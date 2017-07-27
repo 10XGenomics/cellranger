@@ -1,0 +1,4 @@
+Checkout of https://github.com/mengyao/Complete-Striped-Smith-Waterman-Library at commit a9beb7e4c67824538e15
+
+ssw_wrap.py is edited to expect the built .so in the same directory as the file.
+The pipelines Makefile will build the libssw.so binary

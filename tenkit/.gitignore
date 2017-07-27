@@ -1,0 +1,14 @@
+lib/python/tenkit/test_files/demultiplex/
+*.pyc
+.coverage
+cover
+coverage.xml
+node_modules
+nosetests.xml
+*.DS_Store
+*.o
+*.so
+lib/go/pkg
+lib/go/bin
+lib/bin
+

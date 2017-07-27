@@ -1,0 +1,90 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+@include "sc_rna_analyzer.mro"
+@include "_cloupe_stages.mro"
+@include "_sc_rna_aggregator_stages.mro"
+
+pipeline SC_RNA_REANALYZER_CS(
+    in  string analysis_id,
+    in  string analysis_desc,
+    in  h5     filtered_matrices_h5,
+    in  csv    params_csv,
+    in  csv    aggregation_csv,
+    in  csv    barcodes_csv,
+    in  csv    genes_csv,
+    in  int    force_cells,
+    out path   analysis              "Secondary analysis output CSV",
+    out html   web_summary           "Secondary analysis web summary",
+    out csv    params_csv            "Copy of the input parameter CSV",
+    out csv    aggregation_csv       "Copy of the input aggregation CSV",
+    out cloupe cloupe                "Loupe Cell Browser file",
+)
+{
+    call preflight REANALYZER_PREFLIGHT(
+        filtered_matrices_h5 = self.filtered_matrices_h5,
+    )
+
+    call PARSE_PARAM_CSV(
+        params_csv = self.params_csv,
+    )
+
+    call PARSE_CSV(
+        pipestance_root = null,
+        aggregation_csv = self.aggregation_csv,
+        reanalyze       = true,
+        matrix_h5       = self.filtered_matrices_h5,
+    )
+
+    call SC_RNA_ANALYZER(
+        raw_matrices_h5       = null,# don't support barnyard re-analysis (but see note below)
+        filtered_matrices_h5  = self.filtered_matrices_h5,# NOTE: if using force_cells, this might actually be the raw matrix
+        no_secondary_analysis = false,
+        use_genes             = self.genes_csv,
+        use_bcs               = self.barcodes_csv,
+        num_analysis_bcs      = PARSE_PARAM_CSV.num_analysis_bcs,
+        random_seed           = PARSE_PARAM_CSV.random_seed,
+        num_pca_bcs           = PARSE_PARAM_CSV.num_pca_bcs,
+        num_pca_genes         = PARSE_PARAM_CSV.num_pca_genes,
+        num_principal_comps   = PARSE_PARAM_CSV.num_principal_comps,
+        max_clusters          = PARSE_PARAM_CSV.max_clusters,
+        graphclust_neighbors  = PARSE_PARAM_CSV.graphclust_neighbors,
+        neighbor_a            = PARSE_PARAM_CSV.neighbor_a,
+        neighbor_b            = PARSE_PARAM_CSV.neighbor_b,
+        tsne_perplexity       = PARSE_PARAM_CSV.tsne_perplexity,
+        tsne_input_pcs        = PARSE_PARAM_CSV.tsne_input_pcs,
+        tsne_max_dims         = PARSE_PARAM_CSV.tsne_max_dims,
+        tsne_max_iter         = PARSE_PARAM_CSV.tsne_max_iter,
+        tsne_stop_lying_iter  = PARSE_PARAM_CSV.tsne_stop_lying_iter,
+        tsne_mom_switch_iter  = PARSE_PARAM_CSV.tsne_mom_switch_iter,
+        tsne_theta            = PARSE_PARAM_CSV.tsne_theta,
+        force_cells           = self.force_cells,
+    )
+
+    call SUMMARIZE_REANALYSIS(
+        analysis_id       = self.analysis_id,
+        analysis_desc     = self.analysis_desc,
+        filtered_matrices = self.filtered_matrices_h5,
+        analysis          = SC_RNA_ANALYZER.analysis,
+    )
+
+    call CLOUPE_PREPROCESS(
+        pipestance_type              = "SC_RNA_REANALYZER_CS",
+        sample_id                    = self.analysis_id,
+        sample_desc                  = self.analysis_desc,
+        analysis                     = SC_RNA_ANALYZER.analysis,
+        filtered_gene_bc_matrices_h5 = SC_RNA_ANALYZER.reanalyzed_matrix_h5,
+        metrics_json                 = null,
+        aggregation_csv              = self.aggregation_csv,
+        gem_group_index_json         = null,
+        no_secondary_analysis        = false,
+    )
+
+    return (
+        analysis        = SC_RNA_ANALYZER.analysis_csv,
+        web_summary     = SUMMARIZE_REANALYSIS.web_summary,
+        params_csv      = PARSE_PARAM_CSV.params_csv,
+        aggregation_csv = PARSE_CSV.aggregation_csv,
+        cloupe          = CLOUPE_PREPROCESS.output_for_cloupe,
+    )
+}

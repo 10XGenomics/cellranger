@@ -1,0 +1,47 @@
+#
+# Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+#
+filetype fastq;
+filetype json;
+filetype script;
+
+stage BCL_PROCESSOR_PREFLIGHT(
+    in path run_path,
+    in bool allow_no_barcodes,
+    in bool check_executables,
+    src py   "stages/bcl_processor/bcl_processor_preflight",
+)
+
+stage BCL_PROCESSOR_PREFLIGHT_LOCAL(
+    in path run_path,
+    in bool allow_no_barcodes,
+    in bool check_executables,
+    src py   "stages/bcl_processor/bcl_processor_preflight",
+)
+
+stage BARCODE_AWARE_BCL2FASTQ(
+    in  path   run_path,
+    in  int    num_threads,
+    out path   raw_fastq_path,
+    out bool   rc_i2_read,
+    out string si_read_type,
+    src py     "stages/bcl_processor/barcode_aware_bcl2fastq",
+) split using (
+)
+
+stage DEMULTIPLEX(
+    in  path   raw_fastq_path,
+    in  float  sample_index_error_rate,
+    in  bool   interleave,
+    in  bool   rc_i2_read,
+    in  string si_read_type,
+    out path   demultiplexed_fastq_path,
+    out json   demultiplex_summary,
+    src py     "stages/bcl_processor/demultiplex",
+) split using (
+    in  bool   demultiplex,
+    in  string common_bcs,
+    in  string input_files,
+    in  string read_types,
+    in  int    chunk_number,
+)

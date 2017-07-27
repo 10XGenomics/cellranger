@@ -1,0 +1,142 @@
+[
+{
+	"id": "read1_q30_error",
+    	"title": "Low Read1 Percent Q30 Bases",
+	"level": "ERROR",
+	"test": "r1_q30_bases_fract < 0.5",
+	"message": "Ideal > 70%%.  Application performance likely to be affected.",
+	"raw_value": "r1_q30_bases_fract",
+        "formatted_value": "'%.1f%%' % (r1_q30_bases_fract * 100)",
+	"parent": null
+},
+{
+	"id": "read1_q30_warn",
+    	"title": "Low Read1 Percent Q30 Bases",
+	"level": "WARN",
+	"test": "r1_q30_bases_fract < 0.65",
+	"message": "Ideal > 70%%.  Application performance may be affected.",
+	"raw_value": "r1_q30_bases_fract",
+        "formatted_value": "'%.1f%%' % (r1_q30_bases_fract * 100)",
+	"parent": "read1_q30_error"
+},
+{
+	"id": "read2_q30_error",
+    	"title": "Low Read2 Percent Q30 Bases",
+	"level": "ERROR",
+	"test": "r2_q30_bases_fract < 0.45",
+	"message": "Ideal > 70%%.  Application performance likely to be affected.",
+	"raw_value": "r2_q30_bases_fract",
+        "formatted_value": "'%.1f%%' % (r2_q30_bases_fract * 100)",
+	"parent": null
+},
+{
+	"id": "read2_q30_warn",
+    	"title": "Low Read2 Percent Q30 Bases",
+	"level": "WARN",
+	"test": "r2_q30_bases_fract < 0.60",
+	"message": "Ideal > 70%%.  Application performance may be affected.",
+	"raw_value": "r2_q30_bases_fract",
+        "formatted_value": "'%.1f%%' % (r2_q30_bases_fract * 100)",
+	"parent": "read2_q30_error"
+},
+{
+	"id": "unmapped_error",
+    	"title": "High Fraction of Reads Unmapped",
+	"level": "ERROR",
+	"test": "unmapped_fract > 0.5",
+	"message": "Ideal < 20%%.  This can indicate use of the wrong reference genome, high contamination rate, or poor read quality.  Application performance likely to be affected.",
+	"raw_value": "unmapped_fract",
+        "formatted_value": "'%.1f%%' % (unmapped_fract * 100)",
+	"parent": null
+},
+{
+	"id": "unmapped_warn",
+        "title": "High Fraction of Reads Unmapped",
+	"level": "WARN",
+	"test": "unmapped_fract > 0.20",
+	"message": "Ideal < 20%%.  This can indicate use of the wrong reference genome, high contamination rate, or poor read quality.  Application performance may be affected.",
+	"raw_value": "unmapped_fract",
+        "formatted_value": "'%.1f%%' % (unmapped_fract * 100)",
+	"parent": "unmapped_error"
+},
+{
+	"id": "correct_bc_error",
+	"title": "Low Valid Barcode Rate",
+	"level": "ERROR",
+	"test": "correct_bc_rate < 0.5",
+	"message": "Ideal > 80%%. This usually indicates a quality issue with the start of the Ilumina R1 read.  Application performance likely to be affected.",
+	"raw_value": "correct_bc_rate",
+	"formatted_value": "'%.1f%%' % (correct_bc_rate * 100)",
+	"parent": null
+},
+{
+	"id": "correct_bc_warn",
+	"title": "Low Valid Barcode Rate",
+	"level": "WARN",
+	"test": "correct_bc_rate < 0.8",
+	"message": "Ideal > 80%%. This usually indicates a quality issue with the start of the Illumina R1 read.  Application performance may be affected.",
+    	"raw_value": "correct_bc_rate",
+	"formatted_value": "'%.1f%%' % (correct_bc_rate * 100)",
+	"parent": "correct_bc_error"
+},
+{
+    "id": "no_data_error",
+    "title": "No Sequencing Data",
+    "level": "ERROR",
+    "test": "inferred_number_gems < 1",
+    "message": "No valid sequencing data was detected. Please check the sequencing data.",
+    "raw_value": "'n/a'",
+    "formatted_value": "'n/a'",
+    "parent": null
+},
+{
+    "id": "detected_gems_error",
+    "title": "Low Detected GEMs",
+    "level": "ERROR",
+    "test": "inferred_number_gems < 250000",
+    "message": "Ideal > 800,000.  Application performance likely to be affected.",
+    "raw_value": "inferred_number_gems",
+    "formatted_value": "'%d' % inferred_number_gems",
+    "parent": "no_data_error"
+},
+{
+    "id": "detected_gems_warn",
+    "title": "Low Detected GEMs",
+    "level": "WARN",
+    "test": "inferred_number_gems < 800000",
+    "message": "Ideal > 800,000.  Application performance may be affected.",
+    "raw_value": "inferred_number_gems",
+    "formatted_value": "'%d' % inferred_number_gems",
+    "parent": "detected_gems_error"
+},
+{
+    "id": "no_sv_blacklist",
+    "title": "No SV Calling Region Blacklist",
+    "level": "WARN",
+    "test": "sv_blacklist_present != True",
+    "message": "Pipeline run without a region blacklist for structural variant calling. SV calls may contain many false positives due to problematic regions in the reference.",
+    "raw_value": "'n/a'",
+    "formatted_value": "'n/a'",
+    "parent": null
+},
+{
+    "id": "no_call_bases_error",
+    "title": "High Fraction of Reads with Ns",
+    "level": "ERROR",
+    "test": "reads_containing_N_fract > 0.5",
+    "message": "Ideal < 10%%.  This can indicate missing BCL files.",
+    "raw_value": "reads_containing_N_fract",
+    "formatted_value": "'%.1f%%' % (reads_containing_N_fract * 100)",
+    "parent": null
+},
+{
+    "id": "no_call_bases_warn",
+    "title": "High Fraction of Reads with Ns",
+    "level": "WARN",
+    "test": "reads_containing_N_fract > 0.10",
+    "message": "Ideal < 10%%.  This can indicate missing BCL files.",
+    "raw_value": "reads_containing_N_fract",
+    "formatted_value": "'%.1f%%' % (reads_containing_N_fract * 100)",
+    "parent": "no_call_bases_error"
+}
+]

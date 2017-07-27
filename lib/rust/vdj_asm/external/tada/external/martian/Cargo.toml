@@ -1,0 +1,12 @@
+[package]
+name = "martian"
+version = "0.1.0"
+authors = ["Patrick Marks <patrick@10xgenomics.com>"]
+
+[dependencies]
+libc = "*"
+log = "*"
+fern = "*"
+chrono = "*"
+rustc-serialize = "*"
+backtrace = "*"

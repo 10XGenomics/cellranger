@@ -1,0 +1,19 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
+#
+# Parse RunInfo.xml to get flowcell.
+#
+import xml.etree.ElementTree
+import sys
+
+tree = xml.etree.ElementTree.parse(sys.argv[1])
+
+maxilen = 0
+reads = tree.getroot().findall('./Run/Reads/Read')
+for read in reads:
+    cycles = int(read.attrib['NumCycles'])
+    isindex = (read.attrib['IsIndexedRead'] == 'Y')
+    if isindex and (cycles > maxilen):
+        maxilen = cycles
+print maxilen

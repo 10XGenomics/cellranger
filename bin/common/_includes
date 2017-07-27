@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
+#
+# Cell Ranger common docopt strings and options processing functions.
+#
+
+source $TENX_SCRIPTDIR/../tenkit/bin/common/_includes
+
+function process_options_sample_info {
+    # --description
+    if [ -n "$description" ]; then
+        sample_desc=\"$description\"
+    else
+        sample_desc=\"\"
+    fi
+}
+
+read -d '' DOCOPT_OPTIONS_SAMPLE_INFO <<EOF
+    --description=TEXT  Sample description to embed in output files. Optional.
+EOF

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
+#
+# Master command template.
+#
+
+source $TENX_SCRIPTDIR/../tenkit/bin/common/_includes
+
+# Source 10x environment for this product
+sourceme
+
+# Product, version, and copyright
+export TENX_PRODUCT="$PRODUCT"
+export TENX_VERSION=`cat $TENX_SCRIPTDIR/../.version 2> /dev/null`
+export TENX_COPYRIGHT="Copyright (c) 2017 10x Genomics, Inc.  All rights reserved."
+
+# Capture the user-supplied sub-command
+SUBCMD=$1
+export TENX_SUBCMD=$1
+
+# Generate version banner
+read -d '' BANNER <<EOF
+$TENX_PRODUCT $TENX_SUBCMD ($TENX_VERSION)
+$TENX_COPYRIGHT
+-------------------------------------------------------------------------------
+EOF
+export TENX_BANNER="$BANNER"
+
+# Master command usage text boilerplate
+read -d '' USAGE <<EOF
+$BANNER
+
+Usage:
+EOF
+
+# Add subcommands to master command usage text
+nl=$'\n'
+for opt in ${SUBCMDS[@]}; do
+    if [ "$opt" == "--" ]; then
+        USAGE="$USAGE$nl"
+    else
+        USAGE="$USAGE$nl    $TENX_PRODUCT $opt"
+    fi
+done
+
+if [[ "$SUBCMD" == "-h" || "$SUBCMD" == "--help" ]]; then
+    # Emit help upon request
+    echo -e "$USAGE"
+    exit
+
+elif [[ "$SUBCMD" == "shell" ]]; then
+    # Invoke shell
+    "$TENX_PRODUCT-$SUBCMD"
+    exit
+
+elif [[ "$SUBCMD" != "" ]]; then
+    # If dryrun is specified, set the flag for downstream
+    # scripts and then consume the token.
+    if [[ "$SUBCMD" == "dry" ]]; then
+        export TENX_DRYMODE=true
+        shift 1
+        SUBCMD=$1
+        export TENX_SUBCMD=$1
+    fi
+    # Pass-through to subcommand
+    SUBCMDPATH=$(which $SUBCMD)
+    if [ -x "$SUBCMDPATH" ]; then
+        shift 1
+        echo -e "$BANNER"
+        echo
+        $SUBCMD "$@"
+        exit
+    fi
+fi
+
+# Usage message
+echo -e "$USAGE"
+exit 1

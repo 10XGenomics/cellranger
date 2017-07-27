@@ -1,0 +1,26 @@
+<div class="chart_card" style="width: 1200px; height: 600px; overflow: scroll;" ng-repeat="chart in charts" ng-if="chart.name == 'differential_expression'">
+  <div class="has_desc" onclick="show_description(event)" ng-cloak>
+    <div class="summary_description">{{ chart.description }}</div>
+  </div>
+  <h2>{{ chart.title }}</h2>
+  <table id="detable" class="chart_table" chart-div chart="chart">
+    <thead>
+      <tr>
+        <!-- These must be "td"s because sortable.js puts sort controls on the first row in "thead" -->
+        <td class="de_table_cluster_header gene_id_header" style="padding: 2px; text-align:center; width: 24ch">&nbsp;</td>
+        <td class="de_table_cluster_header gene_name_header" style="padding: 2px; text-align:center; width: 16ch">&nbsp;</td>
+        <td class="de_table_cluster_header" style="padding: 2px; text-align:center; width: 16ch" colspan="2" ng-repeat="col in chart.table.cols" ng-if="$index != 0 && $index != 1 && $index % 2 == 0">Cluster {{ $index/2 }}</td>
+        <td class="de_table_cluster_header" style="padding: 2px; text-align:center; width: auto">&nbsp;</td>
+      </tr>
+      <tr>
+        <th id="de_table_header-{{$index}}" class="de_table_cell de_table_header" style="vertical-align:text-top; padding: 0.5ch 1ch; white-space:nowrap" ng-repeat="col in chart.table.cols" data-sortable-type="{{ $index < 2 ? 'alpha' : 'numeric' }}" title="{{col.title}}"><p>{{ col.label }}</p></th><!--" -->
+      </tr>
+    </thead>
+    <tbody>
+      <tr ng-repeat="row in chart.table.rows">
+        <td class="de_table_cell" style="padding: 0.5ch 1ch" ng-if="!cell.f" ng-repeat="cell in row">{{ cell }}</td>
+        <td class="de_table_cell" ng-style="{'color': cell.s, 'text-align': 'right'}" ng-if="cell.f" ng-repeat="cell in row" data-value="{{ cell.v }}">{{ cell.f }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

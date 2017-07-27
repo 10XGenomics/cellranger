@@ -1,0 +1,28 @@
+<div class="chart_card chart_card_single" style="overflow: scroll;" ng-repeat="chart in charts" ng-if="chart.name == 'clonotype_table'">
+  <div class="has_desc" onclick="show_description(event)" ng-cloak>
+    <div class="summary_description">{{ chart.description }}</div>
+  </div>
+  <h2>{{ chart.title }}</h2>
+  <table class="simple_table" id="clonotype_table">
+    <thead>
+      <tr>
+        <!-- clonotype name -->
+        <th title="{{chart.table.cols[0].title}}">{{chart.table.cols[0].label}}</th>
+        <!-- clonotype CDRs -->
+        <th title="{{chart.table.cols[1].title}}">{{chart.table.cols[1].label}}</th>
+        <!-- clonotype frequency -->
+        <th title="{{chart.table.cols[2].title}}" style="text-align: right;">{{chart.table.cols[2].label}}</th>
+        <!-- clonotype percentage -->
+        <th title="{{chart.table.cols[3].title}}" style="text-align: right;">{{chart.table.cols[3].label}}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr ng-repeat="row in chart.table.rows">
+        <td style="{{row[0].s}}">{{row[0].f}}</td>
+        <td style="{{row[1].s}}" ng-bind-html="row[1].f | lineSplit:';'"></td>
+        <td style="{{row[2].s}}">{{row[2].f}}</td>
+        <td style="{{row[3].s}}">{{row[3].f | percent1 }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,107 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+filetype bam;
+filetype bam.bai;
+filetype csv;
+filetype tsv;
+filetype fastq;
+filetype json;
+filetype h5;
+filetype html;
+filetype pickle;
+
+stage AGGREGATOR_PREFLIGHT(
+    in map[]  sample_defs,
+    in string normalization_mode,
+    src py     "stages/aggregator/aggregator_preflight",
+)
+
+stage PARSE_CSV(
+    in  path  pipestance_root,
+    in  csv   aggregation_csv,
+    in  bool  reanalyze,
+    in  h5    matrix_h5,
+    out csv   aggregation_csv,
+    out map[] sample_defs,
+    src py    "stages/aggregator/parse_csv",
+)
+
+stage SETUP_SAMPLES(
+    in  map[] sample_defs,
+    out map   gem_group_index,
+    out json  gem_group_index_json,
+    src py    "stages/aggregator/setup_samples",
+)
+
+stage COUNT_GENES_FROM_MOLECULES(
+    in  map  gem_group_index,
+    in  h5   raw_molecules,
+    in  csv  filtered_barcodes,
+    out h5   filtered_molecules,
+    out h5   raw_matrices_h5,
+    out h5   filtered_matrices_h5,
+    out h5   barcode_summary_h5,
+    out path raw_matrices_mex,
+    out path filtered_matrices_mex,
+    out json summary,
+    src py   "stages/aggregator/count_genes",
+) split using (
+    in  int  chunk_start,
+    in  int  chunk_len,
+)
+
+stage DETECT_CELLS(
+    in  h5[]  molecule_chunks,
+    out csv   cell_barcodes,
+    out map   gem_group_metrics,
+    src py    "stages/aggregator/detect_cells",
+) split using (
+    in  h5    molecule_h5,
+    in  int   chunk_start,
+    in  int   chunk_len,
+    in  int   gem_group,
+    in  int   recovered_cells,
+    in  int   force_cells,
+)
+
+stage MERGE_MOLECULES(
+    in  map[]  sample_defs,
+    in  map    gem_group_index,
+    out h5     merged_molecules,
+    out h5[]   chunked_molecules,
+    src py     "stages/aggregator/merge_molecules",
+) split using (
+    in  string library_id,
+    in  h5     molecule_h5,
+)
+
+stage NORMALIZE_DEPTH(
+    in  h5     molecules,
+    in  map    detect_cells_gg_metrics,
+    in  string normalization_mode,
+    out h5     out_molecules,
+    out json   summary,
+    src py     "stages/aggregator/normalize_depth",
+) split using (
+    in  bool   downsample,
+    in  int    chunk_start,
+    in  int    chunk_len,
+    in  map    downsample_map,
+)
+
+stage SUMMARIZE_AGGREGATED_REPORTS(
+    in  string aggregation_id,
+    in  string aggregation_desc,
+    in  map    gem_group_index,
+    in  h5     filtered_matrices_h5,
+    in  h5     barcode_summary_h5,
+    in  path   analysis,
+    in  json   normalize_depth_summary,
+    in  json   count_genes_summary,
+    in  json   analyze_matrices_summary,
+    out json   summary,
+    out html   web_summary,
+    src py     "stages/aggregator/summarize_reports",
+) split using (
+)

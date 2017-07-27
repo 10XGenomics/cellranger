@@ -1,0 +1,114 @@
+#
+# Copyright (c) 2016 10x Genomics, Inc.  All rights reserved.
+#
+filetype fastq;
+filetype json;
+filetype csv;
+
+stage MAKE_FASTQS_PREFLIGHT_LOCAL(
+    in path   run_path,
+    in bool   check_executables,
+    in int[]  lanes,
+    in map[]  specs,
+    in string bcl2fastq2_args,
+    in string barcode_whitelist,
+    in string bc_read_type,
+    in int    bc_start_index,
+    in int    bc_length,
+    in string si_read_type,
+    in string umi_read_type,
+    in int    umi_start_index,
+    in int    umi_length,
+    in string bases_mask,
+    in bool   ignore_dual_index,
+    src py     "stages/make_fastqs/make_fastqs_preflight_local",
+)
+
+stage MAKE_FASTQS_PREFLIGHT(
+    in path   run_path,
+    in path   output_path,
+    in path   interop_output_path,
+    in string barcode_whitelist,
+    in bool   check_executables,
+    in int    max_bcl2fastq_threads,
+    src py     "stages/make_fastqs/make_fastqs_preflight",
+)
+
+stage PREPARE_SAMPLESHEET(
+    in  path   run_path,
+    in  map[]  specs,
+    in  string project,
+    in  string bc_read_type,
+    in  int    bc_length,
+    in  string si_read_type,
+    out csv    samplesheet,
+    out csv    input_samplesheet,
+    out bool   dual_indexed_samplesheet,
+    src py     "stages/make_fastqs/prepare_samplesheet",
+)
+
+stage BCL2FASTQ_WITH_SAMPLESHEET(
+    in  path   run_path,
+    in  path   output_path,
+    in  path   interop_output_path,
+    in  csv    samplesheet_path,
+    in  string bases_mask,
+    in  string si_read_type,
+    in  string bcl2fastq1_args,
+    in  string bcl2fastq2_args,
+    in  int    max_bcl2fastq_threads,
+    in  bool   dual_indexed_samplesheet,
+    in  bool   ignore_dual_index,
+    out path   fastq_path,
+    out path   interop_path,
+    out bool   rc_i2_read,
+    out map    file_read_types_map,
+    out string bcl2fastq_version,
+    out string bcl2fastq_args,
+    src py     "stages/make_fastqs/bcl2fastq_with_samplesheet",
+) split using (
+)
+
+stage MAKE_QC_SUMMARY(
+    in  path   run_path,
+    in  path   fastq_path,
+    in  path   interop_path,
+    in  string barcode_whitelist,
+    in  string bc_read_type,
+    in  int    bc_start_index,
+    in  int    bc_length,
+    in  string si_read_type,
+    in  string umi_read_type,
+    in  int    umi_start_index,
+    in  int    umi_length,
+    in  bool   rc_i2_read,
+    in  map    file_read_types_map,
+    in  string software_version,
+    in  string bcl2fastq_version,
+    in  string bcl2fastq_args,
+    out json   qc_summary,
+    out bool   completed,
+    src py     "stages/make_fastqs/make_qc_summary",
+) split using (
+    in  string project,
+    in  int    lane,
+    in  string sample,
+    in  string input_files,
+)
+
+stage MERGE_FASTQS_BY_LANE_SAMPLE(
+    in  path     fastq_path,
+    in  csv      samplesheet_path,
+    in  bool     remove_undetermined_fastqs,
+    in  bool     remove_split_fastqs,
+    in  string   bcl2fastq_version,
+    out bool     files_merged,
+    out string[] merged_file_paths,
+    src py       "stages/make_fastqs/merge_fastqs_by_lane_sample",
+) split using (
+    in  string   project,
+    in  int      lane,
+    in  string   sample_id,
+    in  string   output_snum,
+    in  string   input_files,
+)

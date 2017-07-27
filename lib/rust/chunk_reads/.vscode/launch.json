@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug",
+            "program": "${workspaceRoot}/target/debug/chunk_reads",
+            "args": ["out", "p2", "--martian-args=chunk.json"],
+            "cwd": "${workspaceRoot}"
+        }
+    ]
+}

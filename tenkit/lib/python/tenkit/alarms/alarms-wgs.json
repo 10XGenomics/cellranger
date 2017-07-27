@@ -1,0 +1,122 @@
+[
+{
+	"id": "dup_fraction_error",
+	"title": "High PCR Duplication Rate",
+	"level": "ERROR",
+	"test": "dup_fraction > 0.50",
+	"message": "Ideal < 20%%.  A high duplication rate may be caused by loading too little DNA, or very deep sequencing.  Application performance likely to be affected.",
+	"raw_value": "dup_fraction",
+	"formatted_value": "'%.1f%%' % (dup_fraction * 100)",
+	"parent": null
+},
+{
+	"id": "dup_fraction_warn",
+        "title": "High PCR Duplication Rate",
+	"level": "WARN",
+	"test": "dup_fraction > 0.20",
+	"message": "Ideal < 20%%.  A high duplication rate may be caused by loading too little DNA, or very deep sequencing.  Application performance may be affected.",
+        "raw_value": "dup_fraction",
+        "formatted_value": "'%.1f %%' % (dup_fraction * 100)",
+	"parent": "dup_fraction_error"
+},
+{
+	"id": "coverage_error",
+        "title": "Low Mean Coverage Depth",
+	"level": "ERROR",
+	"test": "mean_depth < 5",
+	"message": " Recommended coverage is >30X for whole genome samples.",
+        "raw_value": "mean_depth",
+        "format": "%.1f",
+	"parent": null
+},
+{
+	"id": "coverage_warn",
+        "title": "Low Mean Coverage Depth",
+	"level": "WARN",
+	"test": "mean_depth < 25",
+	"message": " Recommended coverage is >30X for whole genome samples.",
+        "raw_value": "mean_depth",
+        "format": "%.1f",
+	"parent": "coverage_error"
+},
+{
+        "id": "linked_reads_per_molecule_warn",
+        "title": "Low Linked-Reads per Molecule",
+        "level": "WARN",
+        "test": "n90_n50_reads_per_fragment < 13",
+        "raw_value": "n90_n50_reads_per_fragment",
+        "format": "%.1f",
+        "message": "Ideal > 13.  A low N50 Linked-Reads per Molecule may negatively impact application results.  Low linked-reads per molecule can be caused by loading too much DNA mass, using short DNA fragments, or insufficient sequencing depth.",
+        "parent": "linked_reads_per_molecule_error"
+},
+{
+        "id": "linked_reads_per_molecule_error",
+        "title": "Low Linked Reads per Molecule",
+        "level": "ERROR",
+        "test": "n90_n50_reads_per_fragment < 7",
+        "raw_value": "n90_n50_reads_per_fragment",
+        "format": "%.1f",
+        "message": "Ideal > 13.  A very low N50 Linked-Reads per Molecule is likely to negatively impact application results.  Low linked-reads per molecule can be caused by loading too much DNA mass, using short DNA fragments, or insufficient sequencing depth.",
+        "parent": null
+},
+{
+	"id": "low_input_dna_length_error",
+    	"title": "Low Input DNA Molecule Length",
+	"level": "ERROR",
+	"test": "inferred_lw_mean_length < 15000",
+	"message": "Ideal > 40000.  Use of highly fragmented DNA likely to impact application results.",
+	"raw_value": "inferred_lw_mean_length",
+        "format": "%.1f",
+	"parent": null
+},
+{
+	"id": "low_input_dna_length_warn",
+    	"title": "Low Input DNA Molecule Length",
+	"level": "WARN",
+	"test": "inferred_lw_mean_length < 30000",
+	"message": "Ideal > 40000.  Use of shorter DNA may impact application results.",
+	"raw_value": "inferred_lw_mean_length",
+        "format": "%.1f",
+	"parent": "low_input_dna_length_error"
+},
+{
+	"id": "high_input_dna_mass_error",
+  "title": "High Input DNA Mass",
+	"level": "ERROR",
+	"test": "corrected_loaded_mass_ng > 3.75",
+	"message": "Ideal range is 0.625 - 2.5ng.  Overloading of DNA is likely to impact application results.",
+	"raw_value": "corrected_loaded_mass_ng",
+  "format": "%.1f",
+	"parent": null
+},
+{
+	"id": "high_input_dna_mass_warn",
+  "title": "High Input DNA Mass",
+	"level": "WARN",
+	"test": "corrected_loaded_mass_ng > 2.5",
+	"message": "Ideal range is 0.625 - 2.5ng.  Overloading of DNA may impact application results.",
+	"raw_value": "corrected_loaded_mass_ng",
+  "format": "%.1f",
+	"parent": "high_input_dna_mass_error"
+},
+{
+	"id": "low_input_dna_mass_error",
+  "title": "Low Input DNA Mass",
+	"level": "ERROR",
+	"test": "corrected_loaded_mass_ng < 0.4166",
+	"message": "Ideal range is 0.625 - 2.5ng.  Underloading of DNA is likely to impact application results.",
+	"raw_value": "corrected_loaded_mass_ng",
+  "format": "%.1f",
+	"parent": null
+},
+{
+	"id": "low_input_dna_mass_warn",
+  "title": "Low Input DNA Mass",
+	"level": "WARN",
+	"test": "corrected_loaded_mass_ng < 0.625",
+	"message": "Ideal range is 0.625 - 2.5ng.  Underloading of DNA may impact application results.",
+	"raw_value": "corrected_loaded_mass_ng",
+  "format": "%.1f",
+	"parent": "low_input_dna_mass_error"
+}
+]

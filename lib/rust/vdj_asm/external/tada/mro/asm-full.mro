@@ -1,0 +1,65 @@
+
+#                                                                                                                                           
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+@include "_sort_fastq_by_barcode.mro"
+@include "_linked_reads_aligner_stages.mro"
+@include "_aligner_stages.mro"
+@include "_bcsorter.mro"
+@include "_asm_stages.mro"
+
+pipeline ASM_FULL(
+    in  string  fastq_mode                   "configuration of the input fastqs",
+    in  map[]   sample_def,
+    in  string  barcode_whitelist            "name of barcode whitelist file",
+    in  float   max_expected_barcode_errors,
+    in  int     trim_length,
+    in  string  sample_id,
+    in  map     downsample,
+    out graph asm_graph,
+    out node_bcs asm_bcs,
+)
+{
+    call local volatile SETUP_CHUNKS(
+        sample_id         = self.sample_id,
+        downsample        = self.downsample,
+        input_mode        = self.fastq_mode,
+        sample_def        = self.sample_def,
+        barcode_whitelist = self.barcode_whitelist,
+    )
+
+    call volatile TRIM_READS(
+        barcode_whitelist = self.barcode_whitelist,
+        chunks            = SETUP_CHUNKS.chunks,
+        max_read_num      = 10000000,
+        read1_trim_length = self.trim_length,
+        read2_trim_length = 0,
+    )
+
+    call _SORT_FASTQ_BY_BARCODE(
+        barcode_counts              = TRIM_READS.bc_counts,
+        bc_confidence_threshold     = 0.975,
+        chunk                       = TRIM_READS.chunks,
+        barcode_whitelist           = self.barcode_whitelist,
+        max_expected_barcode_errors = self.max_expected_barcode_errors,
+    )
+
+    call MSP(
+        fastqs = _SORT_FASTQ_BY_BARCODE.reads,
+        barcode_whitelist = self.barcode_whitelist,
+    )
+
+    call SHARD_ASM(
+        chunks            = MSP.chunks,
+    )
+
+    call MAIN_ASM(
+        sedge_asm = SHARD_ASM.sedge_asm,
+        sedge_bcs = SHARD_ASM.sedge_bcs,
+    )
+
+    return (
+        asm_graph = MAIN_ASM.asm_graph,
+        asm_bcs   = MAIN_ASM.asm_bcs,
+    )
+}

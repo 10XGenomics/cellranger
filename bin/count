@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
+#
+# Run SC_RNA_COUNTER_CS with mrp.
+#
+
+source $TENX_SCRIPTDIR/common/_includes
+
+DOCOPT_SPEC="$(cat <<EOF
+'$TENX_PRODUCT $TENX_SUBCMD' quantifies single-cell gene expression.
+
+$DOCOPT_PREAMBLE_FASTQS
+
+Options:
+# Single Cell
+    $DOCOPT_OPTIONS_FASTQS
+    $DOCOPT_OPTIONS_SAMPLE_INFO
+    --transcriptome=DIR Path of folder containing 10X-compatible transcriptome.
+    --expect-cells=NUM  Expected number of recovered cells. Optional.
+    --force-cells=NUM   Force pipeline to use this number of cells, bypassing
+                            the cell detection algorithm. Optional.
+    --nosecondary       Disable secondary analysis, e.g. clustering. Optional.
+    --cells=NUM         \(Deprecated\) Equivalent to --expect-cells. Optional.
+
+# Martian Runtime
+    $DOCOPT_OPTIONS_MRP_CLUSTER
+EOF
+)"
+
+function implement_process_options {
+    process_options_fastqs
+    process_options_sample_info
+
+    # --transcriptome
+    if [ -n "$transcriptome" ]; then
+        reference_path=\"$(abspath $transcriptome)\"
+    else
+        reference_path=\"\"
+    fi
+
+    # NOTE: docopt automatically converts dashes to underscores (e.g. force-cells becomes force_cells)
+
+    # --expect_cells
+    if [ -z "$expect_cells" ]; then
+        if [ -n "$cells" ]; then
+            expect_cells=$cells
+        else
+            expect_cells=null
+        fi
+    fi
+
+    # --force_cells
+    if [ -z "$force_cells" ]; then
+        force_cells=null
+    fi
+}
+
+function implement_generate_sample_defs {
+    sample_def=""
+    for fastq in $fastqs; do
+        sample_def="$sample_def
+        {
+            \"fastq_mode\": $fastq_mode,
+            \"gem_group\": null,
+            \"lanes\": $lanes,
+            \"read_path\": \"$fastq\",
+            \"sample_indices\": $indices,
+            \"sample_names\": $sample_names
+        },"
+    done
+    sample_def=${sample_def%\,}
+    sample_def=$(echo -e "[ $sample_def\n    ]")
+}
+
+function implement_generate_mro {
+    cat <<EOF > $mro
+@include "sc_rna_counter_cs.mro"
+
+call SC_RNA_COUNTER_CS(
+    sample_id = $sample_id,
+    sample_def = $sample_def,
+    sample_desc = $sample_desc,
+    reference_path = $reference_path,
+    recovered_cells = $expect_cells,
+    force_cells = $force_cells,
+    no_secondary_analysis = $nosecondary,
+)
+EOF
+}
+
+source $TENX_SCRIPTDIR/../tenkit/bin/common/_subcmd_mrp

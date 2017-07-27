@@ -1,0 +1,37 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+filetype bam;
+filetype bam.bai;
+filetype bed;
+filetype csv;
+filetype fasta;
+filetype fasta.fai;
+filetype json;
+filetype vloupe;
+
+stage VLOUPE_PREPROCESS(
+    in  string    pipestance_type,
+    in  string    sample_id,
+    in  string    sample_desc,
+    in  bam       concat_ref_bam,
+    in  bam.bai   concat_ref_bam_bai,
+    in  fasta     concat_ref_fasta,
+    in  fasta.fai concat_ref_fasta_fai,
+    in  json      concat_ref_annotations_json,
+    in  csv       clonotypes_csv,
+    in  bam       consensus_bam,
+    in  bam.bai   consensus_bam_bai,
+    in  json      consensus_annotations_json,
+    in  fasta     consensus_fasta,
+    in  fasta.fai consensus_fasta_fai,
+    in  string    contig_bam_relative_path,
+    in  bam.bai   contig_bam_bai,
+    in  json      contig_annotations_json,
+    in  bed       contig_annotations_bed,
+    in  fasta     contig_fasta,
+    in  fasta.fai contig_fasta_fai,
+    in  csv       metrics_csv,
+    out vloupe    output_for_vloupe,
+    src py        "stages/vloupe/vloupe_preprocess",
+)

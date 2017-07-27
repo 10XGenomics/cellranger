@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Run BCL_PROCESSOR_CS with mrp.
+#
+
+source $TENX_SCRIPTDIR/../tenkit/bin/common/_includes
+
+DOCOPT_SPEC="$(cat <<EOF
+The commands below should be preceded by '$TENX_PRODUCT':
+
+Usage:
+    demux --run=PATH [options]
+    demux -h | --help | --version
+
+Arguments:
+    run  Path of Illumina BCL run folder.
+
+Options:
+# Martian Runtime
+    $DOCOPT_OPTIONS_MRP_CLUSTER
+    
+EOF
+)"
+
+function implement_process_options {
+    # Expand tildes and get absolute path.
+    run=$(abspath $run)
+
+    # Check run folder exists.
+    if [ ! -d $run ]; then
+        error "Specified run folder does not exist."
+    fi
+
+    # Check run folder is executable.
+    if [ ! -x $run ]; then
+        error "Do not have permission to open run folder."
+    fi
+
+    # Check run is complete, i.e. RTAComplete.txt exists.
+    if [ ! -e $run/RTAComplete.txt ]; then
+        error "Run does not appear to be complete yet. RTAComplete.txt not found."
+    fi
+
+    # Check RunInfo.xml exists.
+    if [ ! -e $run/RunInfo.xml ]; then
+        error "RunInfo.xml not found. Cannot verify run was 10X-prepped."
+    fi
+
+    # Check RunInfo.xml is readable.
+    if [ ! -r $run/RunInfo.xml ]; then
+        error "Do not have permission to open RunInfo.xml."
+    fi
+
+    # Get flowcell ID.
+    id=`get_flowcell $run/RunInfo.xml`
+    if [ $? != 0 ]; then
+        error "Run does not appear to have 14bp 10X barcode reads."
+    fi
+}
+
+function implement_generate_sample_defs {
+    : # noop
+}
+
+function implement_generate_mro {
+    mro=__$id.mro
+    cat <<EOF > $mro
+@include "bcl_processor_cs.mro"
+
+call BCL_PROCESSOR_CS(
+    run_path="$run",
+)
+EOF
+}
+
+source $TENX_SCRIPTDIR/../tenkit/bin/common/_subcmd_mrp

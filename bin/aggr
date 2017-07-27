@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
+#
+# Run SC_RNA_AGGREGATOR_CS with mrp.
+#
+
+source $TENX_SCRIPTDIR/common/_includes
+
+DOCOPT_SPEC="$(cat <<EOF
+'$TENX_PRODUCT $TENX_SUBCMD' aggregates the gene/cell count data generated
+from multiple runs of the '$TENX_PRODUCT count' pipeline.
+
+To run this pipeline, supply a CSV that enumerates the paths to the
+aggregator_output.h5 files produced by '$TENX_PRODUCT count'.
+
+Please see the following URL for details on the CSV format:
+support.10xgenomics.com/single-cell/software
+
+The commands below should be preceded by '$TENX_PRODUCT':
+
+Usage:
+    $TENX_SUBCMD
+        --id=ID
+        --csv=CSV
+        [options]
+    $TENX_SUBCMD <run_id> <mro> [options]
+    $TENX_SUBCMD -h | --help | --version
+
+Arguments:
+    id      A unique run id, used to name output folder [a-zA-Z0-9_-]+.
+    csv     Path of CSV file enumerating '$TENX_PRODUCT count' outputs.
+
+Options:
+# Aggregation
+    $DOCOPT_OPTIONS_SAMPLE_INFO
+    --normalize=<mode>  Library depth normalization mode.
+                            Valid values: mapped, raw, none [default: mapped].
+    --nosecondary       Disable secondary analysis, e.g. clustering.
+
+# Martian Runtime
+    $DOCOPT_OPTIONS_MRP_CLUSTER
+EOF
+)"
+
+function implement_process_options {
+    process_options_sample_info
+
+    # --csv
+    if [ -n "$csv" ]; then
+        aggregation_csv=\"$(abspath $csv)\"
+    fi
+
+    # --normalize
+    if [ -n "$normalize" ]; then
+        normalization_mode=\"$normalize\"
+    fi
+
+    # docopt already handles booleans
+    # --nosecondary
+
+    pipestance_root=\"$(pwd)\"
+}
+
+function implement_generate_sample_defs {
+    : # noop
+}
+
+function implement_generate_mro {
+    cat <<EOF > $mro
+@include "sc_rna_aggregator_cs.mro"
+
+call SC_RNA_AGGREGATOR_CS(
+    aggregation_id = $sample_id,
+    aggregation_csv = $aggregation_csv,
+    aggregation_desc = $sample_desc,
+    pipestance_root = $pipestance_root,
+    normalization_mode = $normalization_mode,
+    no_secondary_analysis = $nosecondary,
+)
+EOF
+}
+
+source $TENX_SCRIPTDIR/../tenkit/bin/common/_subcmd_mrp

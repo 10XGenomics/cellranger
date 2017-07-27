@@ -1,0 +1,76 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+import docopt
+import os
+import sys
+
+from cellranger.matrix import GeneBCMatrices
+import cellranger.utils as cr_utils
+
+VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
+
+__doc__ = '''
+Tool for converting gene-barcode matrices from sparse format to dense CSV
+format, for use by external programs.
+
+The commands below should be preceded by 'cellranger':
+
+Usage:
+    mat2csv <input_path> <output_csv> [--genome=GENOME]
+    mat2csv -h | --help | --version
+
+Arguments:
+    input_path      Path to a Cell Ranger gene-barcode matrix (either an H5 file
+                      or a MEX base directory).
+    output_csv      Output CSV file.
+
+Options:
+    --genome=GENOME          Specify which genome to extract (for multi-genome
+                                matrices).
+    -h --help                Show this message.
+    --version                Show version.
+'''
+
+def main():
+    args = docopt.docopt(__doc__, version=VERSION)
+    output_csv = cr_utils.get_output_path(args['<output_csv>'])
+    input_path = args['<input_path>']
+    genome = args['--genome']
+
+    if input_path.endswith(".h5"):
+        input_path = cr_utils.get_input_path(input_path)
+        gbm = GeneBCMatrices.load_h5(input_path)
+    else:
+        input_path = cr_utils.get_input_path(input_path, is_dir=True)
+        gbm = GeneBCMatrices.load_mtx(input_path)
+
+    genomes = gbm.get_genomes()
+    if genome is None:
+        genome = genomes[0]
+    if genome not in genomes:
+        sys.exit("Genome '%s' not found (genomes available: %s)" % (genome, genomes))
+
+    matrix = gbm.get_matrix(genome)
+
+    num_genes, num_barcodes, num_entries = matrix.genes_dim, matrix.bcs_dim, matrix.m.nnz
+    dense_size = num_genes * num_barcodes
+    zero_frac = float(dense_size - num_entries) * 100.0 / float(dense_size)
+    print """
+    WARNING: this matrix has %d x %d (%d total) elements, %f%% of which are zero.
+    Converting it to dense CSV format may be very slow and memory intensive.
+    Moreover, other programs (e.g. Excel) may be unable to load it due to its size.
+    To cancel this command, press <control key> + C.
+
+    If you need to inspect the data, we recommend using Loupe Cell Browser.
+    """ % (num_genes, num_barcodes, dense_size, zero_frac)
+
+    try:
+        matrix.save_dense_csv(output_csv)
+    except KeyboardInterrupt:
+        if os.path.exists(output_csv):
+            os.remove(output_csv)
+
+if __name__ == '__main__':
+    main()

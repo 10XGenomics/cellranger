@@ -1,0 +1,44 @@
+#
+# Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+#
+@include "_bcl_processor_stages.mro"
+
+pipeline BCL_PROCESSOR(
+    in  path   run_path             "Illumina output folder",
+    in  bool   allow_no_barcodes,
+    out path   fastq_path,
+    out json   demultiplex_summary,
+    out string si_read_type,
+)
+{
+    call local preflight BCL_PROCESSOR_PREFLIGHT_LOCAL(
+        run_path          = self.run_path,
+        allow_no_barcodes = self.allow_no_barcodes,
+        check_executables = false,
+    )
+
+    call preflight BCL_PROCESSOR_PREFLIGHT(
+        run_path          = self.run_path,
+        allow_no_barcodes = self.allow_no_barcodes,
+        check_executables = true,
+    )
+
+    call volatile BARCODE_AWARE_BCL2FASTQ(
+        run_path    = self.run_path,
+        num_threads = 6,
+    )
+
+    call DEMULTIPLEX(
+        raw_fastq_path          = BARCODE_AWARE_BCL2FASTQ.raw_fastq_path,
+        rc_i2_read              = BARCODE_AWARE_BCL2FASTQ.rc_i2_read,
+        si_read_type            = BARCODE_AWARE_BCL2FASTQ.si_read_type,
+        sample_index_error_rate = 0.15,
+        interleave              = true,
+    )
+
+    return (
+        fastq_path          = DEMULTIPLEX.demultiplexed_fastq_path,
+        demultiplex_summary = DEMULTIPLEX.demultiplex_summary,
+        si_read_type        = BARCODE_AWARE_BCL2FASTQ.si_read_type,
+    )
+}

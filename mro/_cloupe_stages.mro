@@ -1,0 +1,31 @@
+#
+# Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
+#
+filetype cloupe;
+filetype csv;
+filetype json;
+filetype h5;
+
+stage CLOUPE_PREPROCESS(
+    in  string pipestance_type,
+    in  string sample_id,
+    in  string sample_desc,
+    in  path   analysis,
+    in  h5     filtered_gene_bc_matrices_h5,
+    in  json   metrics_json,
+    in  csv    aggregation_csv,
+    in  json   gem_group_index_json,
+    in  bool   no_secondary_analysis,
+    out cloupe output_for_cloupe,
+    out json   gem_group_index_json,
+    src py     "stages/cloupe/cloupe_preprocess",
+) split using (
+)
+
+stage CLOUPE_CONVERTER(
+    in  string pipestance_type,
+    in  string sample_id,
+    in  path   pipestance_path,
+    out cloupe output_for_cloupe,
+    src py     "stages/cloupe/cloupe_converter",
+)

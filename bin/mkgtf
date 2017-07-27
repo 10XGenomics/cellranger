@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+import collections
+import docopt
+import os
+import sys
+import cellranger.utils as cr_utils
+import cellranger.reference as cr_reference
+
+VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
+
+__doc__ = '''
+Genes GTF tool for 10x Genomics Cell Ranger.
+
+Filter user-supplied GTF files for use as Cell Ranger-compatible
+genes files for mkreference tool.
+
+The commands below should be preceded by 'cellranger':
+
+Usage:
+    mkgtf <input_gtf> <output_gtf> [--attribute=KEY:VALUE...]
+    mkgtf -h | --help | --version
+
+Arguments:
+    input_gtf     Path to input genes GTF file.
+    output_gtf    Path to filtered output genes GTF file.
+
+Options:
+    --attribute=<key:value>  Key-value pair in attributes field to
+                               be kept in the GTF file.
+    -h --help                Show this message.
+    --version                Show version.
+'''
+
+def main():
+    args = docopt.docopt(__doc__, version=VERSION)
+    input_genes_file = cr_utils.get_input_path(args['<input_gtf>'])
+    output_genes_file = cr_utils.get_output_path(args['<output_gtf>'])
+    attributes_str = args['--attribute']
+
+    attributes = collections.defaultdict(set)
+    for attribute_str in attributes_str:
+        parts = attribute_str.split(':')
+        if len(parts) != 2:
+            sys.exit("Attribute option must have format <key;value>: %s" % attribute_str)
+        key, value = parts
+        attributes[key].add(value)
+
+    gtf_builder = cr_reference.GtfBuilder(input_genes_file, output_genes_file, attributes=attributes)
+    gtf_builder.build_gtf()
+
+if __name__ == '__main__':
+    main()

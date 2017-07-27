@@ -1,0 +1,45 @@
+        {
+            "chemistry": {
+                "barcode_read_length": 16,
+                "barcode_read_offset": 0,
+                "barcode_read_type": "R1",
+                "barcode_whitelist": "737K-august-2016",
+                "description": "Single Cell 3' v2",
+                "name": "SC3Pv2",
+                "read_type_to_bcl2fastq_filename": {
+                    "I1": "I1",
+                    "I2": null,
+                    "R1": "R1",
+                    "R2": "R2"
+                },
+                "read_type_to_bcl_processor_filename": {
+                    "I1": "I1",
+                    "I2": null,
+                    "R1": "RA",
+                    "R2": null
+                },
+                "retain_trimmed_suffix_read": "R1",
+                "rna_read2_length": null,
+                "rna_read2_offset": 0,
+                "rna_read2_type": null,
+                "rna_read_length": null,
+                "rna_read_offset": 0,
+                "rna_read_type": "R2",
+                "si_read_length": null,
+                "si_read_offset": 0,
+                "si_read_type": "I1",
+                "strandedness": "+",
+                "umi_read_length": 10,
+                "umi_read_offset": 16,
+                "umi_read_type": "R1"
+            },
+            "gem_group": 1,
+            "read_chunks": {
+                "I1": "test/invalid_fastq/read-I1.fastq",
+                "I2": null,
+                "R1": "test/invalid_fastq/read-RA.fastq",
+                "R2": null
+            },
+            "read_group": "34346:MissingLibrary:1:HHH53BBXX:3",
+            "reads_interleaved": true
+        }

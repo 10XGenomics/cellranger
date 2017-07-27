@@ -1,0 +1,123 @@
+@include "_sc_rna_aggregator_stages.mro"
+@include "sc_rna_analyzer.mro"
+
+pipeline SC_RNA_AGGREGATOR(
+    in  string aggregation_id,
+    in  string aggregation_desc,
+    in  map[]  sample_defs,
+    in  string normalization_mode,
+    in  bool   no_secondary_analysis,
+    in  int    num_analysis_bcs,
+    in  int    num_pca_bcs,
+    in  int    num_pca_genes,
+    in  int    num_principal_comps,
+    in  int    max_clusters,
+    in  int    graphclust_neighbors,
+    in  float  neighbor_a,
+    in  float  neighbor_b,
+    in  int    tsne_perplexity,
+    in  int    tsne_input_pcs,
+    in  int    random_seed,
+    in  int    tsne_max_dims,
+    in  int    tsne_max_iter,
+    in  int    tsne_stop_lying_iter,
+    in  int    tsne_mom_switch_iter,
+    in  float  tsne_theta,
+    out h5     raw_gene_bc_matrices_h5,
+    out path   raw_gene_bc_matrices_mex,
+    out h5     filtered_gene_bc_matrices_h5,
+    out path   filtered_gene_bc_matrices_mex,
+    out h5     filtered_molecules,
+    out h5     raw_molecules,
+    out csv    cell_barcodes,
+    out path   analysis,
+    out path   analysis_csv,
+    out json   analysis_summary,
+    out json   summary,
+    out html   web_summary,
+    out json   gem_group_index_json,
+)
+{
+    call preflight AGGREGATOR_PREFLIGHT(
+        sample_defs        = self.sample_defs,
+        normalization_mode = self.normalization_mode,
+    )
+
+    call volatile SETUP_SAMPLES(
+        sample_defs = self.sample_defs,
+    )
+
+    call volatile MERGE_MOLECULES(
+        sample_defs     = self.sample_defs,
+        gem_group_index = SETUP_SAMPLES.gem_group_index,
+    )
+
+    call DETECT_CELLS(
+        molecule_chunks = MERGE_MOLECULES.chunked_molecules,
+    )
+
+    call NORMALIZE_DEPTH(
+        normalization_mode      = self.normalization_mode,
+        detect_cells_gg_metrics = DETECT_CELLS.gem_group_metrics,
+        molecules               = MERGE_MOLECULES.merged_molecules,
+    )
+
+    call COUNT_GENES_FROM_MOLECULES(
+        gem_group_index   = SETUP_SAMPLES.gem_group_index,
+        raw_molecules     = NORMALIZE_DEPTH.out_molecules,
+        filtered_barcodes = DETECT_CELLS.cell_barcodes,
+    )
+
+    call SC_RNA_ANALYZER(
+        no_secondary_analysis = self.no_secondary_analysis,
+        raw_matrices_h5       = COUNT_GENES_FROM_MOLECULES.raw_matrices_h5,
+        filtered_matrices_h5  = COUNT_GENES_FROM_MOLECULES.filtered_matrices_h5,
+        num_analysis_bcs      = self.num_analysis_bcs,
+        num_pca_bcs           = self.num_pca_bcs,
+        num_pca_genes         = self.num_pca_genes,
+        num_principal_comps   = self.num_principal_comps,
+        max_clusters          = self.max_clusters,
+        graphclust_neighbors  = self.graphclust_neighbors,
+        neighbor_a            = self.neighbor_a,
+        neighbor_b            = self.neighbor_b,
+        tsne_perplexity       = self.tsne_perplexity,
+        tsne_input_pcs        = self.tsne_input_pcs,
+        tsne_theta            = self.tsne_theta,
+        random_seed           = self.random_seed,
+        use_genes             = null,
+        use_bcs               = null,
+        tsne_max_dims         = self.tsne_max_dims,
+        tsne_max_iter         = self.tsne_max_iter,
+        tsne_stop_lying_iter  = self.tsne_stop_lying_iter,
+        tsne_mom_switch_iter  = self.tsne_mom_switch_iter,
+        force_cells           = null,
+    )
+
+    call SUMMARIZE_AGGREGATED_REPORTS(
+        aggregation_id           = self.aggregation_id,
+        aggregation_desc         = self.aggregation_desc,
+        gem_group_index          = SETUP_SAMPLES.gem_group_index,
+        filtered_matrices_h5     = COUNT_GENES_FROM_MOLECULES.filtered_matrices_h5,
+        barcode_summary_h5       = COUNT_GENES_FROM_MOLECULES.barcode_summary_h5,
+        analysis                 = SC_RNA_ANALYZER.analysis,
+        normalize_depth_summary  = NORMALIZE_DEPTH.summary,
+        count_genes_summary      = COUNT_GENES_FROM_MOLECULES.summary,
+        analyze_matrices_summary = SC_RNA_ANALYZER.summary,
+    )
+
+    return (
+        filtered_molecules            = COUNT_GENES_FROM_MOLECULES.filtered_molecules,
+        filtered_gene_bc_matrices_h5  = COUNT_GENES_FROM_MOLECULES.filtered_matrices_h5,
+        filtered_gene_bc_matrices_mex = COUNT_GENES_FROM_MOLECULES.filtered_matrices_mex,
+        raw_molecules                 = NORMALIZE_DEPTH.out_molecules,
+        raw_gene_bc_matrices_h5       = COUNT_GENES_FROM_MOLECULES.raw_matrices_h5,
+        raw_gene_bc_matrices_mex      = COUNT_GENES_FROM_MOLECULES.raw_matrices_mex,
+        cell_barcodes                 = DETECT_CELLS.cell_barcodes,
+        analysis                      = SC_RNA_ANALYZER.analysis,
+        analysis_csv                  = SC_RNA_ANALYZER.analysis_csv,
+        analysis_summary              = SC_RNA_ANALYZER.summary,
+        summary                       = SUMMARIZE_AGGREGATED_REPORTS.summary,
+        web_summary                   = SUMMARIZE_AGGREGATED_REPORTS.web_summary,
+        gem_group_index_json          = SETUP_SAMPLES.gem_group_index_json,
+    )
+}

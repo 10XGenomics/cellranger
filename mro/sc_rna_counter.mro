@@ -1,0 +1,191 @@
+#
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+@include "_common_stages.mro"
+@include "_sc_rna_counter_stages.mro"
+@include "_basic_sc_rna_counter.mro"
+@include "sc_rna_analyzer.mro"
+
+pipeline SC_RNA_COUNTER(
+    in  string  sample_id,
+    in  map[]   sample_def,
+    in  string  chemistry_name,
+    in  map     custom_chemistry_def,
+    in  float   barcode_confidence_threshold,
+    in  int     umi_min_qual_threshold,
+    in  map     align,
+    in  int     align_threads,
+    in  path    reference_path,
+    in  map[]   primers,
+    in  int     recovered_cells,
+    in  int     force_cells,
+    in  float   subsample_rate,
+    in  int     initial_reads,
+    in  string  sample_desc,
+    in  int     rna_read_length,
+    in  map     annotation_params,
+    in  bool    no_secondary_analysis,
+    in  int     mark_dupes_mem_gb,
+    out bam     possorted_genome_bam,
+    out bam.bai possorted_genome_bam_index,
+    out json    metrics_summary_json,
+    out csv     metrics_summary_csv,
+    out html    web_summary,
+    out h5      barcode_summary,
+    out h5      molecule_info,
+    out h5      raw_gene_bc_matrices_h5,
+    out path    raw_gene_bc_matrices_mex,
+    out h5      filtered_gene_bc_matrices_h5,
+    out path    filtered_gene_bc_matrices_mex,
+    out path    analysis,
+    out path    analysis_csv,
+    out string  barcode_whitelist,
+    out fastq[] read_fastqs,
+    out map[]   fastq_chunks,
+    out map     chemistry_def,
+    out map     align,
+    out int[]   gem_groups,
+    out bam[]   bc_attached_bam_chunks,
+    out bam[]   dup_marked_bam_chunks,
+    out map[]   subsampled_matrices,
+    out csv     filtered_barcodes,
+)
+{
+    call preflight CELLRANGER_PREFLIGHT(
+        sample_def           = self.sample_def,
+        chemistry_name       = self.chemistry_name,
+        custom_chemistry_def = self.custom_chemistry_def,
+        reference_path       = self.reference_path,
+        vdj_reference_path   = null,
+        check_executables    = true,
+        recovered_cells      = self.recovered_cells,
+        force_cells          = self.force_cells,
+    )
+
+    call local preflight CELLRANGER_PREFLIGHT_LOCAL(
+        sample_def           = self.sample_def,
+        chemistry_name       = self.chemistry_name,
+        custom_chemistry_def = self.custom_chemistry_def,
+        reference_path       = self.reference_path,
+        vdj_reference_path   = null,
+        check_executables    = false,
+        recovered_cells      = self.recovered_cells,
+        force_cells          = self.force_cells,
+    )
+
+    call local volatile SETUP_CHUNKS(
+        sample_id            = self.sample_id,
+        sample_def           = self.sample_def,
+        chemistry_name       = self.chemistry_name,
+        custom_chemistry_def = self.custom_chemistry_def,
+    )
+
+    call volatile CHUNK_READS(
+        chunks         = SETUP_CHUNKS.chunks,
+        reads_per_file = 5000000,
+    )
+
+    call volatile EXTRACT_READS(
+        chunks            = CHUNK_READS.out_chunks,
+        chemistry_def     = SETUP_CHUNKS.chemistry_def,
+        barcode_whitelist = SETUP_CHUNKS.barcode_whitelist,
+        reads_per_file    = 5000000,
+        subsample_rate    = self.subsample_rate,
+        initial_reads     = self.initial_reads,
+        primers           = self.primers,
+        align             = self.align,
+        rna_read_length   = self.rna_read_length,
+        skip_metrics      = false,
+    )
+
+    call _BASIC_SC_RNA_COUNTER(
+        sample_id                    = self.sample_id,
+        chemistry_def                = SETUP_CHUNKS.chemistry_def,
+        barcode_whitelist            = SETUP_CHUNKS.barcode_whitelist,
+        read1s                       = EXTRACT_READS.reads,
+        read2s                       = EXTRACT_READS.read2s,
+        trimmed_seqs                 = EXTRACT_READS.trimmed_seqs,
+        gem_groups                   = EXTRACT_READS.gem_groups,
+        read_groups                  = EXTRACT_READS.read_groups,
+        barcode_counts               = EXTRACT_READS.barcode_counts,
+        extract_reads_summary        = EXTRACT_READS.summary,
+        bam_comments                 = EXTRACT_READS.bam_comments,
+        barcode_confidence_threshold = self.barcode_confidence_threshold,
+        umi_min_qual_threshold       = self.umi_min_qual_threshold,
+        align                        = EXTRACT_READS.align,
+        align_threads                = self.align_threads,
+        reference_path               = self.reference_path,
+        recovered_cells              = self.recovered_cells,
+        force_cells                  = self.force_cells,
+        cell_barcodes                = null,
+        correct_barcodes             = true,
+        rescue_multimappers          = true,
+        skip_metrics                 = false,
+        annotation_params            = self.annotation_params,
+        mark_dupes_mem_gb            = self.mark_dupes_mem_gb,
+    )
+
+    call SC_RNA_ANALYZER(
+        raw_matrices_h5       = _BASIC_SC_RNA_COUNTER.raw_gene_bc_matrices_h5,
+        filtered_matrices_h5  = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        no_secondary_analysis = self.no_secondary_analysis,
+        num_analysis_bcs      = null,
+        num_pca_bcs           = null,
+        num_pca_genes         = null,
+        num_principal_comps   = null,
+        max_clusters          = null,
+        graphclust_neighbors  = null,
+        neighbor_a            = null,
+        neighbor_b            = null,
+        tsne_perplexity       = null,
+        tsne_input_pcs        = null,
+        random_seed           = null,
+        tsne_theta            = null,
+        use_genes             = null,
+        use_bcs               = null,
+        tsne_max_dims         = null,
+        tsne_max_iter         = null,
+        tsne_stop_lying_iter  = null,
+        tsne_mom_switch_iter  = null,
+        force_cells           = null,# NOTE: this is null because the cells are already forced in FILTER_BARCODES
+    )
+
+    call SUMMARIZE_REPORTS(
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        reference_path               = self.reference_path,
+        basic_counter_summary        = _BASIC_SC_RNA_COUNTER.summary,
+        analyze_matrices_summary     = SC_RNA_ANALYZER.summary,
+        analysis                     = SC_RNA_ANALYZER.analysis,
+        barcode_summary_h5           = _BASIC_SC_RNA_COUNTER.barcode_summary,
+        filtered_gene_bc_matrices_h5 = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        barcode_whitelist            = SETUP_CHUNKS.barcode_whitelist,
+        gem_groups                   = EXTRACT_READS.gem_groups,
+    )
+
+    return (
+        possorted_genome_bam          = _BASIC_SC_RNA_COUNTER.possorted_genome_bam,
+        possorted_genome_bam_index    = _BASIC_SC_RNA_COUNTER.possorted_genome_bam_index,
+        web_summary                   = SUMMARIZE_REPORTS.web_summary,
+        metrics_summary_json          = SUMMARIZE_REPORTS.metrics_summary_json,
+        metrics_summary_csv           = SUMMARIZE_REPORTS.metrics_summary_csv,
+        barcode_summary               = _BASIC_SC_RNA_COUNTER.barcode_summary,
+        molecule_info                 = _BASIC_SC_RNA_COUNTER.molecule_info,
+        raw_gene_bc_matrices_h5       = _BASIC_SC_RNA_COUNTER.raw_gene_bc_matrices_h5,
+        raw_gene_bc_matrices_mex      = _BASIC_SC_RNA_COUNTER.raw_gene_bc_matrices_mex,
+        filtered_gene_bc_matrices_h5  = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        filtered_gene_bc_matrices_mex = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_mex,
+        analysis                      = SC_RNA_ANALYZER.analysis,
+        analysis_csv                  = SC_RNA_ANALYZER.analysis_csv,
+        barcode_whitelist             = SETUP_CHUNKS.barcode_whitelist,
+        read_fastqs                   = EXTRACT_READS.reads,
+        fastq_chunks                  = SETUP_CHUNKS.chunks,
+        chemistry_def                 = SETUP_CHUNKS.chemistry_def,
+        align                         = EXTRACT_READS.align,
+        gem_groups                    = EXTRACT_READS.gem_groups,
+        bc_attached_bam_chunks        = _BASIC_SC_RNA_COUNTER.bc_attached_bam_chunks,
+        dup_marked_bam_chunks         = _BASIC_SC_RNA_COUNTER.dup_marked_bam_chunks,
+        subsampled_matrices           = _BASIC_SC_RNA_COUNTER.subsampled_matrices,
+        filtered_barcodes             = _BASIC_SC_RNA_COUNTER.filtered_barcodes,
+    )
+}

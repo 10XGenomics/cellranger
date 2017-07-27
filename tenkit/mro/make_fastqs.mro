@@ -1,0 +1,117 @@
+#
+# Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+#
+@include "_make_fastqs_stages.mro"
+
+pipeline MAKE_FASTQS(
+    in  path   run_path               "Illumina output folder",
+    in  int[]  lanes,
+    in  map[]  specs,
+    in  string project,
+    in  string bases_mask             "--use-bases-mask override",
+    in  string bcl2fastq1_args        "Bonus arguments to bcl2fastq v1",
+    in  string bcl2fastq2_args        "Bonus arguments to bcl2fastq v2",
+    in  string barcode_whitelist,
+    in  string bc_read_type,
+    in  int    bc_start_index,
+    in  int    bc_length,
+    in  string si_read_type,
+    in  string umi_read_type,
+    in  int    umi_start_index,
+    in  int    umi_length,
+    in  path   output_path,
+    in  path   interop_output_path,
+    in  bool   delete_undetermined,
+    in  bool   ignore_dual_index,
+    in  int    max_bcl2fastq_threads,
+    in  string software_version,
+    out path   fastq_path,
+    out path   interop_path,
+    out json   qc_summary,
+    out csv    input_samplesheet,
+)
+{
+    call local preflight MAKE_FASTQS_PREFLIGHT_LOCAL(
+        run_path          = self.run_path,
+        check_executables = false,
+        lanes             = self.lanes,
+        specs             = self.specs,
+        barcode_whitelist = self.barcode_whitelist,
+        bc_read_type      = self.bc_read_type,
+        bc_start_index    = self.bc_start_index,
+        bc_length         = self.bc_length,
+        si_read_type      = self.si_read_type,
+        umi_read_type     = self.umi_read_type,
+        umi_start_index   = self.umi_start_index,
+        umi_length        = self.umi_length,
+        bcl2fastq2_args   = self.bcl2fastq2_args,
+        bases_mask        = self.bases_mask,
+        ignore_dual_index = self.ignore_dual_index,
+    )
+
+    call preflight MAKE_FASTQS_PREFLIGHT(
+        run_path              = self.run_path,
+        output_path           = self.output_path,
+        interop_output_path   = self.interop_output_path,
+        barcode_whitelist     = self.barcode_whitelist,
+        check_executables     = true,
+        max_bcl2fastq_threads = self.max_bcl2fastq_threads,
+    )
+
+    call PREPARE_SAMPLESHEET(
+        run_path     = self.run_path,
+        specs        = self.specs,
+        project      = self.project,
+        bc_read_type = self.bc_read_type,
+        bc_length    = self.bc_length,
+        si_read_type = self.si_read_type,
+    )
+
+    call BCL2FASTQ_WITH_SAMPLESHEET(
+        run_path                 = self.run_path,
+        output_path              = self.output_path,
+        interop_output_path      = self.interop_output_path,
+        samplesheet_path         = PREPARE_SAMPLESHEET.samplesheet,
+        bases_mask               = self.bases_mask,
+        si_read_type             = self.si_read_type,
+        bcl2fastq1_args          = self.bcl2fastq1_args,
+        bcl2fastq2_args          = self.bcl2fastq2_args,
+        max_bcl2fastq_threads    = self.max_bcl2fastq_threads,
+        dual_indexed_samplesheet = PREPARE_SAMPLESHEET.dual_indexed_samplesheet,
+        ignore_dual_index        = self.ignore_dual_index,
+    )
+
+    call MAKE_QC_SUMMARY(
+        run_path            = self.run_path,
+        barcode_whitelist   = self.barcode_whitelist,
+        bc_read_type        = self.bc_read_type,
+        bc_start_index      = self.bc_start_index,
+        bc_length           = self.bc_length,
+        si_read_type        = self.si_read_type,
+        umi_read_type       = self.umi_read_type,
+        umi_start_index     = self.umi_start_index,
+        umi_length          = self.umi_length,
+        software_version    = self.software_version,
+        bcl2fastq_version   = BCL2FASTQ_WITH_SAMPLESHEET.bcl2fastq_version,
+        bcl2fastq_args      = BCL2FASTQ_WITH_SAMPLESHEET.bcl2fastq_args,
+        fastq_path          = BCL2FASTQ_WITH_SAMPLESHEET.fastq_path,
+        interop_path        = BCL2FASTQ_WITH_SAMPLESHEET.interop_path,
+        rc_i2_read          = BCL2FASTQ_WITH_SAMPLESHEET.rc_i2_read,
+        file_read_types_map = BCL2FASTQ_WITH_SAMPLESHEET.file_read_types_map,
+    )
+
+    call MERGE_FASTQS_BY_LANE_SAMPLE(
+        fastq_path                 = BCL2FASTQ_WITH_SAMPLESHEET.fastq_path,
+        samplesheet_path           = PREPARE_SAMPLESHEET.samplesheet,
+        remove_undetermined_fastqs = self.delete_undetermined,
+        remove_split_fastqs        = MAKE_QC_SUMMARY.completed,
+        bcl2fastq_version          = BCL2FASTQ_WITH_SAMPLESHEET.bcl2fastq_version,
+    )
+
+    return (
+        fastq_path        = BCL2FASTQ_WITH_SAMPLESHEET.fastq_path,
+        interop_path      = BCL2FASTQ_WITH_SAMPLESHEET.interop_path,
+        qc_summary        = MAKE_QC_SUMMARY.qc_summary,
+        input_samplesheet = PREPARE_SAMPLESHEET.input_samplesheet,
+    )
+}

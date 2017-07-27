@@ -1,0 +1,103 @@
+{
+"preflight": [{
+     "title": "Estimated mean read length exit",
+     "metric": "mean_read_length",
+	"threshold": 125,
+	"compare": "<",
+	"action": "exit",
+     "message": "We observe many reads shorter than 125 bases. The ideal read length for Supernova is 150 bases. Reads shorter than the ideal length are likely to yield a lower quality assembly, and the algorithm has not been tested on short reads. Because reads are too short, execution will be terminated." },
+     {
+     "title": "Estimated mean read length warn",
+     "metric": "mean_read_length",
+     "threshold": 149,
+     "compare": "<",
+	"action": "alarm",
+     "message": "We observe many reads shorter than 150 bases.The ideal read length for Supernova is 150 bases. Reads shorter than the ideal length are likely to yield a lower quality assembly." }],
+
+"df": [{
+	"title": "Percentage of reads whose associated barcodes pass whitelist",
+     "metric": "valid_bc_perc",
+	"threshold": 25,
+     "compare": "<",
+	"action": "exit",
+	"message": "The fraction of input reads having valid barcodes is {} pct, whereas the ideal is at least 80 pct. This condition could have multiple causes including wrong library type, failed library construction and low sequence quality on the barcode bases. This could have a severe effect on assembly performance, and Supernova has not been tested on data with these properties, so execution will be terminated." },
+     {
+	"title": "Percentage of reads whose associated barcodes pass whitelist",
+     "metric": "valid_bc_perc",
+	"threshold": 80,
+     "compare": "<",
+	"action": "alarm",
+     "message": "The fraction of input reads having valid barcodes is {} pct, whereas the ideal is at least 80 pct. This condition could have multiple causes including wrong library type, failed library construction and low sequence quality on the barcode bases. This could have a significant effect on assembly performance." },
+     {
+     "title": "Sanity check of reads per barcode",
+     "metric": "big_bc_perc",
+     "threshold": 10,
+     "compare": ">",
+     "action": "exit",
+     "message": "Of your barcoded reads, {} pct lie in barcodes having at least 50,000 reads. This is indicative of a serious problem during library preparation or an informatic mixup and execution will be terminated." },
+     {
+	"title": "Reads per barcode N50 alarm",
+     "metric": "rpb_N50",
+	"threshold": 3000,
+     "compare": ">",
+	"action": "alarm",
+     "message": "We observe that the N50 of the reads per barcode distribution is {}. Ideally, the N50 is around 1000. This could be caused by very high coverage or due to a problem during library preparation resulting in too few barcodes. Supernova performance may be affected." },
+      {
+	"title": "Reads per barcode N50 exit",
+     "metric": "rpb_N50",
+	"threshold": 10000,
+     "compare": ">",
+	"action": "exit",
+     "message": "We observe that the N50 of the reads per barcode distribution is {}. Ideally, the N50 is around 1000. This could be caused by very high coverage or due to a problem during library preparation resulting in too few barcodes. Supernova has not been tested on this kind of data and execution will be terminated. You can attempt to run with fewer input reads." },
+     {
+	"title": "Read quality",
+	"metric": "q30_r2_perc",
+	"threshold": 65,
+	"compare": "<",
+     "action": "alarm",
+	"message": "We observe only {} pct of bases on read two with quality scores at least 30. Ideally, we expect at least 75 pct. Data quality issues of this type are difficult to diagnose, but might be caused by defects in sequencing reagents or sequencing instrument condition. Use of low quality reads usually reduces assembly quality." },
+     {
+	"title": "Bad cycles: fraction of bases with quality <= 2 for a fixed cycle",
+	"metric": "max_low_q_base_frac",
+     "threshold": 0.5,
+	"compare": ">",
+	"action": "alarm",
+     "message": "We observe that greater than half of the input reads have bases with quality at most 2 at fixed positions along the read: {}. This is likely due to a sequencer failure while those positions were being sequenced. This could significantly affect the quality of the assembly." },
+     {
+	"title": "Insert size",
+	"metric": "median_ins_sz",
+     "threshold": 300,
+	"compare": "<",
+     "action": "alarm",
+	"message": "The median insert size of the sequencing library is {}. Ideally, this metric is between 350 and 400 base pairs. This could affect the quality of the assembly." },
+     {
+	"title": "Insert size exit",
+	"metric": "median_ins_sz",
+     "threshold": 100,
+	"compare": "<",
+     "action": "exit",
+	"message": "The median insert size of the sequencing library is {}. Ideally, this metric is between 350 and 400 base pairs. This could be caused by a problem during library preparation or sequencing or an informatic mixup. Supernova execution will be terminated." }
+     ],
+
+"cp": [{
+     "title": "Read pairing quality",
+	"metric": "proper_pairs_perc",
+	"threshold": 75,
+     "compare": "<",
+	"action": "alarm",
+	"message": "We observe that {} pct of read pairs are proper, i.e., represent the terminal sequences of a short fragment in the correct orientation. Ideally, we expect a value of at least 85 pct for this metric. Improper read-pairs could arise due to a defect in library construction, low sequence quality, or an informatic mixup. This will affect the quality of the assembly."},
+	{
+     "title": "Molecule size",
+	"metric": "lw_mean_mol_len",
+	"threshold": 40000,
+	"compare": "<",
+     "action": "alarm",
+	"message": "The length-weighted mean molecule length is {} bases. Ideally, we expect a number around 100 kb or larger. Short molecules will likely reduce the scaffold and phase block N50 length, and could result in misassemblies."},
+     {
+     "title": "No lines in assembly",
+     "metric": "num_lines",
+     "threshold": 1,
+     "compare": "<",
+     "action": "exit",
+	"message": "The assembly graph does not contain any structure that could represent genomic regions longer than 10 kb and Supernova will not continue. This is a signal of a serious problem with the input data." }]
+}

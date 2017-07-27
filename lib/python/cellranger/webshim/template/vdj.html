@@ -1,0 +1,39 @@
+{% extends 'template.html' %}
+{% import 'utils.html' as utils %}
+{% block summary %}
+<div class="summary">
+  <!-- Left Summary Column -->
+  <div class="summary_card_column">
+    <!-- Hero Metrics -->
+    [[ utils.single_hero_card(data.tables[0].rows[0]) ]]
+    [[ utils.double_hero_card(data.tables[0].rows[1], data.tables[0].rows[2]) ]]
+    <!-- Enrichment Card -->
+    [[ utils.summary_card(data.tables[2] or None) ]]
+    <!-- V(D)J Expression Card -->
+    [[ utils.summary_card(data.tables[4] or None) ]]
+    <!-- V(D)J Annotation Card -->
+    [[ utils.summary_card(data.tables[5] or None) ]]
+  </div>
+  <div class="summary_card_gutter">&nbsp;</div>
+  <!-- Right Summary Column -->
+  <div class="summary_card_column">
+    <!-- Cells Card -->
+    [[ utils.summary_card(data.tables[3] or None, chart="vdj_barcode_rank") ]]
+    <!-- Sequencing Card -->
+    [[ utils.summary_card(data.tables[1] or None) ]]
+    <!-- Sample Info Card -->
+    [[ utils.sample_info_card(data) ]]
+  </div>
+</div>
+{% endblock %}
+{% block analysis %}
+<div class="summary">
+  <div class="chart_card_column">
+    {% include 'charts/vdj-clonotypes-hist.html' %}
+  </div>
+  <div class="chart_card_gutter chart_card_gutter_single">&nbsp;</div>
+  <div class="chart_card_column">
+    {% include 'charts/vdj-clonotypes-table.html' %}
+  </div>
+</div>
+{% endblock %}

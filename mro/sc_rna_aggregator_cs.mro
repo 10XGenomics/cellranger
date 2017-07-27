@@ -1,0 +1,85 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+@include "sc_rna_aggregator.mro"
+@include "_cloupe_stages.mro"
+
+pipeline SC_RNA_AGGREGATOR_CS(
+    in  string aggregation_id,
+    in  string aggregation_desc,
+    in  path   pipestance_root,
+    in  csv    aggregation_csv,
+    in  string normalization_mode,
+    in  bool   no_secondary_analysis,
+    out html   web_summary                    "Aggregation metrics summary HTML",
+    out json   summary                        "Aggregation metrics summary JSON",
+    out path   analysis                       "Secondary analysis output CSV",
+    out h5     filtered_gene_bc_matrices_h5   "Filtered gene-barcode matrices HDF5",
+    out path   filtered_gene_bc_matrices_mex  "Filtered gene-barcode matrices MEX",
+    out h5     filtered_molecules             "Filtered molecule-level info",
+    out h5     raw_gene_bc_matrices_h5        "Unfiltered gene-barcode matrices HDF5",
+    out path   raw_gene_bc_matrices_mex       "Unfiltered gene-barcode matrices MEX",
+    out h5     raw_molecules                  "Unfiltered molecule-level info",
+    out csv    cell_barcodes                  "Barcodes of cell-containing partitions",
+    out csv    aggregation_csv                "Copy of the input aggregation CSV",
+    out cloupe cloupe                         "Loupe Cell Browser file",
+)
+{
+    call PARSE_CSV(
+        pipestance_root = self.pipestance_root,
+        aggregation_csv = self.aggregation_csv,
+        reanalyze       = false,
+        matrix_h5       = null,
+    )
+
+    call SC_RNA_AGGREGATOR(
+        aggregation_id        = self.aggregation_id,
+        aggregation_desc      = self.aggregation_desc,
+        sample_defs           = PARSE_CSV.sample_defs,
+        normalization_mode    = self.normalization_mode,
+        no_secondary_analysis = self.no_secondary_analysis,
+        num_analysis_bcs      = null,
+        num_pca_bcs           = null,
+        num_pca_genes         = null,
+        num_principal_comps   = null,
+        max_clusters          = null,
+        graphclust_neighbors  = null,
+        neighbor_a            = null,
+        neighbor_b            = null,
+        tsne_perplexity       = null,
+        tsne_input_pcs        = null,
+        tsne_theta            = null,
+        random_seed           = null,
+        tsne_max_dims         = null,
+        tsne_max_iter         = null,
+        tsne_stop_lying_iter  = null,
+        tsne_mom_switch_iter  = null,
+    )
+
+    call CLOUPE_PREPROCESS(
+        pipestance_type              = "SC_RNA_AGGREGATOR_CS",
+        sample_id                    = self.aggregation_id,
+        sample_desc                  = self.aggregation_desc,
+        analysis                     = SC_RNA_AGGREGATOR.analysis,
+        filtered_gene_bc_matrices_h5 = SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_h5,
+        metrics_json                 = SC_RNA_AGGREGATOR.summary,
+        aggregation_csv              = PARSE_CSV.aggregation_csv,
+        gem_group_index_json         = SC_RNA_AGGREGATOR.gem_group_index_json,
+        no_secondary_analysis        = self.no_secondary_analysis,
+    )
+
+    return (
+        aggregation_csv               = PARSE_CSV.aggregation_csv,
+        filtered_molecules            = SC_RNA_AGGREGATOR.filtered_molecules,
+        filtered_gene_bc_matrices_h5  = SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_h5,
+        filtered_gene_bc_matrices_mex = SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_mex,
+        raw_molecules                 = SC_RNA_AGGREGATOR.raw_molecules,
+        raw_gene_bc_matrices_h5       = SC_RNA_AGGREGATOR.raw_gene_bc_matrices_h5,
+        raw_gene_bc_matrices_mex      = SC_RNA_AGGREGATOR.raw_gene_bc_matrices_mex,
+        cell_barcodes                 = SC_RNA_AGGREGATOR.cell_barcodes,
+        analysis                      = SC_RNA_AGGREGATOR.analysis_csv,
+        summary                       = SC_RNA_AGGREGATOR.summary,
+        web_summary                   = SC_RNA_AGGREGATOR.web_summary,
+        cloupe                        = CLOUPE_PREPROCESS.output_for_cloupe,
+    )
+}

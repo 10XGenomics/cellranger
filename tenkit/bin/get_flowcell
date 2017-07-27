@@ -1,0 +1,16 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Parse RunInfo.xml to get flowcell.
+#
+import xml.etree.ElementTree
+import sys
+
+tree = xml.etree.ElementTree.parse(sys.argv[1])
+
+# Get flowcell ID and remove cruft from MiSeq IDs.
+flowcell = tree.getroot().findall('./Run/Flowcell')[0].text
+flowcell = flowcell.replace('000000000-', '')
+print flowcell
+

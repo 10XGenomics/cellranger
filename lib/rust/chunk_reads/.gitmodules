@@ -1,0 +1,3 @@
+[submodule "external/rust-fastq-10x"]
+	path = external/rust-fastq-10x
+	url = git@github.com:10XDev/rust-fastq-10x.git

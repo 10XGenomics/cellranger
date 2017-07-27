@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Run mrp and post cleanup.
+#
+
+###########################################################
+# Dry run mode.
+# This flag is set by _master if master command is followed
+# by 'dry'.
+#
+if [ -n "$TENX_DRYMODE" ]; then
+    echo "Dry Run Mode"
+    echo
+    echo "mrp command:"  mrp $mro $id $opts
+    echo "mro file   :" $mro
+    mrc $mro
+    ecode=$?
+    exit $ecode
+fi
+
+###########################################################
+# Call mrp.
+#
+mrp $mro $id $opts
+ecode=$?
+
+# Remove temp MRO invocation.
+if [ -n "$mro_is_temp" ]; then
+    rm $mro
+fi
+
+###########################################################
+# Handle various mrp exit conditions.
+#
+CMDLINE="$0 $@"
+
+if [ $ecode == 0 ]; then
+    # Pipestance completed successfully.
+    tarmri $id $ecode "$CMDLINE"
+elif [ $ecode == 1 ]; then
+    # Pipestance failed in a stage.
+    tarmri $id $ecode "$CMDLINE"
+elif [ $ecode == 2 ]; then
+    # Pre-flight check failed; remove pipestance folder.
+    rm -rf $id
+fi
+
+# Return mrp's exit code.
+exit $ecode

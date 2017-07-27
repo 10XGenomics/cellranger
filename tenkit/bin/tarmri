@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Generate Martian info file (mri.tgz) for mrp pipestances.
+#
+
+folder=${1%/}
+ecode=$2
+cmdline=$3
+email="support@10xgenomics.com"
+tarfile=$(basename $folder).mri.tgz
+files="input_samplesheet.csv summary_cs.csv summary.json summary.txt summary_cs.txt metrics_summary_csv.csv metrics_summary_json.json web_summary.html"
+limit_filesize_patterns=(.json)
+
+if [ -d $folder ]; then
+    # Capture commandline into pipestance.
+    echo $cmdline > $folder/_cmdline
+
+    # Capture sitecheck into pipestance.
+    sitecheck > $folder/_sitecheck
+
+    # Capture data file paths into pipestance.
+    find $folder -path "*files*" -ls > $folder/_filelist
+
+    # Format summary file arguments.
+    for f in $files; do
+	# Limit filesize for a set of patterns
+	more_options=""
+	for pattern in "${limit_filesize_patterns[@]}"; do
+	    if [[ "$f" =~ "$pattern" ]]; then
+		more_options="-a -size -1024k"
+	    fi
+	done
+	files_options="$files_options -o -name $f ${more_options}"
+    done
+
+    # Generate log tar file.
+    echo -e "Saving pipestance info to $folder/$tarfile"
+    find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | tar zcf $tarfile --null -T -
+    mv -t $folder $tarfile
+
+    if [ -n "$TENX_AUTOSUPPORT_SENDER" ]; then
+        echo -e "Automatically sending diagnostics to 10x Genomics."
+        $TENX_PRODUCT upload $TENX_AUTOSUPPORT_SENDER $folder/$tarfile
+    else
+        # Help instructions if exit code is nonzero.
+        if [ "$ecode" != "0" ]; then
+            echo -e "For assistance, upload this file to 10x Genomics by running:\n\n$TENX_PRODUCT upload <your_email> $folder/$tarfile\n"
+        fi
+    fi
+fi

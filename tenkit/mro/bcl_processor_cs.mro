@@ -1,0 +1,19 @@
+#
+# Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+#
+@include "bcl_processor.mro"
+
+pipeline BCL_PROCESSOR_CS(
+    in  path run_path    "Illumina output folder",
+    out path fastq_path  "Demultiplexed FASTQ folder",
+)
+{
+    call BCL_PROCESSOR(
+        run_path          = self.run_path,
+        allow_no_barcodes = true,
+    )
+
+    return (
+        fastq_path = BCL_PROCESSOR.fastq_path,
+    )
+}

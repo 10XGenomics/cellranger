@@ -1,0 +1,176 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+@include "_sc_rna_analyzer_stages.mro"
+
+pipeline SC_RNA_ANALYZER(
+    in  h5    raw_matrices_h5,
+    in  h5    filtered_matrices_h5,
+    in  bool  no_secondary_analysis,
+    in  csv   use_genes,
+    in  csv   use_bcs,
+    in  int   num_analysis_bcs,
+    in  int   random_seed,
+    in  int   num_pca_bcs,
+    in  int   num_pca_genes,
+    in  int   num_principal_comps,
+    in  int   max_clusters,
+    in  int   graphclust_neighbors,
+    in  float neighbor_a,
+    in  float neighbor_b,
+    in  int   tsne_perplexity,
+    in  int   tsne_input_pcs,
+    in  int   tsne_max_dims,
+    in  int   tsne_max_iter,
+    in  int   tsne_stop_lying_iter,
+    in  int   tsne_mom_switch_iter,
+    in  float tsne_theta,
+    in  int   force_cells,
+    out path  analysis,
+    out path  analysis_csv,
+    out h5    reanalyzed_matrix_h5,
+    out json  summary,
+)
+{
+    call volatile ANALYZER_PREFLIGHT(
+        skip                 = self.no_secondary_analysis,
+        raw_matrices_h5      = self.raw_matrices_h5,
+        filtered_matrices_h5 = self.filtered_matrices_h5,
+        use_genes            = self.use_genes,
+        use_bcs              = self.use_bcs,
+        num_analysis_bcs     = self.num_analysis_bcs,
+        force_cells          = self.force_cells,
+        random_seed          = self.random_seed,
+        num_pca_bcs          = self.num_pca_bcs,
+        num_pca_genes        = self.num_pca_genes,
+        num_principal_comps  = self.num_principal_comps,
+        max_clusters         = self.max_clusters,
+        graphclust_neighbors = self.graphclust_neighbors,
+        neighbor_a           = self.neighbor_a,
+        neighbor_b           = self.neighbor_b,
+        tsne_perplexity      = self.tsne_perplexity,
+        tsne_input_pcs       = self.tsne_input_pcs,
+        tsne_max_dims        = self.tsne_max_dims,
+        tsne_max_iter        = self.tsne_max_iter,
+        tsne_stop_lying_iter = self.tsne_stop_lying_iter,
+        tsne_mom_switch_iter = self.tsne_mom_switch_iter,
+        tsne_theta           = self.tsne_theta,
+    )
+
+    call volatile PREPROCESS_MATRIX(
+        matrix_h5   = self.filtered_matrices_h5,
+        random_seed = self.random_seed,
+        use_genes   = self.use_genes,
+        use_bcs     = self.use_bcs,
+        num_bcs     = self.num_analysis_bcs,
+        force_cells = self.force_cells,
+        skip        = ANALYZER_PREFLIGHT.skip,
+    )
+
+    call volatile RUN_MULTIGENOME_ANALYSIS(
+        raw_matrices_h5      = self.raw_matrices_h5,
+        filtered_matrices_h5 = self.filtered_matrices_h5,
+        is_multi_genome      = PREPROCESS_MATRIX.is_multi_genome,
+        skip                 = ANALYZER_PREFLIGHT.skip,
+    )
+
+    call volatile RUN_PCA(
+        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+        random_seed     = self.random_seed,
+        num_bcs         = self.num_pca_bcs,
+        num_genes       = self.num_pca_genes,
+        num_pcs         = self.num_principal_comps,
+        skip            = ANALYZER_PREFLIGHT.skip,
+    )
+
+    call volatile RUN_KMEANS(
+        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5          = RUN_PCA.pca_h5,
+        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+        random_seed     = self.random_seed,
+        max_clusters    = self.max_clusters,
+        skip            = ANALYZER_PREFLIGHT.skip,
+        num_bcs         = null,
+        num_pcs         = null,
+    )
+
+    call volatile RUN_GRAPH_CLUSTERING(
+        matrix_h5          = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5             = RUN_PCA.pca_h5,
+        num_neighbors      = self.graphclust_neighbors,
+        neighbor_a         = self.neighbor_a,
+        neighbor_b         = self.neighbor_b,
+        input_pcs          = null,
+        num_bcs            = null,
+        similarity_type    = "nn",
+        balltree_leaf_size = null,
+        skip               = ANALYZER_PREFLIGHT.skip,
+        is_multi_genome    = PREPROCESS_MATRIX.is_multi_genome,
+    )
+
+    call volatile MERGE_CLUSTERS(
+        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5          = RUN_PCA.pca_h5,
+        clusters_h5     = RUN_GRAPH_CLUSTERING.clusters_h5,
+        skip            = ANALYZER_PREFLIGHT.skip,
+        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+    )
+
+    call volatile COMBINE_CLUSTERING(
+        kmeans_h5       = RUN_KMEANS.kmeans_h5,
+        kmeans_csv      = RUN_KMEANS.kmeans_csv,
+        graphclust_h5   = MERGE_CLUSTERS.clusters_h5,
+        graphclust_csv  = MERGE_CLUSTERS.clusters_csv,
+        skip            = ANALYZER_PREFLIGHT.skip,
+        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+    )
+
+    call volatile RUN_DIFFERENTIAL_EXPRESSION(
+        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        clustering_h5   = COMBINE_CLUSTERING.clustering_h5,
+        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+        random_seed     = self.random_seed,
+        max_clusters    = self.max_clusters,
+        skip            = ANALYZER_PREFLIGHT.skip,
+    )
+
+    call volatile RUN_TSNE(
+        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5          = RUN_PCA.pca_h5,
+        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+        random_seed     = self.random_seed,
+        perplexity      = self.tsne_perplexity,
+        input_pcs       = self.tsne_input_pcs,
+        max_dims        = self.tsne_max_dims,
+        max_iter        = self.tsne_max_iter,
+        stop_lying_iter = self.tsne_stop_lying_iter,
+        mom_switch_iter = self.tsne_mom_switch_iter,
+        theta           = self.tsne_theta,
+        skip            = ANALYZER_PREFLIGHT.skip,
+    )
+
+    call SUMMARIZE_ANALYSIS(
+        matrix_h5            = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5               = RUN_PCA.pca_h5,
+        clustering_h5        = COMBINE_CLUSTERING.clustering_h5,
+        diffexp_h5           = RUN_DIFFERENTIAL_EXPRESSION.diffexp_h5,
+        tsne_h5              = RUN_TSNE.tsne_h5,
+        pca_csv              = RUN_PCA.pca_csv,
+        clustering_csv       = COMBINE_CLUSTERING.clustering_csv,
+        diffexp_csv          = RUN_DIFFERENTIAL_EXPRESSION.diffexp_csv,
+        tsne_csv             = RUN_TSNE.tsne_csv,
+        multi_genome_summary = RUN_MULTIGENOME_ANALYSIS.multi_genome_summary,
+        multi_genome_csv     = RUN_MULTIGENOME_ANALYSIS.multi_genome_csv,
+        multi_genome_json    = RUN_MULTIGENOME_ANALYSIS.multi_genome_json,
+        is_multi_genome      = PREPROCESS_MATRIX.is_multi_genome,
+        skip                 = ANALYZER_PREFLIGHT.skip,
+    )
+
+    return (
+        analysis             = SUMMARIZE_ANALYSIS.analysis,
+        analysis_csv         = SUMMARIZE_ANALYSIS.analysis_csv,
+        reanalyzed_matrix_h5 = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        summary              = SUMMARIZE_ANALYSIS.summary,
+    )
+}

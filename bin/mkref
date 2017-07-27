@@ -1,0 +1,100 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
+#
+import docopt
+import os
+import sys
+import cellranger.reference as cr_reference
+import cellranger.utils as cr_utils
+
+VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
+
+__doc__ = '''
+Reference preparation tool for 10x Genomics Cell Ranger.
+
+Build a Cell Ranger-compatible reference folder from user-supplied genome
+FASTA and gene GTF files. Creates a new folder named after the genome.
+
+The commands below should be preceded by 'cellranger':
+
+Usage:
+    mkref
+        --genome=NAME ...
+        --fasta=PATH ...
+        --genes=PATH ...
+        [options]
+    mkref -h | --help | --version
+
+Arguments:
+    genome    Unique genome name(s), used to name output folder [a-zA-Z0-9_-]+.
+                Specify multiple genomes by specifying the --genome argument
+                multiple times; the output folder will be <name1>_and_<name2>.
+    fasta     Path(s) to FASTA file containing your genome reference.
+                Specify multiple genomes by specifying the --fasta argument
+                multiple times.
+    genes     Path(s) to genes GTF file(S) containing annotated genes for your
+                genome reference. Specify multiple genomes by specifying
+                the --genes argument multiple times.
+
+Options:
+    --nthreads=<num>    Number of threads used during STAR genome index
+                          generation. Defaults to 1.
+    --memgb=<num>       Maximum memory (GB) used when aligning reads with STAR.
+                          Defaults to 16.
+    --ref-version=<str> Optional reference version string to include with
+                          reference.
+    -h --help           Show this message.
+    --version           Show version.
+'''
+
+def main():
+    args = docopt.docopt(__doc__, version=VERSION)
+    genomes = args["--genome"]
+    input_fasta_files = cr_utils.get_input_paths(args["--fasta"])
+    input_genes_files = cr_utils.get_input_paths(args["--genes"])
+    num_threads = args["--nthreads"]
+    mem_gb = args["--memgb"]
+    output_base_dir = '_and_'.join(genomes)
+    output_dir = os.path.join(os.getcwd(), output_base_dir)
+    ref_version = args['--ref-version']
+    mkref_version = os.getenv('TENX_VERSION', '')
+
+    if num_threads is None:
+        num_threads = 1
+    elif num_threads.isdigit() and int(num_threads) > 0:
+        num_threads = int(num_threads)
+    else:
+        sys.exit("--nthreads must be a positive integer")
+
+    if mem_gb is None:
+        mem_gb = 16
+    elif mem_gb.isdigit() and int(mem_gb) > 0:
+        mem_gb = int(mem_gb)
+    else:
+        sys.exit("--memgb must be a positive integer")
+
+    if len(genomes) != len(input_fasta_files) or len(genomes) != len(input_genes_files):
+        sys.exit("Please provide the same number of genome names, genome FASTA and gene GTF files")
+
+    for genome in genomes:
+        if '/' in genome:
+            sys.exit("The specified genome name '%s' contains a '/' character, which is not allowed. --genome must specify a name for the reference, not a path." % genome)
+
+    # Check that destination folder doesn't already exist
+    if os.path.exists(output_dir):
+        sys.exit("Destination reference folder already exists: %s\nPlease delete and start again." % output_dir)
+
+    # Check for write permissions in output directory
+    output_parent_dir = os.path.dirname(output_dir)
+    if not os.access(output_parent_dir, os.W_OK):
+        sys.exit("You do not have write permission in %s." % output_parent_dir)
+
+    referenceBuilder = cr_reference.ReferenceBuilder(genomes, input_fasta_files, input_genes_files, output_dir,
+                                                     ref_version,
+                                                     mkref_version,
+                                                     num_threads=num_threads, mem_gb=mem_gb)
+    referenceBuilder.build_reference()
+
+if __name__ == '__main__':
+    main()

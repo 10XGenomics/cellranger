@@ -1,0 +1,18 @@
+[package]
+name = "vdj_asm"
+version = "0.1.0"
+authors = ["Sofia <sofia@10xtechnologies.com>"]
+
+[dependencies.tada]
+path = "external/tada"
+
+[dependencies]
+flate2 = "*"
+itertools = "0.4"
+docopt = "*"
+rustc-serialize = "*"
+time = "*"
+num = "*"
+bio = { git = "https://github.com/pmarks/rust-bio.git", branch="pmarks/banded-sw"}
+rand = "0.3"
+rust-htslib = { git = "https://github.com/rust-bio/rust-htslib.git", branch="master"}

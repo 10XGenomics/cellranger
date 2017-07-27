@@ -1,0 +1,22 @@
+{% extends 'template.html' %}
+{% import 'utils.html' as utils %}
+{% block summary %}
+<div class="summary">
+  <!-- Sample Info Card -->
+  [[ utils.sample_info_card(data) ]]
+  </div>
+</div>
+{% endblock %}
+{% block analysis %}
+{% include 'charts/cluster-filter.html' %}
+<div class="summary">
+  <div class="chart_card_column">
+    {% include 'charts/tsne-counts.html' %}
+  </div>
+  <div class="chart_card_gutter">&nbsp;</div>
+  <div class="chart_card_column">
+    {% include 'charts/tsne-clustering.html' %}
+  </div>
+  {% include 'charts/differential-expression.html' %}
+</div>
+{% endblock %}

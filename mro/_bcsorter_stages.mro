@@ -1,0 +1,25 @@
+#
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+filetype bam;
+
+stage BUCKET_BY_BC(
+    in  int   nbases,
+    in  bam[] inputs,
+    in  int[] num_alignments,
+    out map   buckets,
+    src py    "stages/counter/bucket_reads_by_bc",
+) split using (
+    in  bam   chunk_input,
+    in  map[] read_groups,
+)
+
+stage SORT_BY_BC(
+    in  map    buckets,
+    out int    total_reads,
+    out bam,
+    src py     "stages/counter/sort_reads_by_bc",
+) split using (
+    in  string prefix,
+    in  bam[]  bucket,
+)

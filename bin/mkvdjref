@@ -1,0 +1,85 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
+#
+import docopt
+import os
+import sys
+
+import cellranger.utils as cr_utils
+import cellranger.vdj.reference as cr_vdj_ref
+
+VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
+
+__doc__ = '''
+Reference preparation tool for 10x Genomics Cell Ranger V(D)J.
+
+Build a Cell Ranger V(D)J-compatible reference folder from user-supplied genome
+FASTA and gene GTF files. Creates a new folder named after the genome.
+
+The commands below should be preceded by 'cellranger':
+
+Usage:
+    mkvdjref
+        --genome=NAME
+        --fasta=PATH
+        --genes=PATH ...
+        [options]
+    mkvdjref -h | --help | --version
+
+Arguments:
+    genome    A unique genome name, used to name output folder [a-zA-Z0-9_-]+.
+    fasta     Path to FASTA file containing your genome reference.
+    genes     One or more GTF files containing annotated genes for your
+                genome reference. Specify multiple files by specifying
+                the --genes argument multiple times. The files will be
+                concatenated.
+
+Options:
+    --ref-version=<str>   Optional reference version string to include
+    --rm-transcripts=PATH Path to text file with transcript IDs to ignore.
+                          This file should have one transcript ID per
+                          line where the IDs correspond to the
+                          "transcript_id" key in the GTF info column.
+    -h --help           Show this message.
+    --version           Show version.
+----
+%s
+''' % VERSION
+
+def main():
+    args = docopt.docopt(__doc__, version=VERSION)
+    genome = args["--genome"]
+    input_fasta_file = cr_utils.get_input_path(args["--fasta"])
+    input_genes_files = cr_utils.get_input_paths(args["--genes"])
+
+    output_dir = os.path.join(os.getcwd(), genome)
+    ref_version = args['--ref-version']
+    mkref_version = os.getenv('TENX_VERSION', '')
+
+    rm_tx_arg = args["--rm-transcripts"]
+    if rm_tx_arg:
+        rm_transcripts = cr_utils.get_input_path(rm_tx_arg)
+    else:
+        rm_transcripts = None
+
+    # Check that destination folder doesn't already exist
+    if os.path.exists(output_dir):
+        sys.exit("Destination reference folder already exists: %s\nPlease delete and start again." % output_dir)
+
+    # Check for write permissions in output directory
+    output_parent_dir = os.path.dirname(output_dir)
+    if not os.access(output_parent_dir, os.W_OK):
+        sys.exit("You do not have write permission in %s." % output_parent_dir)
+
+    cr_vdj_ref.build_reference_fasta_from_ensembl(gtf_paths=input_genes_files,
+                                                  transcripts_to_remove_path=rm_transcripts,
+                                                  genome_fasta_path=input_fasta_file,
+                                                  reference_path=output_dir,
+                                                  reference_name=genome,
+                                                  ref_version=ref_version,
+                                                  mkref_version=mkref_version)
+
+
+if __name__ == '__main__':
+    main()

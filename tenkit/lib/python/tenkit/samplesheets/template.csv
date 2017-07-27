@@ -1,0 +1,10 @@
+[Header]
+EmFileVersion,4
+
+[Reads]
+{read1}
+{read2}
+
+[Data]
+{columns}
+{data}

@@ -1,0 +1,158 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Diagnostic tar file uploader.
+#
+
+import json
+import sys
+import os
+import subprocess
+import datetime
+import random
+import httplib
+import urllib
+import pycurl
+import time
+import math
+import xml.etree.ElementTree as ET
+
+#
+# Setup
+#
+GET_UPLOAD_INFO_FAIL_MSG = """Could not contact http://support.10xgenomics.com (%s)
+   Please make sure you have Internet connectivity and try again,
+   or contact support@10xgenomics.com for help."""
+
+#
+# Parse command line
+#
+USAGE_MSG = """Usage:
+    %s upload <your_email> <file>""" % (os.getenv('TENX_PRODUCT', ''))
+
+if len(sys.argv) != 3:
+    print USAGE_MSG
+    sys.exit(1)
+(_, email, file) = sys.argv
+
+#
+# Verify file input
+#
+try:
+    if not os.path.isfile(file):
+        print "Error: Please specify a file."
+        sys.exit(1)
+    fname = os.path.basename(file)
+    size = os.path.getsize(file)    
+except Exception as e:
+    print "Error: " + str(e)
+    sys.exit(1)
+
+#
+# Retrieve upload information
+#
+try:    
+    print "Getting upload information..."
+    conn = httplib.HTTPConnection("support.10xgenomics.com")
+    conn.request("GET", "/uploadto10x.json?" + urllib.urlencode({
+        "email": email,
+        "fname": fname,
+        "size": size
+    }))
+    resp = conn.getresponse()
+    if resp.status != 200:
+        print GET_UPLOAD_INFO_FAIL_MSG % (str(resp.status) + " " + resp.reason)
+        sys.exit(1)
+
+    # Relay any permanent errors or deprecations to the user.
+    upload = json.loads(resp.read())
+    if upload.has_key("error"):
+        print "\nError: " + upload["error"]
+        sys.exit(1)
+
+    # Get upload url
+    upurl = upload["url"]
+
+    conn.close()
+except Exception as e:
+    print "\nError: " + GET_UPLOAD_INFO_FAIL_MSG % e
+    sys.exit(1)
+
+#
+# pycurl helpers
+#
+class ResponseSink:
+   def __init__(self):
+       self.contents = ''
+   def callback(self, buf):
+       self.contents = self.contents + buf
+
+# Pretty print number
+def pn(n):
+    return format(n, ",d")
+
+class FileReader:
+    def __init__(self, f, bsize):
+        self.f = f
+        # Track progress
+        self.bcount = 0
+        self.bsize = bsize
+        self.start = time.time()
+
+    def callback(self, csize):
+        # Calculate progress
+        self.bcount = min(self.bcount + csize, self.bsize)
+        elap = float(time.time() - self.start)
+        byps = float(self.bcount) / elap
+        mbps = float(self.bcount * 8) / elap / 1000000.0
+        pctg = int(float(self.bcount) / float(self.bsize) * 100.0)
+        etas = math.ceil((self.bsize - self.bcount) / byps)
+        etam = int(etas / 60)
+        etas = int(etas % 60)
+
+        # Update progress display
+        sys.stdout.write('\r')
+        sys.stdout.write("%s [%s] %s %s  eta %s %s  " % (
+            ("%d%%" % pctg).rjust(4),                   # percentage
+            (("=" * (pctg / 3)) + ">").ljust(34),       # progress bar
+            pn(self.bcount).rjust(len(pn(self.bsize))), # bytes sent
+            ("%.2fMb/s" % mbps).rjust(10),              # bitrate
+            ("%dm" % etam),                             # eta min
+            ("%ds" % etas).rjust(3)                     # eta sec
+        ))
+        sys.stdout.flush()
+
+        # Return file chunk
+        return self.f.read(csize)
+
+#
+# Upload file to destination
+#
+try:
+    print "Uploading file..."
+    print "Size: " + pn(size) + " bytes"
+    c = pycurl.Curl()
+    c.setopt(pycurl.URL, str(upurl))
+    c.setopt(pycurl.UPLOAD, 1)
+    c.setopt(pycurl.SSL_VERIFYPEER, 0)
+    r = ResponseSink()
+    c.setopt(c.WRITEFUNCTION, r.callback)
+    with open(file, "rb") as f:
+        c.setopt(pycurl.READFUNCTION, FileReader(f, size).callback)
+        c.setopt(pycurl.INFILESIZE, size)
+        c.perform()
+        c.close()
+
+    # Return any errors from upload destination
+    if len(r.contents) > 0:
+        print "\nError:"                
+        root = ET.fromstring(r.contents)
+        for e in root:
+            if e.tag != "RequestId" and e.tag != "HostId":
+                print "   " + e.tag + ": " + e.text
+    else:
+        print "\nUpload complete!"
+except Exception as e:
+    print "\nError: " + str(e)
+    sys.exit(1)

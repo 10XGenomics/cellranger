@@ -1,0 +1,91 @@
+<!-- macro that creates a generic summary card, optionally with an embedded chart -->
+{% macro summary_card(dtable, chart='') -%}
+<div class="summary_card">
+  <div class="has_desc" onclick="show_description(event)" ng-cloak>
+    <div class="summary_description">
+      <dl>
+        {% for row in dtable.rows %}
+        <dt>[[ row[0].v ]]</dt>
+        <dd>[[ row[0].f ]]</dd>
+        {% endfor %}
+      </dl>
+    </div>
+  </div>
+  <h1>[[ dtable.name ]]</h1>
+  {% if chart != '' %}
+  <div ng-repeat="chart in charts" ng-if="chart.name == '[[chart]]'">
+    <div chart-div chart="chart" id="chart-div-0"></div>
+  </div>
+  {% endif %}
+  <table>
+    {% for row in dtable.rows %}
+    <tr>
+      <td>[[ row[0].v ]]</td>
+      <td>[[ row[2].v ]]</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{%- endmacro %}
+
+{% macro single_hero_card(metric) -%}
+<div class="summary_card">
+  <h1>[[ metric[0].v if metric else "" ]]</h1>
+  <div class="summary_card_hero">[[ metric[2].v if metric else "" ]]</div>
+</div>
+{%- endmacro %}
+
+{% macro double_hero_card(metric1, metric2) -%}
+<div class="summary_card">
+  <div class="summary_card_half">
+    <h2>[[ metric1[0].v if metric1 else "" ]]</h2>
+    <div class="summary_card_hero">[[ metric1[2].v if metric1 else "" ]]</div>
+  </div>
+  <div class="summary_card_half">
+    <h2>[[ metric2[0].v if metric2 else "" ]]</h2>
+    <div class="summary_card_hero">[[ metric2[2].v if metric2 else "" ]]</div>
+  </div>
+</div>
+{%- endmacro %}
+
+<!-- macro that creates the sample info card-->
+{% macro sample_info_card(data) -%}
+<div class="summary_card">
+  <h1>Sample</h1>
+  <table id="sample_table">
+    <tr>
+      <td>Name</td>
+      <td>[[ data.sample_id ]]</td>
+    </tr>
+    <tr>
+      <td>Description</td>
+      <td>[[ data.sample_desc ]]</td>
+    </tr>
+    <tr>
+      {% for ref in data.info.references %}
+      <td>[[ ref.type ]]</td>
+      <td>[[ ref.name ]]</td>
+      {% endfor %}
+    </tr>
+    <tr>
+      <td>Chemistry</td>
+      <td>[[ data.info.chemistry_description ]]</td>
+    </tr>
+    <tr>
+      <td>Cell Ranger Version</td>
+      <td>[[ data.version ]]</td>
+    </tr>
+  </table>
+</div>
+{%- endmacro %}
+
+<!-- macro for rendering plots with standard layout -->
+{% macro chart_card(chartname) -%}
+<div class="chart_card" ng-repeat="chart in charts" ng-if="chart.name == '[[chartname]]'">
+  <div class="has_desc" onclick="show_description(event)" ng-cloak>
+      <div class="summary_description">{{ chart.description }}</div>
+  </div>
+  <h2>{{ chart.title }}</h2>
+  <div chart-div chart=chart id="chart-div-{{ $index }}"></div>
+</div>
+{%- endmacro %}

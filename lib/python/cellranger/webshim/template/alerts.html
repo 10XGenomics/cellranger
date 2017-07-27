@@ -1,0 +1,23 @@
+<div ng-if="alerts" class="alerts_card" ng-class="alerts_any_errors ? 'alerts_level_error' : 'alerts_level_warn'" ng-click="showAlerts()">
+  The analysis detected some <span ng-if="alerts_any_errors">serious</span> issues.&nbsp;&nbsp;
+  <span style="text-decoration: underline"> Details &raquo;</span>
+</div>
+<div id="alerts" class="tab" style="display: none">
+  <table class="alerts_table">
+    <tr>
+      <th colspan="2" width="250">Alert</th>
+      <th class="alert_value" width="100">Value</th>
+      <th width="600">Detail</th>
+    </tr>
+    <tr ng-repeat="alert in alerts">
+      <td>
+        <span class="alert_glyph glyphicon glyphicon-warning-sign" ng-if="alert.level=='warn'"></span>
+        <span class="alert_glyph glyphicon glyphicon-ban-circle" ng-if="alert.level=='error'"></span>
+      </td>
+      <td><b>{{ alert.title }}</b></td>
+      <td class="alert_value">{{ alert.value }}</td>
+      <td><p>{{ alert.message }}</p></td>
+    </tr>
+  </table>
+</div>
+<div ng-if="!alerts" style="height: 1px; margin-top: 100px; margin-bottom: 24px"></div>

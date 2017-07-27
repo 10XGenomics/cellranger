@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Site Check for 10x Genomics pipelines.
+#
+
+eval "$(docopts -V " " -h - : "$@" <<EOF
+The commands below should be preceded by '$TENX_PRODUCT':
+
+Usage:
+    sitecheck
+    sitecheck -h | --help | --version
+
+Options:
+    -h --help         Show this message.
+    --version         Show version.
+EOF
+)"
+
+set -o pipefail
+
+function check {
+    echo "====================================================================="
+    echo $1
+    echo $2
+    echo "---------------------------------------------------------------------"
+    eval /usr/bin/env $2 2> /dev/null
+    ecode=$?
+    echo "====================================================================="
+    echo ""
+}
+
+function ifchk {
+    if [ $ecode == 0 ]; then
+        check "$1" "$2"
+    fi
+}
+
+echo "`date`"
+echo
+check "System Info"         "uname -a"
+check "Linux Distro"        "cat /etc/*-release | sort -u"
+check "Kernel Build"        "cat /proc/version"
+check "CPU Model"           "grep -m 1 'model name' /proc/cpuinfo | cut -d ':' -f 2 | sed 's/^[ \t]*//'"
+check "CPU Sockets"         "grep 'physical id' /proc/cpuinfo | sort -u | wc -l"
+check "CPU Cores"           "grep -c processor /proc/cpuinfo"
+check "Memory Total"        "grep MemTotal /proc/meminfo | cut -d ':' -f 2 | sed 's/^[ \t]*//'"
+check "Disk Space"          "df -Ph | awk '{print \$2, \$3, \$4}'"
+check "Filesystem Options"  "mount | cut -d ' ' -f 5,6"
+check "User Limits"         "bash -c 'ulimit -a'"
+check "Global File Limit"   "cat /proc/sys/fs/file-{max,nr}"
+
+check "SGE Submit"          "which qsub"
+ifchk "SGE CLUSTER_NAME"    "echo \$SGE_CLUSTER_NAME"
+ifchk "SGE JOB_NAME"        "echo \$JOB_NAME"
+
+check "LSF Submit"          "which bsub"
+ifchk "LSF LSB_JOBNAME"     "echo \$LSB_JOBNAME"
+
+check "BCL2FASTQ 1"         "which configureBclToFastq.pl"
+ifchk "BCL2FASTQ 1 Version" "ls \$(dirname \$(which configureBclToFastq.pl))/../etc"
+ifchk "Perl"                "which perl"
+ifchk "Perl Version"        "perl -v"
+
+check "BCL2FASTQ 2"         "which bcl2fastq"
+ifchk "BCL2FASTQ 2 Version" "bcl2fastq --version"
+
+check "Java"                "which java"
+ifchk "Java Version"        "java -version 2>&1 | cat"
+
+check "10X Refdata"         "echo \$TENX_REFDATA"
+ifchk "10X Refdata Version" "cat \$TENX_REFDATA/version"
+
+check "qconf"               "which qconf"
+ifchk "qconf -sc"           "qconf -sc && qconf -sconf | grep -E '(shell_start_mode|login_shells|max_jobs)'"

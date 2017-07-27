@@ -1,0 +1,171 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+filetype bam;
+filetype bam.bai;
+filetype csv;
+filetype fastq;
+filetype json;
+filetype h5;
+filetype pickle;
+
+stage ALIGN_READS(
+    in  fastq[]  reads,
+    in  fastq[]  read2s,
+    in  string[] read_groups,
+    in  path     reference_path,
+    in  int      threads,
+    in  int      max_hits_per_read,
+    out bam[]    genome_output,
+    out bool     paired_end,
+    src py       "stages/counter/align_reads",
+) split using (
+    in  fastq    read_chunk,
+    in  fastq    read2_chunk,
+    in  string[] read_group,
+)
+
+stage ATTACH_BCS_AND_UMIS(
+    in  bam[]    genome_inputs,
+    in  bam[]    trimmed_inputs,
+    in  path     reference_path,
+    in  int[]    gem_groups,
+    in  map      chemistry_def,
+    in  map      annotation_params,
+    in  string   barcode_whitelist,
+    in  json     barcode_counts,
+    in  float    barcode_confidence_threshold,
+    in  int      umi_min_qual_threshold,
+    in  string[] bam_comments,
+    in  bool     rescue_multimappers,
+    in  bool     correct_barcodes,
+    in  bool     skip_metrics,
+    in  bool     paired_end,
+    out bam[]    output,
+    out int[]    num_alignments,
+    out pickle   chunked_reporter,
+    out json     summary,
+    out h5       barcode_summary,
+    src py       "stages/counter/attach_bcs_and_umis",
+) split using (
+    in  bam      chunk_genome_input,
+    in  bam      chunk_trimmed_input,
+    in  int      gem_group,
+)
+
+stage MARK_DUPLICATES(
+    in  bam    input,
+    in  path   reference_path,
+    in  map    align,
+    in  int    mem_gb,
+    out bam[]  output,
+    out pickle chunked_reporter,
+    out json   summary,
+    src py     "stages/counter/mark_duplicates",
+) split using (
+    in  string chunk_start,
+    in  string chunk_end,
+)
+
+stage REPORT_MOLECULES(
+    in  bam[]  inputs,
+    in  path   reference_path,
+    in  map    align,
+    in  string barcode_whitelist,
+    in  json   extract_reads_summary,
+    in  json   attach_bcs_and_umis_summary,
+    in  json   mark_duplicates_summary,
+    in  csv    filtered_barcodes,
+    in  int[]  gem_groups,
+    in  int    recovered_cells,
+    in  int    force_cells,
+    out h5     output,
+    src py     "stages/counter/report_molecules",
+) split using (
+    in  string chunk_start,
+    in  string chunk_end,
+)
+
+stage SORT_BY_POS(
+    in  bam[]   inputs,
+    in  int     num_threads,
+    in  int     mem_gb,
+    out bam     output,
+    out bam.bai index,
+    src py      "stages/counter/sort_reads_by_pos",
+) split using (
+    in  bam     chunk_input,
+)
+
+stage COUNT_GENES(
+    in  string sample_id,
+    in  bam[]  inputs,
+    in  path   reference_path,
+    in  map    chemistry_def,
+    in  string barcode_whitelist,
+    in  h5     barcode_summary,
+    in  int[]  gem_groups,
+    in  map    align,
+    out h5     matrices_h5,
+    out path   matrices_mex,
+    out pickle chunked_reporter,
+    out json   reporter_summary,
+    out h5     barcode_summary,
+    src py     "stages/counter/count_genes",
+) split using (
+    in  bam    chunk_input,
+)
+
+stage FILTER_BARCODES(
+    in  string sample_id,
+    in  h5     matrices_h5,
+    in  json   raw_fastq_summary,
+    in  json   attach_bcs_summary,
+    in  int    recovered_cells,
+    in  int    force_cells,
+    in  h5     barcode_summary,
+    in  string barcode_whitelist,
+    in  int[]  gem_groups,
+    in  map    chemistry_def,
+    in  json   cell_barcodes          "Cell barcode override",
+    out json   summary,
+    out csv    filtered_barcodes,
+    out h5     filtered_matrices_h5,
+    out path   filtered_matrices_mex,
+    src py     "stages/counter/filter_barcodes",
+) split using (
+)
+
+stage SUBSAMPLE_READS(
+    in  h5     molecule_info,
+    in  csv    filtered_barcodes,
+    out map[]  subsampled_matrices,
+    out pickle chunked_reporter,
+    out json   summary,
+    src py     "stages/counter/subsample_reads",
+) split using (
+    in  int    chunk_start,
+    in  int    chunk_len,
+    in  map    subsample_info,
+)
+
+stage SUMMARIZE_BASIC_REPORTS(
+    in  json   extract_reads_summary,
+    in  path   reference_path,
+    in  map    align,
+    in  json   attach_bcs_and_umis_summary,
+    in  h5     attach_bcs_and_umis_barcode_summary,
+    in  json   mark_duplicates_summary,
+    in  json   count_genes_reporter_summary,
+    in  h5     count_genes_barcode_summary,
+    in  json   filter_barcodes_summary,
+    in  json   subsample_molecules_summary,
+    in  h5     raw_gene_bc_matrices_h5,
+    in  h5     filtered_gene_bc_matrices_h5,
+    in  string barcode_whitelist,
+    in  int[]  gem_groups,
+    out h5     barcode_summary,
+    out json   summary,
+    src py     "stages/counter/summarize_basic_reports",
+) split using (
+)

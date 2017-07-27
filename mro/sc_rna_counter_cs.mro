@@ -1,0 +1,75 @@
+#
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+@include "sc_rna_counter.mro"
+@include "_cloupe_stages.mro"
+
+pipeline SC_RNA_COUNTER_CS(
+    in  string  sample_id,
+    in  map[]   sample_def,
+    in  string  sample_desc,
+    in  path    reference_path,
+    in  int     recovered_cells,
+    in  bool    no_secondary_analysis,
+    in  int     force_cells,
+    out html    web_summary                   "Run summary HTML",
+    out csv     metrics_summary               "Run summary CSV",
+    out bam     possorted_genome_bam          "BAM"                                    "possorted_genome_bam.bam",
+    out bam.bai possorted_genome_bam_index    "BAM index"                              "possorted_genome_bam.bam.bai",
+    out path    filtered_gene_bc_matrices     "Filtered gene-barcode matrices MEX",
+    out h5      filtered_gene_bc_matrices_h5  "Filtered gene-barcode matrices HDF5",
+    out path    raw_gene_bc_matrices          "Unfiltered gene-barcode matrices MEX",
+    out h5      raw_gene_bc_matrices_h5       "Unfiltered gene-barcode matrices HDF5",
+    out path    analysis                      "Secondary analysis output CSV",
+    out h5      molecule_info                 "Per-molecule read information",
+    out cloupe  cloupe                        "Loupe Cell Browser file",
+)
+{
+    call SC_RNA_COUNTER(
+        sample_id                    = self.sample_id,
+        sample_def                   = self.sample_def,
+        chemistry_name               = "auto",
+        custom_chemistry_def         = null,
+        sample_desc                  = self.sample_desc,
+        barcode_confidence_threshold = 0.975,
+        umi_min_qual_threshold       = 10,
+        align                        = {"aligner":"star","high_conf_mapq":null},
+        align_threads                = 4,
+        reference_path               = self.reference_path,
+        primers                      = [{"name":"P5","seq":"AATGATACGGCGACCACCGAGATCT"},{"name":"P7","seq":"CAAGCAGAAGACGGCATACGAGAT"},{"name":"R1","seq":"ACACTCTTTCCCTACACGACG"},{"name":"R2","seq":"GTGACTGGAGTTCAGACGTGTG"},{"name":"switch_oligo","seq":"AAGCAGTGGTATCAACGCAGAGTACATGGG"},{"name":"polyA","seq":"AAAAAAAAAAAAAAAAAAAA"}],
+        recovered_cells              = self.recovered_cells,
+        force_cells                  = self.force_cells,
+        subsample_rate               = 1,
+        initial_reads                = null,
+        rna_read_length              = null,
+        annotation_params            = null,
+        no_secondary_analysis        = self.no_secondary_analysis,
+        mark_dupes_mem_gb            = null,
+    )
+
+    call CLOUPE_PREPROCESS(
+        pipestance_type              = "SC_RNA_COUNTER_CS",
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        analysis                     = SC_RNA_COUNTER.analysis,
+        filtered_gene_bc_matrices_h5 = SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        metrics_json                 = SC_RNA_COUNTER.metrics_summary_json,
+        aggregation_csv              = null,
+        gem_group_index_json         = null,
+        no_secondary_analysis        = false,
+    )
+
+    return (
+        possorted_genome_bam         = SC_RNA_COUNTER.possorted_genome_bam,
+        possorted_genome_bam_index   = SC_RNA_COUNTER.possorted_genome_bam_index,
+        web_summary                  = SC_RNA_COUNTER.web_summary,
+        metrics_summary              = SC_RNA_COUNTER.metrics_summary_csv,
+        raw_gene_bc_matrices         = SC_RNA_COUNTER.raw_gene_bc_matrices_mex,
+        raw_gene_bc_matrices_h5      = SC_RNA_COUNTER.raw_gene_bc_matrices_h5,
+        filtered_gene_bc_matrices    = SC_RNA_COUNTER.filtered_gene_bc_matrices_mex,
+        filtered_gene_bc_matrices_h5 = SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        analysis                     = SC_RNA_COUNTER.analysis_csv,
+        molecule_info                = SC_RNA_COUNTER.molecule_info,
+        cloupe                       = CLOUPE_PREPROCESS.output_for_cloupe,
+    )
+}

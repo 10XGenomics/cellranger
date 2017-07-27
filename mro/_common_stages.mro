@@ -1,0 +1,82 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+filetype bam;
+filetype bam.bai;
+filetype fastq;
+filetype json;
+filetype h5;
+filetype pickle;
+
+stage CELLRANGER_PREFLIGHT(
+    in map[]  sample_def,
+    in string chemistry_name,
+    in map    custom_chemistry_def,
+    in path   reference_path,
+    in path   vdj_reference_path,
+    in bool   check_executables,
+    in int    recovered_cells,
+    in int    force_cells,
+    src py     "stages/common/cellranger_preflight",
+)
+
+stage CELLRANGER_PREFLIGHT_LOCAL(
+    in map[]  sample_def,
+    in string chemistry_name,
+    in map    custom_chemistry_def,
+    in path   reference_path,
+    in path   vdj_reference_path,
+    in bool   check_executables,
+    in int    recovered_cells,
+    in int    force_cells,
+    src py     "stages/common/cellranger_preflight",
+)
+
+stage SETUP_CHUNKS(
+    in  string sample_id,
+    in  map[]  sample_def,
+    in  string chemistry_name,
+    in  map    custom_chemistry_def,
+    out map[]  chunks,
+    out map    chemistry_def,
+    out string barcode_whitelist,
+    src py     "stages/common/setup_chunks",
+)
+
+stage CHUNK_READS(
+    in  map[] chunks,
+    in  int   reads_per_file,
+    out map[] out_chunks,
+    src py    "stages/common/chunk_reads",
+) split using (
+    in  map   read_chunks,
+)
+
+stage EXTRACT_READS(
+    in  map[]    chunks,
+    in  map      chemistry_def,
+    in  string   barcode_whitelist,
+    in  int      reads_per_file,
+    in  float    subsample_rate,
+    in  int      initial_reads,
+    in  map[]    primers,
+    in  map      align,
+    in  int      rna_read_length,
+    in  bool     skip_metrics,
+    out pickle   chunked_reporter,
+    out json     summary,
+    out json     barcode_counts,
+    out fastq[]  reads,
+    out fastq[]  read2s,
+    out bam[]    trimmed_seqs,
+    out int[]    gem_groups,
+    out string[] read_groups,
+    out map      align,
+    out string[] bam_comments,
+    src py       "stages/common/extract_reads",
+) split using (
+    in  map      read_chunks,
+    in  int      gem_group,
+    in  bool     reads_interleaved,
+    in  bool     barcode_rc,
+)

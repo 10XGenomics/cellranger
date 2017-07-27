@@ -1,0 +1,234 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+filetype csv;
+filetype h5;
+filetype html;
+filetype json;
+filetype pickle;
+
+stage ANALYZER_PREFLIGHT(
+    in  bool  skip,
+    in  h5    raw_matrices_h5,
+    in  h5    filtered_matrices_h5,
+    in  csv   use_genes,
+    in  csv   use_bcs,
+    in  int   num_analysis_bcs,
+    in  int   force_cells,
+    in  int   random_seed,
+    in  int   num_pca_bcs,
+    in  int   num_pca_genes,
+    in  int   num_principal_comps,
+    in  int   max_clusters,
+    in  int   graphclust_neighbors,
+    in  float neighbor_a,
+    in  float neighbor_b,
+    in  int   tsne_perplexity,
+    in  int   tsne_input_pcs,
+    in  int   tsne_max_dims,
+    in  int   tsne_max_iter,
+    in  int   tsne_stop_lying_iter,
+    in  int   tsne_mom_switch_iter,
+    in  float tsne_theta,
+    out bool  skip,
+    src py    "stages/analyzer/analyzer_preflight",
+)
+
+stage REANALYZER_PREFLIGHT(
+    in h5 filtered_matrices_h5,
+    src py "stages/analyzer/reanalyzer_preflight",
+)
+
+stage PREPROCESS_MATRIX(
+    in  h5   matrix_h5,
+    in  bool skip,
+    in  int  random_seed,
+    in  csv  use_genes,
+    in  csv  use_bcs,
+    in  int  num_bcs,
+    in  int  force_cells,
+    out h5   preprocessed_matrix_h5,
+    out bool is_multi_genome,
+    src py   "stages/analyzer/preprocess_matrix",
+) split using (
+)
+
+stage RUN_MULTIGENOME_ANALYSIS(
+    in  h5   raw_matrices_h5,
+    in  h5   filtered_matrices_h5,
+    in  bool is_multi_genome,
+    in  bool skip,
+    out path multi_genome_csv,
+    out path multi_genome_json,
+    out json multi_genome_summary,
+    src py   "stages/analyzer/run_multigenome_analysis",
+) split using (
+)
+
+stage RUN_PCA(
+    in  h5   matrix_h5,
+    in  bool is_multi_genome,
+    in  bool skip,
+    in  int  random_seed,
+    in  int  num_bcs,
+    in  int  num_genes,
+    in  int  num_pcs,
+    out h5   pca_h5,
+    out path pca_csv,
+    src py   "stages/analyzer/run_pca",
+) split using (
+)
+
+stage RUN_KMEANS(
+    in  h5   matrix_h5,
+    in  h5   pca_h5,
+    in  bool is_multi_genome,
+    in  bool skip,
+    in  int  random_seed,
+    in  int  max_clusters,
+    in  int  num_bcs,
+    in  int  num_pcs,
+    out h5   kmeans_h5,
+    out path kmeans_csv,
+    src py   "stages/analyzer/run_kmeans",
+) split using (
+    in  int  n_clusters,
+)
+
+stage RUN_GRAPH_CLUSTERING(
+    in  h5     matrix_h5,
+    in  h5     pca_h5,
+    in  int    num_neighbors       "Use this many neighbors",
+    in  float  neighbor_a          "Use larger of (a+b*log10(n_cells) neighbors or num_neighbors",
+    in  float  neighbor_b          "Use larger of (a+b*log10(n_cells) neighbors or num_neighbors",
+    in  int    num_bcs             "Use this many cell-barcodes in clustering",
+    in  int    input_pcs           "Use top N PCs",
+    in  int    balltree_leaf_size,
+    in  string similarity_type     "Type of similarity to use (nn or snn)",
+    in  bool   skip,
+    in  bool   is_multi_genome,
+    out h5     chunked_neighbors,
+    out h5     clusters_h5,
+    out path   clusters_csv,
+    src py     "stages/analyzer/run_graph_clustering",
+) split using (
+    in  pickle neighbor_index,
+    in  h5     submatrix,
+    in  int    row_start,
+    in  int    total_rows,
+    in  int    k_nearest,
+    in  h5     use_bcs,
+)
+
+stage MERGE_CLUSTERS(
+    in  h5   matrix_h5,
+    in  h5   pca_h5,
+    in  h5   clusters_h5,
+    in  bool skip,
+    in  bool is_multi_genome,
+    out h5   clusters_h5,
+    out path clusters_csv,
+    src py   "stages/analyzer/merge_clusters",
+) split using (
+)
+
+stage COMBINE_CLUSTERING(
+    in  bool skip,
+    in  bool is_multi_genome,
+    in  h5   kmeans_h5,
+    in  path kmeans_csv,
+    in  h5   graphclust_h5,
+    in  path graphclust_csv,
+    out h5   clustering_h5,
+    out path clustering_csv,
+    src py   "stages/analyzer/combine_clustering",
+)
+
+stage RUN_DIFFERENTIAL_EXPRESSION(
+    in  h5     matrix_h5,
+    in  h5     clustering_h5,
+    in  bool   is_multi_genome,
+    in  bool   skip,
+    in  int    random_seed,
+    in  int    max_clusters,
+    out h5     diffexp_h5,
+    out path   diffexp_csv,
+    src py     "stages/analyzer/run_differential_expression",
+) split using (
+    in  string clustering_key,
+)
+
+stage RUN_TSNE(
+    in  h5    matrix_h5,
+    in  h5    pca_h5,
+    in  bool  is_multi_genome,
+    in  bool  skip,
+    in  int   random_seed,
+    in  int   perplexity,
+    in  int   input_pcs,
+    in  int   max_dims,
+    in  int   max_iter,
+    in  int   stop_lying_iter,
+    in  int   mom_switch_iter,
+    in  float theta,
+    out h5    tsne_h5,
+    out path  tsne_csv,
+    src py    "stages/analyzer/run_tsne",
+) split using (
+    in  int   tsne_dims,
+)
+
+stage SUMMARIZE_ANALYSIS(
+    in  h5   matrix_h5,
+    in  h5   pca_h5,
+    in  h5   clustering_h5,
+    in  h5   diffexp_h5,
+    in  h5   tsne_h5,
+    in  path pca_csv,
+    in  path clustering_csv,
+    in  path diffexp_csv,
+    in  path tsne_csv,
+    in  json multi_genome_summary,
+    in  path multi_genome_csv,
+    in  path multi_genome_json,
+    in  bool is_multi_genome,
+    in  bool skip,
+    out path analysis,
+    out path analysis_csv,
+    out json summary,
+    src py   "stages/analyzer/summarize_analysis",
+) split using (
+)
+
+stage PARSE_PARAM_CSV(
+    in  csv   params_csv,
+    out csv   params_csv,
+    out int   num_analysis_bcs,
+    out int   random_seed,
+    out int   num_pca_bcs,
+    out int   num_pca_genes,
+    out int   num_principal_comps,
+    out int   max_clusters,
+    out int   graphclust_neighbors,
+    out float neighbor_a,
+    out float neighbor_b,
+    out int   tsne_perplexity,
+    out int   tsne_input_pcs,
+    out int   tsne_max_dims,
+    out int   tsne_max_iter,
+    out int   tsne_stop_lying_iter,
+    out int   tsne_mom_switch_iter,
+    out float tsne_theta,
+    src py    "stages/analyzer/parse_csv",
+)
+
+stage SUMMARIZE_REANALYSIS(
+    in  string analysis_id,
+    in  string analysis_desc,
+    in  h5     filtered_matrices,
+    in  path   analysis,
+    out html   web_summary,
+    out json   summary,
+    src py     "stages/analyzer/summarize_reanalysis",
+) split using (
+)

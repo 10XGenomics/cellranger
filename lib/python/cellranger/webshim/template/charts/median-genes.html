@@ -1,0 +1,7 @@
+<div class="chart_card" ng-repeat="chart in charts" ng-if="chart.name == 'median_genes_per_cell'">
+  <div class="has_desc" onclick="show_description(event)" ng-cloak>
+    <div class="summary_description">{{ chart.description }}</div>
+  </div>
+  <h2>{{ chart.title }}</h2>
+  <div chart-div chart="chart" id="chart-div-{{ $index }}"></div>
+</div

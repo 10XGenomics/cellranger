@@ -1,0 +1,26 @@
+#
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+filetype csv;
+filetype json;
+filetype h5;
+filetype html;
+
+stage SUMMARIZE_REPORTS(
+    in  string sample_id,
+    in  string sample_desc,
+    in  path   reference_path,
+    in  json   basic_counter_summary,
+    in  path   analysis,
+    in  json   analyze_matrices_summary,
+    in  h5     barcode_summary_h5,
+    in  h5     filtered_gene_bc_matrices_h5,
+    in  string barcode_whitelist,
+    in  int[]  gem_groups,
+    out json   metrics_summary_json,
+    out csv    metrics_summary_csv,
+    out html   web_summary,
+    out json   alerts,
+    src py     "stages/counter/summarize_reports",
+) split using (
+)

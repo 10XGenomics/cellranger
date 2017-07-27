@@ -1,0 +1,20 @@
+<html ng-app="webshim">
+  {% include 'header.html' %}
+  <body ng-controller="WebshimCtrl">
+    {% include 'navbar.html' %}
+    {% include 'alerts.html' %}
+    <div class="container">
+      <!-- Summary Tab -->
+      <div id="summary" ng-show="tab=='summary'" class="tab">
+        {% block summary %}
+        {% endblock %}
+      </div>
+    </div>
+    <div style="clear:both"></div>
+    <!-- Analysis Tab -->
+    <div id="analysis" ng-show="tab=='analysis'" class="tab">
+      {% block analysis %}
+      {% endblock %}
+    </div>
+  </body>
+</html>

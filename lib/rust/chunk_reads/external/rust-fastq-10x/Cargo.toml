@@ -1,0 +1,9 @@
+[package]
+name = "fastq_10x"
+version = "0.1.0"
+authors = ["Patrick Marks <patrick@10xgenomics.com>"]
+
+[dependencies]
+rustc-serialize = "*"
+flate2 = { git = "https://github.com/veldsla/flate2-rs.git", branch = "multigz"}
+ordered-float = "0.3.0"

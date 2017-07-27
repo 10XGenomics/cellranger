@@ -1,0 +1,64 @@
+#
+# Copyright (c) 2014 10X Genomics, Inc. All rights reserved.
+#
+@include "make_fastqs.mro"
+
+pipeline MAKE_FASTQS_CS(
+    in  path   run_path               "Illumina output folder",
+    in  int[]  lanes                  "The lanes to demultiplex",
+    in  map[]  specs                  "Demultiplex specification",
+    in  string project                "Project name",
+    in  string bases_mask             "--use-bases-mask argument",
+    in  string bcl2fastq1_args        "Additional arguments to pass to bcl2fastq if RTA needs v1",
+    in  string bcl2fastq2_args        "Additional arguments to pass to bcl2fastq if RTA needs v2",
+    in  string barcode_whitelist      "Path to barcode whitelist to check matching rates",
+    in  string bc_read_type           "Read type containing the barcode (R1, I1, I2, R2)",
+    in  int    bc_start_index         "Zero-based index of first base of barcode on read",
+    in  int    bc_length              "Length of barcode",
+    in  string si_read_type           "Read type containing the sample index (I1, I2)",
+    in  string umi_read_type          "Read type containing a UMI (R1, I1, I2, R2)",
+    in  int    umi_start_index        "Zero-based index of first base of UMI on read",
+    in  int    umi_length             "Length of UMI",
+    in  path   output_path            "Override --output-dir argument to bcl2fastq",
+    in  path   interop_output_path    "Override --interop-dir argument to bcl2fastq",
+    in  bool   delete_undetermined    "Delete FASTQ files not matching a supplied sample index",
+    in  bool   ignore_dual_index      "Ignore the second index of a dual-index flowcell",
+    in  int    max_bcl2fastq_threads  "Maximum number of threads for bcl2fastq to use",
+    in  string software_version       "Enclosing version of software calling this pipeline",
+    out json   qc_summary             "Run QC metrics",
+    out path   fastq_path             "FASTQ output folder",
+    out path   interop_path           "Interop output folder",
+    out csv    input_samplesheet      "Input samplesheet",
+)
+{
+    call MAKE_FASTQS(
+        run_path              = self.run_path,
+        lanes                 = self.lanes,
+        specs                 = self.specs,
+        project               = self.project,
+        bases_mask            = self.bases_mask,
+        bcl2fastq1_args       = self.bcl2fastq1_args,
+        bcl2fastq2_args       = self.bcl2fastq2_args,
+        barcode_whitelist     = self.barcode_whitelist,
+        bc_read_type          = self.bc_read_type,
+        bc_start_index        = self.bc_start_index,
+        bc_length             = self.bc_length,
+        si_read_type          = self.si_read_type,
+        umi_read_type         = self.umi_read_type,
+        umi_start_index       = self.umi_start_index,
+        umi_length            = self.umi_length,
+        output_path           = self.output_path,
+        interop_output_path   = self.interop_output_path,
+        delete_undetermined   = self.delete_undetermined,
+        ignore_dual_index     = self.ignore_dual_index,
+        max_bcl2fastq_threads = self.max_bcl2fastq_threads,
+        software_version      = self.software_version,
+    )
+
+    return (
+        fastq_path        = MAKE_FASTQS.fastq_path,
+        interop_path      = MAKE_FASTQS.interop_path,
+        qc_summary        = MAKE_FASTQS.qc_summary,
+        input_samplesheet = MAKE_FASTQS.input_samplesheet,
+    )
+}

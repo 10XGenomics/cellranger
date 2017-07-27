@@ -1,0 +1,18 @@
+[package]
+name = "chunk_reads"
+version = "0.1.0"
+authors = ["Patrick Marks <patrick@10xgenomics.com>"]
+
+[dependencies]
+fastq = { git = "https://github.com/pmarks/fastq-rs.git", branch = "master" }
+serde = "0.9"
+serde_derive = "0.9"
+serde_json = "0.9"
+docopt = "*"
+rustc-serialize = "0.3"
+rayon = "^0.8"
+error-chain = "*"
+tempdir = "*"
+
+[dev-dependencies]
+fastq_10x = { path = "external/rust-fastq-10x" }

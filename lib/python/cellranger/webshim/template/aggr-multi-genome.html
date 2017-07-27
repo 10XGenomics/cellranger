@@ -1,0 +1,42 @@
+{% extends 'template.html' %}
+{% import 'utils.html' as utils %}
+{% block summary %}
+<div class="summary">
+  <!-- Left Summary Column -->
+  <div class="summary_card_column">
+    <!-- Hero Metrics -->
+    [[ utils.single_hero_card(data.tables[0].rows[0]) ]]
+    [[ utils.single_hero_card(data.tables[0].rows[1]) ]]
+    <!-- Sequencing Card -->
+    [[ utils.summary_card(data.tables[1]) ]]
+    <!-- GEMs Card -->
+    [[ utils.summary_card(data.tables[3]) ]]
+     <!-- Aggregation Card -->
+    [[ utils.summary_card(data.tables[4]) ]]
+ </div>
+  <div class="summary_card_gutter">&nbsp;</div>
+  <!-- Right Summary Column -->
+  <div class="summary_card_column">
+    <!-- Cells Card -->
+    [[ utils.summary_card(data.tables[2], chart="barcode_rank") ]]
+    <!-- Sample Info Card -->
+    [[ utils.sample_info_card(data) ]]
+  </div>
+</div>
+{% endblock %}
+{% block analysis %}
+{% include 'charts/cluster-filter.html' %}
+<div class="summary">
+  <div class="chart_card_column">
+    {% include 'charts/barnyard-counts.html' %}
+  </div>
+  <div class="chart_card_gutter chart_card_gutter_single">&nbsp;</div>
+  <div class="chart_card_column">
+    {% include 'charts/sequencing-saturation.html' %}
+  </div>
+  <div class="chart_card_gutter">&nbsp;</div>
+  <div class="chart_card_column">
+    {% include 'charts/median-genes.html' %}
+  </div>
+</div>
+{% endblock %}
