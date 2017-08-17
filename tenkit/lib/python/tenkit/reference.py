@@ -1,5 +1,5 @@
 import os.path
-import pyfasta
+import pyfaidx
 import re
 from tenkit.regions import Regions
 from collections import defaultdict
@@ -11,15 +11,9 @@ KNOWN_GENOMES = ['10X_hg19_ucsc', '10X_b37']
 
 def open_reference(reference_path):
     ''' Open a reference fasta and rename the contigs to strip any fasta comments'''
-    fasta = pyfasta.Fasta(get_fasta(reference_path))
-
-    new_fasta = {}
-
-    for (k,v) in fasta.iteritems():
-        key_prefix = k.split(" ")[0]
-        new_fasta[key_prefix] = v
-
-    return new_fasta
+    # strips comments by splitting on first whitespace
+    fasta = pyfaidx.Fasta(get_fasta(reference_path), as_raw=True)
+    return fasta
 
 def get_fasta(reference_path):
     '''Convention for location of reference fasta in a reference path'''
