@@ -787,20 +787,6 @@ METRIC_ALARMS = [
             'test': '< 0.75',
         },
     },
-    {
-        'name': MULTI_FRAC_READS_IN_CELLS_METRIC['name'],
-        'format': MULTI_FRAC_READS_IN_CELLS_METRIC['format'],
-        'error': {
-            'title': 'Low Fraction Reads in Cells',
-            'message': 'Ideal > 70%. Application performance is likely to be affected. Many of the reads were not assigned to cell-associated barcodes. This could be caused by high levels of ambient RNA or by a significant population of cells with a low RNA content, which the algorithm did not call as cells. The latter case can be addressed by inspecting the data to determine the appropriate cell count and using --force-cells.',
-            'test': '< 0.50',
-        },
-        'warn': {
-            'title': 'Low Fraction Reads in Cells',
-            'message': 'Ideal > 70%. Application performance may be affected. Many of the reads were not assigned to cell-associated barcodes. This could be caused by high levels of ambient RNA or by a significant population of cells with a low RNA content, which the algorithm did not call as cells. The latter case can be addressed by inspecting the data to determine the appropriate cell count and using --force-cells.',
-            'test': '< 0.70',
-        },
-    },
     # Aggregation-specific alerts
     {
         'name': 'lowest_frac_reads_kept',
