@@ -1,4 +1,5 @@
-# Building Cell Ranger
+# Building Cell Ranger 2.0.2
+
 ## Build dependencies
 - Python 2.7
 - rust 1.15.1
