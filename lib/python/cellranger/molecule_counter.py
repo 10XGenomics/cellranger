@@ -472,13 +472,13 @@ class MoleculeCounter:
         """ Sum 'total_reads' across all gem groups """
         raw_reads = 0
         for _, gg_metrics in self.get_metric(GEM_GROUPS_METRIC).iteritems():
-            raw_reads += gg_metrics[GG_TOTAL_READS_METRIC]
+            raw_reads += gg_metrics.get(GG_TOTAL_READS_METRIC, 0)
         return raw_reads
 
     def get_total_conf_mapped_filtered_bc_reads(self):
         conf_reads = 0
         for _, gg_metrics in self.get_metric(GEM_GROUPS_METRIC).iteritems():
-            conf_reads += gg_metrics[GG_CONF_MAPPED_FILTERED_BC_READS_METRIC]
+            conf_reads += gg_metrics.get(GG_CONF_MAPPED_FILTERED_BC_READS_METRIC, 0)
         return conf_reads
 
     @staticmethod
