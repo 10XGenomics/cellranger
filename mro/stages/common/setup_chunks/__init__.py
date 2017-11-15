@@ -15,11 +15,14 @@ import tenkit.preflight as tk_preflight
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
+import cellranger.constants as cr_constants
+import cellranger.utils as cr_utils
 
 __MRO__ = '''
 stage SETUP_CHUNKS(
     in  string sample_id,
     in  map[]  sample_def,
+    in  string[] library_type_filter,
     in  string chemistry_name,
     in  map    custom_chemistry_def,
     out map[]  chunks,
@@ -117,6 +120,13 @@ def main(args, outs):
     if not ok:
         martian.exit(msg)
 
+    filtered_sample_def = cr_utils.filter_sample_def(args.sample_def, args.library_type_filter)
+
+    ##########
+    # Important, take care of the edge case where filtered sample def is empty.
+    # May involve passing a "no samples, do nothing" flag to all stages in this part (GEX)_ of the pipeline
+    ##########
+
     if args.chemistry_name is None:
         martian.exit("The chemistry was unable to be automatically determined. This can happen if not enough reads originate from the given reference. Please verify your choice of reference or explicitly specify the chemistry via the --chemistry argument.")
 
@@ -128,9 +138,8 @@ def main(args, outs):
     ## Build chunk dicts
     outs.chunks = []
 
-    for sample_def in args.sample_def:
+    for sample_def in filtered_sample_def:
         fq_spec = cr_fastq.FastqSpec.from_sample_def(sample_def)
-
         gem_group = sample_def['gem_group']
         library_id = sample_def.get('library_id', 'MissingLibrary')
 
@@ -159,7 +168,6 @@ def main(args, outs):
     ## Output chemistry and barcode whitelist
     outs.chemistry_def = outs.chunks[0]['chemistry']
     outs.barcode_whitelist = cr_chem.get_barcode_whitelist(outs.chemistry_def)
-
 
 def check_fastq(fastq):
     # Check if fastq is readable

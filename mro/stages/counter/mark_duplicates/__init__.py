@@ -10,6 +10,7 @@ import tenkit.seq as tk_seq
 import cellranger.constants as cr_constants
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.stats as cr_stats
 
 __MRO__ = '''
 stage MARK_DUPLICATES(
@@ -40,37 +41,6 @@ def split(args):
         for chunk in chunks:
             chunk['__mem_gb'] = args.mem_gb
     return {'chunks': chunks}
-
-def correct_umi(seq, counts):
-    corrected_seq = seq
-    count = counts.get(seq, 0)
-
-    a = array.array('c', seq)
-    for pos in xrange(len(a)):
-        existing = a[pos]
-        for c in tk_seq.NUCS:
-            if c == existing:
-                continue
-            a[pos] = c
-            test_str = a.tostring()
-
-            value = counts.get(test_str, 0)
-            if value > count or (value == count and corrected_seq < test_str):
-                corrected_seq = test_str
-                count = value
-
-        a[pos] = existing
-    return corrected_seq
-
-def correct_umis(dupe_keys):
-    corrected_dupe_keys = collections.defaultdict(dict)
-    for dupe_key, umis in dupe_keys.iteritems():
-        for umi in umis:
-            new_umi = correct_umi(umi, umis)
-            if not (new_umi == umi):
-                corrected_dupe_keys[dupe_key][umi] = new_umi
-
-    return corrected_dupe_keys
 
 def mark_dupes(bc, gene_id, reads, args, dupe_type, dupe_func, reporter,
                corrected_dupe_keys=None, out_bam=None):
@@ -138,7 +108,7 @@ def main(args, outs):
                                          reporter)
 
         # Record UMI corrections
-        umi_corrections = correct_umis(dupe_key_umi_counts)
+        umi_corrections = cr_stats.correct_umis(dupe_key_umi_counts)
 
         # Mark duplicates for cDNA PCR duplicates with corrected UMIs
         mark_dupes(bc, gene_id, reads, args,

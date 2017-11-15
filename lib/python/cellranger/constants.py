@@ -425,3 +425,6 @@ TEST_FILE_OUT_DIR = os.path.join(CODE_PATH, 'test_files', 'outputs')
 
 BARCODE_CSV_COLNAME = 'Barcode'
 GENE_ID_CSV_COLNAME = 'Gene'
+
+# Constants for metasamples
+DEFAULT_LIBRARY_TYPE = 'Gene Expression'

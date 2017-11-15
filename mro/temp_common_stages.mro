@@ -7,7 +7,7 @@ filetype fastq;
 filetype json;
 filetype pickle;
 
-stage CELLRANGER_PREFLIGHT(
+stage temp_CELLRANGER_PREFLIGHT(
     in  map[]    sample_def,
     in  string   chemistry_name,
     in  map      custom_chemistry_def,
@@ -21,7 +21,7 @@ stage CELLRANGER_PREFLIGHT(
     src py       "stages/common/cellranger_preflight",
 )
 
-stage CELLRANGER_PREFLIGHT_LOCAL(
+stage temp_CELLRANGER_PREFLIGHT_LOCAL(
     in  map[]    sample_def,
     in  string   chemistry_name,
     in  map      custom_chemistry_def,
@@ -35,7 +35,7 @@ stage CELLRANGER_PREFLIGHT_LOCAL(
     src py       "stages/common/cellranger_preflight",
 )
 
-stage SETUP_CHUNKS(
+stage temp_SETUP_CHUNKS(
     in  string   sample_id,
     in  map[]    sample_def,
     in  string[] library_type_filter,
@@ -47,7 +47,7 @@ stage SETUP_CHUNKS(
     src py       "stages/common/setup_chunks",
 )
 
-stage CHUNK_READS(
+stage temp_CHUNK_READS(
     in  map[] chunks,
     in  int   reads_per_file,
     out map[] out_chunks,
@@ -56,7 +56,7 @@ stage CHUNK_READS(
     in  map   read_chunks,
 )
 
-stage EXTRACT_READS(
+stage temp_EXTRACT_READS(
     in  map[]    chunks,
     in  map      chemistry_def,
     in  string   barcode_whitelist,

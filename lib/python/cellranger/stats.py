@@ -9,6 +9,7 @@ import cellranger.constants as cr_constants
 import tenkit.constants as tk_constants
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
+import collections
 
 # Inverse Simpson Index, or the effective diversity of power 2
 def effective_diversity(counts):
@@ -223,3 +224,36 @@ def merge_filtered_metrics(filtered_metrics):
         np.sqrt(result['filtered_bcs_var']), fm['filtered_bcs'])
 
     return result
+
+def correct_umis(dupe_keys):
+    corrected_dupe_keys = collections.defaultdict(dict)
+    for dupe_key, umis in dupe_keys.iteritems():
+        for umi in umis:
+            new_umi = correct_umi(umi, umis)
+            if not (new_umi == umi):
+                corrected_dupe_keys[dupe_key][umi] = new_umi
+
+    return corrected_dupe_keys
+
+def correct_umi(seq, counts):
+    corrected_seq = seq
+    count = counts.get(seq, 0)
+
+    a = array.array('c', seq)
+    for pos in xrange(len(a)):
+        existing = a[pos]
+        for c in tk_seq.NUCS:
+            if c == existing:
+                continue
+            a[pos] = c
+            test_str = a.tostring()
+
+            value = counts.get(test_str, 0)
+            if value > count or (value == count and corrected_seq < test_str):
+                corrected_seq = test_str
+                count = value
+
+        a[pos] = existing
+    return corrected_seq
+
+

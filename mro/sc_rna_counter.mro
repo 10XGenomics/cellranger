@@ -29,6 +29,7 @@ pipeline SC_RNA_COUNTER(
     in  int      mark_dupes_mem_gb,
     in  bool     retain_fastqs,
     in  string[] allowed_chems,
+    in  string[] library_type_filter,
     out bam      possorted_genome_bam,
     out bam.bai  possorted_genome_bam_index,
     out json     metrics_summary_json,
@@ -90,6 +91,7 @@ pipeline SC_RNA_COUNTER(
     call local volatile SETUP_CHUNKS(
         sample_id            = self.sample_id,
         sample_def           = self.sample_def,
+        library_type_filter  = self.library_type_filter,
         chemistry_name       = CHEMISTRY_DETECTOR.chemistry_type,
         custom_chemistry_def = self.custom_chemistry_def,
     )

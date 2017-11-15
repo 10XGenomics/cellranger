@@ -51,6 +51,9 @@ def check_sample_def(sample_def):
                 if not is_int(lane):
                     raise PreflightException("Lanes must be a comma-separated list of numbers.")
 
+        if sample_def.get('library_type') == '':
+            raise PreflightException("Library type may not be an empty string.")
+
         check(tk_preflight.check_sample_indices(sample_def))
 
 def check_refdata(reference_path):

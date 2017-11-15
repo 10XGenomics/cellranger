@@ -632,7 +632,7 @@ def get_thread_request_from_mem_gb(mem_gb):
 def get_mem_gb_request_from_genome_fasta(reference_path):
     in_fasta_fn = get_reference_genome_fasta(reference_path)
     genome_size_gb = float(os.path.getsize(in_fasta_fn)) / 1e9
-    return max(cr_constants.MIN_MEM_GB, cr_constants.BAM_CHUNK_SIZE_GB + max(1, 2*int(genome_size_gb)))
+    return np.ceil(max(cr_constants.MIN_MEM_GB, cr_constants.BAM_CHUNK_SIZE_GB + max(1, 2*int(genome_size_gb))))
 
 def get_mem_gb_request_from_barcode_whitelist(barcode_whitelist_fn, gem_groups=None, use_min=True, double=False):
     barcode_whitelist = load_barcode_whitelist(barcode_whitelist_fn)
@@ -654,9 +654,9 @@ def get_mem_gb_request_from_barcode_whitelist(barcode_whitelist_fn, gem_groups=N
         num_bcs = len(barcode_whitelist)
 
     if double:
-        return max(min_mem_gb, 2 * num_bcs / cr_constants.NUM_BARCODES_PER_MEM_GB)
+        return np.ceil(max(min_mem_gb, 2 * num_bcs / cr_constants.NUM_BARCODES_PER_MEM_GB))
     else:
-        return max(min_mem_gb,     num_bcs / cr_constants.NUM_BARCODES_PER_MEM_GB)
+        return np.ceil(max(min_mem_gb,     num_bcs / cr_constants.NUM_BARCODES_PER_MEM_GB))
 
 def update_require_unique_key(dest_dict, src_dict):
     """ Update a dict w/ another dict; raise exception on duplicate keys """
@@ -1219,6 +1219,22 @@ def merge_jsons_single_level(filenames):
                                                                                                           str(merged[key])))
     return merged
 
+def filter_sample_def(sample_def, library_type_list):
+    if library_type_list is None:
+        library_type_list = [cr_constants.DEFAULT_LIBRARY_TYPE]
+
+    filtered_sample_def = []
+
+    for this_sample_map in sample_def:
+        this_library_type = this_sample_map.get('library_type', cr_constants.DEFAULT_LIBRARY_TYPE)
+
+        if this_library_type is None:
+            this_library_type = cr_constants.DEFAULT_LIBRARY_TYPE
+
+        if this_library_type in library_type_list:
+            filtered_sample_def.append(this_sample_map)
+
+    return filtered_sample_def
 
 def splitexts(s):
     """ Like splitext, but handle concat'd extensions like .tar.gz.

@@ -4,6 +4,7 @@
 #
 import collections
 import cPickle
+import errno
 import h5py
 import itertools
 import numpy as np
@@ -12,6 +13,7 @@ import scipy.sparse as sp_sparse
 import sklearn.neighbors as sk_neighbors
 import subprocess
 import tables
+import time
 import tenkit.log_subprocess as tk_subproc
 import cellranger.analysis.io as cr_io
 import cellranger.analysis.clustering as cr_clustering
@@ -98,23 +100,40 @@ def run_louvain_weighted_clustering(bin_filename, weight_filename, louvain_out):
 def pipe_unweighted_edgelist_to_convert(matrix, bin_filename):
     """ Pipe an unweighted edgelist (COO sparse matrix) to Louvain's convert utility """
     devnull = open(os.devnull, 'w')
-
     proc = tk_subproc.Popen([LOUVAIN_CONVERT_BINPATH,
                            '-i', '-',
                            '-o', bin_filename,
-                         ], stdin=subprocess.PIPE, stdout=devnull, stderr=devnull)
+                         ], stdin=subprocess.PIPE)
+
+
+    # Check if the process terminated early
+    time.sleep(3)
+    retcode = proc.poll()
+    if retcode is not None:
+        proc.stdin.close()
+        proc.wait()
+        raise Exception("'convert' command terminated early with exit code %d" % proc.returncode)
 
     # Stream text triplets to 'convert'
     print 'Writing %d elements.' % len(matrix.row)
-    for ij in itertools.izip(matrix.row, matrix.col):
-        proc.stdin.write('%d\t%d\n' % ij)
 
-    proc.stdin.close()
+    try:
+        for ij in itertools.izip(matrix.row, matrix.col):
+            proc.stdin.write('%d\t%d\n' % ij)
+        proc.stdin.close()
+    except IOError as e:
+        if e.errno == errno.EPIPE:
+            proc.stdin.close()
+            proc.wait()
+            raise Exception("'convert' binary closed the pipe before we finished writing to it. It terminated with exit code %d" % proc.returncode)
+
     proc.wait()
-    devnull.close()
 
     if proc.returncode != 0:
         raise Exception("'convert' command failed with exit code %d" % proc.returncode)
+
+    if not os.path.exists(bin_filename):
+        raise Exception("'convert' failed to write the matrix file. Please see the standard error file (_stderr) to see if it emitted any errors.")
 
 def run_louvain_unweighted_clustering(bin_filename, louvain_out):
     """ Run Louvain clustering on an unweighted edge-list """

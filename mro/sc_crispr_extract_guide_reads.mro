@@ -1,0 +1,99 @@
+#
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+# This pipeline needs _basic_sc_rna_counter and _common_stages but those are not included because
+# martian cannot handle double imports
+#
+@include "temp_basic_sc_rna_counter.mro"
+## include "temp_common_stages.mro"
+
+filetype bam;
+
+pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
+    in  string   sample_id,
+    in  map[]    sample_def,
+    in  string[] library_type_filter,
+    in  string   chemistry_name,
+    in  map      custom_chemistry_def,
+    in  float    barcode_confidence_threshold,
+    in  int      umi_min_qual_threshold,
+    in  map      align,
+    in  int      align_threads,
+    in  path     reference_path,
+    in  map[]    primers,
+    in  int      recovered_cells,
+    in  int      force_cells,
+    in  float    subsample_rate,
+    in  int      initial_reads,
+    in  int      r1_length,
+    in  int      r2_length,
+    in  map      annotation_params,
+    in  string[] allowed_chems,
+    in  bool     retain_fastqs,
+    out bam      possorted_guide_bam,
+)
+{
+    call preflight temp_CELLRANGER_PREFLIGHT(
+        sample_def           = self.sample_def,
+        chemistry_name       = self.chemistry_name,
+        custom_chemistry_def = self.custom_chemistry_def,
+        reference_path       = self.reference_path,
+        check_executables    = true,
+        recovered_cells      = self.recovered_cells,
+        force_cells          = self.force_cells,
+        allowed_chems        = self.allowed_chems,
+        r1_length            = self.r1_length,
+        r2_length            = self.r2_length,
+    )
+
+    call local preflight temp_CELLRANGER_PREFLIGHT_LOCAL(
+        sample_def           = self.sample_def,
+        chemistry_name       = self.chemistry_name,
+        custom_chemistry_def = self.custom_chemistry_def,
+        reference_path       = self.reference_path,
+        check_executables    = false,
+        recovered_cells      = self.recovered_cells,
+        force_cells          = self.force_cells,
+        allowed_chems        = self.allowed_chems,
+        r1_length            = self.r1_length,
+        r2_length            = self.r2_length,
+    )
+
+    call local volatile temp_SETUP_CHUNKS(
+        sample_id            = self.sample_id,
+        sample_def           = self.sample_def,
+        library_type_filter  = self.library_type_filter,
+        chemistry_name       = self.chemistry_name,
+        custom_chemistry_def = self.custom_chemistry_def,
+    )
+
+    call temp_BASIC_SC_RNA_COUNTER(
+        sample_id                    = self.sample_id,
+        chemistry_def                = temp_SETUP_CHUNKS.chemistry_def,
+        barcode_whitelist            = temp_SETUP_CHUNKS.barcode_whitelist,
+        barcode_confidence_threshold = self.barcode_confidence_threshold,
+        umi_min_qual_threshold       = self.umi_min_qual_threshold,
+        align                        = self.align,
+        align_threads                = self.align_threads,
+        reference_path               = self.reference_path,
+        recovered_cells              = self.recovered_cells,
+        force_cells                  = self.force_cells,
+        cell_barcodes                = null,
+        correct_barcodes             = true,
+        rescue_multimappers          = true,
+        skip_metrics                 = false,
+        annotation_params            = self.annotation_params,
+        mark_dupes_mem_gb            = null,
+        retain_fastqs                = self.retain_fastqs,
+        chunks                       = temp_SETUP_CHUNKS.chunks,
+        subsample_rate               = self.subsample_rate,
+        initial_reads                = self.initial_reads,
+        primers                      = self.primers,
+        r1_length                    = self.r1_length,
+        r2_length                    = self.r2_length,
+    )
+
+    return (
+        possorted_guide_bam = temp_BASIC_SC_RNA_COUNTER.possorted_genome_bam,
+    )
+}
