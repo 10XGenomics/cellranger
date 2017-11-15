@@ -1,11 +1,9 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
-# This pipeline needs _basic_sc_rna_counter and _common_stages but those are not included because
-# martian cannot handle double imports
 #
-@include "temp_basic_sc_rna_counter.mro"
-## include "temp_common_stages.mro"
+@include "_basic_sc_rna_counter.mro"
+@include "_common_stages.mro"
 
 filetype bam;
 
@@ -33,7 +31,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
     out bam      possorted_guide_bam,
 )
 {
-    call preflight temp_CELLRANGER_PREFLIGHT(
+    call preflight CELLRANGER_PREFLIGHT(
         sample_def           = self.sample_def,
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
@@ -46,7 +44,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         r2_length            = self.r2_length,
     )
 
-    call local preflight temp_CELLRANGER_PREFLIGHT_LOCAL(
+    call local preflight CELLRANGER_PREFLIGHT_LOCAL(
         sample_def           = self.sample_def,
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
@@ -59,7 +57,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         r2_length            = self.r2_length,
     )
 
-    call local volatile temp_SETUP_CHUNKS(
+    call local volatile SETUP_CHUNKS(
         sample_id            = self.sample_id,
         sample_def           = self.sample_def,
         library_type_filter  = self.library_type_filter,
@@ -67,10 +65,10 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         custom_chemistry_def = self.custom_chemistry_def,
     )
 
-    call temp_BASIC_SC_RNA_COUNTER(
+    call _BASIC_SC_RNA_COUNTER(
         sample_id                    = self.sample_id,
-        chemistry_def                = temp_SETUP_CHUNKS.chemistry_def,
-        barcode_whitelist            = temp_SETUP_CHUNKS.barcode_whitelist,
+        chemistry_def                = SETUP_CHUNKS.chemistry_def,
+        barcode_whitelist            = SETUP_CHUNKS.barcode_whitelist,
         barcode_confidence_threshold = self.barcode_confidence_threshold,
         umi_min_qual_threshold       = self.umi_min_qual_threshold,
         align                        = self.align,
@@ -85,7 +83,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         annotation_params            = self.annotation_params,
         mark_dupes_mem_gb            = null,
         retain_fastqs                = self.retain_fastqs,
-        chunks                       = temp_SETUP_CHUNKS.chunks,
+        chunks                       = SETUP_CHUNKS.chunks,
         subsample_rate               = self.subsample_rate,
         initial_reads                = self.initial_reads,
         primers                      = self.primers,
@@ -94,6 +92,6 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
     )
 
     return (
-        possorted_guide_bam = temp_BASIC_SC_RNA_COUNTER.possorted_genome_bam,
+        possorted_guide_bam = _BASIC_SC_RNA_COUNTER.possorted_genome_bam,
     )
 }
