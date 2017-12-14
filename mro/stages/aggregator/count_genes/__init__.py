@@ -42,12 +42,10 @@ def split(args):
         for chunk_start, chunk_len in mol_counter.get_chunks(cr_constants.NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK):
             mol_mem_gb = cr_mol_counter.MoleculeCounter.estimate_mem_gb(chunk_len)
             tot_mem_gb = 4 * (matrix_mem_gb + mol_mem_gb)
-            threads = max(1, int(round(tot_mem_gb / 8.0)))
             chunks.append({
                 'chunk_start': str(chunk_start),
                 'chunk_len': str(chunk_len),
                 '__mem_gb': tot_mem_gb,
-                '__threads': threads,
             })
     join_mem_gb = max(matrix_mem_gb, cr_constants.MIN_MEM_GB)
     join = {'__mem_gb': join_mem_gb}

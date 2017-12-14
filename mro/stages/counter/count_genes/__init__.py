@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
+import math
 import tenkit.bam as tk_bam
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
@@ -58,7 +59,11 @@ def split(args):
     # Multiply by 2 to hold the current reporter + accumulating reporter in the merge
     bc_diversity_mem_gb = (2 * max_bc_diversity_entries * cr_constants.BYTES_PER_STR_INT_DICT_ENTRY * (len(genomes) + 1) * len(cr_constants.READ_TYPES))/1e9
     umi_diversity_mem_gb = (2 * max_umi_diversity_entries * cr_constants.BYTES_PER_STR_INT_DICT_ENTRY * (len(genomes) + 1) * len(cr_constants.READ_TYPES))/1e9
-    join_mem_gb = min(cr_constants.COUNT_GENES_MAX_MEM_GB, max(cr_constants.MIN_MEM_GB, int(join_mem_gb + bc_diversity_mem_gb + umi_diversity_mem_gb)))
+    join_mem_gb = min(cr_constants.COUNT_GENES_MAX_MEM_GB,
+                      max(cr_constants.MIN_MEM_GB,
+                          int(math.ceil(join_mem_gb +
+                                        bc_diversity_mem_gb +
+                                        umi_diversity_mem_gb))))
     join = {
         '__mem_gb': join_mem_gb,
     }

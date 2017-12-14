@@ -38,7 +38,10 @@ def split(args):
     chunks = [{
         '__mem_gb': matrix_mem_gb,
     }]
-    return {'chunks': chunks}
+    return {
+        'chunks': chunks,
+        'join': {'__mem_gb': cr_constants.MIN_MEM_GB}
+    }
 
 def main(args, outs):
     genomes = cr_matrix.GeneBCMatrices.load_genomes_from_h5(args.filtered_matrices)

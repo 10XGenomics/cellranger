@@ -6,6 +6,7 @@ import json
 import os
 import martian
 import tenkit.log_subprocess as tk_subproc
+import cellranger.constants as cr_constants
 
 __MRO__ = """
 stage CHUNK_READS(
@@ -25,9 +26,12 @@ def split(args):
         chunk_def = {}
         chunk_def['read_chunk'] = chunk
         chunk_def['__threads'] = 4
+        chunk_def['__mem_gb'] = cr_constants.MIN_MEM_GB
         chunks.append(chunk_def)
 
-    join = {}
+    join = {
+        '__mem_gb': cr_constants.MIN_MEM_GB,
+    }
     return {'chunks': chunks, 'join': join}
 
 

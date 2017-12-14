@@ -74,7 +74,12 @@ def split(args):
                 'chunk_len': str(chunk_len),
                 '__mem_gb': cr_mol_counter.MoleculeCounter.estimate_mem_gb(chunk_len),
             })
-    return {'chunks': chunks}
+    return {
+        'chunks': chunks,
+        'join': {
+            '__mem_gb': cr_constants.MIN_MEM_GB
+        }
+    }
 
 def main(args, outs):
     np.random.seed(0)

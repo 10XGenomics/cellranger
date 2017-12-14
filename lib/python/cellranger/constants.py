@@ -304,7 +304,7 @@ on clusters without memory reservations. As of 3/15/2017, it's used by:
 '''
 MEM_GB_PER_THREAD = 8
 
-MIN_MEM_GB = 6
+MIN_MEM_GB = 3
 MIN_MEM_GB_NOWHITELIST = 64
 COUNT_GENES_MAX_MEM_GB = 64
 BYTES_PER_STR_INT_DICT_ENTRY = 180 # Empirical testing w/ str:int dicts and pympl.asizeof; len(k) = 10,14; *1.25 safety
