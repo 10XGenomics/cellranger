@@ -349,6 +349,7 @@ def main(args, outs):
     if chemistry_name in cr_chem.AUTO_CHEMISTRY_NAMES:
         # Map (sample_def_idx, fastq_group_name) => chemistry_name
         group_chem = {}
+        group_exception = {}
 
         for sd_idx, sd in enumerate(args.sample_def):
             fq_spec = cr_fastq.FastqSpec.from_sample_def(sd)
@@ -362,20 +363,34 @@ def main(args, outs):
                     # It's okay for a single sample index/name to be absent
                     continue
 
+                except cr_chem.NoChemistryFoundException as e:
+                    # It's okay for a single sample index to be unclassifiable
+                    group_chem[(sd_idx, group)] = None
+                    group_exception[(sd_idx, group)] = e
+                    continue
+
         if len(group_chem) == 0:
+            # Could not find any FASTQs
             martian.exit(cr_constants.NO_INPUT_FASTQS_MESSAGE)
 
         martian.log_info("Detected chemistries:")
         for (i, g) in group_chem.iteritems():
             martian.log_info("%s: %s" % (str(i), str(g)))
 
+        found_chemistries = filter(lambda x: x is not None, group_chem.itervalues())
+
+        # Check for zero chemistry types
+        if len(found_chemistries) == 0:
+            s = ', '.join("Sample def %d/%s: %s" % (i,g,e) for ((i,g),e) in sorted(group_exception.iteritems()))
+            martian.exit("Unable to auto-detect chemistry. %s" % s)
+
         # Check for multiple chemistry types
-        if len(set(group_chem.itervalues())) > 1:
+        if len(set(found_chemistries)) > 1:
             c = ', '.join(map(str, sorted(list(set(group_chem.itervalues())))))
             s = ', '.join("Sample def %d/%s: %s" % (i,g,v) for ((i,g),v) in sorted(group_chem.iteritems()))
             martian.exit("Detected conflicting chemistry types (%s). Please run these data separately. %s" % (c, s))
 
-        chemistry_name = group_chem.values()[0]
+        chemistry_name = found_chemistries[0]
 
         report += "\nThe chemistry version or sequencing configuration is likely %s" % cr_chem.get_chemistry_description_from_name(chemistry_name)
 

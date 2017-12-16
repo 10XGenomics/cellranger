@@ -17,6 +17,9 @@ import cellranger.utils as cr_utils
 class NoInputFastqsException(Exception):
     pass
 
+class NoChemistryFoundException(Exception):
+    pass
+
 # Single Cell 3' chemistries
 CHEMISTRY_SC3P_V1 = {
     'name': 'SC3Pv1',
@@ -552,7 +555,7 @@ def infer_sc3p_chemistry(fq_spec):
     if best_frac >= cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST:
         return best_chem
     else:
-        raise ValueError('Could not auto-detect Single Cell 3\' chemistry. Fraction of barcodes on whitelist was at best %0.2f%%, while we expected at least %0.2f%% for one of the chemistries.' %
+        raise NoChemistryFoundException('Fraction of barcodes on whitelist was at best %0.2f%%, while we expected at least %0.2f%% for one of the chemistries.' %
                 (100.0*best_frac, 100.0*cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST))
 
 
