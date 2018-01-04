@@ -121,5 +121,7 @@ def main(args, outs):
 
     in_bam.close()
 
+    reporter.store_reference_metadata(args.reference_path, cr_constants.REFERENCE_TYPE, cr_constants.REFERENCE_METRIC_PREFIX)
+
     matrices.save_h5(outs.matrices_h5)
     reporter.save(outs.chunked_reporter)

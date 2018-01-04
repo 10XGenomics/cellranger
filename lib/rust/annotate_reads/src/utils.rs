@@ -172,6 +172,27 @@ pub fn get_processed_bc(corrected_seq: &str, gem_group: &u8) -> String {
     format!("{}-{}", corrected_seq, gem_group)
 }
 
+/// Find intersection of two sorted, deduped vectors
+pub fn intersect_vecs<T: PartialOrd + Eq + Clone>(x: &Vec<T>, y: &Vec<T>)
+                                                  -> Vec<T> {
+    let mut i = 0;
+    let mut j = 0;
+    let mut result = Vec::new();
+
+    while i < x.len() && j < y.len() {
+        if x[i] < y[j] {
+            i += 1;
+        } else if y[j] < x[i] {
+            j += 1
+        } else {
+            result.push(x[i].clone());
+            i += 1;
+            j += 1;
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +225,11 @@ mod tests {
         assert_eq!(median(&vec![1,2]), 1);
         assert_eq!(median(&vec![2,2]), 2);
         assert_eq!(median(&vec![1,2,3]), 2);
+    }
+
+    #[test]
+    fn test_intersect() {
+        assert_eq!(intersect_vecs(&vec![0u64,1], &vec![2,3]), Vec::<u64>::new());
+        assert_eq!(intersect_vecs(&vec![0,2,4], &vec![1,2,5]), vec![2]);
     }
 }

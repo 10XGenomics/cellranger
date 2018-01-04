@@ -11,7 +11,8 @@ use std::hash::{Hash, SipHasher, Hasher};
 use std::fmt::Display;
 use std::io::Read;
 use std::fs::File;
-use std::path::{Path};
+use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
 use constants::NUCS;
 use lz4;
 
@@ -333,26 +334,26 @@ pub fn drop_read(subsample_rate: f64, name: &str) -> bool {
     }
 }
 
-pub fn find_file_maybe_compressed(prefix: &str) -> Option<String> {
-    if Path::new(prefix).exists() {
-        return Some(prefix.to_owned())
-    } else if (Path::new(&(prefix.clone().to_owned() + ".lz4"))).exists() {
-        return Some(prefix.to_owned() + ".lz4")
+pub fn find_file_maybe_compressed<P: AsRef<Path>>(prefix: P) -> Option<PathBuf> {
+    if prefix.as_ref().exists() {
+        return Some(PathBuf::from(prefix.as_ref()));
+    } else if (prefix.as_ref().with_extension("lz4")).exists() {
+        return Some(prefix.as_ref().with_extension("lz4"));
     }
     None
 
 }
 
-pub fn open_lz4(filename: &str) -> lz4::Decoder<File> {
+pub fn open_lz4<P: AsRef<Path>>(filename: P) -> lz4::Decoder<File> {
     let f = File::open(filename).expect("Failed to open file for reading");
     lz4::Decoder::new(f).expect("Failed to create lz4 decoder")
 }
 
-pub fn open_maybe_compressed(filename: &str) -> Box<Read> {
-    match filename.ends_with(".lz4") {
-        true => Box::new(open_lz4(filename)) as Box<Read>,
-        false => Box::new(File::open(filename)
-                          .expect("Failed to open file for reading")) as Box<Read>,
+pub fn open_maybe_compressed<P: AsRef<Path>>(filename: P) -> Box<Read> {
+    match filename.as_ref().extension().and_then(OsStr::to_str) {
+        Some("lz4") => Box::new(open_lz4(filename)) as Box<Read>,
+        _ => Box::new(File::open(filename)
+                      .expect("Failed to open file for reading")) as Box<Read>,
     }
 }
 

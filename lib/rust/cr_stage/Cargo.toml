@@ -1,0 +1,27 @@
+[package]
+name = "cr_stage"
+version = "0.1.0"
+authors = ["Paul Ryvkin <paul.ryvkin@10xgenomics.com>"]
+
+[dependencies]
+itertools = "0.4"
+docopt = "*"
+time = "*"
+log = "*"
+env_logger = "*"
+num = "*"
+rand = "0.3"
+chrono = "*"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+bincode = "*"
+byteorder = "*"
+rust-htslib = { git = "https://github.com/10xGenomics/rust-htslib", branch="paul/chunked-records" }
+flate2 = "*"
+martian = { git = "https://github.com/martian-lang/martian-rust" }
+tenkit = { git = "ssh://git@github.com/10XDev/rust-utils-10x", branch="paul/newer-htslib" }
+bitflags = ">1.0.0"
+
+[profile.release]
+#debug = true

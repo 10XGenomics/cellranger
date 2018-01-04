@@ -18,6 +18,7 @@ serde_json = "1.0"
 bincode = "*"
 rust-htslib = { git = "https://github.com/10xGenomics/rust-htslib", branch = "paul/set-qname" }
 flate2 = "*"
+bitflags = "*"
 
 [profile.release]
 #debug = true

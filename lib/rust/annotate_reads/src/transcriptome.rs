@@ -7,7 +7,6 @@ use std::path::Path;
 use std::str;
 use std::cmp;
 use std::collections::{HashSet, BTreeMap};
-
 use utils;
 
 use reference::{TranscriptIndex, Gene};
@@ -19,6 +18,22 @@ const GENE_NAME_TAG: &'static [u8]   = b"GN";
 const REGION_TAG: &'static [u8]      = b"RE";
 const MULTIMAPPER_TAG: &'static [u8] = b"MM";
 const ANTISENSE_TAG: &'static [u8]   = b"AN"; // equivalent to TX, but for antisense alignments
+const EXTRA_FLAGS_TAG: &'static [u8] = b"xf";
+// These are set to the original single-read annotations
+// if a read-pair had gene disagreement.
+const UNPAIRED_GENE_ID_TAG: &'static [u8] = b"gX";
+const UNPAIRED_GENE_NAME_TAG: &'static [u8] = b"gN";
+
+bitflags! {
+    #[derive(Default)]
+    pub struct ExtraFlags: u32 {
+        // Confidently mapped to transcriptome
+        const CONF_MAPPED = 1u32;
+        const LOW_SUPPORT_UMI = 2u32;
+        // Mates mapped to incompatible sets of genes
+        const GENE_DISCORDANT = 4u32;
+    }
+}
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct AnnotationData {
@@ -27,6 +42,43 @@ pub struct AnnotationData {
     pub genes:          Vec<Gene>,
     pub region:         AnnotationRegion,
     pub rescued:        bool,
+}
+
+#[derive(Eq, PartialEq, Debug)]
+pub struct PairAnnotationData {
+    pub genes: Vec<Gene>,
+}
+
+fn format_gx_gn_tags(genes: &Vec<Gene>) -> Option<(String, String)> {
+    if genes.len() > 0 {
+        let mut gx = Vec::new();
+        let mut gn = Vec::new();
+        for gene in genes {
+            gx.push(gene.id.clone());
+            gn.push(gene.name.clone());
+        }
+        Some((gx.join(";"), gn.join(";")))
+    } else {
+        None
+    }
+}
+
+impl PairAnnotationData {
+    /// Annotate a pair of alignments
+    /// Take the intersection of the non-empty gene sets of the mates
+    pub fn from_pair(anno1: &AnnotationData, anno2: &AnnotationData)
+                     -> PairAnnotationData {
+        let genes = match (anno1.genes.len() > 0, anno2.genes.len() > 0) {
+            (true, false) => anno1.genes.clone(),
+            (false, true) => anno2.genes.clone(),
+            _ => utils::intersect_vecs(&anno1.genes, &anno2.genes),
+        };
+        PairAnnotationData { genes: genes }
+    }
+
+    pub fn make_gx_gn_tags(&self) -> Option<(String, String)> {
+        format_gx_gn_tags(&self.genes)
+    }
 }
 
 impl AnnotationData {
@@ -65,17 +117,7 @@ impl AnnotationData {
     }
 
     fn make_gx_gn_tags(&self) -> Option<(String, String)> {
-        if self.genes.len() > 0 {
-            let mut gx = Vec::new();
-            let mut gn = Vec::new();
-            for gene in &self.genes {
-                gx.push(gene.id.clone());
-                gn.push(gene.name.clone());
-            }
-            Some((gx.join(";"), gn.join(";")))
-        } else {
-            None
-        }
+        format_gx_gn_tags(&self.genes)
     }
 
     fn make_mm_tag(&self) -> Option<i32> {
@@ -86,16 +128,39 @@ impl AnnotationData {
         }
     }
 
-    /// Add tags to a BAM record
-    pub fn attach_tags(&mut self, record: &mut Record) {
-        self.genes.sort();
+    /// Add tags to a BAM record.
+    /// Set is_conf_mapped to true if the qname is confidently mapped to
+    /// the transcriptome.
+    pub fn attach_tags(&mut self, record: &mut Record, is_conf_mapped: bool,
+                       is_gene_discordant: bool, pair_anno: Option<&PairAnnotationData>) {
         if let Some(tag) = self.make_tx_tag() {
             record.push_aux(TRANSCRIPT_TAG, &Aux::String(tag.as_bytes()));
         }
-        if let Some((tag_gx, tag_gn)) = self.make_gx_gn_tags() {
-            record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
-            record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+
+        if let Some(pair) = pair_anno {
+            // Write the pair's annotation
+            if let Some((tag_gx, tag_gn)) = pair.make_gx_gn_tags() {
+                record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
+                record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+            }
+
+            if self.genes != pair.genes {
+                // This record disagrees with the pair, so store its single-end
+                // gene annotations separately.
+                if let Some((tag_gx, tag_gn)) = self.make_gx_gn_tags() {
+                    record.push_aux(UNPAIRED_GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
+                    record.push_aux(UNPAIRED_GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+                }
+            }
+
+        } else {
+            // Unpaired case
+            if let Some((tag_gx, tag_gn)) = self.make_gx_gn_tags() {
+                record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
+                record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+            }
         }
+
         if let Some(tag) = self.make_re_tag() {
             record.push_aux(REGION_TAG, &Aux::Char(tag.as_bytes()[0]));
         }
@@ -104,6 +169,18 @@ impl AnnotationData {
         }
         if let Some(tag) = self.make_an_tag() {
             record.push_aux(ANTISENSE_TAG, &Aux::String(tag.as_bytes()));
+        }
+
+        // Note: only attach these flags to primary alignment
+        if !record.is_secondary() {
+            let mut flags: ExtraFlags = Default::default();
+            if is_conf_mapped {
+                flags |= CONF_MAPPED;
+            }
+            if is_gene_discordant {
+                flags |= GENE_DISCORDANT;
+            }
+            record.push_aux(EXTRA_FLAGS_TAG, &Aux::Integer(flags.bits() as i32));
         }
     }
 }
@@ -330,7 +407,10 @@ fn align_to_transcriptome(read: &Record, chrom_starts: &[i64], transcript_info: 
     }
 
     annotation_data.region = if any_exonic { AnnotationRegion::Exonic } else if any_intronic { AnnotationRegion::Intronic } else { AnnotationRegion::Intergenic };
+
     annotation_data.genes = seen_genes.into_iter().collect::<Vec<Gene>>();
+    // Sorting this makes life easier later.
+    annotation_data.genes.sort_unstable();
 
     return annotation_data
 }
@@ -678,12 +758,21 @@ impl TranscriptAnnotator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use rust_htslib::bam::record::CigarString;
 
     struct TranscriptomeTest {
         chrom_starts:       Vec<i64>,
         transcript_info:    Vec<StarTranscript>,
         exon_info:          Vec<StarExon>,
         transcript_index:   TranscriptIndex,
+    }
+
+    pub fn set_forward(record: &mut Record) {
+        // NOTE: rust_htslib doesn't have a method for this either
+        if record.is_reverse() {
+            record.inner_mut().core.flag -= 16u16;
+        }
     }
 
     impl TranscriptomeTest {
@@ -703,13 +792,13 @@ mod tests {
 
             NOTE: that STAR uses closed intervals (so transcript / exon ends are inclusive)
             */
-            let mut transcript_info = vec![
+            let transcript_info = vec![
                 StarTranscript { id: "tx0".into(), start: 0, end: 9, max_end: 9, strand: 1, num_exons: 1, break_idx: 0 },
                 StarTranscript { id: "tx1".into(), start: 0, end: 49, max_end: 49, strand: 1, num_exons: 2, break_idx: 1 },
                 StarTranscript { id: "tx2".into(), start: 25, end: 44, max_end: 49, strand: 2, num_exons: 2, break_idx: 3 },
             ];
 
-            let mut exon_info = vec![
+            let exon_info = vec![
                 // tx0
                 StarExon { start: 0, end: 9, cum_len: 0 },
                 // tx1
@@ -720,16 +809,16 @@ mod tests {
                 StarExon { start: 10, end: 19, cum_len: 5 },
             ];
 
-            let mut chrom_starts = vec![0];
+            let chrom_starts = vec![0];
 
             let mut transcript_genes = HashMap::new();
             transcript_genes.insert("tx0".into(), Gene { id: "gx0".into(), name: "gene0".into() });
             transcript_genes.insert("tx1".into(), Gene { id: "gx1".into(), name: "gene1".into() });
             transcript_genes.insert("tx2".into(), Gene { id: "gx2".into(), name: "gene2".into() });
 
-            let mut transcript_lengths = HashMap::new(); // doesn't need to be populated
+            let transcript_lengths = HashMap::new(); // doesn't need to be populated
 
-            let mut transcript_index = TranscriptIndex {
+            let transcript_index = TranscriptIndex {
                 transcript_genes: transcript_genes,
                 transcript_lengths: transcript_lengths,
             };
@@ -846,14 +935,14 @@ mod tests {
         params.chemistry_strandedness = Strandedness::Mixed;
         read.set_reverse();
         txome.check_annotation(&read, &params, 2, 0, AnnotationRegion::Exonic);
-        utils::set_forward(&mut read);
+        set_forward(&mut read);
         txome.check_annotation(&read, &params, 2, 0, AnnotationRegion::Exonic);
     }
 
     #[test]
     fn test_transcriptome_splice() {
         let txome = TranscriptomeTest::new();
-        let mut params = default_params();
+        let params = default_params();
 
         let mut read = Record::new();
         let qname = "SplicedRead".as_bytes();

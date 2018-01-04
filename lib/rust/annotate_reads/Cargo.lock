@@ -3,6 +3,7 @@ name = "annotate_reads"
 version = "0.1.0"
 dependencies = [
  "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bitflags 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "csv 1.0.0-beta.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "docopt 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "flate2 0.2.19 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -15,6 +15,7 @@ extern crate serde;
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate serde_json;
 extern crate flate2;
+#[macro_use] extern crate bitflags;
 
 mod barcodes;
 mod metrics;
@@ -40,7 +41,7 @@ use serde_json::Value;
 
 use itertools::Itertools;
 
-use transcriptome::{TranscriptAnnotator, AnnotationParams, Strandedness};
+use transcriptome::{TranscriptAnnotator, AnnotationParams, Strandedness, PairAnnotationData};
 use report::{Reporter, Metrics, ReadData, RecordData};
 use barcodes::{BarcodeUmiChecker, BarcodeUmiData};
 use metrics::MetricGroup;
@@ -171,6 +172,68 @@ fn annotate_reads_join(args: Args) {
     merged_metrics.write_barcodes_csv(&args.arg_out_bc_csv.unwrap());
 }
 
+/// Use transcriptome alignments to promote a single genome alignment
+/// when none are confidently mapped to the genome.
+/// Returns true if rescue took place.
+fn rescue_alignments(r1_data: &mut Vec<RecordData>, mut maybe_r2_data: Option<&mut Vec<RecordData>>) -> bool {
+    // Check if rescue is appropriate and determine which record to promote
+    let mut seen_genes = HashSet::new();
+    let mut promote_index: Option<usize> = None;
+
+    for i in 0..r1_data.len() {
+        let ref r1 = r1_data[i];
+        let ref r2 = maybe_r2_data.as_ref().map(|ref x| &x[i]);
+
+        // Abort if any of the records mapped uniquely to the genome
+        if r1.rec.mapq() >= report::HIGH_CONF_MAPQ ||
+            r2.map_or(0, |ref x| x.rec.mapq()) >= report::HIGH_CONF_MAPQ {
+            return false;
+        }
+
+        let genes = report::get_alignment_gene_intersection(&r1.anno, r2.map(|x| &x.anno));
+
+        // Track which record/record-pair we should promote;
+        // Take the first record/pair with 1 gene
+        if genes.len() == 1 {
+            promote_index = promote_index.or(Some(i));
+        }
+
+        // Track number of distinct genes we're aligned to
+        seen_genes.extend(genes.into_iter());
+    }
+    // There are >1 candidate genes to align to
+    // or there are no candidate genes to align to.
+    if seen_genes.len() > 1 || promote_index.is_none() {
+        return false;
+    }
+
+    // Promote a single alignment
+    for i in 0..r1_data.len() {
+        let ref mut r1 = r1_data[i];
+
+        if promote_index.unwrap() == i {
+            // Promote one alignment
+            r1.anno.rescued = true;
+            r1.rec.set_mapq(report::HIGH_CONF_MAPQ);
+            utils::set_primary(&mut r1.rec);
+            if let Some(ref mut r2_data) = maybe_r2_data.as_mut() {
+                r2_data[i].anno.rescued = true;
+                r2_data[i].rec.set_mapq(report::HIGH_CONF_MAPQ);
+                utils::set_primary(&mut r2_data[i].rec);
+            }
+        } else {
+            // Demote the rest
+            r1.rec.set_mapq(0);
+            r1.rec.set_secondary();
+            if let Some(ref mut r2_data) = maybe_r2_data.as_mut() {
+                r2_data[i].rec.set_mapq(0);
+                r2_data[i].rec.set_secondary();
+            }
+        }
+    }
+    true
+}
+
 fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut Reporter,
                  annotator: &TranscriptAnnotator, bc_umi_checker: &BarcodeUmiChecker, out_bam: &mut bam::Writer,
                  gem_group: &u8) {
@@ -181,22 +244,9 @@ fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut R
     let mut r1_data = Vec::new();
     let mut r2_data = Vec::new();
 
-    let mut seen_genes = HashSet::new();
-    let mut seen_primary = false;
-    let mut do_rescue = false;
-
+    // Annotate individual alignments
     for genome_alignment in genome_alignments {
-        let mut anno = annotator.annotate_genomic_alignment(&genome_alignment);
-        for gene in &anno.genes { seen_genes.insert(gene.to_owned()); }
-
-        if genome_alignment.mapq() == 255 {
-            seen_primary = true;
-        }
-        if (!seen_primary) && (!do_rescue) && (anno.genes.len() > 0) {
-            do_rescue = true;
-            anno.rescued = true;
-        }
-
+        let anno = annotator.annotate_genomic_alignment(&genome_alignment);
         let rec_data = RecordData { rec: genome_alignment, anno: anno };
         if !rec_data.rec.is_last_in_template() {
             r1_data.push(rec_data);
@@ -205,99 +255,109 @@ fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut R
         }
     }
 
-    do_rescue = (seen_genes.len() == 1) && !seen_primary && do_rescue;
+    // Annotate pairs
+    let pair_data = match r2_data.len() > 0 {
+        false => Vec::new(),
+        true => r1_data.iter().zip(r2_data.iter())
+            .map(|(r1, r2)| PairAnnotationData::from_pair(&r1.anno, &r2.anno)).collect(),
+    };
 
     let mut read_data = ReadData {
         r1_data:        r1_data,
         r2_data:        r2_data,
         bc_umi_data:    bc_umi_data,
-        num_genes:      seen_genes.len() as i32,
+        pair_data:      pair_data,
     };
 
-    if read_data.is_properly_paired() {
-        // interleave pairs + rescue together
-        for i in 0..read_data.r1_data.len() {
-            let ref mut r1_data = read_data.r1_data[i];
-            let ref mut r2_data = read_data.r2_data[i];
-            if do_rescue && (r1_data.anno.rescued || r2_data.anno.rescued) {
-                r1_data.anno.rescued = true;
-                r2_data.anno.rescued = true;
-            } else {
-                r1_data.anno.rescued = false;
-                r2_data.anno.rescued = false;
-            }
-            process_record(&stripped_qname, r1_data, &read_data.bc_umi_data, do_rescue, gem_group);
-            process_record(&stripped_qname, r2_data, &read_data.bc_umi_data, do_rescue, gem_group);
-            out_bam.write(&r1_data.rec).unwrap();
-            out_bam.write(&r2_data.rec).unwrap();
+    // STAR does not generate partially-mapped pairs. Double-check.
+    let is_paired = read_data.is_paired_end();
+    assert!(!is_paired || read_data.is_properly_paired());
+
+    rescue_alignments(&mut read_data.r1_data, match is_paired {
+        true => Some(&mut read_data.r2_data),
+        false => None,
+    });
+
+    let is_conf_mapped = read_data.is_conf_mapped_to_transcriptome();
+    let is_gene_discordant = read_data.is_gene_discordant();
+
+    // Interleave pairs of aligned records
+    for i in 0 .. read_data.r1_data.len() {
+        {
+            let pair_data = match read_data.is_paired_end() {
+                true => Some(&read_data.pair_data[i]),
+                false => None,
+            };
+
+            let ref mut r1 = read_data.r1_data[i];
+            process_record(&stripped_qname, r1, pair_data,
+                           &read_data.bc_umi_data, is_conf_mapped, is_gene_discordant, gem_group);
+            out_bam.write(&r1.rec).unwrap();
         }
-    } else {
-        for i in 0..read_data.r1_data.len() {
-            let ref mut r1_data = read_data.r1_data[i];
-            if !do_rescue { r1_data.anno.rescued = false; }
-            process_record(&stripped_qname, r1_data, &read_data.bc_umi_data, do_rescue, gem_group);
-            out_bam.write(&r1_data.rec).unwrap();
-        }
-        for i in 0..read_data.r2_data.len() {
-            let ref mut r2_data = read_data.r2_data[i];
-            if !do_rescue { r2_data.anno.rescued = false; }
-            process_record(&stripped_qname, r2_data, &read_data.bc_umi_data, do_rescue, gem_group);
-            out_bam.write(&r2_data.rec).unwrap();
+        if read_data.is_paired_end() {
+            let ref mut r2 = read_data.r2_data[i];
+            process_record(&stripped_qname, r2, Some(&read_data.pair_data[i]),
+                           &read_data.bc_umi_data, is_conf_mapped, is_gene_discordant, gem_group);
+            out_bam.write(&r2.rec).unwrap();
         }
     }
 
     reporter.update_metrics(&read_data);
 }
 
-fn process_record(qname: &[u8], record_data: &mut RecordData, bc_umi_data: &BarcodeUmiData,
-                  do_rescue: bool, gem_group: &u8) {
+/// Process a record.
+/// is_conf_mapped: the qname is confidently mapped to the transcriptome
+fn process_record(qname: &[u8],
+                  record_data: &mut RecordData,
+                  pair_anno: Option<&PairAnnotationData>,
+                  bc_umi_data: &BarcodeUmiData,
+                  is_conf_mapped: bool,
+                  is_gene_discordant: bool,
+                  gem_group: &u8) {
     // Strip auxiliary tags from the qname
     record_data.rec.set_qname(qname);
 
-    // Set mapq and flags
-    if do_rescue && !record_data.rec.is_unmapped() {
-        if record_data.anno.rescued {
-            record_data.rec.set_mapq(255);
-            utils::set_primary(&mut record_data.rec);
-        } else {
-            record_data.rec.set_mapq(0);
-            record_data.rec.set_secondary();
-        }
-    }
-
     // Attach annotation tags
-    record_data.anno.attach_tags(&mut record_data.rec);
+    record_data.anno.attach_tags(&mut record_data.rec, is_conf_mapped, is_gene_discordant,
+                                 pair_anno);
 
     // Attach BC and UMI
     bc_umi_data.attach_tags(&mut record_data.rec, gem_group);
-
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
 
     // TODO validate outputs?
 
     fn test_base(reference: &str, sample: &str) {
+        // Setup test output dir
+        let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_output").join("annotate_reads").join(&reference).join(&sample);
+        fs::create_dir_all(&out_dir)
+            .expect("Failed to create test output dir");
+
         let args_main = Args {
             cmd_main:               true,
             cmd_join:               false,
             arg_in_bam:             Some(format!("test/{}/{}/align_reads.bam", reference, sample).into()),
-            arg_out_bam:            Some(format!("test/{}/{}/annotate_reads.bam", reference, sample).into()),
-            arg_out_metrics:        Some(format!("test/{}/{}/metrics.bincode", reference, sample).into()),
+            arg_out_bam:            Some(format!("{}/annotate_reads.bam", out_dir.to_str().unwrap()).into()),
+            arg_out_metrics:        Some(format!("{}/metrics.bincode", out_dir.to_str().unwrap()).into()),
             arg_reference_path:     Some(format!("test/{}", reference).into()),
             arg_gene_index:         Some(format!("test/{}/gene_index.tab", reference).into()),
             arg_bc_counts:          Some(format!("test/{}/{}/barcode_counts.json", reference, sample).into()),
             arg_bc_whitelist:       Some("../../python/cellranger/barcodes/737K-august-2016.txt".into()),
             arg_gem_group:          Some(1),
-            arg_out_metadata:       Some(format!("test/{}/{}/metadata.json", reference, sample).into()),
+            arg_out_metadata:       Some(format!("{}/metadata.json", out_dir.to_str().unwrap()).into()),
             arg_strandedness:       Some("+".into()),
             arg_in_metrics_list:    None,
             arg_out_json:           None,
             arg_out_bc_csv:         None,
             flag_fiveprime:         false,
+            flag_bam_comments:      None,
         };
         annotate_reads_main(args_main);
 
@@ -315,9 +375,10 @@ mod tests {
             arg_out_metadata:       None,
             arg_strandedness:       None,
             arg_in_metrics_list:    Some(format!("test/{}/{}/chunked_metrics.txt", reference, sample).into()),
-            arg_out_json:           Some(format!("test/{}/{}/summary.json", reference, sample).into()),
-            arg_out_bc_csv:         Some(format!("test/{}/{}/barcodes_detected.csv", reference, sample).into()),
+            arg_out_json:           Some(format!("{}/summary.json", out_dir.to_str().unwrap()).into()),
+            arg_out_bc_csv:         Some(format!("{}/barcodes_detected.csv", out_dir.to_str().unwrap()).into()),
             flag_fiveprime:         false,
+            flag_bam_comments:      None,
         };
         annotate_reads_join(args_join);
     }

@@ -81,7 +81,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         rescue_multimappers          = true,
         skip_metrics                 = false,
         annotation_params            = self.annotation_params,
-        mark_dupes_mem_gb            = null,
+        filter_umis                  = true,
         retain_fastqs                = self.retain_fastqs,
         chunks                       = SETUP_CHUNKS.chunks,
         subsample_rate               = self.subsample_rate,

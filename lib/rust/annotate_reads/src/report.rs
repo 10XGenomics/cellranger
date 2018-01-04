@@ -15,14 +15,14 @@ use bincode::Infinite;
 use rand;
 use rand::{Rng, SeedableRng};
 
-use transcriptome::{AnnotationData, AnnotationRegion, AnnotationParams, Strand};
-use reference::TranscriptIndex;
+use transcriptome::{AnnotationData, PairAnnotationData, AnnotationRegion, AnnotationParams, Strand};
+use reference::{TranscriptIndex, Gene};
 use barcodes::BarcodeUmiData;
 use metrics::{SequenceDistMetric, PercentMetric, InsertSizeMetric, PrefixGroup, MetricGroup, Metric};
 use utils;
 
 const MULTI_REFS_PREFIX: &'static str = "multi";
-const HIGH_CONF_MAPQ: u8 = 255;
+pub const HIGH_CONF_MAPQ: u8 = 255;
 
 const TOP_RAW_SEQ_SAMPLE_RATE: f64 = 0.01;
 const TOP_CORRECTED_SEQ_SAMPLE_RATE: f64 = 1.0;
@@ -46,12 +46,31 @@ pub struct ReadData {
     pub r1_data:        Vec<RecordData>,
     pub r2_data:        Vec<RecordData>,
     pub bc_umi_data:    BarcodeUmiData,
-    pub num_genes:      i32,
+    pub pair_data:      Vec<PairAnnotationData>,
 }
 
 pub struct RecordData {
     pub rec:    Record,
     pub anno:   AnnotationData,
+}
+
+/// Get the gene(s) that an alignment or pair of alignments aligned to.
+/// For a single-end alignment, this is the genes from the alignment.
+/// For a pair of alignments, this is the intersection of the genes
+///   among mates with a non-zero number of genes.
+pub fn get_alignment_gene_intersection(r1_anno: &AnnotationData, maybe_r2_anno: Option<&AnnotationData>) -> Vec<Gene> {
+    let r1_genes = HashSet::from_iter(r1_anno.genes.iter());
+    let r2_genes = match maybe_r2_anno {
+        Some(r2_anno) => HashSet::from_iter(r2_anno.genes.iter()),
+        None => HashSet::new(),
+    };
+    if r1_genes.len() > 0 && r2_genes.len() == 0 {
+        r1_genes.into_iter().map(|x| x.to_owned()).collect()
+    } else if r1_genes.len() == 0 && r2_genes.len() > 0 {
+        r2_genes.into_iter().map(|x| x.to_owned()).collect()
+    } else {
+        r1_genes.intersection(&r2_genes).into_iter().map(|x| (*x).to_owned()).collect()
+    }
 }
 
 impl ReadData {
@@ -66,6 +85,63 @@ impl ReadData {
     pub fn is_mapped(&self) -> bool {
         return (self.r1_data.len() > 0 && !self.r1_data[0].rec.is_unmapped()) ||
                (self.r2_data.len() > 0 && !self.r2_data[0].rec.is_unmapped())
+    }
+
+    /// Get the index of the primary alignment record.
+    /// Should always exist.
+    pub fn get_primary_index(&self) -> Option<usize> {
+        self.r1_data.iter().position(|x| !x.rec.is_secondary())
+    }
+
+    /// Is there a primary alignment that mapped uniquely to the
+    /// genome and is compatible with a single gene
+    pub fn is_conf_mapped_to_transcriptome(&self) -> bool {
+        // Get primary record
+        let primary = self.get_primary_index();
+        if primary.is_none() {
+            return false;
+        }
+        let primary = primary.unwrap();
+
+        let r1 = &self.r1_data[primary].rec;
+
+        if self.is_paired_end() {
+            assert!(!self.r2_data[primary].rec.is_secondary());
+            let r2 = &self.r2_data[primary].rec;
+
+            // Both reads uniquely map and their gene intersection is unique
+            return !r1.is_unmapped() && r1.mapq() >= HIGH_CONF_MAPQ &&
+                !r2.is_unmapped() && r2.mapq() >= HIGH_CONF_MAPQ &&
+                self.pair_data[primary].genes.len() == 1
+        } else {
+
+            // Single read uniquely maps and has a single gene
+            return !r1.is_unmapped() && r1.mapq() >= HIGH_CONF_MAPQ &&
+                self.r1_data[primary].anno.genes.len() == 1
+        }
+    }
+
+    /// Do the records in the primary uniquely-mapped alignment pair
+    /// that are compatible with at least one gene share
+    /// no genes?
+    pub fn is_gene_discordant(&self) -> bool {
+        if !self.is_paired_end() {
+            return false;
+        }
+
+        // Get primary record
+        let primary = self.get_primary_index();
+        if primary.is_none() {
+            return false;
+        }
+        let primary = primary.unwrap();
+
+        let r1 = &self.r1_data[primary].rec;
+        let r2 = &self.r2_data[primary].rec;
+
+        return !r1.is_unmapped() && r1.mapq() >= HIGH_CONF_MAPQ &&
+            !r2.is_unmapped() && r2.mapq() >= HIGH_CONF_MAPQ &&
+            self.pair_data[primary].genes.len() == 0
     }
 
     // TODO add iterators for zipping R1, R2, etc.
@@ -555,14 +631,18 @@ impl<'a> Reporter<'a> {
         let median_insert_size = utils::median(&paired_stats.insert_sizes) as u64;
 
         if read_data.is_mapped() {
+            let conf_mapped_to_transcriptome = read_data.is_conf_mapped_to_transcriptome();
+
             for rdata in read_data.r1_data.iter().chain(read_data.r2_data.iter()) {
                 let alignment = &rdata.rec;
                 let annotation = &rdata.anno;
-                let (genome, region) = match (self.get_genome(alignment), get_mapping_region(annotation)) {
+                let (genome, region) = match (self.get_genome(alignment),
+                                              get_mapping_region(annotation)) {
                     (Some(g), Some(r)) => (g, r),
-                    _ => continue, // should only happend for improper / halfmapped pairs
+                    _ => continue, // should only happen for improper / halfmapped pairs
                 };
-                self.count_regions(&mut read_mapped, &genome, &region, read_data.num_genes > 0);
+                self.count_regions(&mut read_mapped, &genome, &region,
+                                   annotation.genes.len() > 0);
 
                 if paired_stats.discordant_pair {
                     pair_discordant.insert(genome.clone());
@@ -574,8 +654,9 @@ impl<'a> Reporter<'a> {
                     pair_improper.insert(MULTI_REFS_PREFIX.into());
                 }
 
-                if alignment.mapq() >= HIGH_CONF_MAPQ { // conf mapped
-                    self.count_regions(&mut read_conf_mapped, &genome, &region, read_data.num_genes == 1);
+                if alignment.mapq() >= HIGH_CONF_MAPQ {
+                    self.count_regions(&mut read_conf_mapped, &genome, &region,
+                                       conf_mapped_to_transcriptome);
 
                     if annotation.is_antisense() {
                         read_antisense.insert(genome.clone());
@@ -583,7 +664,8 @@ impl<'a> Reporter<'a> {
                     }
 
                     if corrected_bc_seq.is_some() { // conf mapped and barcoded
-                        self.count_regions(&mut read_conf_mapped_barcoded, &genome, &region, read_data.num_genes == 1);
+                        self.count_regions(&mut read_conf_mapped_barcoded, &genome, &region,
+                                           conf_mapped_to_transcriptome);
                     }
                 }
             }
@@ -593,7 +675,7 @@ impl<'a> Reporter<'a> {
         let ref mut mapping_metrics = self.metrics.read_metrics.mapping_metrics;
         for (genome, genome_metrics) in mapping_metrics.iter_mut() {
             // NOTE: in the Python code, we only track insert size for confidently mapped reads, so do that here as well
-            if read_data.num_genes == 1 && paired_stats.insert_sizes.len() > 0 { genome_metrics.insert_sizes.add(&median_insert_size); }
+            if read_data.is_conf_mapped_to_transcriptome() && paired_stats.insert_sizes.len() > 0 { genome_metrics.insert_sizes.add(&median_insert_size); }
             genome_metrics.antisense_reads.add(&read_antisense.contains(genome));
             genome_metrics.improper_pairs.add(&pair_improper.contains(genome));
             genome_metrics.discordant_pairs.add(&pair_discordant.contains(genome));

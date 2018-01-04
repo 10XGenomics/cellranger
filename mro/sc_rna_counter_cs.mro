@@ -76,8 +76,8 @@ pipeline SC_RNA_COUNTER_CS(
         r2_length                    = self.r2_length,
         annotation_params            = null,
         no_secondary_analysis        = self.no_secondary_analysis,
-        mark_dupes_mem_gb            = null,
         library_type_filter          = null,
+        filter_umis                  = true,
         retain_fastqs                = false,
         allowed_chems                = [
             "auto",

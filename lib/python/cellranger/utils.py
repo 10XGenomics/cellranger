@@ -120,7 +120,12 @@ def barcode_sort_key(read, squash_unbarcoded=False):
     if squash_unbarcoded and formatted_bc is None:
         return None
     (bc, gg) = split_barcode_seq(formatted_bc)
-    return gg, bc, get_read_gene_ids(read)
+    return gg, bc, get_read_raw_umi(read)
+
+def barcode_sort_key_processed_umi(read):
+    formatted_bc = get_read_barcode(read)
+    (bc, gg) = split_barcode_seq(formatted_bc)
+    return gg, bc, get_read_umi(read)
 
 def pos_sort_key(read):
     return read.tid, read.pos
@@ -441,6 +446,15 @@ def is_transcriptome_read_sense(read, strandedness):
     else:
         return strandedness == cr_constants.FORWARD_STRAND
 
+def get_read_extra_flags(read):
+    return _get_read_tag(read, cr_constants.EXTRA_FLAGS_TAG) or 0
+
+def is_read_low_support_umi(read):
+    return (get_read_extra_flags(read) & cr_constants.EXTRA_FLAGS_LOW_SUPPORT_UMI) > 0
+
+def is_read_umi_count(read):
+    return (get_read_extra_flags(read) & cr_constants.EXTRA_FLAGS_UMI_COUNT) > 0
+
 def is_read_dupe_candidate(read, high_conf_mapq, use_corrected_umi=True):
     if use_corrected_umi:
         umi = get_read_umi(read)
@@ -448,6 +462,7 @@ def is_read_dupe_candidate(read, high_conf_mapq, use_corrected_umi=True):
         umi = get_read_raw_umi(read)
 
     return not read.is_secondary and umi and get_read_barcode(read) and \
+        not is_read_low_support_umi(read) and \
         is_read_conf_mapped_to_transcriptome(read, high_conf_mapq)
 
 def is_read_conf_mapped_to_transcriptome(read, high_conf_mapq):

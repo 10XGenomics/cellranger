@@ -10,6 +10,7 @@ import tenkit.bam as tk_bam
 import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mol_counter
 import cellranger.reference as cr_reference
+import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 
 """ Report info on each detected molecule
@@ -92,8 +93,8 @@ def main(args, outs):
 
     gg_metrics = collections.defaultdict(lambda: {cr_mol_counter.GG_CONF_MAPPED_FILTERED_BC_READS_METRIC: 0})
 
-    for (gem_group, barcode, gene_ids), reads_iter in itertools.groupby(in_bam, key=cr_utils.barcode_sort_key):
-        if barcode is None or gem_group is None:
+    for (gem_group, barcode, umi), reads_iter in itertools.groupby(in_bam, key=cr_utils.barcode_sort_key_processed_umi):
+        if barcode is None or gem_group is None or umi is None:
             continue
         is_cell_barcode = cr_utils.format_barcode_seq(barcode, gem_group) in filtered_bcs
         molecules = collections.defaultdict(lambda: np.zeros(len(mol_data_columns), dtype=np.uint64))
@@ -103,9 +104,8 @@ def main(args, outs):
 
         read_positions = collections.defaultdict(set)
         for read in reads_iter:
-            umi = cr_utils.get_read_umi(read)
             # ignore read2 to avoid double-counting. the mapping + annotation should be equivalent.
-            if read.is_secondary or umi is None or read.is_read2:
+            if read.is_secondary or read.is_read2 or cr_utils.is_read_low_support_umi(read):
                 continue
 
             raw_umi = cr_utils.get_read_raw_umi(read)
@@ -113,6 +113,7 @@ def main(args, outs):
             proc_bc, proc_gg = cr_utils.split_barcode_seq(cr_utils.get_read_barcode(read))
 
             if cr_utils.is_read_conf_mapped_to_transcriptome(read, cr_utils.get_high_conf_mapq(args.align)):
+                gene_ids = cr_utils.get_read_gene_ids(read)
                 assert len(gene_ids) == 1
 
                 mol_key, map_type = (umi, gene_index.gene_id_to_int(gene_ids[0])), 'reads'
@@ -155,6 +156,17 @@ def join(args, outs, chunk_defs, chunk_outs):
         args.attach_bcs_and_umis_summary,
         args.mark_duplicates_summary,
     ])
+
+    # Hack for getting reference metadata -
+    # this used to be computed in prior stages.
+    # This is needed for storage in the molecule_info HDF5.
+    tmp_reporter = cr_report.Reporter()
+    tmp_reporter.store_reference_metadata(args.reference_path,
+                                          cr_constants.REFERENCE_TYPE,
+                                          cr_constants.REFERENCE_METRIC_PREFIX)
+    ref_metadata = tmp_reporter.report(cr_constants.DEFAULT_REPORT_TYPE)
+    summary.update(ref_metadata)
+
     gem_groups = sorted(set(args.gem_groups))
     metrics = cr_mol_counter.MoleculeCounter.get_metrics_from_summary(summary, gem_groups, args.recovered_cells, args.force_cells)
     input_h5_filenames = [chunk_out.output for chunk_out in chunk_outs]

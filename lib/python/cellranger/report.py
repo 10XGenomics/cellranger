@@ -419,6 +419,7 @@ METRICS = {
     'top_raw_umis':       (SubsampledTopNMetric, {'args': [cr_constants.TOP_N, cr_constants.TOP_RAW_SEQUENCE_SAMPLE_RATE]}),
     'top_processed_umis': (SubsampledTopNMetric, {'args': [cr_constants.TOP_N, cr_constants.TOP_PROCESSED_SEQUENCE_SAMPLE_RATE], 'prefixes': ['references', 'read_types']}),
     'effective_umi_diversity': (EffectiveDiversityMetric, {'prefixes': ['references', 'read_types']}),
+    'low_support_umi_reads_frac': (PercentMetric, {}),
 
     'top_raw_barcodes':            (SubsampledTopNMetric, {'args': [cr_constants.TOP_N, cr_constants.TOP_RAW_SEQUENCE_SAMPLE_RATE]}),
     'effective_barcode_diversity': (EffectiveDiversityMetric, {'prefixes': ['references', 'read_types']}),
@@ -827,25 +828,25 @@ class Reporter:
                 else:
                     read1, gene1 = read, gene
 
+        # Take the primary alignment for Read1
         read = read1 if read1 is not None else read2
         gene_id = gene1 if gene1 is not None else gene2
 
         if read is None or gene_id is None:
             return False, None, None, None
 
-        # ignore discordant pairs
-        if gene1 is not None and gene2 is not None and gene1 != gene2:
-            return False, None, None, None
-
         genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
 
+        # Initialize this barcode
         for reference in [genome] + ([cr_constants.MULTI_REFS_PREFIX] if self.has_multiple_genomes else []):
             conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads', reference)
             conf_mapped_barcode_reads.add(bc)
 
-        conf_mapped_deduped = not read.is_duplicate
+        # Count this read
         if use_umis:
-            conf_mapped_deduped = conf_mapped_deduped and umi is not None
+            conf_mapped_deduped = cr_utils.is_read_umi_count(read)
+        else:
+            conf_mapped_deduped = not read.is_duplicate
 
         for reference in self.references:
             conf_mapped_deduped_frac = self._get_metric_attr('reads_frac', reference,

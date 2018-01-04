@@ -21,7 +21,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     in  bool    rescue_multimappers,
     in  bool    skip_metrics,
     in  map     annotation_params,
-    in  int     mark_dupes_mem_gb,
+    in  bool    filter_umis,
     in  bool    retain_fastqs,
     in  float   subsample_rate,
     in  int     initial_reads,
@@ -119,8 +119,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     call volatile MARK_DUPLICATES(
         input          = SORT_BY_BC,
         reference_path = self.reference_path,
-        align          = SUMMARIZE_READ_REPORTS.align,
-        mem_gb         = self.mark_dupes_mem_gb,
+        filter_umis    = self.filter_umis,
     )
 
     call volatile SUMMARIZE_MKDUP(

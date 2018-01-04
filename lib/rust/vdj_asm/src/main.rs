@@ -787,7 +787,7 @@ pub fn get_matches(args: Args) {
     let mut num_unmapped = 0;
     let mut npairs = 0;
     let mut fq_iter = fastq::CellrangerPairedFastqIter::new(&r1_filename,
-                                                            r2_filename.as_ref().map(String::as_str),
+                                                            r2_filename.as_ref(),
                                                             args.flag_rev_strand);
 
     let cc_start = PreciseTime::now();

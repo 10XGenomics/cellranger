@@ -164,7 +164,7 @@ impl<T: MetricGroup> PrefixGroup<T> {
 
     pub fn merge(&mut self, other: &Self) {
         for (prefix, other_group) in &other.mapping {
-            let mut group = self.mapping.entry(prefix.clone()).or_insert(T::new());
+            let group = self.mapping.entry(prefix.clone()).or_insert(T::new());
             group.merge(&other_group);
         }
     }
@@ -204,10 +204,6 @@ impl SequenceHistogram {
         let count = hist.entry(seq.to_owned()).or_insert(0);
         *count += 1;
     }
-
-    //pub fn get_count(&self, seq: &String) -> u64 {
-    //    return self.hist.get(seq).unwrap_or(&0).to_owned()
-    //}
 
     pub fn merge(&mut self, other: &Self) {
         let ref mut hist = self.hist;
@@ -266,10 +262,6 @@ impl LengthHistogram {
         *count += 1;
     }
 
-    //pub fn get_count(&self, length: &u64) -> u64 {
-    //    return self.hist.get(length).unwrap_or(&0).to_owned()
-    //}
-
     pub fn merge(&mut self, other: &Self) {
         let ref mut hist = self.hist;
         for (seq, other_count) in &other.hist {
@@ -324,7 +316,7 @@ impl LengthHistogram {
             if (curr_cutoff_idx < cutoffs.len() - 1) && (value >= &cutoffs[curr_cutoff_idx+1]) {
                 curr_cutoff_idx += 1;
             }
-            let mut binned_count = binned_histogram.get_mut(&cutoffs[curr_cutoff_idx]).unwrap();
+            let binned_count = binned_histogram.get_mut(&cutoffs[curr_cutoff_idx]).unwrap();
             *binned_count += *count;
         }
 
@@ -335,6 +327,15 @@ impl LengthHistogram {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    pub fn get_seqhist_count(metric: &SequenceHistogram, seq: &String) -> u64 {
+        return metric.hist.get(seq).unwrap_or(&0).to_owned()
+    }
+
+    pub fn get_lenhist_count(metric: &LengthHistogram, length: &u64) -> u64 {
+        return metric.hist.get(length).unwrap_or(&0).to_owned()
+    }
+
 
     #[test]
     fn test_percent_metric() {
@@ -359,16 +360,16 @@ mod tests {
         m0.increment(&foo);
         m0.increment(&foo);
         m0.increment(&bar);
-        assert_eq!(m0.get_count(&foo), 2);
-        assert_eq!(m0.get_count(&bar), 1);
+        assert_eq!(get_seqhist_count(&m0, &foo), 2);
+        assert_eq!(get_seqhist_count(&m0, &bar), 1);
         assert_eq!(m0.top_n(1).keys().next().unwrap().to_owned(), &foo);
         assert_eq!(m0.effective_diversity(), 1.8);
         let mut m1 = SequenceHistogram::new();
         m1.increment(&bar);
         m1.increment(&baz);
         m0.merge(&m1);
-        assert_eq!(m0.get_count(&bar), 2);
-        assert_eq!(m0.get_count(&baz), 1);
+        assert_eq!(get_seqhist_count(&m0, &bar), 2);
+        assert_eq!(get_seqhist_count(&m0, &baz), 1);
     }
 
     #[test]
@@ -378,9 +379,9 @@ mod tests {
         m0.increment(10);
         m0.increment(10);
         m0.increment(20);
-        assert_eq!(m0.get_count(&0), 1);
-        assert_eq!(m0.get_count(&10), 2);
-        assert_eq!(m0.get_count(&20), 1);
+        assert_eq!(get_lenhist_count(&m0, &0), 1);
+        assert_eq!(get_lenhist_count(&m0, &10), 2);
+        assert_eq!(get_lenhist_count(&m0, &20), 1);
         assert_eq!(m0.percentile(0.0), 0.0);
         assert_eq!(m0.percentile(25.0), 7.5);
         assert_eq!(m0.percentile(50.0), 10.0);
@@ -389,6 +390,6 @@ mod tests {
         let mut m1 = LengthHistogram::new();
         m1.increment(0);
         m0.merge(&m1);
-        assert_eq!(m0.get_count(&0), 2);
+        assert_eq!(get_lenhist_count(&m0, &0), 2);
     }
 }
