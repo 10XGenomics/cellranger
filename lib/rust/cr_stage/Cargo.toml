@@ -20,7 +20,7 @@ byteorder = "*"
 rust-htslib = { git = "https://github.com/10xGenomics/rust-htslib", branch="paul/chunked-records" }
 flate2 = "*"
 martian = { git = "https://github.com/martian-lang/martian-rust" }
-tenkit = { git = "ssh://git@github.com/10XDev/rust-utils-10x", branch="paul/newer-htslib" }
+tenkit = { path = "external/rust-utils-10x/tenkit" }
 bitflags = ">1.0.0"
 
 [profile.release]
