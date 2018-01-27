@@ -124,12 +124,15 @@ stage MARK_DUPLICATES(
     out bam[] output,
     out json  summary,
     src comp  "cr_stage martian mark_duplicates",
-) split using (
+) split (
     in  int   chunk_start,
     in  int   chunk_end,
     out json  metrics,
     out bam   alignments,
+) using (
+    mem_gb = 6,
 )
+
 
 stage REPORT_MOLECULES(
     in  bam[]  inputs,
