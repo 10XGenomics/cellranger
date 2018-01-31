@@ -6,6 +6,7 @@
 @include "_common_stages.mro"
 
 filetype bam;
+filetype json;
 
 pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
     in  string   sample_id,
@@ -29,6 +30,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
     in  string[] allowed_chems,
     in  bool     retain_fastqs,
     out bam      possorted_guide_bam,
+    out json     crispr_extract_summary,
 )
 {
     call preflight CELLRANGER_PREFLIGHT(
@@ -92,6 +94,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
     )
 
     return (
-        possorted_guide_bam = _BASIC_SC_RNA_COUNTER.possorted_genome_bam,
+        possorted_guide_bam    = _BASIC_SC_RNA_COUNTER.possorted_genome_bam,
+        crispr_extract_summary = _BASIC_SC_RNA_COUNTER.summary,
     )
 }
