@@ -14,4 +14,6 @@ stage DETECT_CHEMISTRY(
     out txt      report,
     src py       "stages/chemistry_detector/detect_chemistry",
 ) split using (
+) using (
+    mem_gb = 6,
 )
