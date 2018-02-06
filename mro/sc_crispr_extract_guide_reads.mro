@@ -29,6 +29,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
     in  map      annotation_params,
     in  string[] allowed_chems,
     in  bool     retain_fastqs,
+    in  csv      feature_reference,
     out bam      possorted_guide_bam,
     out json     crispr_extract_summary,
 )
@@ -38,6 +39,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
         reference_path       = self.reference_path,
+        feature_reference    = self.feature_reference,
         check_executables    = true,
         recovered_cells      = self.recovered_cells,
         force_cells          = self.force_cells,
@@ -51,6 +53,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
         reference_path       = self.reference_path,
+        feature_reference    = self.feature_reference,
         check_executables    = false,
         recovered_cells      = self.recovered_cells,
         force_cells          = self.force_cells,
@@ -91,6 +94,7 @@ pipeline SC_CRISPR_EXTRACT_GUIDE_READS(
         primers                      = self.primers,
         r1_length                    = self.r1_length,
         r2_length                    = self.r2_length,
+        feature_reference            = self.feature_reference,
     )
 
     return (

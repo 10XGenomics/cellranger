@@ -13,7 +13,9 @@ __MRO__ = """
 stage SUMMARIZE_READ_REPORTS(
     in  json     extract_reads_summary,
     in  json     barcode_counts,
+    in  json     feature_counts,
     in  int[]    gem_groups,
+    in  string[] library_types,
     in  string[] read_groups,
     in  map      align,
     in  string[] bam_comments,
@@ -23,8 +25,10 @@ stage SUMMARIZE_READ_REPORTS(
     in  map      chemistry_def,
     out json     summary,
     out json     barcode_counts,
+    out json     feature_counts,
     out h5       barcode_summary,
     out int[]    gem_groups,
+    out string[] library_types,
     out string[] read_groups,
     out map      align,
     out string[] bam_comments,
@@ -69,8 +73,10 @@ def main(args, outs):
 def join(args, outs, chunk_defs, chunk_outs):
     cr_utils.copy(args.extract_reads_summary, outs.summary)
     cr_utils.copy(args.barcode_counts, outs.barcode_counts)
+    cr_utils.copy(args.feature_counts, outs.feature_counts)
 
     outs.gem_groups = args.gem_groups
+    outs.library_types = args.library_types
     outs.read_groups = args.read_groups
     outs.align = args.align
     outs.bam_comments = args.bam_comments

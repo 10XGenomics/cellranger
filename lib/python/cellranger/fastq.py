@@ -138,18 +138,71 @@ def get_read_generator_fastq(fastq_open_file, read_def, reads_interleaved, r1_le
     for read_tuple in read_iter:
         yield extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, r1_length, r2_length)
 
+def get_feature_generator_fastq(files, feature_ref, interleaved, read_types, r1_length=None, r2_length=None):
+    ''' Yields a FeatureMatchResult each read pair '''
+    assert len(files) == 2
+    assert 'R1' in read_types or 'R2' in read_types
+
+    # Apply hard trimming on input
+    r1_hard_end = sys.maxint if r1_length is None else r1_length
+    r2_hard_end = sys.maxint if r2_length is None else r2_length
+
+    if interleaved:
+        f = files[0]
+        assert f
+        # Get R1 and R2 seqs from interleaved FASTQ
+        pair_iter = itertools.imap(lambda x: (x[0:3], x[3:6]),
+                                   tk_fasta.read_generator_fastq(f, paired_end=True))
+    else:
+        r1_iter = tk_fasta.read_generator_fastq(files[0], paired_end=False) if 'R1' in read_types else iter([])
+        r2_iter = tk_fasta.read_generator_fastq(files[1], paired_end=False) if 'R2' in read_types else iter([])
+        pair_iter = itertools.izip_longest(r1_iter, r2_iter)
+
+    if read_types == ['R1']:
+        match_func = lambda x: feature_ref.extract_single_end(x[0][1][0:r1_hard_end], # seq
+                                                              x[0][2][0:r1_hard_end], # qual
+                                                              'R1')
+
+    elif read_types == ['R2']:
+        match_func = lambda x: feature_ref.extract_single_end(x[1][1][0:r2_hard_end], # seq
+                                                              x[1][2][0:r2_hard_end], # qual
+                                                              'R2')
+
+    elif read_types == ['R1', 'R2']:
+        match_func = lambda x: feature_ref.extract_paired_end(x[0][1][0:r1_hard_end], # seq
+                                                              x[0][2][0:r1_hard_end], # qual
+                                                              x[1][1][0:r2_hard_end], # seq
+                                                              x[1][2][0:r2_hard_end]) # qual
+
+    return itertools.imap(match_func, pair_iter)
+
+
 def get_fastq_from_read_type(fastq_dict, read_def, reads_interleaved):
+    ''' Use a ReadDef to determine which FASTQ files to open '''
     if read_def.read_type == 'R2' and reads_interleaved:
         return fastq_dict.get('R1')
     else:
         return fastq_dict.get(read_def.read_type)
+
+def get_fastqs_from_feature_ref(fastq_dict, feature_ref, reads_interleaved, read_types):
+    ''' Use a FeatureRef to determine which FASTQ files to open '''
+    assert 'R1' in read_types or 'R2' in read_types
+
+    fastq1 = fastq_dict.get('R1') if 'R1' in read_types else None
+
+    if reads_interleaved:
+        fastq2 = fastq_dict.get('R1') if 'R2' in read_types else None
+    else:
+        fastq2 = fastq_dict.get('R2') if 'R2' in read_types else None
+
+    return (fastq1, fastq2)
 
 class FastqReader:
     # Extracts specified regions from input fastqs
     # For example, extract UMIs from the first 10 bases of the "R2" read
     def __init__(self, in_filenames, read_def, reads_interleaved, r1_length, r2_length):
         """ Args:
-              in_filenames - list(str): Paths to fastq files
+              in_filenames - Map of paths to fastq files
               read_def - ReadDef
         """
 
@@ -173,6 +226,49 @@ class FastqReader:
     def close(self):
         if self.in_fastq:
             self.in_fastq.close()
+
+class FastqFeatureReader:
+    ''' Use a FeatureReference to extract specified feature barcodes from input fastqs
+        For example, extract antibody barcodes from R2. '''
+
+    def __init__(self, in_filenames, feature_ref, reads_interleaved, r1_length, r2_length):
+        """ Args:
+              in_filenames - Map of paths to fastq files
+              feature_ref - FeatureReference object
+        """
+
+        self.in_fastqs = None
+        self.in_iter = iter([])
+        self.feature_ref = feature_ref
+
+        # Relevant read types
+        read_types = feature_ref.get_read_types()
+
+        if in_filenames:
+            in_filenames = get_fastqs_from_feature_ref(in_filenames,
+                                                       feature_ref,
+                                                       reads_interleaved,
+                                                       read_types)
+            if in_filenames != (None, None):
+                if reads_interleaved:
+                    filename = in_filenames[0] if in_filenames[0] else in_filenames[1]
+                    self.in_fastqs = (cr_utils.open_maybe_gzip(filename, 'r') if filename[0] else None,
+                                      None)
+                else:
+                    self.in_fastqs = (cr_utils.open_maybe_gzip(in_filenames[0], 'r') if in_filenames[0] else None,
+                                      cr_utils.open_maybe_gzip(in_filenames[1], 'r') if in_filenames[1] else None)
+
+                self.in_iter = get_feature_generator_fastq(files=self.in_fastqs,
+                                                           feature_ref=feature_ref,
+                                                           interleaved=reads_interleaved,
+                                                           read_types=read_types,
+                                                           r1_length=r1_length,
+                                                           r2_length=r2_length)
+    def close(self):
+        if self.in_fastqs:
+            for f in self.in_fastqs:
+                if f:
+                    f.close()
 
 class ChunkedWriter:
     # Writes sequencing read-based output, splitting into chunks as specified
@@ -307,7 +403,7 @@ class FastqSpecException(Exception):
 
 def _require_sample_def_key(sd, key):
     if key not in sd:
-        raise FastqSpecException('Sample def is missing the key "%s." % key')
+        raise FastqSpecException('Sample def is missing the key "%s."' % key)
 
 class FastqSpec(object):
     """ All info required to find FASTQ files """

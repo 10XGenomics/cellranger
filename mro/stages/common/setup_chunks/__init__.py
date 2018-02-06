@@ -15,7 +15,6 @@ import tenkit.preflight as tk_preflight
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
-import cellranger.constants as cr_constants
 import cellranger.utils as cr_utils
 
 __MRO__ = '''
@@ -50,13 +49,14 @@ def validate_fastq_lists(filename_lists):
 
 def construct_chunks(filename_lists,
                      sample_id, gem_group, library_id,
-                     reads_interleaved, chemistry):
+                     reads_interleaved, chemistry, library_type):
     """ filename_lists (list of dict<str,list>) """
     chunks = []
 
     for chunk_idx in xrange(len(filename_lists.values()[0])):
         chunk = {
             'gem_group': gem_group,
+            'library_type': library_type,
             'reads_interleaved': reads_interleaved,
             'read_chunks': {},
             'chemistry': chemistry,
@@ -88,7 +88,7 @@ def fill_in_missing_reads(filename_lists):
             filename_lists[read_type] = [None] * max_filenames
 
 def setup_chunks(sample_id, fq_spec, gem_group, library_id,
-                 chemistry):
+                 chemistry, library_type):
     """ Build chunks for a single sample def """
     chunks = []
 
@@ -111,7 +111,8 @@ def setup_chunks(sample_id, fq_spec, gem_group, library_id,
                                        gem_group=gem_group,
                                        library_id=library_id,
                                        reads_interleaved=group_spec.interleaved,
-                                       chemistry=chemistry)
+                                       chemistry=chemistry,
+                                       library_type=library_type)
 
     return chunks
 
@@ -142,12 +143,14 @@ def main(args, outs):
         fq_spec = cr_fastq.FastqSpec.from_sample_def(sample_def)
         gem_group = sample_def['gem_group']
         library_id = sample_def.get('library_id', 'MissingLibrary')
+        library_type = sample_def.get('library_type') or cr_constants.DEFAULT_LIBRARY_TYPE
 
         chunks = setup_chunks(args.sample_id,
                               fq_spec,
                               gem_group,
                               library_id,
-                              chemistry)
+                              chemistry,
+                              library_type)
 
         if len(chunks) == 0:
             # No FASTQs found for a sample def

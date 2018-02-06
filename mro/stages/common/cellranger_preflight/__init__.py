@@ -11,6 +11,7 @@ stage CELLRANGER_PREFLIGHT_LOCAL(
     in string chemistry_name,
     in map    custom_chemistry_def,
     in path   reference_path,
+    in csv    feature_reference,
     in bool   check_executables,
     in int    recovered_cells,
     in int    force_cells,
@@ -24,6 +25,10 @@ def run_preflight_checks(args):
 
     print "Checking reference..."
     cr_preflight.check_refdata(args.reference_path)
+
+    if args.feature_reference is not None:
+        print "Checking feature definition file..."
+        cr_preflight.check_feature_ref(args.feature_reference)
 
     print "Checking chemistry..."
     cr_preflight.check_chemistry(args.chemistry_name, args.custom_chemistry_def,

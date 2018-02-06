@@ -18,6 +18,7 @@ extern crate flate2;
 #[macro_use] extern crate bitflags;
 
 mod barcodes;
+mod features;
 mod metrics;
 mod reference;
 mod report;
@@ -44,12 +45,13 @@ use itertools::Itertools;
 use transcriptome::{TranscriptAnnotator, AnnotationParams, Strandedness, PairAnnotationData};
 use report::{Reporter, Metrics, ReadData, RecordData};
 use barcodes::{BarcodeUmiChecker, BarcodeUmiData};
+use features::{FeatureChecker, FeatureData};
 use metrics::MetricGroup;
 use utils::CellrangerFastqHeader;
 
 const USAGE: &'static str = "
 Usage:
-  annotate_reads main <in-bam> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> [--fiveprime] [--bam-comments=F]
+  annotate_reads main <in-bam> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> [--fiveprime] [--bam-comments=F] [--feature-ref=F]
   annotate_reads join <in-metrics-list> <out-json> <out-bc-csv>
   annotate_reads (-h | --help)
 
@@ -58,6 +60,7 @@ Options:
   --neg-strand         Assume negative-strand chemistry.
   --fiveprime          Assume reads originate from 5' end (instead of 3').
   --bam-comments=F     JSON file with array of strings to append as @CO items
+  --feature-ref=F      Feature definition file (CSV)
 ";
 
 #[derive(Debug, Deserialize, Clone)]
@@ -76,10 +79,13 @@ struct Args {
     arg_gem_group:          Option<u8>,
     arg_out_metadata:       Option<String>,
     arg_strandedness:       Option<String>,
+    arg_feature_dist:       Option<String>,
+    arg_library_type:       Option<String>,
 
     // main flags
     flag_fiveprime:         bool,
     flag_bam_comments:      Option<String>,
+    flag_feature_ref:       Option<String>,
 
     // join args
     arg_in_metrics_list:    Option<String>,
@@ -97,6 +103,7 @@ fn main() {
 }
 
 fn annotate_reads_main(args: Args) {
+
     println!("Loading indices");
     let reference_path = args.arg_reference_path.unwrap();
     let strandedness = Strandedness::from_string(args.arg_strandedness.unwrap());
@@ -113,6 +120,26 @@ fn annotate_reads_main(args: Args) {
     println!("Loading whitelist");
     let gem_group = &args.arg_gem_group.unwrap();
     let bc_umi_checker = barcodes::BarcodeUmiChecker::new(&args.arg_bc_counts.unwrap(), &args.arg_bc_whitelist.unwrap(), gem_group);
+
+    let feature_checker = match (&args.flag_feature_ref, &args.arg_feature_dist,
+                                 &args.arg_library_type) {
+        (&Some(ref fref_path), &Some(ref fdist_path), &Some(ref library_type)) => {
+            if features::library_type_requires_feature_ref(library_type) {
+                println!("Loading feature reference");
+
+                let fref_file = File::open(fref_path)
+                    .expect("Failed to open feature definition file");
+                let fdist_file = File::open(fdist_path)
+                    .expect("Failed to open feature barcode count file");
+
+                Some(features::FeatureChecker::new(fref_file, fdist_file, library_type))
+            } else {
+                // Gene Expression library type; don't need feature ref
+                None
+            }
+        },
+        _ => None,
+    };
 
     println!("Setting up BAMs");
     let in_bam = bam::Reader::from_path(Path::new(&args.arg_in_bam.unwrap())).unwrap();
@@ -149,7 +176,9 @@ fn annotate_reads_main(args: Args) {
     let mut num_alignments = 0;
     for (qname, genome_alignments) in in_bam.records().map(|res| res.unwrap()).group_by(|rec| str::from_utf8(rec.qname()).unwrap().to_string()) {
         num_alignments += genome_alignments.len();
-        process_qname(qname, genome_alignments, &mut reporter, &annotator, &bc_umi_checker, &mut out_bam, &gem_group);
+        process_qname(qname, genome_alignments, &mut reporter,
+                      &annotator, &bc_umi_checker, &feature_checker,
+                      &mut out_bam, &gem_group);
     }
 
     println!("Writing metrics");
@@ -235,11 +264,19 @@ fn rescue_alignments(r1_data: &mut Vec<RecordData>, mut maybe_r2_data: Option<&m
 }
 
 fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut Reporter,
-                 annotator: &TranscriptAnnotator, bc_umi_checker: &BarcodeUmiChecker, out_bam: &mut bam::Writer,
+                 annotator: &TranscriptAnnotator,
+                 bc_umi_checker: &BarcodeUmiChecker,
+                 feature_checker: &Option<FeatureChecker>,
+                 out_bam: &mut bam::Writer,
                  gem_group: &u8) {
     let fastq_header = CellrangerFastqHeader::new(qname);
+
+    let bc_umi_data = bc_umi_checker.process_barcodes_and_umis(&fastq_header.tags);
+
+    let feature_data = feature_checker.as_ref()
+        .and_then(|fc| fc.process_feature_data(&fastq_header.tags));
+
     let stripped_qname = fastq_header.qname.into_bytes();
-    let bc_umi_data = bc_umi_checker.process_barcodes_and_umis(fastq_header.tags);
 
     let mut r1_data = Vec::new();
     let mut r2_data = Vec::new();
@@ -266,6 +303,7 @@ fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut R
         r1_data:        r1_data,
         r2_data:        r2_data,
         bc_umi_data:    bc_umi_data,
+        feature_data:   feature_data,
         pair_data:      pair_data,
     };
 
@@ -291,13 +329,13 @@ fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut R
 
             let ref mut r1 = read_data.r1_data[i];
             process_record(&stripped_qname, r1, pair_data,
-                           &read_data.bc_umi_data, is_conf_mapped, is_gene_discordant, gem_group);
+                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped, is_gene_discordant, gem_group);
             out_bam.write(&r1.rec).unwrap();
         }
         if read_data.is_paired_end() {
             let ref mut r2 = read_data.r2_data[i];
             process_record(&stripped_qname, r2, Some(&read_data.pair_data[i]),
-                           &read_data.bc_umi_data, is_conf_mapped, is_gene_discordant, gem_group);
+                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped, is_gene_discordant, gem_group);
             out_bam.write(&r2.rec).unwrap();
         }
     }
@@ -311,6 +349,7 @@ fn process_record(qname: &[u8],
                   record_data: &mut RecordData,
                   pair_anno: Option<&PairAnnotationData>,
                   bc_umi_data: &BarcodeUmiData,
+                  feature_data: &Option<FeatureData>,
                   is_conf_mapped: bool,
                   is_gene_discordant: bool,
                   gem_group: &u8) {
@@ -323,6 +362,12 @@ fn process_record(qname: &[u8],
 
     // Attach BC and UMI
     bc_umi_data.attach_tags(&mut record_data.rec, gem_group);
+
+    // Attach feature tags
+    if let &Some(ref feature_data) = feature_data {
+        println!("here");
+        feature_data.attach_tags(&mut record_data.rec);
+    }
 }
 
 
@@ -356,6 +401,9 @@ mod tests {
             arg_in_metrics_list:    None,
             arg_out_json:           None,
             arg_out_bc_csv:         None,
+            arg_feature_ref:        None,
+            arg_feature_dist:       None,
+            arg_library_type:       None,
             flag_fiveprime:         false,
             flag_bam_comments:      None,
         };
@@ -377,6 +425,9 @@ mod tests {
             arg_in_metrics_list:    Some(format!("test/{}/{}/chunked_metrics.txt", reference, sample).into()),
             arg_out_json:           Some(format!("{}/summary.json", out_dir.to_str().unwrap()).into()),
             arg_out_bc_csv:         Some(format!("{}/barcodes_detected.csv", out_dir.to_str().unwrap()).into()),
+            arg_feature_ref:        None,
+            arg_feature_dist:       None,
+            arg_library_type:       None,
             flag_fiveprime:         false,
             flag_bam_comments:      None,
         };

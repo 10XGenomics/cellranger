@@ -18,6 +18,7 @@ use rand::{Rng, SeedableRng};
 use transcriptome::{AnnotationData, PairAnnotationData, AnnotationRegion, AnnotationParams, Strand};
 use reference::{TranscriptIndex, Gene};
 use barcodes::BarcodeUmiData;
+use features::FeatureData;
 use metrics::{SequenceDistMetric, PercentMetric, InsertSizeMetric, PrefixGroup, MetricGroup, Metric};
 use utils;
 
@@ -46,6 +47,7 @@ pub struct ReadData {
     pub r1_data:        Vec<RecordData>,
     pub r2_data:        Vec<RecordData>,
     pub bc_umi_data:    BarcodeUmiData,
+    pub feature_data:   Option<FeatureData>,
     pub pair_data:      Vec<PairAnnotationData>,
 }
 

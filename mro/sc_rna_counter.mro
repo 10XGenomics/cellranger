@@ -30,6 +30,7 @@ pipeline SC_RNA_COUNTER(
     in  bool     retain_fastqs,
     in  string[] allowed_chems,
     in  string[] library_type_filter,
+    in  csv      feature_reference,
     out bam      possorted_genome_bam,
     out bam.bai  possorted_genome_bam_index,
     out json     metrics_summary_json,
@@ -58,6 +59,7 @@ pipeline SC_RNA_COUNTER(
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
         reference_path       = self.reference_path,
+        feature_reference    = self.feature_reference,
         check_executables    = true,
         recovered_cells      = self.recovered_cells,
         force_cells          = self.force_cells,
@@ -71,6 +73,7 @@ pipeline SC_RNA_COUNTER(
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
         reference_path       = self.reference_path,
+        feature_reference    = self.feature_reference,
         check_executables    = false,
         recovered_cells      = self.recovered_cells,
         force_cells          = self.force_cells,
@@ -120,6 +123,7 @@ pipeline SC_RNA_COUNTER(
         primers                      = self.primers,
         r1_length                    = self.r1_length,
         r2_length                    = self.r2_length,
+        feature_reference            = self.feature_reference,
     )
 
     call SC_RNA_ANALYZER(

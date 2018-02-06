@@ -92,6 +92,7 @@ pipeline SC_RNA_COUNTER_CS(
             "SC5P-R2",
             "SC5P-R1"
         ],
+        feature_reference            = null,
     )
 
     call CLOUPE_PREPROCESS(

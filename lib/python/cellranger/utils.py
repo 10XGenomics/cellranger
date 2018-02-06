@@ -1234,9 +1234,11 @@ def merge_jsons_single_level(filenames):
                                                                                                           str(merged[key])))
     return merged
 
+""" Filter a list of sample defs by a list of desired library types.
+    If list=None, don't filter. """
 def filter_sample_def(sample_def, library_type_list):
     if library_type_list is None:
-        library_type_list = [cr_constants.DEFAULT_LIBRARY_TYPE]
+        return sample_def
 
     filtered_sample_def = []
 

@@ -3,15 +3,20 @@
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
 import itertools
+import json
 import martian
+import numpy as np
 import random
 import tenkit.constants as tk_constants
+import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+from cellranger.feature_ref import FeatureReference
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
-from cellranger.fastq import BarcodeCounter, FastqReader, ChunkedFastqWriter, AugmentedFastqHeader, get_bamtofastq_defs
+from cellranger.fastq import BarcodeCounter, FastqReader, FastqFeatureReader, \
+    ChunkedFastqWriter, AugmentedFastqHeader, get_bamtofastq_defs
 from cellranger.fastq import infer_barcode_reverse_complement
 
 __MRO__ = """
@@ -33,6 +38,7 @@ stage EXTRACT_READS(
     out fastq[]  reads,
     out fastq[]  read2s,
     out int[]    gem_groups,
+    out string[] library_types,
     out string[] read_groups,
     out map      align,
     out string[] bam_comments,
@@ -40,6 +46,7 @@ stage EXTRACT_READS(
 ) split using (
     in  map      read_chunks,
     in  int      gem_group,
+    in  string   library_type,
     in  bool     reads_interleaved,
     in  bool     barcode_rc,
 )
@@ -68,22 +75,38 @@ def split(args):
     return {'chunks': chunks, 'join': join}
 
 def join(args, outs, chunk_defs, chunk_outs):
-    outs.reads, outs.read2s, outs.gem_groups, outs.read_groups = [], [], [], []
+    outs.reads, outs.read2s, outs.gem_groups, outs.library_types, outs.read_groups = [], [], [], [], []
 
     for chunk_out in chunk_outs:
         outs.reads += [read for read in chunk_out.reads]
         outs.read2s += [read2 for read2 in chunk_out.read2s]
         outs.gem_groups += [gem_group for gem_group in chunk_out.gem_groups]
+        outs.library_types += [lt for lt in chunk_out.library_types]
         outs.read_groups += [read_group for read_group in chunk_out.read_groups]
 
     # Ensure consistency of BAM comments
     assert all(chunk_out.bam_comments == chunk_outs[0].bam_comments for chunk_out in chunk_outs)
     outs.bam_comments = chunk_outs[0].bam_comments
 
+    # Write barcode counts
     bc_counter = BarcodeCounter(args.barcode_whitelist, outs.barcode_counts, gem_groups=outs.gem_groups)
-    for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):
+    for chunk_def, chunk_out in itertools.izip(chunk_defs, chunk_outs):
         bc_counter.merge(chunk_def.gem_group, chunk_out.barcode_counts)
     bc_counter.close()
+
+    # Write feature counts
+    feature_counts = None
+    for chunk_def, chunk_out in itertools.izip(chunk_defs, chunk_outs):
+        with open(chunk_out.feature_counts) as f:
+            chunk_counts = np.asarray(json.load(f), dtype=int)
+            if feature_counts is None:
+                feature_counts = chunk_counts
+            else:
+                feature_counts += chunk_counts
+
+    with open(outs.feature_counts, 'w') as f:
+        json.dump(tk_safe_json.json_sanitize(list(feature_counts)), f)
+
 
     outs.align = cr_utils.select_alignment_params(args.align)
 
@@ -98,6 +121,13 @@ def main(args, outs):
     random.seed(0)
 
     paired_end = cr_chem.is_paired_end(args.chemistry_def)
+
+    # Load the feature reference if given
+    if args.feature_reference and args.library_type:
+        feature_ref = FeatureReference(args.feature_reference, args.library_type)
+    else:
+        # No feature ref given
+        feature_ref = None
 
     # Use the chemistry to get the locations of various sequences
     rna_read_def = cr_chem.get_rna_read_def(args.chemistry_def)
@@ -166,7 +196,20 @@ def main(args, outs):
     else:
         umi_reads = FastqReader(None, None, False, r1_length, r2_length)
 
-    fastq_readers = (rna_reads, rna_read2s, bc_reads, si_reads, umi_reads)
+    # Record feature counts:
+    if feature_ref is not None:
+        feature_counts = np.zeros(feature_ref.num_total_features, dtype=int)
+    else:
+        feature_counts = np.zeros(0, dtype=int)
+
+    # If this library type has no features, make the reader a NOOP
+    if feature_ref is not None and len(feature_ref.feature_defs) > 0:
+        feature_reads = FastqFeatureReader(args.read_chunks, feature_ref, args.reads_interleaved, r1_length, r2_length)
+    else:
+        feature_reads = FastqReader(None, None, None, r1_length, r2_length)
+
+
+    fastq_readers = (rna_reads, rna_read2s, bc_reads, si_reads, umi_reads, feature_reads)
 
     read1_writer = ChunkedFastqWriter(outs.reads, args.reads_per_file, compression=COMPRESSION)
     if paired_end:
@@ -185,7 +228,7 @@ def main(args, outs):
         if random.random() > args.subsample_rate:
             continue
 
-        rna_extraction, rna2_extraction, bc_extraction, si_extraction, umi_extraction = extractions
+        rna_extraction, rna2_extraction, bc_extraction, si_extraction, umi_extraction, feature_extraction = extractions
 
         rna_read = rna_extraction if rna_extraction is not None else EMPTY_READ
         rna_read2 = rna2_extraction if rna2_extraction is not None else EMPTY_READ
@@ -218,9 +261,32 @@ def main(args, outs):
         fastq_header1.set_tag(cr_constants.RAW_UMI_TAG, umi_read[1])
         fastq_header1.set_tag(cr_constants.UMI_QUAL_TAG, umi_read[2])
 
-        fastq_header_str1 = fastq_header1.to_string()
+        feat_raw_bc = None
+        feat_proc_bc = None
+        feat_qual = None
+        feat_ids = None
 
-        read1_writer.write((fastq_header_str1, rna_read[1], rna_read[2]))
+        if feature_extraction:
+            if feature_extraction.barcode:
+                feat_raw_bc = feature_extraction.barcode
+                feat_qual = feature_extraction.qual
+
+            if len(feature_extraction.ids) > 0:
+                feat_proc_bc = feature_extraction.barcode
+                feat_ids = ';'.join(feature_extraction.ids)
+
+                # If hit a single feature ID, count its frequency
+                if len(feature_extraction.ids) == 1:
+                    feature_counts[feature_extraction.indices[0]] += 1
+
+        if feat_raw_bc:
+            fastq_header1.set_tag(cr_constants.RAW_FEATURE_BARCODE_TAG, feat_raw_bc)
+            fastq_header1.set_tag(cr_constants.FEATURE_BARCODE_QUAL_TAG, feat_qual)
+        if feat_ids:
+            fastq_header1.set_tag(cr_constants.PROCESSED_FEATURE_BARCODE_TAG, feat_proc_bc)
+            fastq_header1.set_tag(cr_constants.FEATURE_IDS_TAG, feat_ids)
+
+        read1_writer.write((fastq_header1.to_string(), rna_read[1], rna_read[2]))
 
         if paired_end:
             fastq_header2 = AugmentedFastqHeader(rna_read2[0])
@@ -230,6 +296,13 @@ def main(args, outs):
             fastq_header2.set_tag(cr_constants.RAW_BARCODE_QUAL_TAG, bc_read[2])
             fastq_header2.set_tag(cr_constants.RAW_UMI_TAG, umi_read[1])
             fastq_header2.set_tag(cr_constants.UMI_QUAL_TAG, umi_read[2])
+
+            if feat_raw_bc:
+                fastq_header2.set_tag(cr_constants.RAW_FEATURE_BARCODE_TAG, feat_raw_bc)
+                fastq_header2.set_tag(cr_constants.FEATURE_BARCODE_QUAL_TAG, feat_qual)
+            if feat_ids:
+                fastq_header2.set_tag(cr_constants.PROCESSED_FEATURE_BARCODE_TAG, feat_proc_bc)
+                fastq_header2.set_tag(cr_constants.FEATURE_IDS_TAG, feat_ids)
 
             read2_writer.write((fastq_header2.to_string(), rna_read2[1], rna_read2[2]))
 
@@ -248,6 +321,10 @@ def main(args, outs):
         read2_writer.close()
     bc_counter.close()
 
+    # Write feature BC read counts
+    with open(outs.feature_counts, 'w') as f:
+        json.dump(tk_safe_json.json_sanitize(list(feature_counts)), f)
+
     # Set stage output parameters.
     if len(read1_writer.file_paths) > 0:
         outs.reads = read1_writer.get_out_paths()
@@ -256,11 +333,13 @@ def main(args, outs):
         else:
             outs.read2s = []
         outs.gem_groups = [args.gem_group] * len(outs.reads)
+        outs.library_types = [args.library_type] * len(outs.reads)
         outs.read_groups = [args.read_group] * len(outs.reads)
     else:
         outs.reads = []
         outs.read2s = []
         outs.gem_groups = []
+        outs.library_types = []
         outs.read_groups = []
 
     assert len(outs.gem_groups) == len(outs.reads)

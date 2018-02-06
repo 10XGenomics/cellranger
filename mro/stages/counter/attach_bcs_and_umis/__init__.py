@@ -17,11 +17,14 @@ __MRO__ = '''
 stage ATTACH_BCS_AND_UMIS(
     in  bam[]    genome_inputs,
     in  path     reference_path,
+    in  csv      feature_reference,
     in  int[]    gem_groups,
+    in  string[] library_types,
     in  map      chemistry_def,
     in  map      annotation_params,
     in  string   barcode_whitelist,
     in  json     barcode_counts,
+    in  json     feature_counts,
     in  float    barcode_confidence_threshold,
     in  int      umi_min_qual_threshold,
     in  string[] bam_comments,
@@ -42,6 +45,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  bam      chunk_genome_input,
     in  bam      chunk_trimmed_input,
     in  int      gem_group,
+    in  string   library_type,
     in  json     bam_comments_json,
 )
 '''
@@ -56,11 +60,12 @@ def split(args):
     join_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
 
     chunks = []
-    for chunk_genome_input, gem_group in itertools.izip_longest(
-            args.genome_inputs, args.gem_groups):
+    for chunk_genome_input, gem_group, library_type in itertools.izip_longest(
+            args.genome_inputs, args.gem_groups, args.library_types):
         chunks.append({
             'chunk_genome_input': chunk_genome_input,
             'gem_group': gem_group,
+            'library_type': library_type,
             'bam_comments_json': bam_comment_fn,
             '__mem_gb': chunk_mem_gb,
         })
@@ -91,11 +96,15 @@ def main(args, outs):
         str(args.gem_group),
         outs.chunk_metadata,
         cr_chem.get_strandedness(args.chemistry_def),
+        args.feature_counts,
+        args.library_type or cr_constants.DEFAULT_LIBRARY_TYPE,
         '--bam-comments', args.bam_comments_json,
     ]
 
     if cr_chem.get_endedness(args.chemistry_def) == cr_constants.FIVE_PRIME:
         cmd.append('--fiveprime')
+    if args.feature_reference is not None:
+        cmd.extend(['--feature-ref', args.feature_reference])
 
     print >> sys.stderr, 'Running', ' '.join(cmd)
     tk_subproc.check_call(cmd, cwd=os.getcwd())

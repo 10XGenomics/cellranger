@@ -8,6 +8,7 @@ import tenkit.log_subprocess as tk_subproc
 import tenkit.preflight as tk_preflight
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+import cellranger.feature_ref as cr_feature_ref
 
 class PreflightException(Exception):
     def __init__(self, msg):
@@ -87,6 +88,15 @@ def check_chemistry(name, custom_def, allowed_chems):
 
     if name == cr_chem.CUSTOM_CHEMISTRY_NAME:
         check(cr_chem.check_chemistry_def(custom_def))
+
+def check_feature_ref(filename):
+    if not os.path.isfile(filename):
+        raise PreflightException("Could not find the feature definition file %s" % filename)
+
+    try:
+        cr_feature_ref.parse_feature_def_file(filename)
+    except cr_feature_ref.FeatureDefException as e:
+        raise PreflightException(str(e))
 
 def check_environment():
     check(tk_preflight.check_open_fh())

@@ -15,6 +15,9 @@ use serde_json::Value;
 use csv;
 use flate2::read::{GzDecoder};
 
+pub const NUCLEOTIDES: &'static [u8] = b"ACGT";
+pub const ILLUMINA_QUAL_OFFSET: u8 = 33;
+
 /* File IO */
 
 pub fn load_txt<T: FromStr>(file: &str) -> Vec<T> {

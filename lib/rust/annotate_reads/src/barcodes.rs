@@ -13,14 +13,14 @@ use rust_htslib::bam::record::{Record, Aux};
 
 use utils;
 
-const RAW_BC_SEQ_TAG: &'static str = "CR";
-const RAW_BC_QUAL_TAG: &'static str = "CY";
-const PROC_BC_SEQ_TAG: &'static str = "CB";
-const RAW_UMI_SEQ_TAG: &'static str = "UR";
+const RAW_BC_SEQ_TAG: &'static str   = "CR";
+const RAW_BC_QUAL_TAG: &'static str  = "CY";
+const PROC_BC_SEQ_TAG: &'static str  = "CB";
+const RAW_UMI_SEQ_TAG: &'static str  = "UR";
 const RAW_UMI_QUAL_TAG: &'static str = "UY";
 const PROC_UMI_SEQ_TAG: &'static str = "UB";
-const SI_SEQ_TAG: &'static str = "BC";
-const SI_QUAL_TAG: &'static str = "QT";
+const SI_SEQ_TAG: &'static str       = "BC";
+const SI_QUAL_TAG: &'static str      = "QT";
 
 const ILLUMINA_QUAL_OFFSET: u8 = 33;
 
@@ -288,7 +288,7 @@ impl BarcodeUmiChecker {
         }
     }
 
-    pub fn process_barcodes_and_umis(&self, bc_tags: HashMap<String, String>) -> BarcodeUmiData {
+    pub fn process_barcodes_and_umis(&self, bc_tags: &HashMap<String, String>) -> BarcodeUmiData {
         let si_data = self.get_sample_index_data(&bc_tags);
         let bc_data = self.get_barcode_data(&bc_tags);
         let umi_data = self.get_umi_data(&bc_tags);
