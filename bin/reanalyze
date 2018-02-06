@@ -36,22 +36,30 @@ Arguments:
 Options:
 # Analysis
     $DOCOPT_OPTIONS_SAMPLE_INFO
-    --params=PARAMS_CSV     A CSV file specifying analysis parameters.
-    --barcodes=BARCODE_CSV  A CSV file containing a list of cell barcodes to
-                                use for reanalysis, e.g. barcodes exported from
-                                Loupe Cell Browser.
-    --genes=GENES_CSV       A CSV file containing a list of gene IDs to
-                                use for reanalysis. These must correspond to
-                                the gene_id field in the reference GTF
-                                \(e.g. ENSG... for ENSEMBL-based references\).
-    --agg=AGGREGATION_CSV   If the input matrix was produced by
-                                '$TENX_PRODUCT aggr', you may pass the same
-                                aggregation CSV in order to retain
-                                per-library tag information in the
-                                resulting .cloupe file.
-    --force-cells=NUM       Force pipeline to use this number of cells,
-                                bypassing the cell detection algorithm.
+    --params=PARAMS_CSV        A CSV file specifying analysis parameters.
                                 Optional.
+    --barcodes=BARCODE_CSV     A CSV file containing a list of cell barcodes to
+                                use for reanalysis, e.g. barcodes exported from
+                                Loupe Cell Browser. Optional.
+    --genes=GENES_CSV          A CSV file containing a list of gene IDs to
+                                   use for reanalysis. These must correspond to
+                                   the gene_id field in the reference GTF
+                                   \(e.g. ENSG... for ENSEMBL-based references\).
+                                   Optional.
+    --exclude-genes=GENES_CSV  A CSV file containing a list of gene IDs to
+                                   exclude for reanalysis. These must correspond
+                                   to the gene_id field in the reference GTF
+                                   \(e.g., ENSG... for ENSEMBL-based references\).
+                                   The exclusion is applied after --genes.
+                                   Optional.
+    --agg=AGGREGATION_CSV      If the input matrix was produced by
+                                   '$TENX_PRODUCT aggr', you may pass the same
+                                   aggregation CSV in order to retain
+                                   per-library tag information in the
+                                   resulting .cloupe file. Optional.
+    --force-cells=NUM          Force pipeline to use this number of cells,
+                                   bypassing the cell detection algorithm.
+                                   Optional.
 
 # Martian Runtime
     $DOCOPT_OPTIONS_MRP_CLUSTER
@@ -94,7 +102,14 @@ function implement_process_options {
         genes=null
     fi
 
-    # --force_cells
+    # --exclude-genes
+    if [ -n "$exclude_genes" ]; then
+        exclude_genes=\"$(abspath $exclude_genes)\"
+    else
+        exclude_genes=null
+    fi
+
+    # --force-cells
     if [ -z "$force_cells" ]; then
         force_cells=null
     fi
@@ -116,6 +131,7 @@ call SC_RNA_REANALYZER_CS(
     aggregation_csv = $aggregation_csv,
     barcodes_csv = $barcodes,
     genes_csv = $genes,
+    exclude_genes_csv = $exclude_genes,
     force_cells = $force_cells,
 )
 EOF

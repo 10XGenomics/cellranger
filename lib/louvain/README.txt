@@ -44,8 +44,8 @@ much verifications about the arguments.
 -----------------------------------------------------------------------------
 
 
-This package offers a set of functions to use in order to compute 
-communities on graphs weighted or unweighted. A typical sequence of 
+This package offers a set of functions to use in order to compute
+communities on graphs weighted or unweighted. A typical sequence of
 actions is:
 
 1. Conversion from a text format (each line contains a couple "src dest")
@@ -89,7 +89,7 @@ Displays the belonging of nodes to communities for the last level of the tree:
 ./matrix graph.tree -l 2 > graph_X_level2
 
 Displays the X relational matrix for the last level of the tree:
-./matrix graph.tree -m > graph_node2comm_lastlevel  
+./matrix graph.tree -m > graph_node2comm_lastlevel
 
 
 
@@ -113,9 +113,13 @@ The following modifications have been made from version 0.1 and 0.2:
 - graph is not renumbered by default in the convert program
 - an optional verbose mode has been added and the program is silent by default
 - some portions of the code have been c++ improved (type * -> vector<type>)
-These modifications imply that any binary graph file created with the previous 
+These modifications imply that any binary graph file created with the previous
 versions of the code is not comptabile with this version. You must therefore regenerate all the binary files.
 
 Version 0.1 and 0.2:
 - initial community detection algorithm
 
+- 10x Genomics changes following 0.3:
+  - Hardcode a fixed seed value
+  - Fix .gitignore
+  - Add support for '-' as input filename to `convert`, denoting stdin

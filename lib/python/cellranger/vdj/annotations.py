@@ -32,6 +32,9 @@ import tenkit.stats as tk_stats
 import tenkit.seq as tk_seq
 from collections import defaultdict
 
+# Allow the start codon to shift up or down by this many codons
+START_CODON_SLOP = 1
+
 def filter_alignment(alignment_result, score_ratio, word_size,
                      match_score=VDJ_ANNOTATION_MATCH_SCORE):
     """Returns True for a passing alignment and False otherwise.
@@ -500,6 +503,8 @@ class AnnotatedContig(object):
     def has_full_length_vj_hit(self):
         has_full_len_v_hit = any([annotation.feature.region_type in VDJ_V_FEATURE_TYPES and \
                                   annotation.annotation_match_start == 0 for annotation in self.annotations])
+
+        # The -2 allows for slop on the 3' end of J in the face of alignment clipping
         has_full_len_j_hit = any([annotation.feature.region_type in VDJ_J_FEATURE_TYPES  and
                                   annotation.annotation_match_end >= annotation.annotation_length - 2 \
                                   for annotation in self.annotations])
@@ -755,6 +760,8 @@ class AnnotatedContig(object):
         self.productive = None
         self.aa_sequence = None
 
+        flags = []
+
         if len(v_regions) == 1 and len(j_regions) == 1:
             # First try to search in an annotation-guided way
             v_region = v_regions[0]
@@ -769,25 +776,49 @@ class AnnotatedContig(object):
                 # Full V and V begins with a start codon (because it's an L-REGION+V-REGION).
                 # Force the frame to 0.
                 # Search for a CDR3 in frame 0.
-                (cdr_pos, self.cdr3_flag) = search_cdr3_signature(seq, v_region, j_region, 0)
+                (cdr_pos, flag) = search_cdr3_signature(seq, v_region, j_region, 0)
+                flags.append(flag)
+                flags.append('FULL_V_HAS_START')
                 self.start_codon_pos = v_start
 
-            else:
+            elif has_v_start:
+                # Full V but the first annotated codon is not a start.
+                # Look for an alternative start nearby that preserves the V frame.
+                for i in xrange(v_start - 3*START_CODON_SLOP, 1+v_start+3*START_CODON_SLOP, 3):
+                    if i > 0 and (i+3) <= len(seq) and seq[i:(i+3)] in START_CODONS:
+                        (cdr_pos, flag) = search_cdr3_signature(seq, v_region, j_region, 0)
+                        self.start_codon_pos = i
+                        flags.append(flag)
+                        flags.append('FULL_V_ALT_START')
+                if self.start_codon_pos is None:
+                    flags.append('FULL_V_NO_START')
+
+            if not has_v_start or self.start_codon_pos is None:
+                # Either we don't contain the start of V or we didn't find a valid start codon above
                 # Look for a CDR3 sequence in all frames
                 cdr_pos = None
 
                 for frame in [0, 1, 2]:
-                    ((cdr_pos), self.cdr3_flag) = search_cdr3_signature(seq, v_region, j_region, frame)
+                    ((cdr_pos), flag) = search_cdr3_signature(seq, v_region, j_region, frame)
+
                     if cdr_pos:
+                        flags.append(flag)
                         break
+                if cdr_pos is None:
+                    flags.append('FAILED_UNGUIDED_SEARCH')
 
             if cdr_pos and cdr_pos[1] - cdr_pos[0] < VDJ_MAX_CDR3_LEN:
                 self.cdr3_start = cdr_pos[0]
                 self.cdr3_stop = cdr_pos[1]
                 self.cdr3_seq = seq[cdr_pos[0]:cdr_pos[1]]
-                self.cdr3 = ''.join([CODON_TO_AA[self.cdr3_seq[i:(i+3)]] for i in range(0, len(self.cdr3_seq), 3)])
+                self.cdr3 = ''.join([CODON_TO_AA[self.cdr3_seq[i:(i+3)]] for i in xrange(0, len(self.cdr3_seq), 3)])
 
                 assert (cdr_pos[1] - cdr_pos[0]) % 3 == 0
+            else:
+                if cdr_pos is None:
+                    flags.append('NO_CDR3')
+                else:
+                    flags.append('CDR3_TOO_LONG:%d' % (cdr_pos[1] - cdr_pos[0]))
 
         if not self.cdr3:
             # Either this didn't have both a V and a J, or the annotation-guided search failed to give a valid CDR3.
@@ -801,7 +832,8 @@ class AnnotatedContig(object):
                 self.cdr3 = cdr3_aas
                 self.cdr3_seq = cdr3_seq
                 self.cdr3_start = cys_pos
-                self.cdr3_stop = fgxg_pos
+                self.cdr3_stop = fgxg_pos + 3 # End position is the start position of last amino acid + 3
+                flags.append('FOUND_CDR3_UNGUIDED')
 
         if self.cdr3:
             cdr3_frame = self.cdr3_start % 3 # frame wrt start of sequence
@@ -810,33 +842,47 @@ class AnnotatedContig(object):
                 # We don't have a V or a start codon.
                 # De novo search for the start codon in the CDR3 frame;
                 # Get the leftmost possible start codon match
-                for i in range(cdr3_frame, len(self.sequence), 3):
+                for i in xrange(cdr3_frame, len(self.sequence), 3):
                     if self.codon(i) in START_CODONS:
                         self.start_codon_pos = i
+                        flags.append('NO_V_BUT_FOUND_START')
                         break
 
             if self.start_codon_pos is not None:
                 # If we have a start codon, try to find a stop codon in-frame
-                for i in range(self.start_codon_pos, len(self.sequence), 3):
+                for i in xrange(self.start_codon_pos, len(self.sequence), 3):
                     if self.codon(i) in STOP_CODONS:
                         self.stop_codon_pos = i
                         break
 
             # Determine productivity
             if self.has_full_length_vj_hit():
-                self.productive = self.start_codon_pos is not None and \
-                                  (self.start_codon_pos % 3) == (self.cdr3_start % 3) and \
-                    all([self.codon(i) not in STOP_CODONS for i in range(self.start_codon_pos,
-                                                                         j_region.contig_match_end, 3)])
+                has_start = self.start_codon_pos is not None
+                cdr3_in_frame = has_start and self.cdr3_start is not None and \
+                                (self.start_codon_pos % 3) == (self.cdr3_start % 3)
+                vj_nostop = has_start and \
+                            all([self.codon(i) not in STOP_CODONS for i in xrange(self.start_codon_pos,
+                                                                                  j_region.contig_match_end, 3)])
+                self.productive = has_start and cdr3_in_frame and vj_nostop
 
-            elif any([self.codon(i) in STOP_CODONS for i in range(self.cdr3_start, self.cdr3_stop, 3)]):
+                if not has_start:
+                    flags.append('NO_START')
+                if has_start and self.cdr3_start is not None and not cdr3_in_frame:
+                    flags.append('CDR3_OUT_OF_FRAME')
+                if not vj_nostop:
+                    flags.append('VJ_STOP')
+
+            elif any([self.codon(i) in STOP_CODONS for i in xrange(self.cdr3_start, self.cdr3_stop, 3)]):
                 # We don't know where the transcript starts and ends so we'll
                 # be cautious about calling productivity.
+                flags.append('CDR3_STOP')
                 self.productive = False
 
         # Translate the entire reading frame if possible
         if self.start_codon_pos is not None:
-            self.aa_sequence = ''.join([CODON_TO_AA[self.codon(i)] for i in range(self.start_codon_pos, len(self.sequence) - 2, 3)])
+            self.aa_sequence = ''.join([CODON_TO_AA[self.codon(i)] for i in xrange(self.start_codon_pos, len(self.sequence) - 2, 3)])
+
+        self.cdr3_flag = '|'.join([f for f in flags if f is not None and len(f) > 0])
 
 
 

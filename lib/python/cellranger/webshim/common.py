@@ -97,19 +97,6 @@ def format_value(value, format_type):
         return format_type % float(value)
     raise Exception('Invalid format type: %s' % format_type)
 
-def get_sample_properties(sample_id, sample_desc, genomes, version, agg_batches=None):
-    sample_properties = {
-        'sample_id': sample_id,
-        'sample_desc': sample_desc,
-        'genomes': genomes,
-        'version': version,
-    }
-
-    if agg_batches:
-        sample_properties['agg_batches'] = agg_batches
-
-    return sample_properties
-
 def lookup_name(data, name):
     name_parts = name.split('/', 1)
     data = data.get(name_parts[0])
@@ -119,7 +106,9 @@ def lookup_name(data, name):
         return lookup_name(data, name_parts[1])
 
 def add_alarm(value, formatted_value, level, alarm_dict, alarms):
-    test = '%f %s' % (value, alarm_dict['test'])
+    # The numeric value may have become a string via JSON ('NaN', 'Infinity', '-Infinity')
+    # Note that by default python's json encoder outputs a bare NaN symbol which is even worse
+    test = 'float("%s") %s' % (str(value), alarm_dict['test'])
     raised = eval(test, {}, {})
     if raised:
         title = alarm_dict['title']
@@ -172,7 +161,9 @@ def add_table_rows(data, name, metric_dict, rows, style_func, target_func, prefi
             formatted_description = format_description(description, prefix, prefixes,
                                                        prefix_format_func=prefix_format_func)
             formatted_value = format_value(value, format_type)
+
             style = style_func(metric_dict, value)
+
             rows.append([
                 {
                     'v': formatted_name,
@@ -186,6 +177,7 @@ def add_table_rows(data, name, metric_dict, rows, style_func, target_func, prefi
                 {
                     'v': formatted_value,
                     's': style,
+                    'r': value,
                 },
             ])
             values.append(value)
@@ -297,17 +289,22 @@ def plot_barcode_rank(chart, sample_properties, sample_data):
     if len(sample_properties['genomes']) == 0:
         return None
 
-    counts_per_bc = []
-    for genome in sample_properties['genomes']:
-        key = cr_utils.format_barcode_summary_h5_key(genome, cr_constants.TRANSCRIPTOME_REGION, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
-        if key in sample_data.barcode_summary:
-            counts_per_bc.append(sample_data.barcode_summary[key][:])
-        else:
-            # Not guaranteed to exist, depending on pipeline
-            return
-    counts_per_bc = np.concatenate(counts_per_bc)
+    # UMI counts per BC across all genomes present
+    if len(sample_properties['genomes']) > 1:
+        genome = cr_constants.MULTI_REFS_PREFIX
+    else:
+        genome = sample_properties['genomes'][0]
 
-    return _plot_barcode_rank(chart, counts_per_bc, sample_data.num_cells)
+    key = cr_utils.format_barcode_summary_h5_key(genome,
+                                                 cr_constants.TRANSCRIPTOME_REGION,
+                                                 cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
+
+    if key in sample_data.barcode_summary:
+        counts_per_bc = sample_data.barcode_summary[key][:]
+        return _plot_barcode_rank(chart, counts_per_bc, sample_data.num_cells)
+    else:
+        # Not guaranteed to exist, depending on pipeline
+        pass
 
 
 def plot_vdj_barcode_rank(chart, sample_properties, sample_data):
@@ -700,8 +697,13 @@ def plot_subsampled_scatterplot_metric(chart, sample_properties, sample_data, **
     """
     summary_data = sample_data.summary or {}
 
+    subsample_type = kwargs.get('subsample_type', 'raw_rpc')
+    ref_prefix = kwargs.get('ref_prefix', '(.+)_')
+
     # Regular expression to match <reference>_<subsample_type>_<subsample_depth>_<metric_suffix> pattern
-    metric_pattern = "^(.+)_(raw_rpc)_([0-9]+)_%s" % (kwargs.get("metric_suffix", None))
+    metric_pattern = '^%s(%s)_([0-9]+)_%s' % (ref_prefix,
+                                              subsample_type,
+                                              kwargs.get('metric_suffix', None))
 
     metric_search_results = [re.search(metric_pattern, key) for key in summary_data.keys()]
 
@@ -797,22 +799,70 @@ def build_charts(sample_properties, chart_dicts, sample_data, module=None):
 
     return charts, filters
 
+def filter_vdj_prefixes(all_prefixes, sample_properties):
+    """ Only get subset of metric prefix values """
+    chain_filter = sample_properties.get('chain_type')
+    if chain_filter is None:
+        return all_prefixes
 
-def get_constants_for_pipeline(pipeline):
+    # NOTE: Assumes chains (TRA, TRB, etc) are prefixed with the chain_type (TR or IG)
+    result = {}
+    for key, values in all_prefixes.iteritems():
+        # Only filter any prefix that is a candidate for filtering
+        # (i.e., contains some values prefixed by the selected chain type)
+        if values is not None and \
+           any(v.startswith(chain_filter) for v in values):
+            result[key] = [v for v in values if v.startswith(chain_filter) or v == cr_constants.MULTI_REFS_PREFIX]
+        else:
+            result[key] = values
+    return result
+
+
+def filter_vdj_alarms(all_alarms, sample_properties):
+    """ Only get subset of metric alarms """
+    chain_filter = sample_properties.get('chain_type')
+    if chain_filter is None:
+        return all_alarms
+
+    result = []
+    for alarm in all_alarms:
+        # No filters specified; don't filter
+        if 'filters' not in alarm:
+            result.append(alarm)
+            continue
+
+        for f in alarm['filters']:
+            if f.get('chain_type') == chain_filter:
+                result.append(alarm)
+
+    return result
+
+
+def get_constants_for_pipeline(pipeline, sample_properties):
+    """ Get the appropriate metrics/alarms/charts for a pipeline """
     if pipeline == shared_constants.PIPELINE_VDJ:
         metrics, alarms, charts = ws_vdj_constants.METRICS, ws_vdj_constants.METRIC_ALARMS, ws_vdj_constants.CHARTS
-        metric_prefixes = vdj_report.VdjReporter().get_all_prefixes()
+
+        metric_prefixes = filter_vdj_prefixes(vdj_report.VdjReporter().get_all_prefixes(),
+                                              sample_properties)
+
+        alarms = filter_vdj_alarms(alarms, sample_properties)
+
     else:
         metrics, alarms, charts = ws_gex_constants.METRICS, ws_gex_constants.METRIC_ALARMS, ws_gex_constants.CHARTS
+
         metric_prefixes = cr_report.Reporter().get_all_prefixes()
 
     return metrics, alarms, charts, metric_prefixes
 
 
 def build_web_summary_json(sample_properties, sample_data, pipeline):
+    """ sample_properties - dict
+        sample_data - *SampleData class
+        pipeline - string """
     view = copy.deepcopy(sample_properties)
 
-    metrics, alarms, charts, all_prefixes = get_constants_for_pipeline(pipeline)
+    metrics, alarms, charts, all_prefixes = get_constants_for_pipeline(pipeline, sample_properties)
 
     tables, alarms = build_tables(sample_properties, metrics, alarms, sample_data, all_prefixes=all_prefixes)
     if tables:
@@ -899,7 +949,7 @@ def build_web_summary_html(filename, sample_properties, sample_data, pipeline,
 
 
 def build_metrics_summary_csv(filename, sample_properties, sample_data, pipeline):
-    metrics, alarms, charts, all_prefixes = get_constants_for_pipeline(pipeline)
+    metrics, alarms, charts, all_prefixes = get_constants_for_pipeline(pipeline, sample_properties)
 
     tables, _ = build_tables(sample_properties, metrics, alarms, sample_data, all_prefixes=all_prefixes)
     if not tables:

@@ -39,7 +39,9 @@ def split(args):
     chunks = []
     min_clusters = cr_constants.MIN_N_CLUSTERS
     max_clusters = args.max_clusters if args.max_clusters is not None else cr_constants.MAX_N_CLUSTERS_DEFAULT
+
     matrix_mem_gb = np.ceil(MEM_FACTOR * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5))
+
     for n_clusters in xrange(min_clusters, max_clusters + 1):
         chunk_mem_gb = max(matrix_mem_gb, cr_constants.MIN_MEM_GB)
         chunks.append({

@@ -2,9 +2,11 @@
 #
 # Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
 #
-
+#
 # Determine the locations of the cell barcode, cDNA sequence, UMI, sample index.
-
+#
+from collections import OrderedDict
+import copy
 import tenkit.constants as tk_constants
 import tenkit.fasta as tk_fasta
 import tenkit.stats as tk_stats
@@ -35,6 +37,7 @@ CHEMISTRY_SC3P_V1 = {
     'si_read_offset': 0,
     'si_read_length': None,
     'strandedness': '+',
+    'endedness': cr_constants.THREE_PRIME,
     'read_type_to_bcl_processor_filename': {
         'R1': 'RA', # Read1, Read2 interleaved
         'R2': None,
@@ -50,8 +53,6 @@ CHEMISTRY_SC3P_V1 = {
         'I2': 'I1', # Index5
     },
     'barcode_whitelist': '737K-april-2014_rc',
-    # Retain sequence after the UMI in R2
-    'retain_trimmed_suffix_read': 'R2',
 }
 
 CHEMISTRY_SC3P_V2 = {
@@ -73,6 +74,7 @@ CHEMISTRY_SC3P_V2 = {
     'si_read_offset': 0,
     'si_read_length': None,
     'strandedness': '+',
+    'endedness': cr_constants.THREE_PRIME,
     'read_type_to_bcl_processor_filename': {
         'R1': 'RA', # Read1, Read2 interleaved
         'R2': None,
@@ -88,19 +90,89 @@ CHEMISTRY_SC3P_V2 = {
         'I2': None, # Index5
     },
     'barcode_whitelist': '737K-august-2016',
-    # Retain sequqence after the BC-UMI in R1
-    'retain_trimmed_suffix_read': 'R1',
 }
-
-SC3P_CHEMISTRIES = [
-    CHEMISTRY_SC3P_V1,
-    CHEMISTRY_SC3P_V2,
-]
 
 # Single Cell V(D)J
 CHEMISTRY_SCVDJ = {
     'name': 'SCVDJ',
     'description': 'Single Cell V(D)J',
+    'barcode_read_type': 'R1',
+    'barcode_read_offset': 0,
+    'barcode_read_length': 16,
+    'umi_read_type': 'R1',
+    'umi_read_offset': 16,
+    'umi_read_length': 10,
+    'rna_read_type': 'R1',
+    # Remove BC, UMI, spacer + 2bp
+    'rna_read_offset': 41,
+    'rna_read_length': None,
+    'rna_read2_type': 'R2',
+    'rna_read2_offset': 0,
+    'rna_read2_length': None,
+    'si_read_type': 'I1',
+    'si_read_offset': 0,
+    'si_read_length': None,
+    'strandedness': '+',
+    'endedness': cr_constants.FIVE_PRIME,
+    'read_type_to_bcl_processor_filename': {
+        'R1': 'RA', # Read1, Read2 interleaved
+        'R2': None,
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    # Valid for the following argument to bcl2fastq:
+    # --use-bases-mask=Y150,I8,Y150
+    'read_type_to_bcl2fastq_filename': {
+        'R1': 'R1', # Read1
+        'R2': 'R2', # Read2
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    'barcode_whitelist': '737K-august-2016',
+}
+
+# Single Cell V(D)J, transcript on R2 only
+CHEMISTRY_SCVDJ_R2 = {
+    'name': 'SCVDJ-R2',
+    'description': 'Single Cell V(D)J R2-only',
+    'barcode_read_type': 'R1',
+    'barcode_read_offset': 0,
+    'barcode_read_length': 16,
+    'umi_read_type': 'R1',
+    'umi_read_offset': 16,
+    'umi_read_length': 10,
+    'rna_read_type': 'R2',
+    'rna_read_offset': 0,
+    'rna_read_length': None,
+    'rna_read2_type': None,
+    'rna_read2_offset': 0,
+    'rna_read2_length': None,
+    'si_read_type': 'I1',
+    'si_read_offset': 0,
+    'si_read_length': None,
+    'strandedness': '-',
+    'endedness': cr_constants.FIVE_PRIME,
+    'read_type_to_bcl_processor_filename': {
+        'R1': 'RA', # Read1, Read2 interleaved
+        'R2': None,
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    # Valid for the following argument to bcl2fastq:
+    # --use-bases-mask=Y26,I8,Y150
+    'read_type_to_bcl2fastq_filename': {
+        'R1': 'R1', # Read1
+        'R2': 'R2', # Read2
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    'barcode_whitelist': '737K-august-2016',
+}
+
+# Single Cell 5' Gene Expression, paired-end
+CHEMISTRY_SC5P_PE = {
+    'name': 'SC5P-PE',
+    'description': 'Single Cell 5\' PE',
     'barcode_read_type': 'R1',
     'barcode_read_offset': 0,
     'barcode_read_length': 16,
@@ -117,6 +189,7 @@ CHEMISTRY_SCVDJ = {
     'si_read_offset': 0,
     'si_read_length': None,
     'strandedness': '+',
+    'endedness': cr_constants.FIVE_PRIME,
     'read_type_to_bcl_processor_filename': {
         'R1': 'RA', # Read1, Read2 interleaved
         'R2': None,
@@ -132,25 +205,129 @@ CHEMISTRY_SCVDJ = {
         'I2': None, # Index5
     },
     'barcode_whitelist': '737K-august-2016',
-    'retain_trimmed_suffix_read': None,
 }
 
-DEFINED_CHEMISTRIES = SC3P_CHEMISTRIES + [CHEMISTRY_SCVDJ]
+# Single Cell 5' Gene Expression, transcript on R2 only
+CHEMISTRY_SC5P_R2 = {
+    'name': 'SC5P-R2',
+    'description': 'Single Cell 5\' R2-only',
+    'barcode_read_type': 'R1',
+    'barcode_read_offset': 0,
+    'barcode_read_length': 16,
+    'umi_read_type': 'R1',
+    'umi_read_offset': 16,
+    'umi_read_length': 10,
+    'rna_read_type': 'R2',
+    'rna_read_offset': 0,
+    'rna_read_length': None,
+    'rna_read2_type': None,
+    'rna_read2_offset': 0,
+    'rna_read2_length': None,
+    'si_read_type': 'I1',
+    'si_read_offset': 0,
+    'si_read_length': None,
+    'strandedness': '-',
+    'endedness': cr_constants.FIVE_PRIME,
+    'read_type_to_bcl_processor_filename': {
+        'R1': 'RA', # Read1, Read2 interleaved
+        'R2': None,
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    # Valid for the following argument to bcl2fastq:
+    # --use-bases-mask=Y26,I8,Y98
+    'read_type_to_bcl2fastq_filename': {
+        'R1': 'R1', # Read1
+        'R2': 'R2', # Read2
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    'barcode_whitelist': '737K-august-2016',
+}
+
+# Single Cell 5' Gene Expression, transcript on R1 only
+CHEMISTRY_SC5P_R1 = {
+    'name': 'SC5P-R1',
+    'description': 'Single Cell 5\' R1-only',
+    'barcode_read_type': 'R1',
+    'barcode_read_offset': 0,
+    'barcode_read_length': 16,
+    'umi_read_type': 'R1',
+    'umi_read_offset': 16,
+    'umi_read_length': 10,
+    'rna_read_type': 'R1',
+    # Remove BC, UMI, spacer + 2bp
+    'rna_read_offset': 41,
+    'rna_read_length': None,
+    'rna_read2_type': None,
+    'rna_read2_offset': 0,
+    'rna_read2_length': None,
+    'si_read_type': 'I1',
+    'si_read_offset': 0,
+    'si_read_length': None,
+    'strandedness': '+',
+    'endedness': cr_constants.FIVE_PRIME,
+    # NOTE: Interleaved input is not supported!
+    'read_type_to_bcl_processor_filename': {
+        'R1': 'RA', # Read1, Read2 interleaved
+        'R2': None,
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    # Valid for the following argument to bcl2fastq:
+    # --use-bases-mask=Y137,I8
+    'read_type_to_bcl2fastq_filename': {
+        'R1': 'R1', # Read1
+        'R2': 'R2', # Read2
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    'barcode_whitelist': '737K-august-2016',
+}
+
+
+SC3P_CHEMISTRIES = [
+    CHEMISTRY_SC3P_V1,
+    CHEMISTRY_SC3P_V2,
+]
+
+SC5P_CHEMISTRIES = [
+    CHEMISTRY_SC5P_PE,
+    CHEMISTRY_SC5P_R2,
+    CHEMISTRY_SC5P_R1,
+]
+
+DEFINED_CHEMISTRIES = SC3P_CHEMISTRIES + [CHEMISTRY_SCVDJ, CHEMISTRY_SCVDJ_R2] + SC5P_CHEMISTRIES
+
+# Aliases for human usage
+CHEMISTRY_ALIASES = OrderedDict([
+    ('threeprime', 'SC3P_auto'),
+    ('fiveprime', 'SC5P_auto'),
+])
 
 # Signals the pipeline to auto-detect the chemistry
-AUTO_CHEMISTRY_NAME = 'auto'
+AUTO_CHEMISTRY_NAMES = ['auto', 'threeprime', 'fiveprime', 'SC3P_auto', 'SC5P_auto', 'SCVDJ_auto']
 
 # User-defined chemistry (use the various read_type/offset/length arguments passed to the pipeline)
 CUSTOM_CHEMISTRY_NAME = 'custom'
 
-# All valid chemistry arguments to the pipeline
-CHEMISTRY_ARG_NAMES = [c['name'] for c in DEFINED_CHEMISTRIES] + [AUTO_CHEMISTRY_NAME, CUSTOM_CHEMISTRY_NAME]
+# All valid chemistry name arguments to the pipeline
+CHEMISTRY_ARG_NAMES = CHEMISTRY_ALIASES.keys() + \
+                      [c['name'] for c in DEFINED_CHEMISTRIES] + \
+                      AUTO_CHEMISTRY_NAMES + \
+                      [CUSTOM_CHEMISTRY_NAME]
 
-def check_chemistry_arg(chemistry_name):
+def check_chemistry_arg(chemistry_name, allowed_chems=None):
     """ Validate a given chemistry name argument passed to the pipeline. Return (ok, error_msg) """
-    if any(name == chemistry_name for name in CHEMISTRY_ARG_NAMES):
+    check_against = allowed_chems or CHEMISTRY_ARG_NAMES
+
+    if chemistry_name in check_against:
         return True, None
-    return (False, 'Unrecognized chemistry name: "%s". Must be one of: %s.' % (chemistry_name, ', '.join(CHEMISTRY_ARG_NAMES)))
+
+    display_list = copy.copy(check_against)
+    display_list.remove(CUSTOM_CHEMISTRY_NAME)
+
+    return (False, 'Unrecognized chemistry name: "%s". Must be one of: %s.' % (chemistry_name, ', '.join(display_list)))
 
 def check_chemistry_def(chemistry):
     """ Validate a chemistry definition dict. Return (ok, error_msg) """
@@ -239,11 +416,17 @@ def get_read_type_map(chemistry, fastq_mode):
 def get_strandedness(chemistry):
     return chemistry['strandedness']
 
+def get_endedness(chemistry):
+    return chemistry.get('endedness', cr_constants.THREE_PRIME)
+
 def get_description(chemistry):
     return chemistry['description']
 
 def get_chemistry(name):
     """ Returns a chemistry definition dict for a given name """
+
+    name = CHEMISTRY_ALIASES.get(name, name)
+
     chemistries = filter(lambda c: c['name'] == name, DEFINED_CHEMISTRIES)
     if len(chemistries) == 0:
         raise ValueError("Could not find chemistry named %s" % name)
@@ -252,7 +435,7 @@ def get_chemistry(name):
     return chemistries[0]
 
 def get_chemistry_description_from_name(name):
-    if name == AUTO_CHEMISTRY_NAME or name == CUSTOM_CHEMISTRY_NAME:
+    if name in AUTO_CHEMISTRY_NAMES or name == CUSTOM_CHEMISTRY_NAME:
         return name
     else:
         return get_chemistry(name)['description']
@@ -267,13 +450,13 @@ def _compute_frac_barcodes_on_whitelist(fastqs, barcode_whitelist_set, reads_int
         barcode_reads = cr_fastq.FastqReader({read_def.read_type: fastq},
                                              read_def,
                                              reads_interleaved,
-                                             None)
+                                             None, None)
 
-        for extraction in barcode_reads.in_iter:
+        for read in barcode_reads.in_iter:
             if num_reads == cr_constants.DETECT_CHEMISTRY_INITIAL_READS:
                 break
 
-            _, barcode, _ = extraction.read
+            _, barcode, _ = read
 
             num_reads += 1
             if barcode in barcode_whitelist_set:
@@ -287,69 +470,129 @@ def _compute_frac_barcodes_on_whitelist(fastqs, barcode_whitelist_set, reads_int
     else:
         return 0.0
 
+def _compute_r1_length(fastqs, reads_interleaved):
+    """ Infer the length of R1 """
+    num_reads = 0
+    r1_max_len = 0
 
-def _infer_sc3p_chemistry(chemistry_whitelist_frac):
-    """ Infer the SC3P chemistry name from a dict of <chemistry_name>: frac_barcodes_on_whitelist. """
-    best_chemistry_name, best_whitelist_frac = max(chemistry_whitelist_frac.items(), key=lambda kv: kv[1])
+    def get_r1_noninterleaved(read_iter):
+        for _, seq, _ in read_iter:
+            yield seq
+    def get_r1_interleaved(read_iter):
+        for _, seq, _, _, _, _ in read_iter:
+            yield seq
+    get_r1 = get_r1_interleaved if reads_interleaved else get_r1_noninterleaved
 
-    if best_whitelist_frac >= cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST:
-        return best_chemistry_name
+    for fastq in fastqs:
+        with cr_utils.open_maybe_gzip(fastq, 'r') as fq_file:
+            reads = tk_fasta.read_generator_fastq(fq_file, reads_interleaved)
+
+            for r1 in get_r1(reads):
+                if num_reads == cr_constants.DETECT_CHEMISTRY_INITIAL_READS:
+                    break
+                r1_max_len = max(len(r1), r1_max_len)
+                num_reads += 1
+
+        if num_reads == cr_constants.DETECT_CHEMISTRY_INITIAL_READS:
+            break
+
+    return r1_max_len
+
+def infer_chemistry(chemistry_arg, fq_spec):
+    """ Infers the chemistry name given a FastqSpec for a single sample index/name """
+    assert fq_spec.is_single_group()
+
+    chemistry_arg = CHEMISTRY_ALIASES.get(chemistry_arg, chemistry_arg)
+
+    if chemistry_arg == 'SC3P_auto':
+        return infer_sc3p_chemistry(fq_spec)
+
+    elif chemistry_arg == 'SC5P_auto':
+        return infer_sc5p_chemistry(fq_spec)
+
+    elif chemistry_arg == 'SCVDJ_auto':
+        return infer_scvdj_chemistry(fq_spec)
+
     else:
-        raise ValueError('Could not auto-detect Single Cell 3\' chemistry. Fraction of barcodes on whitelist was at best %0.2f%%, while we expected at least %0.2f%% for one of the chemistries.' %
-                (100.0*best_whitelist_frac, 100.0*cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST))
-
-def infer_sc3p_chemistry_bcl_processor(chemistry_arg, fastq_path, sample_index, lanes):
-    """ Infer the SC3P chemistry name from the set of fastqs provided by BCL_PROCESSOR/mkfastq. """
-
-    if chemistry_arg != AUTO_CHEMISTRY_NAME:
+        # Must be explicit from this point on
+        assert chemistry_arg not in AUTO_CHEMISTRY_NAMES
         return chemistry_arg
 
-    chemistry_whitelist_fracs = {}
-    num_fastqs_found = 0
+
+def infer_sc3p_chemistry(fq_spec):
+    """ Infer the SC3P chemistry name.
+        fq_spec (FastqSpec) for a single sample index/name """
+    assert fq_spec.is_single_group()
+
+    best_chem, best_frac = None, float('-inf')
+
+    n_fastqs = 0
 
     for chemistry in SC3P_CHEMISTRIES:
+        # Get the FASTQs containing the barcode for this chemistry
         barcode_read_def = get_barcode_read_def(chemistry)
+        read_type = get_read_type_map(chemistry, fq_spec.fastq_mode)[barcode_read_def.read_type]
 
-        fastq_read = get_read_type_map(chemistry, tk_constants.BCL_PROCESSOR_FASTQ_MODE)[barcode_read_def.read_type]
+        fastqs = fq_spec.get_fastqs(read_type)
+        n_fastqs += len(fastqs)
 
-        fastqs = tk_fasta.find_input_fastq_files_10x_preprocess(fastq_path, fastq_read,
-                                                                sample_index, lanes)
-        num_fastqs_found += len(fastqs)
+        whitelist = _get_barcode_whitelist_set(chemistry)
 
-        chemistry_whitelist_fracs[chemistry['name']] = _compute_frac_barcodes_on_whitelist(fastqs,
-                                                                                          _get_barcode_whitelist_set(chemistry),
-                                                                                          reads_interleaved=True,
-                                                                                          read_def=barcode_read_def)
+        wl_frac = _compute_frac_barcodes_on_whitelist(fastqs,
+                                                      whitelist,
+                                                      reads_interleaved=fq_spec.interleaved,
+                                                      read_def=barcode_read_def)
 
-    if num_fastqs_found == 0:
+        if wl_frac > best_frac:
+            best_chem, best_frac = chemistry['name'], wl_frac
+
+    if n_fastqs == 0:
         raise NoInputFastqsException()
 
-    return _infer_sc3p_chemistry(chemistry_whitelist_fracs)
+    if best_frac >= cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST:
+        return best_chem
+    else:
+        raise ValueError('Could not auto-detect Single Cell 3\' chemistry. Fraction of barcodes on whitelist was at best %0.2f%%, while we expected at least %0.2f%% for one of the chemistries.' %
+                (100.0*best_frac, 100.0*cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST))
 
-def infer_sc3p_chemistry_ilmn_bcl2fastq(chemistry_arg, fastq_path, sample_name, lanes):
-    """ Infer the SC3P chemistry name from the set of fastqs provided by bcl2fastq. """
 
-    if chemistry_arg != AUTO_CHEMISTRY_NAME:
-        return chemistry_arg
+def infer_sc5p_chemistry(fq_spec):
+    """ Infer the SC5P chemistry from the R1 length.
+        fq_spec (FastqSpec) - for a single sample index/name """
+    assert fq_spec.is_single_group()
 
-    chemistry_whitelist_fracs = {}
-    num_fastqs_found = 0
+    r1_fastqs = fq_spec.get_fastqs('R1')
 
-    for chemistry in SC3P_CHEMISTRIES:
-        barcode_read_def = get_barcode_read_def(chemistry)
+    if len(r1_fastqs) == 0:
+        raise NoInputFastqsException()
 
-        fastq_read = get_read_type_map(chemistry, tk_constants.ILMN_BCL2FASTQ_FASTQ_MODE)[barcode_read_def.read_type]
+    r1_len = _compute_r1_length(r1_fastqs, reads_interleaved=fq_spec.interleaved)
 
-        fastqs = tk_fasta.find_input_fastq_files_bcl2fastq_demult(fastq_path, fastq_read,
-                                                                  sample_name, lanes)
-        num_fastqs_found += len(fastqs)
 
-        chemistry_whitelist_fracs[chemistry['name']] = _compute_frac_barcodes_on_whitelist(fastqs,
-                                                                                          _get_barcode_whitelist_set(chemistry),
-                                                                                          reads_interleaved=False,
-                                                                                          read_def=barcode_read_def)
+    if fq_spec.interleaved:
+        # Single-end + interleaved is unsupported.
+        single_end = False
+    else:
+        r2_fastqs = fq_spec.get_fastqs('R2')
+        single_end = len(r2_fastqs) == 0
 
-    if num_fastqs_found == 0:
-        raise NoInputFastqsException
+    if single_end:
+        return 'SC5P-R1'
+    elif r1_len >= cr_constants.DETECT_5P_CHEMISTRY_MIN_R1_LEN_PE:
+        return 'SC5P-PE'
+    else:
+        return 'SC5P-R2'
 
-    return _infer_sc3p_chemistry(chemistry_whitelist_fracs)
+def infer_scvdj_chemistry(fq_spec):
+    """ Infer the SCVDJ chemistry from the R1 length.
+        fq_spec (FastqSpec) - for a single sample index/name """
+    name = infer_sc5p_chemistry(fq_spec)
+
+    if name == 'SC5P-PE':
+        return 'SCVDJ'
+    elif name == 'SC5P-R2':
+        return 'SCVDJ-R2'
+    elif name == 'SC5P-R1':
+        raise ValueError("Single-end (SC5P-R1) is not supported for V(D)J.")
+    else:
+        raise ValueError("Cannot translate chemistry %s from SC5P to SCVDJ.")

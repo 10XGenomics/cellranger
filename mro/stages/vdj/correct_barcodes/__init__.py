@@ -4,6 +4,7 @@
 #
 import itertools
 import tenkit.fasta as tk_fasta
+import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
 import cellranger.report as cr_report
@@ -20,8 +21,7 @@ stage CORRECT_BARCODES(
     in  float   barcode_confidence_threshold,
     in  string  barcode_whitelist,
     in  int     initial_reads,
-    out fastq[] corrected_read1s,
-    out fastq[] corrected_read2s,
+    out tsv[]   corrected_bcs,
     out json    corrected_barcode_counts,
     out pickle  chunked_reporter,
     out json    summary,
@@ -36,7 +36,13 @@ stage CORRECT_BARCODES(
 
 def split(args):
     chunks = []
-    for read1, read2, gem_group in itertools.izip(args.read1s, args.read2s, args.gem_groups):
+
+    if cr_chem.is_paired_end(args.chemistry_def):
+        assert len(args.read1s) == len(args.read2s)
+
+    assert len(args.gem_groups) == len(args.read1s)
+
+    for read1, read2, gem_group in itertools.izip_longest(args.read1s, args.read2s, args.gem_groups):
         chunks.append({
             'read1_chunk': read1,
             'read2_chunk': read2,
@@ -61,22 +67,24 @@ def main(args, outs):
     else:
         barcode_whitelist_set = None
 
-    in_read1_fastq = open(args.read1_chunk)
-    in_read2_fastq = open(args.read2_chunk)
-    out_read1_fastq = open(outs.corrected_read1s, 'w')
-    out_read2_fastq = open(outs.corrected_read2s, 'w')
+    in_read1_fastq = cr_utils.open_maybe_gzip(args.read1_chunk)
+    in_read2_fastq = cr_utils.open_maybe_gzip(args.read2_chunk) if args.read2_chunk else []
+
+    outs.corrected_bcs += cr_constants.LZ4_SUFFIX
+    out_file = cr_utils.open_maybe_gzip(outs.corrected_bcs, 'w')
 
     bc_counter = cr_fastq.BarcodeCounter(args.barcode_whitelist, outs.corrected_barcode_counts)
 
     # Correct barcodes, add processed bc tag to fastq
-    read_pair_iter = itertools.izip(tk_fasta.read_generator_fastq(in_read1_fastq), \
-                                    tk_fasta.read_generator_fastq(in_read2_fastq))
+    read_pair_iter = itertools.izip_longest(tk_fasta.read_generator_fastq(in_read1_fastq), \
+                                            tk_fasta.read_generator_fastq(in_read2_fastq))
     for read1, read2 in itertools.islice(read_pair_iter, args.initial_reads):
         read1_header = cr_fastq.AugmentedFastqHeader(read1[0])
-        read2_header = cr_fastq.AugmentedFastqHeader(read2[0])
 
         raw_bc = read1_header.get_tag(cr_constants.RAW_BARCODE_TAG)
         bc_qual = read1_header.get_tag(cr_constants.RAW_BARCODE_QUAL_TAG)
+
+        processed_bc = None
 
         if raw_bc:
             if barcode_whitelist_set is not None and raw_bc not in barcode_whitelist_set:
@@ -94,25 +102,22 @@ def main(args, outs):
 
                 # Add gem group to barcode sequence
                 processed_bc = cr_utils.format_barcode_seq(processed_bc, gem_group=args.gem_group)
-                read1_header.set_tag(cr_constants.PROCESSED_BARCODE_TAG, processed_bc)
-                read2_header.set_tag(cr_constants.PROCESSED_BARCODE_TAG, processed_bc)
 
             reporter.vdj_barcode_cb(raw_bc, processed_bc)
 
-        tk_fasta.write_read_fastq(out_read1_fastq, read1_header.to_string(), read1[1], read1[2])
-        tk_fasta.write_read_fastq(out_read2_fastq, read2_header.to_string(), read2[1], read2[2])
+        out_file.write('%s\n' % (processed_bc if processed_bc is not None else ''))
 
     in_read1_fastq.close()
-    in_read2_fastq.close()
-    out_read1_fastq.close()
-    out_read2_fastq.close()
+    if in_read2_fastq:
+        in_read2_fastq.close()
+    out_file.close()
+
     bc_counter.close()
 
     reporter.save(outs.chunked_reporter)
 
 def join(args, outs, chunk_defs, chunk_outs):
-    outs.corrected_read1s = [chunk_out.corrected_read1s for chunk_out in chunk_outs]
-    outs.corrected_read2s = [chunk_out.corrected_read2s for chunk_out in chunk_outs]
+    outs.corrected_bcs = [co.corrected_bcs for co in chunk_outs]
 
     bc_counter = cr_fastq.BarcodeCounter(args.barcode_whitelist, outs.corrected_barcode_counts, gem_groups=args.gem_groups)
     for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):

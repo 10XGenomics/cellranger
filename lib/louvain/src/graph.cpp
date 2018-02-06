@@ -9,17 +9,17 @@
 // Copyright (C) 2014 R. Campigotto, P. Conde Céspedes, J.-L. Guillaume
 //
 // This file is part of Louvain algorithm.
-// 
+//
 // Louvain algorithm is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // Louvain algorithm is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU Lesser General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Lesser General Public License
 // along with Louvain algorithm.  If not, see <http://www.gnu.org/licenses/>.
 //-----------------------------------------------------------------------------
@@ -35,32 +35,38 @@
 
 using namespace std;
 
-
 Graph::Graph(char *filename, int type) {
-  ifstream finput;
-  finput.open(filename,fstream::in);
-  if (finput.is_open() != true) {
-    cerr << "The file " << filename << " does not exist" << endl;
-    exit(EXIT_FAILURE);
+  istream *finput;
+  ifstream file;
+
+  if (string(filename) == "-") {
+      finput = &cin;
+  } else {
+    file.open(filename);
+    if (file.is_open() != true) {
+      cerr << "The file " << filename << " does not exist" << endl;
+      exit(EXIT_FAILURE);
+    }
+    finput = &file;
   }
 
   unsigned long long nb_links = 0ULL;
 
-  while (!finput.eof()) {
+  while (!finput->eof()) {
     unsigned int src, dest;
     long double weight = 1.0L;
 
     if (type==WEIGHTED) {
-      finput >> src >> dest >> weight;
+      *finput >> src >> dest >> weight;
     } else {
-      finput >> src >> dest;
+      *finput >> src >> dest;
     }
-    
-    if (finput) {
+
+    if (*finput) {
       if (links.size()<=max(src,dest)+1) {
         links.resize(max(src,dest)+1);
       }
-      
+
       links[src].push_back(make_pair(dest,weight));
       if (src!=dest)
         links[dest].push_back(make_pair(src,weight));
@@ -68,8 +74,6 @@ Graph::Graph(char *filename, int type) {
       nb_links += 1ULL;
     }
   }
-
-  finput.close();
 }
 
 void
@@ -80,14 +84,14 @@ Graph::renumber(int type, char *filename) {
 
   ofstream foutput;
   foutput.open(filename, fstream::out);
-  
+
   for (unsigned int i=0 ; i<links.size() ; i++) {
     if (links[i].size() > 0)
       linked[i] = 1;
   }
-  
+
   for (unsigned int i=0 ; i<links.size() ; i++) {
-    if (linked[i]==1) { 
+    if (linked[i]==1) {
       renum[i] = nb++;
       foutput << i << " " << renum[i] << endl;
     }
@@ -117,7 +121,7 @@ Graph::clean(int type) {
       else if (type==WEIGHTED)
       	it->second+=links[i][j].second;
     }
-    
+
     vector<pair<int, long double> > v;
     for (it = m.begin() ; it!=m.end() ; it++)
       v.push_back(*it);
@@ -149,7 +153,7 @@ Graph::display_binary(char *filename, char *filename_w, int type) {
 
   // outputs number of nodes
   foutput.write((char *)(&s),sizeof(int));
-  
+
   // outputs cumulative degree sequence
   unsigned long long tot = 0ULL;
   for (int i=0 ; i<s ; i++) {

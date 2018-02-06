@@ -60,11 +60,12 @@ def main(args, outs):
     filtered_bcs_per_genome = cr_utils.load_barcode_csv(args.filtered_barcodes)
 
     raw_matrices = cr_matrix.GeneBCMatrices.build_from_mol_counter(molecule_counter)
+    filtered_matrices = raw_matrices.filter_barcodes(filtered_bcs_per_genome)
+
     raw_matrices.save_h5(outs.raw_matrices_h5)
     raw_matrices.save_mex(outs.raw_matrices_mex)
     raw_matrices.save_barcode_summary_h5(outs.barcode_summary_h5)
 
-    filtered_matrices = raw_matrices.filter_barcodes(filtered_bcs_per_genome)
     filtered_matrices.save_h5(outs.filtered_matrices_h5)
     filtered_matrices.save_mex(outs.filtered_matrices_mex)
 

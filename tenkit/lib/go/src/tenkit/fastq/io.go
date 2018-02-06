@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"github.com/klauspost/compress/gzip"
+	"github.com/youtube/vitess/go/cgzip"
 	"io"
 	"log"
 	"os"
@@ -147,7 +147,7 @@ func (self *FastqReader) Close() error {
 type ZipFastqWriter struct {
 	Path             string
 	Source           io.WriteCloser
-	CompressedSource *gzip.Writer
+	CompressedSource *cgzip.Writer
 	Writer           *bufio.Writer
 }
 
@@ -167,7 +167,7 @@ func NewZipFastqWriter(path string, mode string) (*ZipFastqWriter, error) {
 		return nil, err
 	}
 
-	self.CompressedSource, err = gzip.NewWriterLevel(self.Source, GZIP_COMPRESSION_LEVEL)
+	self.CompressedSource, err = cgzip.NewWriterLevel(self.Source, GZIP_COMPRESSION_LEVEL)
 	if err != nil {
 		return nil, err
 	}

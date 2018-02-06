@@ -12,6 +12,7 @@ import scipy.sparse as sp_sparse
 import sklearn.neighbors as sk_neighbors
 import subprocess
 import tables
+import tenkit.log_subprocess as tk_subproc
 import cellranger.analysis.io as cr_io
 import cellranger.analysis.clustering as cr_clustering
 import cellranger.constants as cr_constants
@@ -70,7 +71,7 @@ def pipe_weighted_edgelist_to_convert(matrix, bin_filename, weight_filename):
 
     devnull = open(os.devnull, 'w')
 
-    proc = subprocess.Popen([LOUVAIN_CONVERT_BINPATH,
+    proc = tk_subproc.Popen([LOUVAIN_CONVERT_BINPATH,
                            '-i', '/dev/stdin',
                            '-o', bin_filename,
                            '-w', weight_filename,
@@ -87,7 +88,7 @@ def pipe_weighted_edgelist_to_convert(matrix, bin_filename, weight_filename):
 def run_louvain_weighted_clustering(bin_filename, weight_filename, louvain_out):
     """ Run Louvain clustering on a weighted edge-list """
     with open(louvain_out, 'w') as f:
-        subprocess.check_call([LOUVAIN_BINPATH,
+        tk_subproc.check_call([LOUVAIN_BINPATH,
                                bin_filename,
                                '-w', weight_filename,
                                '-q', '0',
@@ -98,12 +99,13 @@ def pipe_unweighted_edgelist_to_convert(matrix, bin_filename):
     """ Pipe an unweighted edgelist (COO sparse matrix) to Louvain's convert utility """
     devnull = open(os.devnull, 'w')
 
-    proc = subprocess.Popen([LOUVAIN_CONVERT_BINPATH,
-                           '-i', '/dev/stdin',
+    proc = tk_subproc.Popen([LOUVAIN_CONVERT_BINPATH,
+                           '-i', '-',
                            '-o', bin_filename,
                          ], stdin=subprocess.PIPE, stdout=devnull, stderr=devnull)
 
     # Stream text triplets to 'convert'
+    print 'Writing %d elements.' % len(matrix.row)
     for ij in itertools.izip(matrix.row, matrix.col):
         proc.stdin.write('%d\t%d\n' % ij)
 
@@ -111,10 +113,13 @@ def pipe_unweighted_edgelist_to_convert(matrix, bin_filename):
     proc.wait()
     devnull.close()
 
+    if proc.returncode != 0:
+        raise Exception("'convert' command failed with exit code %d" % proc.returncode)
+
 def run_louvain_unweighted_clustering(bin_filename, louvain_out):
     """ Run Louvain clustering on an unweighted edge-list """
     with open(louvain_out, 'w') as f:
-        subprocess.check_call([LOUVAIN_BINPATH,
+        tk_subproc.check_call([LOUVAIN_BINPATH,
                                bin_filename,
                                '-q', '0',
                                '-l', '-1',

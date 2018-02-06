@@ -3,9 +3,9 @@
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
 import json
-import subprocess
 import os
 import martian
+import tenkit.log_subprocess as tk_subproc
 
 __MRO__ = """
 stage CHUNK_READS(
@@ -48,9 +48,9 @@ def main(args, outs):
 
     output_path = martian.make_path("")
     prefix = "fastq_chunk"
-    chunk_reads_args = ['chunk_reads',  '--reads-per-fastq', str(args.reads_per_file), output_path, prefix, "--martian-args", "chunk_args.json"]
+    chunk_reads_args = ['chunk_reads',  '--reads-per-fastq', str(args.reads_per_file), output_path, prefix, "--martian-args", "chunk_args.json", '--compress', 'lz4']
     print "running chunk reads: [%s]" % str(chunk_reads_args)
-    subprocess.check_call(chunk_reads_args)
+    tk_subproc.check_call(chunk_reads_args)
 
     with open(os.path.join(output_path, "read_chunks.json")) as f:
         chunk_results = json.load(f)

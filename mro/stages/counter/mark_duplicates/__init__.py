@@ -28,8 +28,12 @@ stage MARK_DUPLICATES(
 '''
 
 def split(args):
+    # use a custom key that returns None for all unbarcoded reads, so that chunk_bam_records
+    # never has to linearly scan over those reads to find a chunk boundary (which could take a long
+    # time for large datasets)
+    bc_sort_key = lambda read: cr_utils.barcode_sort_key(read, squash_unbarcoded=True)
     with tk_bam.create_bam_infile(args.input) as in_bam:
-        chunks = tk_bam.chunk_bam_records(in_bam, chunk_bound_key=cr_utils.barcode_sort_key,
+        chunks = tk_bam.chunk_bam_records(in_bam, chunk_bound_key=bc_sort_key,
                                           chunk_size_gb=cr_constants.BAM_CHUNK_SIZE_GB,
                                           max_chunks=cr_constants.MAX_BAM_CHUNKS)
     if args.mem_gb is not None and args.mem_gb > cr_constants.MIN_MEM_GB:
@@ -159,4 +163,6 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.output = [chunk_out.output for chunk_out in chunk_outs]
 
     reporter = cr_report.merge_reporters([chunk_out.chunked_reporter for chunk_out in chunk_outs])
+    # TODO: this is the easiest place to add the reference metadata for now, but it should happen earlier in the pipeline
+    reporter.store_reference_metadata(args.reference_path, cr_constants.REFERENCE_TYPE, cr_constants.REFERENCE_METRIC_PREFIX)
     reporter.report_summary_json(outs.summary)

@@ -14,6 +14,7 @@ stage PREPROCESS_MATRIX(
     in  bool skip,
     in  int  random_seed,
     in  csv  use_genes,
+    in  csv  exclude_genes,
     in  csv  use_bcs,
     in  int  num_bcs,
     in  int  force_cells,
@@ -30,7 +31,7 @@ def split(args):
 
     matrix_mem_gb = cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
     chunks = [{
-        '__mem_gb': max(matrix_mem_gb, cr_constants.MIN_MEM_GB)
+        '__mem_gb': max(matrix_mem_gb, cr_constants.MIN_MEM_GB),
     }]
     return {'chunks': chunks}
 
@@ -52,7 +53,12 @@ def main(args, outs):
 
     genome = genomes[0]
     matrix = cr_matrix.GeneBCMatrices.load_h5(args.matrix_h5).get_matrix(genome)
-    matrix = cr_matrix.GeneBCMatrix.preprocess_matrix(matrix, num_bcs=args.num_bcs, use_bcs=args.use_bcs, use_genes=args.use_genes, force_cells=args.force_cells)
+    matrix = cr_matrix.GeneBCMatrix.preprocess_matrix(matrix,
+                                                      num_bcs=args.num_bcs,
+                                                      use_bcs=args.use_bcs,
+                                                      use_genes=args.use_genes,
+                                                      exclude_genes=args.exclude_genes,
+                                                      force_cells=args.force_cells)
 
     gbm = cr_matrix.GeneBCMatrices()
     gbm.matrices[genome] = matrix

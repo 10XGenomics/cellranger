@@ -2,8 +2,20 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+from collections import namedtuple
 import cellranger.constants as cr_constants
 import cellranger.webshim.constants.shared as shared
+
+# These define information about the sample required to generate a web summary
+CountSampleProperties = namedtuple('CountSampleProperties',
+                                   ['sample_id', 'sample_desc', 'genomes', 'version'])
+
+AggrSampleProperties = namedtuple('AggrSampleProperties',
+                                  ['sample_id', 'sample_desc', 'genomes', 'version', 'agg_batches'])
+
+ReanalyzeSampleProperties = namedtuple('ReanalyzeSampleProperties',
+                                  ['sample_id', 'sample_desc', 'genomes', 'version'])
+
 
 PCA_PRCT_CLIP = [0.1, 99.9]
 TSNE_TOTALCOUNTS_PRCT_CLIP = [5, 95]
@@ -40,20 +52,20 @@ GEM_CALL_LABELS = [
 TOTAL_READS_METRIC = {
     'name': 'total_reads',
     'display_name': 'Number of Reads',
-    'description': 'Total number of single-end reads that were assigned to this library in demultiplexing.',
+    'description': 'Total number of read pairs that were assigned to this library in demultiplexing.',
     'format': 'integer',
 }
 
 PRENORM_READS_METRIC = {
     'name': 'pre_normalization_total_reads',
     'display_name': 'Pre-Normalization Number of Reads',
-    'description': 'Total number of single-end reads that were assigned to these libraries in demultiplexing.',
+    'description': 'Total number of read pairs that were assigned to these libraries in demultiplexing.',
     'format': 'integer',
 }
 POSTNORM_READS_METRIC = {
     'name': 'post_normalization_total_reads',
     'display_name': 'Post-Normalization Number of Reads',
-    'description': 'Number of single-end reads after normalizing for depth among multiple libraries.',
+    'description': 'Number of read pairs after normalizing for depth among multiple libraries.',
     'format': 'integer',
 }
 
@@ -71,50 +83,107 @@ GOOD_UMIS_METRIC = {
     'format': 'percent',
 }
 
+GENOME_MAPPED_READS_METRIC = {
+    'name': 'genome_mapped_reads_frac',
+    'display_name': 'Reads Mapped to Genome',
+    'description': 'Fraction of reads that mapped to the %s genome.',
+    'format': 'percent',
+    'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
+}
+
+MULTI_GENOME_MAPPED_READS_METRIC = {
+    'name': 'multi_genome_mapped_reads_frac',
+    'display_name': 'Reads Mapped to Genome',
+    'description': 'Fraction of reads that mapped to the genome.',
+    'format': 'percent',
+}
+
+GENOME_CONF_MAPPED_READS_METRIC = {
+    'name': 'genome_conf_mapped_reads_frac',
+    'display_name': 'Reads Mapped Confidently to Genome',
+    'description': 'Fraction of reads that mapped uniquely to the %s genome. If a gene mapped to exonic loci from a single gene and also to non-exonic loci, it is considered uniquely mapped to one of the exonic loci.',
+    'format': 'percent',
+    'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
+}
+
+MULTI_GENOME_CONF_MAPPED_READS_METRIC = {
+    'name': 'multi_genome_conf_mapped_reads_frac',
+    'display_name': 'Reads Mapped Confidently to Genome',
+    'description': 'Fraction of reads that mapped uniquely to the %s genome. If a gene mapped to exonic loci from a single gene and also to non-exonic loci, it is considered uniquely mapped to one of the exonic loci.',
+    'format': 'percent',
+}
+
 TRANSCRIPTOME_CONF_MAPPED_READS_METRIC = {
     'name': 'transcriptome_conf_mapped_reads_frac',
     'display_name': 'Reads Mapped Confidently to Transcriptome',
-    'description': 'Fraction of reads that mapped to a unique gene in the %s transcriptome with a high mapping quality score as reported by the aligner. At least 50% of the read must overlap with an exon and the read must be consistent with annotated splice junctions.',
+    'description': 'Fraction of reads that mapped to a unique gene in the %s transcriptome. The read must be consistent with annotated splice junctions. These reads are considered for UMI counting.',
     'format': 'percent',
     'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
 }
 
 MULTI_TRANSCRIPTOME_CONF_MAPPED_READS_METRIC = {
     'name': 'multi_transcriptome_conf_mapped_reads_frac',
     'display_name': 'Reads Mapped Confidently to Transcriptome',
-    'description': 'Fraction of reads that mapped to a unique gene in any specified transcriptome with a high mapping quality score as reported by the aligner. At least 50% of the read must overlap with an exon and the read must be consistent with annotated splice junctions.',
+    'description': 'Fraction of reads that mapped to a unique gene in the transcriptome. The read must be consistent with annotated splice junctions. These reads are considered for UMI counting.',
     'format': 'percent',
 }
 
 ANTISENSE_CONF_MAPPED_READS_METRIC = {
     'name': 'multi_antisense_reads_frac',
     'display_name': 'Reads Mapped Antisense to Gene',
-    'description': 'Fraction of reads confidently mapped to the transcriptome, but on the opposite strand of their annotated gene.',
+    'description': 'Fraction of reads confidently mapped to the transcriptome, but on the opposite strand of their annotated gene. A read is counted as antisense if it has any alignments that are consistent with an exon of a transcript but antisense to it, and has no sense alignments.',
     'format': 'percent',
 }
 
 INTERGENIC_CONF_MAPPED_READS_METRIC = {
     'name': 'intergenic_conf_mapped_reads_frac',
     'display_name': 'Reads Mapped Confidently to Intergenic Regions',
-    'description': 'Fraction of reads that mapped to the intergenic regions of the %s genome with a high mapping quality score as reported by the aligner.',
+    'description': 'Fraction of reads that mapped uniquely to an intergenic region of the %s genome.',
     'format': 'percent',
     'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
+}
+
+MULTI_INTERGENIC_CONF_MAPPED_READS_METRIC = {
+    'name': 'multi_intergenic_conf_mapped_reads_frac',
+    'display_name': 'Reads Mapped Confidently to Intergenic Regions',
+    'description': 'Fraction of reads that mapped uniquely to an intergenic region of the genome.',
+    'format': 'percent',
 }
 
 INTRONIC_CONF_MAPPED_READS_METRIC = {
     'name': 'intronic_conf_mapped_reads_frac',
     'display_name': 'Reads Mapped Confidently to Intronic Regions',
-    'description': 'Fraction of reads that mapped to the intronic regions of the %s genome with a high mapping quality score as reported by the aligner.',
+    'description': 'Fraction of reads that mapped uniquely to an intronic region of the %s genome.',
     'format': 'percent',
     'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
+}
+
+MULTI_INTRONIC_CONF_MAPPED_READS_METRIC = {
+    'name': 'multi_intronic_conf_mapped_reads_frac',
+    'display_name': 'Reads Mapped Confidently to Intronic Regions',
+    'description': 'Fraction of reads that mapped uniquely to an intronic region of the genome.',
+    'format': 'percent',
 }
 
 EXONIC_CONF_MAPPED_READS_METRIC = {
     'name': 'exonic_conf_mapped_reads_frac',
     'display_name': 'Reads Mapped Confidently to Exonic Regions',
-    'description': 'Fraction of reads that mapped to the exonic regions of the genome with a high mapping quality score as reported by the aligner.',
+    'description': 'Fraction of reads that mapped uniquely to an exonic region of the %s genome.',
     'format': 'percent',
     'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
+}
+
+MULTI_EXONIC_CONF_MAPPED_READS_METRIC = {
+    'name': 'multi_exonic_conf_mapped_reads_frac',
+    'display_name': 'Reads Mapped Confidently to Exonic Regions',
+    'description': 'Fraction of reads that mapped uniquely to an exonic region of the genome.',
+    'format': 'percent',
 }
 
 NUMBER_OF_DETECTED_CELLS_METRIC = {
@@ -198,21 +267,21 @@ SUMMARY_METRICS = [
 MULTIPLET_RATE_METRIC = {
     'name': 'filtered_bcs_inferred_multiplet_rate',
     'display_name': 'Fraction GEMs with >1 Cell',
-    'description': 'The mean fraction of cell-associated barcodes estimated to be associated with more than one cell, calculated via bootstrap sampling.',
+    'description': 'The mean fraction of cell-associated barcodes estimated to be associated with more than one cell, calculated via bootstrap sampling and adjusting for the ratio of the two cell types.',
     'format': 'percent',
 }
 
 MULTIPLET_RATE_LB_METRIC = {
     'name': 'filtered_bcs_inferred_multiplet_rate_lb',
     'display_name': 'Fraction GEMs with >1 Cell (Lower Bound)',
-    'description': 'The lower bound of the 95% confidence interval of the fraction of cell-associated barcodes estimated to be associated with more than one cell, calculated via bootstrap sampling.',
+    'description': 'The lower bound of the 95% confidence interval of the fraction of cell-associated barcodes estimated to be associated with more than one cell, calculated via bootstrap sampling and adjusting for the ratio of the two cell types.',
     'format': 'percent',
 }
 
 MULTIPLET_RATE_UB_METRIC = {
     'name': 'filtered_bcs_inferred_multiplet_rate_ub',
     'display_name': 'Fraction GEMs with >1 Cell (Upper Bound)',
-    'description': 'The upper bound of the 95% confidence interval of the fraction of cell-associated barcodes estimated to be associated with more than one cell, calculated via bootstrap sampling.',
+    'description': 'The upper bound of the 95% confidence interval of the fraction of cell-associated barcodes estimated to be associated with more than one cell, calculated via bootstrap sampling and adjusting for the ratio of the two cell types.',
     'format': 'percent',
 }
 
@@ -229,7 +298,17 @@ FRAC_READS_IN_CELLS_METRIC = {
     'description': 'The fraction of valid-barcode, confidently-mapped-to-transcriptome reads with %s cell-associated barcodes.',
     'format': 'percent',
     'prefix': 'genomes',
+    'hidden': 'len(genomes) <= 1',
 }
+
+# Same as above, but summarized across all genomes present
+MULTI_FRAC_READS_IN_CELLS_METRIC = {
+    'name': 'multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac',
+    'display_name': 'Fraction Reads in Cells',
+    'description': 'The fraction of valid-barcode, confidently-mapped-to-transcriptome reads with cell-associated barcodes.',
+    'format': 'percent',
+}
+
 
 TOTAL_GENES_DETECTED_METRIC = {
     'name': 'filtered_bcs_total_unique_genes_detected',
@@ -277,18 +356,30 @@ SEQUENCING_METRICS = [
     PRENORM_READS_METRIC,
     POSTNORM_READS_METRIC,
     GOOD_BCS_METRIC,
-    TRANSCRIPTOME_CONF_MAPPED_READS_METRIC,
-    EXONIC_CONF_MAPPED_READS_METRIC,
-    INTRONIC_CONF_MAPPED_READS_METRIC,
-    INTERGENIC_CONF_MAPPED_READS_METRIC,
-    ANTISENSE_CONF_MAPPED_READS_METRIC,
     CDNA_DUPE_FRAC_METRIC,
     SEQUENCING_SATURATION_METRIC,
 ] + Q30_METRICS
 
+MAPPING_METRICS = [
+    MULTI_GENOME_MAPPED_READS_METRIC,
+    GENOME_MAPPED_READS_METRIC,
+    MULTI_GENOME_CONF_MAPPED_READS_METRIC,
+    GENOME_CONF_MAPPED_READS_METRIC,
+    MULTI_INTERGENIC_CONF_MAPPED_READS_METRIC,
+    INTERGENIC_CONF_MAPPED_READS_METRIC,
+    MULTI_INTRONIC_CONF_MAPPED_READS_METRIC,
+    INTRONIC_CONF_MAPPED_READS_METRIC,
+    MULTI_EXONIC_CONF_MAPPED_READS_METRIC,
+    EXONIC_CONF_MAPPED_READS_METRIC,
+    MULTI_TRANSCRIPTOME_CONF_MAPPED_READS_METRIC,
+    TRANSCRIPTOME_CONF_MAPPED_READS_METRIC,
+    ANTISENSE_CONF_MAPPED_READS_METRIC,
+]
+
 DETECTED_CELL_METRICS = [
     MULTI_NUMBER_OF_DETECTED_CELLS_METRIC,
     NUMBER_OF_DETECTED_CELLS_METRIC,
+    MULTI_FRAC_READS_IN_CELLS_METRIC,
     FRAC_READS_IN_CELLS_METRIC,
     READS_PER_DETECTED_CELL_METRIC,
     PRENORM_READS_PER_CELL_METRIC,
@@ -352,6 +443,10 @@ METRICS = [
     {
         'name': 'Sequencing',
         'metrics': SEQUENCING_METRICS,
+    },
+    {
+        'name': 'Mapping',
+        'metrics': MAPPING_METRICS,
     },
     {
         'name': 'Cells',
@@ -690,6 +785,20 @@ METRIC_ALARMS = [
             'title': 'Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2)',
             'message': 'Ideal > 75%. Application performance may be affected.',
             'test': '< 0.75',
+        },
+    },
+    {
+        'name': MULTI_FRAC_READS_IN_CELLS_METRIC['name'],
+        'format': MULTI_FRAC_READS_IN_CELLS_METRIC['format'],
+        'error': {
+            'title': 'Low Fraction Reads in Cells',
+            'message': 'Ideal > 70%. Application performance is likely to be affected. Many of the reads were not assigned to cell-associated barcodes. This could be caused by high levels of ambient RNA or by a significant population of cells with a low RNA content, which the algorithm did not call as cells. The latter case can be addressed by inspecting the data to determine the appropriate cell count and using --force-cells.',
+            'test': '< 0.50',
+        },
+        'warn': {
+            'title': 'Low Fraction Reads in Cells',
+            'message': 'Ideal > 70%. Application performance may be affected. Many of the reads were not assigned to cell-associated barcodes. This could be caused by high levels of ambient RNA or by a significant population of cells with a low RNA content, which the algorithm did not call as cells. The latter case can be addressed by inspecting the data to determine the appropriate cell count and using --force-cells.',
+            'test': '< 0.70',
         },
     },
     # Aggregation-specific alerts

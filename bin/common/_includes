@@ -17,5 +17,5 @@ function process_options_sample_info {
 }
 
 read -d '' DOCOPT_OPTIONS_SAMPLE_INFO <<EOF
-    --description=TEXT  Sample description to embed in output files. Optional.
+    --description=TEXT  Sample description to embed in output files.
 EOF

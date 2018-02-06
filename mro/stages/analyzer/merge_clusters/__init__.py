@@ -14,6 +14,7 @@ import cellranger.analysis.io as cr_io
 from cellranger.analysis.diffexp import compute_sseq_params, sseq_differential_expression
 import cellranger.analysis.graphclust as cr_graphclust
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+import cellranger.constants as cr_constants
 from cellranger.matrix import GeneBCMatrices, GeneBCMatrix
 
 __MRO__ = """
@@ -40,10 +41,12 @@ def split(args):
     if args.skip or args.is_multi_genome:
         return {'chunks': [{}]}
 
+    matrix_mem_gb = GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
+
     return {
         'chunks': [{}],
         'join': {
-            '__mem_gb': 2 * GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5),
+            '__mem_gb': max(cr_constants.MIN_MEM_GB, 2 * matrix_mem_gb),
         }
     }
 

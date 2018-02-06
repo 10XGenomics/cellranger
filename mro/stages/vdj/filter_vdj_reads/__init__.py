@@ -2,91 +2,54 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
-# Filter input reads based on similarity to reference VDJ segments.
-# Correct UMI sequences based on UMI frequencies (per barcode) post filtering.
+# - Filter input reads based on similarity to reference VDJ segments.
 #
-# Input reads can be provided in two different ways (which are mutually exclusive):
+# - Correct UMI sequences based on UMI frequencies (per barcode) post filtering.
 #
-#   1. If interleaved_reads is provided, we assume the data are barcoded. This stage
-#      will split the data into chunks, with (roughly) reads_per_chunk reads per chunk.
-#      Splitting is done in such a way that barcodes are never split across chunks.
-#
-#   2. If read1s and read2s are provided, we assume the data are non-barcoded.
-#      In this case we'll just make a single chunk and copy all reads to that chunk.
-#      This is because subsequent stages assume that barcodes do not span chunks.
-#
-# If the output_fastqs flag is set, then each chunk will write the reads passing
-# filtering to a pair of fastqs. Otherwise all reads (filtered or not) will be
-# written to a single BAM per chunk. Filtered readpairs have both mates unmapped.
-#
+
 from collections import defaultdict
 import itertools
-import json
-import os
-import re
-import sys
 import martian
 import numpy as np
+import pysam
 import cPickle
-import subprocess
 import tables
 import tenkit.bam as tk_bam
-import tenkit.fasta as tk_fasta
 import tenkit.seq as tk_seq
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
 import cellranger.report as cr_report
+import cellranger.utils as cr_utils
 import cellranger.vdj.constants as vdj_constants
+import cellranger.vdj.filter_vdj_reads as vdj_filt
 import cellranger.vdj.reference as vdj_reference
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.umi_info as vdj_umi_info
 
 __MRO__ = """
 stage FILTER_VDJ_READS(
-    in  path       vdj_reference_path,
-    in  fastq[]    read1s                   "Per-chunk fastqs",
-    in  fastq[]    read2s                   "Per-chunk fastqs",
-    in  json[]     chunk_barcodes           "Per-chunk barcodes",
-    in  map        chemistry_def,
-    in  json       extract_reads_summary,
-    in  map        sw_params                "Params for SW alignment (seed, min_sw_score)",
-    in  bool       output_fastqs            "Output a pair of fastqs instead of a single bam",
-    out pickle     chunked_reporter,
-    out pickle     chunked_gene_umi_counts,
-    out bam[]      barcode_chunked_bams     "Either this or the next two will be populated",
-    out fastq[]    barcode_chunked_read1,
-    out fastq[]    barcode_chunked_read2,
-    out string[][] barcodes_in_chunks,
-    out tsv[]      reads_per_bc,
-    out json       summary,
-    out h5         umi_info,
-    src py         "stages/vdj/filter_vdj_reads",
+    in  path    vdj_reference_path,
+    in  fastq[] read1s                   "Per-chunk fastqs",
+    in  fastq[] read2s                   "Per-chunk fastqs",
+    in  json[]  chunk_barcodes           "Per-chunk barcodes",
+    in  map     chemistry_def,
+    in  map     sw_params                "Params for SW alignment (seed, min_sw_score)",
+    in  int     min_readpairs_per_umi,
+    out pickle  chunked_reporter,
+    out pickle  chunked_gene_umi_counts,
+    out bam[]   barcode_chunked_bams,
+    out json[]  barcodes_in_chunks,
+    out tsv[]   reads_per_bc,
+    out json    summary,
+    out h5      umi_info,
+    src py      "stages/vdj/filter_vdj_reads",
 ) split using (
-    in  fastq      read1_chunk,
-    in  fastq      read2_chunk,
-    in  string[]   barcodes_chunk,
+    in  fastq   read1_chunk,
+    in  fastq   read2_chunk,
+    in  json    barcodes_chunk,
 )
 """
-
-def write_bam_read_fastq(out, read):
-    if read.is_reverse:
-        seq, qual = tk_seq.get_rev_comp(read.seq), read.qual[::-1]
-    else:
-        seq, qual = read.seq, read.qual
-    tk_fasta.write_read_fastq(out, read.qname, seq, qual)
-
-def run_read_match(fq_pref, fasta_path, out_bam_filename, chemistry_def, sw_params):
-
-    cmd = ['vdj_asm', 'read-match', fasta_path, fq_pref, out_bam_filename,
-           '--seed=' + str(sw_params['seed']),
-           '--min-sw-score=' + str(sw_params['min_sw_score'])]
-    if cr_chem.get_strandedness(chemistry_def) == '-':
-        cmd.append('--rev-strand')
-
-    print >> sys.stderr, 'Running', ' '.join(cmd)
-    subprocess.check_call(cmd, cwd=os.getcwd())
-
 
 def get_dummy_chunk():
     read1_out_filename = martian.make_path('chunk0_1.fastq')
@@ -96,7 +59,7 @@ def get_dummy_chunk():
     chunks = [{
         'read1_chunk': read1_out_filename,
         'read2_chunk': read2_out_filename,
-        'barcodes_chunk': [],
+        'barcodes_chunk': None,
     }]
     return {'chunks': chunks}
 
@@ -106,42 +69,16 @@ def split(args):
 
     chunks = []
 
-    if cr_chem.get_barcode_whitelist(args.chemistry_def) is not None:
+    # Ensure that data are barcoded
+    assert cr_chem.get_barcode_whitelist(args.chemistry_def) is not None
 
-        # Data are barcoded
-        for read1_fq, read2_fq, barcodes_json in zip(args.read1s, args.read2s,
-                                                     args.chunk_barcodes):
-            with open(barcodes_json) as f:
-                chunk_barcodes = json.load(f)
-
-            chunks.append({
-                'read1_chunk': read1_fq,
-                'read2_chunk': read2_fq,
-                'barcodes_chunk': chunk_barcodes,
-                '__mem_gb': 3.0,
-            })
-
-    else:
-        # Most stages assume that each chunk has a single barcode.
-        # So unfortunately we have to put all reads in the same chunk, otherwise
-        # metric computation will break.
-        read1_out_filename = martian.make_path('chunk0_1.fastq')
-        read2_out_filename = martian.make_path('chunk0_2.fastq')
-        with open(read1_out_filename, 'w') as read1_out, open(read2_out_filename, 'w') as read2_out:
-            for read1_file, read2_file in zip(args.read1s, args.read2s):
-                with open(read1_file) as in1, open(read2_file) as in2:
-                    fastq1_iter = tk_fasta.read_generator_fastq(in1, paired_end=False)
-                    fastq2_iter = tk_fasta.read_generator_fastq(in2, paired_end=False)
-
-                    for read1_tuple in fastq1_iter:
-                        read2_tuple = fastq2_iter.next()
-                        tk_fasta.write_read_fastq(read1_out, *read1_tuple)
-                        tk_fasta.write_read_fastq(read2_out, *read2_tuple)
-
+    for read1_fq, read2_fq, barcodes_json in zip(args.read1s, args.read2s,
+                                                 args.chunk_barcodes):
         chunks.append({
-            'read1_chunk': read1_out_filename,
-            'read2_chunk': read2_out_filename,
-            'barcodes_chunk': [""],
+            'read1_chunk': read1_fq,
+            'read2_chunk': read2_fq,
+            'barcodes_chunk': barcodes_json,
+            '__mem_gb': 3.0,
         })
 
     # Martian doesn't like empty chunk lists so create a chunk w/ empty data
@@ -153,34 +90,30 @@ def split(args):
 def default_dict_int():
     return defaultdict(int)
 
-def get_pair_iter(iterable):
-    """ Return (x_i, x_(i+1)) for i in {0,2,4,...} """
-    return itertools.izip(iterable, iterable)
-
-def is_mapped(read1, read2):
-    if read2 is not None:
-        return not (read1.is_unmapped and read2.is_unmapped)
-    else:
-        return not read1.is_unmapped
-
-def get_bc_grouped_pair_iter(bam):
+def get_bc_grouped_pair_iter(bam, paired_end):
     """ Yields (bc, pair_iter)
-        where pair_iter yields (AugmentedFastqHeader, (read1, read2)) for the barcode """
+        where pair_iter yields (AugmentedFastqHeader, (read1, read2|None)) for the barcode """
     wrap_header = lambda pair: (cr_fastq.AugmentedFastqHeader(pair[0].qname), pair)
     get_barcode = lambda hdr_pair: hdr_pair[0].get_tag(cr_constants.PROCESSED_BARCODE_TAG)
 
-    return itertools.groupby(
-        itertools.imap(wrap_header, get_pair_iter(bam)),
-        key=get_barcode)
+    if paired_end:
+        bam_iter = vdj_filt.get_pair_iter(bam)
+    else:
+        bam_iter = itertools.imap(lambda r1: (r1, None), bam)
 
+    return itertools.groupby(itertools.imap(wrap_header, bam_iter), key=get_barcode)
 
-def write_barcode_fastq(bam, pair_iter, bc, corrected_umis, reporter,
+def process_bam_barcode(bam, pair_iter, bc, corrected_umis, reporter,
                         gene_umi_counts_per_bc,
-                        strand, out_bam, out_fastq1, out_fastq2):
+                        strand, out_bam,
+                        asm_min_readpairs_per_umi,
+                        paired_end):
     """ Process all readpairs from pair_iter, all having the same bc """
 
     # Note: "gene" in this function is actually "chain"
     # Readpair counts per UMI (per-gene); {gene: {UMI: count}}
+
+    # Note: Using a lambda here breaks cPickle for some reason
     gene_umi_counts = defaultdict(default_dict_int)
 
     read_pairs_written = 0
@@ -188,38 +121,49 @@ def write_barcode_fastq(bam, pair_iter, bc, corrected_umis, reporter,
     for header, (read1, read2) in pair_iter:
         (gene1, gene2) = reporter.vdj_recombinome_bam_cb(read1, read2, bam, strand)
 
-        if is_mapped(read1, read2):
-            umi = header.get_tag(cr_constants.RAW_UMI_TAG)
-            corrected_umi = corrected_umis[umi]
+        umi = header.get_tag(cr_constants.RAW_UMI_TAG)
+        corrected_umi = corrected_umis[umi]
 
-            # Count readpairs per UMI
-            if gene1 is not None or gene2 is not None:
-                for gene in set(filter(lambda x: x is not None, [gene1, gene2, cr_constants.MULTI_REFS_PREFIX])):
-                    gene_umi_counts[gene][corrected_umi] += 1
+        # Count readpairs per UMI
+        if gene1 is not None:
+            gene_umi_counts[gene1][corrected_umi] += 1
+        if gene2 is not None:
+            gene_umi_counts[gene2][corrected_umi] += 1
+        if gene1 is None and gene2 is None:
+            # Allow unmapped UMIs
+            gene_umi_counts["None"][corrected_umi] += 1
+        gene_umi_counts[cr_constants.MULTI_REFS_PREFIX][corrected_umi] += 1
 
-            header.set_tag(cr_constants.PROCESSED_UMI_TAG, corrected_umi)
-            read1.qname = header.to_string()
+        header.set_tag(cr_constants.PROCESSED_UMI_TAG, corrected_umi)
+        read1.qname = header.to_string()
 
+        if read2 is not None:
             header2 = cr_fastq.AugmentedFastqHeader(read2.qname)
             assert(header2.get_tag(cr_constants.RAW_UMI_TAG) == umi)
             header2.set_tag(cr_constants.PROCESSED_UMI_TAG, corrected_umi)
             read2.qname = header2.to_string()
 
-            reporter._get_metric_attr('vdj_corrected_umi_frac').add(1, filter=corrected_umis[umi] != umi)
-            read_pairs_written += 1
+        reporter._get_metric_attr('vdj_corrected_umi_frac').add(1, filter=corrected_umis[umi] != umi)
+        read_pairs_written += 1
 
-        if not out_bam is None:
-            # Write whether this pair was filtered or not.
-            out_bam.write(read1)
+        # Write whether this pair was filtered or not.
+        out_bam.write(read1)
+        if read2 is not None:
             out_bam.write(read2)
-        elif is_mapped(read1, read2):
-            write_bam_read_fastq(out_fastq1, read1)
-            write_bam_read_fastq(out_fastq2, read2)
 
     # Report read-pairs/umi
     for gene in reporter.vdj_genes:
+        tot_readpairs = 0
+        asm_bad_readpairs = 0
+
         for reads_per_umi in gene_umi_counts[gene].itervalues():
             reporter._get_metric_attr('vdj_recombinome_readpairs_per_umi_distribution', gene).add(reads_per_umi)
+
+            if reads_per_umi < asm_min_readpairs_per_umi:
+                asm_bad_readpairs += reads_per_umi
+            tot_readpairs += reads_per_umi
+
+        reporter._get_metric_attr('vdj_recombinome_low_support_reads_frac', gene).set_value(asm_bad_readpairs, tot_readpairs)
 
     gene_umi_counts_per_bc[bc] = gene_umi_counts
 
@@ -230,30 +174,27 @@ def main(args, outs):
 
     strand = cr_chem.get_strandedness(args.chemistry_def)
 
+    paired_end = cr_chem.is_paired_end(args.chemistry_def)
+    assert paired_end != (args.read2_chunk is None)
+
     # For the entire chunk, match reads against the V(D)J reference
     ref_fasta = vdj_reference.get_vdj_reference_fasta(args.vdj_reference_path)
-    fq_prefix = re.sub('_1.fastq', '', args.read1_chunk)
+
     # The filtering code will write this bam. Then we'll read it, correct the UMIs
     # and write outs.chunked_bams.
     filter_bam = martian.make_path('tmp.bam')
 
-    run_read_match(fq_prefix, ref_fasta, filter_bam, args.chemistry_def, args.sw_params)
+    vdj_filt.run_read_match(args.read1_chunk, args.read2_chunk,
+                            ref_fasta, filter_bam, strand, args.sw_params)
 
     # Make two passes over the BAM file, processing one barcode at a time
-    bam1 = tk_bam.create_bam_infile(filter_bam)
-    bam2 = tk_bam.create_bam_infile(filter_bam)
-    bc_iter1 = get_bc_grouped_pair_iter(bam1)
-    bc_iter2 = get_bc_grouped_pair_iter(bam2)
+    bam1 = pysam.AlignmentFile(filter_bam, check_sq=False)
+    bam2 = pysam.AlignmentFile(filter_bam, check_sq=False)
+    bc_iter1 = get_bc_grouped_pair_iter(bam1, paired_end)
+    bc_iter2 = get_bc_grouped_pair_iter(bam2, paired_end)
 
     reads_per_bc = open(outs.reads_per_bc, 'w')
-    if args.output_fastqs:
-        out_fastq1 = open(outs.barcode_chunked_read1, 'w')
-        out_fastq2 = open(outs.barcode_chunked_read2, 'w')
-        out_bam = None
-    else:
-        out_bam, _ = tk_bam.create_bam_outfile(outs.barcode_chunked_bams, None, None, template=bam1)
-        out_fastq1 = None
-        out_fastq2 = None
+    out_bam, _ = tk_bam.create_bam_outfile(outs.barcode_chunked_bams, None, None, template=bam1)
 
     for (bc, pair_iter1), (_, pair_iter2) in itertools.izip(bc_iter1, bc_iter2):
         nreads = 0
@@ -262,28 +203,31 @@ def main(args, outs):
         umi_counts = defaultdict(int)
         for header, (read1, read2) in pair_iter1:
             nreads += 2
-            if is_mapped(read1, read2):
-                umi_counts[header.get_tag(cr_constants.RAW_UMI_TAG)] += 1
+            umi_counts[header.get_tag(cr_constants.RAW_UMI_TAG)] += 1
 
         corrected_umis = correct_umis(umi_counts)
 
         # Pass 2: Write the UMI-corrected records
-        write_barcode_fastq(bam1, pair_iter2, bc, corrected_umis,
+        process_bam_barcode(bam1, pair_iter2, bc, corrected_umis,
                             reporter, gene_umi_counts_per_bc, strand,
-                            out_bam, out_fastq1, out_fastq2)
+                            out_bam,
+                            args.min_readpairs_per_umi,
+                            paired_end)
 
         reads_per_bc.write('{}\t{}\n'.format(bc, nreads))
 
     bam1.close()
     bam2.close()
-    if args.output_fastqs:
-        out_fastq1.close()
-        out_fastq2.close()
-    else:
-        out_bam.close()
+    out_bam.close()
 
     # Write bc-gene-umi counts
     cPickle.dump(gene_umi_counts_per_bc, open(outs.chunked_gene_umi_counts, 'w'))
+
+    # Copy the input barcodes
+    if args.barcodes_chunk is not None:
+        cr_utils.copy(args.barcodes_chunk, outs.barcodes_in_chunks)
+    else:
+        outs.barcodes_in_chunks = None
 
     reporter.save(outs.chunked_reporter)
 
@@ -327,27 +271,20 @@ def join(args, outs, chunk_defs, chunk_outs):
     reporter = cr_report.merge_reporters([chunk_out.chunked_reporter for chunk_out in chunk_outs])
 
     outs.reads_per_bc = [chunk_out.reads_per_bc for chunk_out in chunk_outs]
-    if args.output_fastqs:
-        outs.barcode_chunked_read1 = [chunk_out.barcode_chunked_read1 for chunk_out in chunk_outs]
-        outs.barcode_chunked_read2 = [chunk_out.barcode_chunked_read2 for chunk_out in chunk_outs]
-        outs.barcode_chunked_bams = []
-    else:
-        outs.barcode_chunked_read1 = []
-        outs.barcode_chunked_read2 = []
-        outs.barcode_chunked_bams = [chunk_out.barcode_chunked_bams for chunk_out in chunk_outs]
+
+    outs.barcode_chunked_bams = [chunk_out.barcode_chunked_bams for chunk_out in chunk_outs]
 
     # Output barcodes in each chunk
-    outs.barcodes_in_chunks = [chunk_def.barcodes_chunk for chunk_def in chunk_defs]
+    outs.barcodes_in_chunks = [co.barcodes_in_chunks for co in chunk_outs]
 
-    # If a single chunk w/ no barcodes, return null for chunk info
-    if len(outs.barcodes_in_chunks) == 1 and outs.barcodes_in_chunks[0][0] == '':
-        outs.barcodes_in_chunks = None
+    # Write UMI info file
+    write_umi_info([c.chunked_gene_umi_counts for c in chunk_outs], outs.umi_info)
 
-    # Write UMI info (only for barcoded data)
-    if cr_chem.get_barcode_whitelist(args.chemistry_def) is not None:
-        write_umi_info([c.chunked_gene_umi_counts for c in chunk_outs], outs.umi_info)
-
-    reporter.store_reference_metadata(args.vdj_reference_path, vdj_constants.REFERENCE_TYPE, vdj_constants.REFERENCE_METRIC_PREFIX)
+    # Record reference info
+    if args.vdj_reference_path is not None:
+        reporter.store_reference_metadata(args.vdj_reference_path,
+                                          vdj_constants.REFERENCE_TYPE,
+                                          vdj_constants.REFERENCE_METRIC_PREFIX)
 
     # Write output json
     reporter.report_summary_json(outs.summary)

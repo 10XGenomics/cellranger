@@ -6,6 +6,7 @@
 import martian
 import os
 import subprocess
+import tenkit.log_subprocess as tk_subproc
 
 __MRO__ = """
 stage CLOUPE_CONVERTER(
@@ -66,7 +67,7 @@ def main(args, outs):
 
     martian.log_info("Running crconverter: %s" % " ".join(call))
     try:
-        results = subprocess.check_output(call)
+        results = tk_subproc.check_output(call)
         martian.log_info("crconverter output: %s" % results)
     except subprocess.CalledProcessError, e:
         outs.output_for_cloupe = None

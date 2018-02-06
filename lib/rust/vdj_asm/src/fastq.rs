@@ -2,11 +2,8 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
-extern crate tada;
 use utils;
-use std::fs::File;
-use std::path::{Path};
-use std::io::{BufRead, BufReader, Lines};
+use std::io::{BufRead, BufReader, Lines, Read};
 use std::collections::{HashMap};
 use constants::{UmiType, ReadType, RAW_UMI_TAG, PROCESSED_BC_TAG, PROCESSED_UMI_TAG, QUAL_OFFSET};
 
@@ -36,14 +33,11 @@ impl CellrangerFastqHeader {
         }
     }
 
-    pub fn get_tag(&self, tag: &String) -> Option<String> {
-        match self.tags.get(tag) {
-            None => None,
-            Some(value) => Some((*value).clone()),
-        }
+    pub fn get_tag(&self, tag: &str) -> Option<&String> {
+        self.tags.get(tag)
     }
 
-    pub fn get_barcode(&self) -> Option<String> {
+    pub fn get_barcode(&self) -> Option<&String> {
         self.get_tag(&(PROCESSED_BC_TAG.to_string()))
     }
 }
@@ -80,35 +74,25 @@ pub struct PairedInputRead {
 }
 
 pub struct CellrangerPairedFastqIter {
-    lines1: Lines<BufReader<File>>,
-    lines2: Option<Lines<BufReader<File>>>,
+    lines1: Lines<BufReader<Box<Read>>>,
+    lines2: Option<Lines<BufReader<Box<Read>>>>,
     rev_strand: bool,
     read_count: usize,
     umis: HashMap<String, UmiType>,
 }
 
 impl CellrangerPairedFastqIter {
-    pub fn new(name1: &Path,
-               name2: Option<&Path>,
+    pub fn new(name1: &str,
+               name2: Option<&str>,
                rev_strand: bool)
                -> CellrangerPairedFastqIter {
 
-        let f1 = File::open(name1).unwrap();
-        let br1 = BufReader::new(f1);
-        let lines1 = br1.lines();
-
-        let lines2 = match name2 {
-            Some(name) => {
-                let f2 = File::open(name).unwrap();
-                let br2 = BufReader::new(f2);
-                Some(br2.lines())
-            },
-            None => None,
-        };
+        let r1 = BufReader::new(utils::open_maybe_compressed(name1));
+        let r2 = name2.map(|x| BufReader::new(utils::open_maybe_compressed(x)));
 
         CellrangerPairedFastqIter {
-            lines1: lines1,
-            lines2: lines2,
+            lines1: r1.lines(),
+            lines2: r2.map(|x| x.lines()),
             rev_strand: rev_strand,
             read_count: 0,
             umis: HashMap::new()
@@ -146,7 +130,7 @@ impl Iterator for CellrangerPairedFastqIter {
                     umi_id = self.umis.len() as u32;
                     self.umis.insert(umi, umi_id.clone());
                 }
-                
+
                 let fw_seq: Vec<u8> = match self.rev_strand {
                     true => rc(&read_seq).into_bytes().into_iter().enumerate().map(|(i, x)| utils::base_to_bits_hash(x, &read_name, i)).collect(),
                     false => read_seq.into_bytes().into_iter().enumerate().map(|(i, x)| utils::base_to_bits_hash(x, &read_name, i)).collect(),
@@ -236,9 +220,9 @@ mod tests {
     fn test_fastq_header() {
         let name = "D000684:775:H3YYTBCXY:1:1101:10541:57223|||BC|||TGGTAAAC|||UR|||AGAGCTGCCA|||UY|||IIIIIIIIII|||TR||||||CB|||TCAGATGCAGGCTCAC-1|||UB|||AGAGCTGCCA";
         let header = CellrangerFastqHeader::new(name.to_string());
-        assert_eq!(header.get_tag(&("BC".to_string())), Some("TGGTAAAC".to_string()));
-        assert_eq!(header.get_tag(&("TR".to_string())), Some("".to_string()));
-        assert_eq!(header.get_tag(&("FOO".to_string())), None);
+        assert_eq!(header.get_tag("BC"), Some(&("TGGTAAAC".to_string())));
+        assert_eq!(header.get_tag("TR"), Some(&"".to_string()));
+        assert_eq!(header.get_tag("FOO"), None);
     }
 
     #[test]

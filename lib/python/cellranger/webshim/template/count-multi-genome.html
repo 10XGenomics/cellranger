@@ -9,14 +9,16 @@
     [[ utils.single_hero_card(data.tables[0].rows[1]) ]]
     <!-- Sequencing Card -->
     [[ utils.summary_card(data.tables[1]) ]]
+    <!-- Mapping Card -->
+    [[ utils.summary_card(data.tables[2]) ]]
     <!-- GEMs Card -->
-    [[ utils.summary_card(data.tables[3]) ]]
+    [[ utils.summary_card(data.tables[4]) ]]
   </div>
   <div class="summary_card_gutter">&nbsp;</div>
   <!-- Right Summary Column -->
   <div class="summary_card_column">
     <!-- Cells Card -->
-    [[ utils.summary_card(data.tables[2], chart="barcode_rank") ]]
+    [[ utils.summary_card(data.tables[3], chart="barcode_rank") ]]
     <!-- Sample Info Card -->
     [[ utils.sample_info_card(data) ]]
   </div>

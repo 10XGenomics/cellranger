@@ -20,6 +20,7 @@ import sys
 import tables
 import tenkit.bam as tk_bam
 import tenkit.fasta as tk_fasta
+import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
 import tenkit.constants as tk_constants
@@ -33,7 +34,7 @@ def get_version():
         with open(version_fn, 'r') as f:
             output = f.read()
     else:
-        output = subprocess.check_output(['git', 'describe', '--tags', '--always', '--dirty'], cwd=script_dir)
+        output = tk_subproc.check_output(['git', 'describe', '--tags', '--always', '--dirty'], cwd=script_dir)
     return output.strip()
 
 def fixpath(path):
@@ -114,8 +115,10 @@ def get_mkref_version(reference_path):
     data = _load_reference_metadata_file(reference_path)
     return data[cr_constants.REFERENCE_MKREF_VERSION_KEY]
 
-def barcode_sort_key(read):
+def barcode_sort_key(read, squash_unbarcoded=False):
     formatted_bc = get_read_barcode(read)
+    if squash_unbarcoded and formatted_bc is None:
+        return None
     (bc, gg) = split_barcode_seq(formatted_bc)
     return gg, bc, get_read_gene_ids(read)
 
@@ -302,30 +305,41 @@ def get_read_transcripts_iter(read):
 
         yield chrom, strand, pos, cigarstring
 
+def get_mapping_region(read):
+    region_tag = _get_read_tag(read, 'RE')
+    return cr_constants.REGION_TAG_MAP.get(region_tag, None)
+
 def make_annotation_tags(tx, gx, gn):
     return [(cr_constants.TRANSCRIPTS_TAG, tx), (cr_constants.GENE_IDS_TAG, gx), (cr_constants.GENE_NAMES_TAG, gn)]
 
 def iter_read_pairs(reads_iter, paired_end):
-    ''' Iterate though mate pairs, assuming that they're adjacent '''
-    read1, read2 = None, None
-    for read in reads_iter:
-        if not paired_end:
+    """
+    Iterate through mate pairs. In the paired end case, the number of R1:R2 alignments
+    should be either N:N or 1:N / N:1 (if one end is unmapped, in which case we treat it separately).
+    """
+    if not paired_end:
+        for read in reads_iter:
             yield read, None
-        else:
+    else:
+        r1s, r2s = [], []
+        for read in reads_iter:
             if read.is_read2:
-                assert read2 is None
-                read2 = read
+                r2s.append(read)
             else:
-                assert read1 is None
-                read1 = read
-
-            if read1 is None or read2 is None:
-                continue # don't yield until we've seen both ends
-
-            assert read1.qname == read2.qname
-            assert read1.is_read1 and read2.is_read2
-            yield read1, read2
-            read1, read2 = None, None
+                r1s.append(read)
+        if len(r1s) == len(r2s):
+            for r1, r2 in itertools.izip(r1s, r2s):
+                yield r1, r2
+        elif len(r1s) == 1:
+            for r2 in r2s:
+                yield None, r2
+            yield r1s[0], None
+        elif len(r2s) == 1:
+            for r1 in r1s:
+                yield r1, None
+            yield None, r2s[0]
+        else:
+            raise Exception("Inconsistent number of R1:R2 alignments (%d:%d)" % (len(r1s), len(r2s)))
 
 def iter_by_qname(in_genome_bam, in_trimmed_bam):
     # Iterate through multiple BAMs by qname simultaneously
@@ -433,7 +447,7 @@ def is_read_dupe_candidate(read, high_conf_mapq, use_corrected_umi=True):
     else:
         umi = get_read_raw_umi(read)
 
-    return not read.is_read2 and not read.is_secondary and umi and get_read_barcode(read) and \
+    return not read.is_secondary and umi and get_read_barcode(read) and \
         is_read_conf_mapped_to_transcriptome(read, high_conf_mapq)
 
 def is_read_conf_mapped_to_transcriptome(read, high_conf_mapq):
@@ -445,15 +459,17 @@ def is_read_conf_mapped_to_transcriptome(read, high_conf_mapq):
         gene_ids = get_read_gene_ids(read)
         return gene_ids is not None and len(gene_ids) == 1
 
-def is_read_conf_mapped_to_transcriptome_deduped(read, high_conf_mapq):
-    return not read.is_secondary and not read.is_duplicate and \
-        is_read_conf_mapped_to_transcriptome(read, high_conf_mapq) and \
-        (get_read_umi(read) and get_read_barcode(read))
-
 def is_read_conf_mapped_to_transcriptome_barcoded(read, high_conf_mapq):
-    return not read.is_secondary and not read.is_duplicate and \
-        is_read_conf_mapped_to_transcriptome(read, high_conf_mapq) and \
-        get_read_barcode(read)
+    return is_read_conf_mapped_to_transcriptome(read, high_conf_mapq) and \
+        not read.is_secondary and get_read_barcode(read)
+
+def is_read_conf_mapped_to_transcriptome_barcoded_deduped(read, high_conf_mapq):
+    return is_read_conf_mapped_to_transcriptome_barcoded(read, high_conf_mapq) and \
+        not read.is_duplicate
+
+def is_read_conf_mapped_to_transcriptome_barcoded_deduped_with_umi(read, high_conf_mapq):
+    return is_read_conf_mapped_to_transcriptome_barcoded_deduped(read, high_conf_mapq) and \
+        get_read_umi(read)
 
 def get_hamming_distance(kmer1, kmer2):
     kmer1_len, kmer2_len = len(kmer1), len(kmer2)
@@ -476,20 +492,36 @@ def get_kmers_hamming_distance(kmers):
     return min_hamming_distance
 
 def load_barcode_tsv(filename):
-    barcodes = [x.strip() for x in open(filename, 'r') if not ('#' in x)]
+    barcodes = [x.strip() for x in open_maybe_gzip(filename, 'r') if not ('#' in x)]
     if len(barcodes) != len(set(barcodes)):
         raise Exception('Duplicates found in barcode whitelist: %s' % filename)
     return barcodes
 
-def load_barcode_whitelist(filename):
-    if filename:
-        if not os.path.exists(filename):
-            filename = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, filename + '.txt')
-            if not os.path.isfile(filename):
-                raise NameError('Unable to find barcode whitelist: %s' % filename)
+def get_barcode_whitelist_path(filename):
+    # Look for exact path, .txt.gz, or .txt
+    if filename is None:
+        return None
+    elif os.path.exists(filename):
+        return filename
+    else:
+        gz = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, filename + '.txt.gz')
+        if os.path.exists(gz):
+            return gz
 
-        return load_barcode_tsv(filename)
-    return None
+        txt = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, filename + '.txt')
+        return txt
+
+def load_barcode_whitelist(filename):
+    path = get_barcode_whitelist_path(filename)
+
+    if path is None:
+        return None
+
+    if not os.path.isfile(path):
+        raise NameError('Unable to find barcode whitelist: %s' % path)
+
+    return load_barcode_tsv(path)
+
 
 def load_barcode_summary(barcode_summary):
     if barcode_summary:
@@ -651,7 +683,7 @@ def get_metric_from_json(filename, key):
     return d[key]
 
 def format_barcode_summary_h5_key(genome, region, read_type):
-    return '%s_%s_%s_barcode_reads' % (genome, region, read_type)
+    return '%s_%s_%s_reads' % (genome, region, read_type)
 
 def downsample(rate):
     if rate is None or rate == 1.0:
@@ -701,14 +733,61 @@ def is_barcode_on_whitelist(seq, whitelist):
     else:
         return seq in whitelist
 
+class SubprocessStream(object):
+    """ Wrap a subprocess that we stream from or stream to """
+    def __init__(self, *args, **kwargs):
+        mode = kwargs.pop('mode', 'r')
+        if mode == 'r':
+            kwargs['stdout'] = subprocess.PIPE
+        elif mode == 'w':
+            kwargs['stdin'] = subprocess.PIPE
+        else:
+            raise ValueError('mode %s unsupported' % self.mode)
+
+        kwargs['preexec_fn'] = os.setsid
+        print args[0]
+        sys.stdout.flush()
+        self.proc = tk_subproc.Popen(*args, **kwargs)
+
+        if mode == 'r':
+            self.pipe = self.proc.stdout
+        elif mode == 'w':
+            self.pipe = self.proc.stdin
+    def __enter__(self):
+        return self
+    def __iter__(self):
+        return self
+    def next(self):
+        return self.pipe.next()
+    def fileno(self):
+        return self.pipe.fileno()
+    def write(self, x):
+        self.pipe.write(x)
+    def close(self):
+        self.pipe.close()
+        self.proc.wait()
+    def __exit__(self, tp, val, tb):
+        self.close()
+
 def open_maybe_gzip(filename, mode='r'):
+    compressor = None
+
     if filename.endswith(cr_constants.GZIP_SUFFIX):
-        gunzip = subprocess.Popen(['gunzip', '-c', filename],
-                                  stdout=subprocess.PIPE,
-                                  preexec_fn=os.setsid)
-        return gunzip.stdout
+        compressor = 'gzip'
+    elif filename.endswith(cr_constants.LZ4_SUFFIX):
+        compressor = 'lz4'
     else:
         return open(filename, mode)
+
+    assert compressor is not None
+
+    if mode == 'r':
+        return SubprocessStream([compressor, '-c', '-d', filename], mode='r')
+    elif mode == 'w':
+        f = open(filename, 'w')
+        return SubprocessStream([compressor, '-c'], stdout=f, mode='w')
+    else:
+        raise ValueError("Unsupported mode for compression: %s" % mode)
 
 def get_comp(seq):
     return str(seq).translate(tk_seq.DNA_CONVERT_TABLE)
@@ -717,7 +796,7 @@ def get_rev(seq):
     return str(seq)[::-1]
 
 def run_command_safely(cmd, args):
-    p = subprocess.Popen([cmd] + args, stderr=subprocess.PIPE)
+    p = tk_subproc.Popen([cmd] + args, stderr=subprocess.PIPE)
     _, stderr_data = p.communicate()
     if p.returncode != 0:
         raise Exception("%s returned error code %d: %s" % (p, p.returncode, stderr_data))
@@ -804,6 +883,25 @@ def concatenate_files(out_path, in_paths, mode=''):
     with open(out_path, 'w' + mode) as out_file:
         for in_path in in_paths:
             with open(in_path, 'r' + mode) as in_file:
+                shutil.copyfileobj(in_file, out_file)
+
+def concatenate_headered_files(out_path, in_paths, mode=''):
+    """ Concatenate files, taking the first line of the first file
+        and skipping the first line for subsequent files.
+        Asserts that all header lines are equal. """
+    with open(out_path, 'w' + mode) as out_file:
+        if len(in_paths) > 0:
+            # Write first file
+            with open(in_paths[0], 'r' + mode) as in_file:
+                header = in_file.readline()
+                out_file.write(header)
+                shutil.copyfileobj(in_file, out_file)
+
+        # Write remaining files
+        for in_path in in_paths[1:]:
+            with open(in_path, 'r' + mode) as in_file:
+                this_header = in_file.readline()
+                assert this_header == header
                 shutil.copyfileobj(in_file, out_file)
 
 def compute_hash_of_file(filename, block_size_bytes=2**20):
@@ -981,7 +1079,7 @@ def get_unmapped_read_count_from_indexed_bam(bam_file_name):
 
     """
 
-    index_output = subprocess.check_output('samtools idxstats %s' % bam_file_name, shell=True)
+    index_output = tk_subproc.check_output('samtools idxstats %s' % bam_file_name, shell=True)
     return int(index_output.strip().split('\n')[-1].split()[-1])
 
 
@@ -1063,7 +1161,7 @@ def load_barcode_csv(barcode_csv):
     return bcs_per_genome
 
 def load_csv_rownames(csv_file):
-    rownames = pd.read_csv(csv_file, usecols=[0]).values.squeeze()
+    rownames = np.atleast_1d(pd.read_csv(csv_file, usecols=[0]).values.squeeze())
     return rownames
 
 def get_h5_filetype(filename):
@@ -1112,3 +1210,17 @@ def merge_jsons_single_level(filenames):
                                                                                                           str(value),
                                                                                                           str(merged[key])))
     return merged
+
+
+def splitexts(s):
+    """ Like splitext, but handle concat'd extensions like .tar.gz.
+        E.g., /path/to/foo.tar.gz => ('/path/to/foo', '.tar.gz')
+        Returns (str,str) - (base, extension) """
+    dn = os.path.dirname(s)
+    bn = os.path.basename(s)
+    parts = bn.split('.')
+
+    if len(parts) == 1:
+        return (os.path.join(dn, bn), '')
+    else:
+        return (os.path.join(dn, parts[0]), '.' + '.'.join(parts[1:]))

@@ -74,3 +74,15 @@ ifchk "10X Refdata Version" "cat \$TENX_REFDATA/version"
 
 check "qconf"               "which qconf"
 ifchk "qconf -sc"           "qconf -sc && qconf -sconf | grep -E '(shell_start_mode|login_shells|max_jobs)'"
+ifchk "qhost"               "which qhost"
+ifchk "qhost count"         "qhost -l \"mem_total=20G\" | tail -n +3 | wc -l"
+ifchk "qhost -F"            "qhost -F -q -h \$(qhost | sort -h -k 5 -r | head -n 1 | cut -d \" \" -f 1)"
+
+check "MRP"                 "mrp --version"
+ifchk "mrp templates"       "ls \$(dirname \$(dirname \$(which mrp)))/jobmanagers/*.template"
+if [ $ecode == 0 ]; then
+  for template in $(ls $(dirname $(dirname $(which mrp)))/jobmanagers/*.template); do
+    ifchk "$template" "cat $template"
+  done
+fi
+

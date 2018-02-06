@@ -16,7 +16,6 @@ stage ALIGN_READS(
     in  int      threads,
     in  int      max_hits_per_read,
     out bam[]    genome_output,
-    out bool     paired_end,
     src py       "stages/counter/align_reads",
 ) split using (
     in  fastq    read_chunk,
@@ -42,7 +41,6 @@ def split(args):
 
 def join(args, outs, chunk_defs, chunk_outs):
     outs.genome_output = [chunk_out.genome_output for chunk_out in chunk_outs]
-    outs.paired_end = len(args.read2s) > 0
 
 def main(args, outs):
     reference_star_path = cr_utils.get_reference_star_path(args.reference_path)

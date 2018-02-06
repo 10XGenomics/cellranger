@@ -1,0 +1,29 @@
+[package]
+name = "detect_chemistry"
+version = "0.1.0"
+authors = ["Paul Ryvkin <paul.ryvkin@10xgenomics.com>"]
+
+[dependencies]
+docopt = "*"
+serde = { version = "1.0", features = ["derive"] }
+regex = "*"
+lazy_static = "*"
+bio = "*"
+debruijn = { git = "https://github.com/10XGenomics/rust-debruijn.git" }
+fnv = "*"
+itertools = "*"
+bincode = "*"
+serde_json = "*"
+pdqsort = "*"
+log = "*"
+env_logger = "*"
+chrono = "*"
+rand = "*"
+flate2 = "*"
+
+[dependencies.boomphf]
+git = "https://github.com/10XGenomics/rust-boomphf"
+features = ["serde"]
+
+[profile.release]
+#debug = true

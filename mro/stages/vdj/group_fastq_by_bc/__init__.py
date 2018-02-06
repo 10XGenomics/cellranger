@@ -10,11 +10,15 @@ import martian
 import tenkit.fasta as tk_fasta
 import tenkit.cache as tk_cache
 import tenkit.safe_json as tk_safe_json
+import cellranger.chemistry as cr_chem
+import cellranger.constants as cr_constants
+import cellranger.utils as cr_utils
 import cellranger.vdj.utils as vdj_utils
 
 __MRO__ = """
 stage GROUP_FASTQ_BY_BC(
     in  map[]   buckets,
+    in map chemistry_def,
     out fastq[] read1s,
     out fastq[] read2s,
     out int[]   chunk_gem_groups,
@@ -33,20 +37,32 @@ def split(args):
 def main(args, outs):
     outs.coerce_strings()
 
-    # Note: This naming scheme is required by FILTER_VDJ_READS / vdj_asm
-    outs.read1s = martian.make_path('reads_1.fastq')
-    outs.read2s = martian.make_path('reads_2.fastq')
+    paired_end = cr_chem.is_paired_end(args.chemistry_def)
 
-    with open(outs.read1s, 'w') as r1_fq_out, \
-         open(outs.read2s, 'w') as r2_fq_out, \
-         open(outs.chunk_barcodes, 'w') as barcodes_out:
-        merge_by_barcode(args.fastqs,
-                         r1_fq_out, r2_fq_out,
-                         barcodes_out)
+    outs.read1s = martian.make_path('reads_1.fastq' + cr_constants.LZ4_SUFFIX)
+    r1_fq_out = cr_utils.open_maybe_gzip(outs.read1s, 'w')
 
-def merge_by_barcode(in_filenames, r1_out_file, r2_out_file, bcs_out_file):
+    if paired_end:
+        outs.read2s = martian.make_path('reads_2.fastq' + cr_constants.LZ4_SUFFIX)
+        r2_fq_out = cr_utils.open_maybe_gzip(outs.read2s, 'w')
+    else:
+        outs.read2s = None
+        r2_fq_out = None
+
+    barcodes_out = cr_utils.open_maybe_gzip(outs.chunk_barcodes, 'w')
+
+    merge_by_barcode(args.fastqs, r1_fq_out, r2_fq_out,
+                     barcodes_out, paired_end)
+
+    r1_fq_out.close()
+    if r2_fq_out is not None:
+        r2_fq_out.close()
+    barcodes_out.close()
+
+def merge_by_barcode(in_filenames, r1_out_file, r2_out_file, bcs_out_file, paired_end):
     barcodes = set()
 
+    # Note: The filehandle cache precludes the use of compressed files
     file_cache = tk_cache.FileHandleCache(mode='r', open_func=open)
     heap = []
 
@@ -54,7 +70,7 @@ def merge_by_barcode(in_filenames, r1_out_file, r2_out_file, bcs_out_file):
 
     for filename in in_filenames:
         try:
-            fastq = tk_fasta.read_generator_fastq(file_cache.get(filename), paired_end=True)
+            fastq = tk_fasta.read_generator_fastq(file_cache.get(filename), paired_end=paired_end)
             first_readpair = fastq.next()
 
             key = key_func(first_readpair[0:3])
@@ -70,10 +86,11 @@ def merge_by_barcode(in_filenames, r1_out_file, r2_out_file, bcs_out_file):
         # Get the minimum item and write it.
         key, readpair, in_filename = heapq.heappop(heap)
 
-        fastq = tk_fasta.read_generator_fastq(file_cache.get(in_filename), paired_end=True)
+        fastq = tk_fasta.read_generator_fastq(file_cache.get(in_filename), paired_end=paired_end)
 
         tk_fasta.write_read_fastq(r1_out_file, *readpair[0:3])
-        tk_fasta.write_read_fastq(r2_out_file, *readpair[3:6])
+        if paired_end:
+            tk_fasta.write_read_fastq(r2_out_file, *readpair[3:6])
 
         # Get the next item from the source file we just wrote from
         # If that file is out of items, then we leave that one out

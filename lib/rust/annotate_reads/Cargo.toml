@@ -1,0 +1,23 @@
+[package]
+name = "annotate_reads"
+version = "0.1.0"
+authors = ["Matt Sooknah <matt.sooknah@10xgenomics.com>"]
+
+[dependencies]
+itertools = "0.4"
+docopt = "*"
+time = "*"
+log = "*"
+num = "*"
+rand = "0.3"
+csv = "1.0.0-beta.3"
+histogram = "*"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+bincode = "*"
+rust-htslib = { git = "https://github.com/10xGenomics/rust-htslib", branch = "paul/set-qname" }
+flate2 = "*"
+
+[profile.release]
+#debug = true

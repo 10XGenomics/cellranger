@@ -3,8 +3,8 @@
 # Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
 #
 # Generic script for running a Martian pipeine as a subcommand.
-# 
-# Requires the including subcommand script to implement the following 
+#
+# Requires the including subcommand script to implement the following
 # functions with their own specific functionality:
 #    implement_process_options
 #    implement_generate_sample_defs
@@ -27,11 +27,14 @@ opts=""
 
 # mrp flag options
 flagopts=(
+    "disable-ui"
     "noexit"
     "nopreflight"
 )
 for opt in ${flagopts[@]}; do
-    if [ "${!opt}" == "true" ]; then
+    # Associated variables have underscores instead of hyphens
+    var=${opt//-/_}
+    if [ "${!var}" == "true" ]; then
         opts="$opts --$opt"
     fi
 done
@@ -48,8 +51,10 @@ numopts=(
     "overrides"
 )
 for opt in ${numopts[@]}; do
-    if [ -n "${!opt}" ]; then
-        opts="$opts --$opt=${!opt}"
+    # Associated variables have underscores instead of hyphens
+    var=${opt//-/_}
+    if [ -n "${!var}" ]; then
+        opts="$opts --$opt=${!var}"
     fi
 done
 

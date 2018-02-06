@@ -132,7 +132,7 @@ def summarize_bootstrapped_top_n(top_n_boot):
     result['filtered_bcs_cv'] = tk_stats.robust_divide(top_n_bcs_sd, top_n_bcs_mean)
     result['filtered_bcs_lb'] = round(scipy.stats.norm.ppf(0.025, top_n_bcs_mean, top_n_bcs_sd))
     result['filtered_bcs_ub'] = round(scipy.stats.norm.ppf(0.975, top_n_bcs_mean, top_n_bcs_sd))
-    result['filtered_bcs'] = round(top_n_bcs_mean)
+    result['filtered_bcs'] = int(round(top_n_bcs_mean))
     return result
 
 def filter_cellular_barcodes_ordmag(bc_counts, recovered_cells, total_diversity):

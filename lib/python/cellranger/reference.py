@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import re
+import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import tenkit.bam as tk_bam
@@ -510,7 +511,7 @@ class STAR:
         if chr_bin_n_bits is not None:
             args += ['--genomeChrBinNbits', str(chr_bin_n_bits)]
 
-        subprocess.check_call(args)
+        tk_subproc.check_call(args)
 
     def align(self, read1_fastq_fn, read2_fastq_fn,
               out_genome_bam_fn,
@@ -539,25 +540,30 @@ class STAR:
             args.append('--outSAMattrRGline')
             args.extend(read_group_tags)
 
+        if read1_fastq_fn.endswith(cr_constants.GZIP_SUFFIX):
+            args.extend(['--readFilesCommand', 'gzip -c -d'])
+        if read1_fastq_fn.endswith(cr_constants.LZ4_SUFFIX):
+            args.extend(['--readFilesCommand', 'lz4 -c -d'])
+
         if out_genome_bam_fn == cr_constants.BAM_FILE_STREAM:
             # stream to pipe for downstream processing
             # NOTE: this feature is unused in the standard pipeline
             # HACK: see https://github.com/pysam-developers/pysam/issues/355
             parent_read, child_write = os.pipe()
             try:
-                subprocess.Popen(args, stdout=child_write)
+                tk_subproc.Popen(args, stdout=child_write)
             finally:
                 os.close(child_write)
             os.dup2(parent_read, sys.stdin.fileno())
             # now streaming output can be read using pysam.Samfile('-', 'r')
             # NOTE: since this does not await termination of the process, we can't reliably check the return code
         else:
-            star = subprocess.Popen(args, stdout=subprocess.PIPE, cwd=cwd)
+            star = tk_subproc.Popen(args, stdout=subprocess.PIPE, cwd=cwd)
             star_log = os.path.join(cwd, 'Log.out')
 
             with open(out_genome_bam_fn, 'w') as f:
                 view_cmd = ['samtools', 'view', '-Sb', '-']
-                view = subprocess.Popen(view_cmd, stdin=star.stdout, stdout=f, cwd=cwd)
+                view = tk_subproc.Popen(view_cmd, stdin=star.stdout, stdout=f, cwd=cwd)
                 view.communicate()
 
             try:

@@ -9,6 +9,7 @@ import cellranger.utils as cr_utils
 import martian
 import subprocess
 import os
+import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_json
 
 __MRO__ = """
@@ -104,9 +105,16 @@ def main(args, outs):
     if gem_group_index_json:
         call.extend(["--gemgroups", gem_group_index_json])
 
+    # the sample desc may be unicode, so send the whole
+    # set of args str utf-8 to check_output
+    unicode_call = [arg.encode('utf-8') for arg in call]
+
+    # but keep the arg 'call' here because log_info inherently
+    # attempts to encode the message... (TODO: should log_info
+    # figure out the encoding of the input string)
     martian.log_info("Running crconverter: %s" % " ".join(call))
     try:
-        results = subprocess.check_output(call)
+        results = tk_subproc.check_output(unicode_call)
         martian.log_info("crconverter output: %s" % results)
     except subprocess.CalledProcessError, e:
         outs.output_for_cloupe = None

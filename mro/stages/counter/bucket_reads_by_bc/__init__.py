@@ -62,11 +62,11 @@ def get_read_group_union(in_filenames):
 def split(args):
     chunks = []
 
-    assert len(args.inputs) == len(args.num_alignments)
+    assert args.num_alignments is None or len(args.inputs) == len(args.num_alignments)
 
     read_groups = get_read_group_union(args.inputs)
 
-    for chunk_input, num_alignments in itertools.izip(args.inputs, args.num_alignments):
+    for chunk_input, num_alignments in itertools.izip_longest(args.inputs, args.num_alignments or []):
         # Base it on compression ratios if we don't have alignment counts
         if num_alignments is None:
             mem_gb = get_mem_gb_request_from_bam(chunk_input)

@@ -9,10 +9,9 @@ import itertools
 import json
 import os
 import os.path
-import pandas as pd
-import subprocess
 import sys
 import tenkit.bam as tk_bam
+import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_safe_json
 import cellranger.chemistry as cr_chem
 import cellranger.utils as cr_utils
@@ -27,15 +26,12 @@ stage ASSEMBLE_VDJ(
     in  int       min_kmer_count         "min number of UMIs in which a kmer occurs to consider it",
     in  int       min_contig_len         "min length of output sequences",
     in  int       min_qual               "min extension quality to consider a branch",
-    in  float     nx                     "min number of reads/UMI (90.0 means take N90)",
-    in  int       npaths                 "num of paths per graph component to consider",
     in  float     score_factor           "assign UMIs to sequences with score_factor * best_umi_path_score",
     in  float     qual_factor            "consider branches with qual_factor * best extension quality",
-    in  bool      use_sw                 "align reads on contigs using SW or fast k-mer extension",
     in  float     min_sw_score           "min SW score for read-contig alignments",
-    in  map       min_readpairs_per_umi  "per-gem-group min readpairs/UMI (absolute count, unlike nx above)",
-    in  map       subsample_rate         "per-gem-group read subsampling rate",
+    in  int       min_readpairs_per_umi  "min readpairs/UMI (absolute count)",
     in  float     rt_error               "RT error for base qual computation",
+    in  bool      use_unmapped           "Use unmapped reads in input",
     out fasta     contig_fasta,
     out fasta.fai contig_fasta_fai,
     out fastq     contig_fastq,
@@ -52,8 +48,12 @@ stage ASSEMBLE_VDJ(
 """
 
 # Empirical maxrss seems to scale sublinearly
+# None of this is used if mem_gb is manually specified
 MEM_BYTES_PER_READ = 15000
 MAX_READS_PER_BC = 200000
+
+# Merge output bams in chunks of N
+MERGE_BAMS_N = 64
 
 def run_assembly(fastq_pref, fasta_pref, args):
     cmd = [
@@ -62,26 +62,28 @@ def run_assembly(fastq_pref, fasta_pref, args):
         fasta_pref,
         '--kmers=' + str(args.min_kmer_count),
         '--min-contig=' + str(args.min_contig_len),
-        '--npaths=' + str(args.npaths),
-        '--nx=' + str(args.nx),
         '--min-qual=' + str(args.min_qual),
         '--score-factor=' + str(args.score_factor),
         '--qual-factor=' + str(args.qual_factor),
         '--min-sw-score=' + str(args.min_sw_score),
-        '--rt-error=' + str(args.rt_error),
-        '--subsample-rate=' + str(args.subsample_rate[str(args.gem_group)]),
-    ]
+        '--rt-error=' + str(args.rt_error)]
+
     if not cr_chem.has_umis(args.chemistry_def):
         martian.log_info('Assembly without UMIs is not fully supported.')
-    if not args.use_sw:
-        cmd.append('--fast-align')
-    if not args.min_readpairs_per_umi is None:
-        # If only assembling with read2, adjust this cutoff
-        # NOTE: Martian stores the gem_group dict keys as strings
-        cutoff = args.min_readpairs_per_umi[str(args.gem_group)]
-        cmd.append('--min-umi-reads=' + str(cutoff))
+
+    if cr_chem.is_paired_end(args.chemistry_def):
+        cmd.append('--min-umi-reads=' + str(2 * args.min_readpairs_per_umi))
+    else:
+        cmd.append('--min-umi-reads=' + str(args.min_readpairs_per_umi))
+        cmd.append('--single-end')
+
+    if args.use_unmapped:
+        cmd.append('--use-unmapped')
+
+    #cmd.append('--mixture-filter')
+
     print >> sys.stderr, 'Running', ' '.join(cmd)
-    subprocess.check_call(cmd, cwd=os.getcwd())
+    tk_subproc.check_call(cmd, cwd=os.getcwd())
 
 
 def split(args):
@@ -90,7 +92,7 @@ def split(args):
     for reads_per_bc_file, bam, gem_group in itertools.izip(args.reads_per_bc,
                                                             args.barcode_chunked_bams,
                                                             args.chunk_gem_groups):
-        subsample_rate = args.subsample_rate[str(gem_group)]
+        subsample_rate = 1.0
 
         with open(reads_per_bc_file) as f:
             reads_per_bc = []
@@ -104,7 +106,10 @@ def split(args):
         max_reads = min(MAX_READS_PER_BC, max_reads)
 
         # The assembly step takes roughly num_reads * MEM_BYTES_PER_READ bytes of memory to complete each BC.
-        mem_gb = max(2.0, int(np.ceil(MEM_BYTES_PER_READ * max_reads / 1e9)))
+        if args.mem_gb is None:
+            mem_gb = max(2.0, int(np.ceil(MEM_BYTES_PER_READ * max_reads / 1e9)))
+        else:
+            mem_gb = args.mem_gb
 
         chunks.append({
             'chunked_bam': bam,
@@ -112,10 +117,10 @@ def split(args):
             '__mem_gb': mem_gb,
         })
 
-    # If there were no input reads, create a dummy chunk
     if not chunks:
-        chunks.append({'chunked_bam': None})
-    return {'chunks': chunks, 'join': {'__threads': 4}}
+        # No input reads
+        return {'chunks': []}
+    return {'chunks': chunks, 'join': {'__threads': 4, '__mem_gb': 16}}
 
 
 def main(args, outs):
@@ -137,8 +142,26 @@ def join(args, outs, chunk_defs, chunk_outs):
     contig_fastqs = []
     contig_bams = []
 
-    summary_df_parts = []
-    umi_summary_df_parts = []
+    if len(chunk_outs) == 0:
+        # No input reads
+        # Create empty BAM file
+        with open(outs.contig_bam, 'w') as f:
+            pass
+        outs.contig_bam_bai = None
+        # Create empty contig FASTA
+        with open(outs.contig_fasta, 'w') as f:
+            pass
+        outs.contig_fasta_fai = None
+        # Create empty contig FASTQ
+        with open(outs.contig_fastq, 'w') as f:
+            pass
+        outs.metrics_summary_json = None
+        outs.summary_tsv = None
+        outs.umi_summary_tsv = None
+        return
+
+    summary_tsvs = []
+    umi_summary_tsvs = []
 
     for chunk_out in chunk_outs:
         if not os.path.isfile(chunk_out.contig_fasta):
@@ -147,34 +170,53 @@ def join(args, outs, chunk_defs, chunk_outs):
 
         contig_fastqs.append(chunk_out.contig_fastq)
         contig_bams.append(chunk_out.contig_bam)
-        summary_df_parts.append(pd.read_csv(chunk_out.summary_tsv,
-                                     header=0, index_col=None, sep='\t',
-                                     dtype={'component': int, 'num_reads': int,
-                                            'num_pairs': int, 'num_umis': int}))
 
-        umi_summary_df_parts.append(pd.read_csv(chunk_out.umi_summary_tsv,
-                                     header=0, index_col=None, sep='\t',
-                                     dtype={'umi_id': int, 'reads': int,
-                                            'min_umi_reads': int, 'contigs': str}))
-
-    summary_df = pd.concat(summary_df_parts, ignore_index=True)
-    umi_summary_df = pd.concat(umi_summary_df_parts, ignore_index=True)
+        summary_tsvs.append(chunk_out.summary_tsv)
+        umi_summary_tsvs.append(chunk_out.umi_summary_tsv)
 
     cr_utils.concatenate_files(outs.contig_fasta, contigs)
 
     if os.path.getsize(outs.contig_fasta) > 0:
-        subprocess.check_call('samtools faidx %s' % outs.contig_fasta, shell=True)
+        tk_subproc.check_call('samtools faidx %s' % outs.contig_fasta, shell=True)
         outs.contig_fasta_fai = outs.contig_fasta + '.fai'
 
     cr_utils.concatenate_files(outs.contig_fastq, contig_fastqs)
 
-    if summary_df is not None:
-        summary_df.to_csv(outs.summary_tsv, header=True, index=False, sep='\t')
-    if umi_summary_df is not None:
-        umi_summary_df.to_csv(outs.umi_summary_tsv, header=True, index=False, sep='\t')
+    if len(summary_tsvs) > 0:
+        cr_utils.concatenate_headered_files(outs.summary_tsv, summary_tsvs)
+    if len(umi_summary_tsvs) > 0:
+        cr_utils.concatenate_headered_files(outs.umi_summary_tsv, umi_summary_tsvs)
 
     if contig_bams:
-        tk_bam.merge(outs.contig_bam, contig_bams, threads=args.__threads)
+        # Merge every N BAMs. Trying to merge them all at once
+        #  risks hitting the filehandle limit.
+        n_merged = 0
+
+        while len(contig_bams) > 1:
+            to_merge = contig_bams[0:MERGE_BAMS_N]
+
+            tmp_bam = martian.make_path('merged-%04d.bam' % n_merged)
+            n_merged += 1
+
+            print "Merging %d BAMs into %s ..." % (len(to_merge), tmp_bam)
+            tk_bam.merge(tmp_bam, to_merge, threads=args.__threads)
+
+            # Delete any temporary bams that have been merged
+            for in_bam in to_merge:
+                if os.path.basename(in_bam).startswith('merged-'):
+                    cr_utils.remove(in_bam)
+
+            # Pop the input bams and push the merged bam
+            contig_bams = contig_bams[len(to_merge):] + [tmp_bam]
+
+        if os.path.basename(contig_bams[0]).startswith('merged-'):
+            # We merged at least two chunks together.
+            # Rename it to the output bam.
+            cr_utils.move(contig_bams[0], outs.contig_bam)
+        else:
+            # There was only a single chunk, so copy it from the input
+            cr_utils.copy(contig_bams[0], outs.contig_bam)
+
         tk_bam.index(outs.contig_bam)
 
         # Make sure the Martian out matches the actual index filename

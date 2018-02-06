@@ -4,6 +4,7 @@
 #
 import os
 import subprocess
+import tenkit.log_subprocess as tk_subproc
 import cellranger.utils as cr_utils
 
 class Bowtie2Reference:
@@ -35,7 +36,7 @@ class Bowtie2Reference:
 
         # Check existence and validity of index
         try:
-            subprocess.check_call('bowtie2-inspect -n %s' % index_path, shell=True)
+            tk_subproc.check_call('bowtie2-inspect -n %s' % index_path, shell=True)
         except subprocess.CalledProcessError:
             raise ValueError('Bowtie2 index could not be found or was invalid')
 
@@ -69,7 +70,7 @@ class Bowtie2Reference:
         additional_arguments = cr_utils.kwargs_to_command_line_options(set(), replace_chars={'_': '-'}, **kwargs)
 
         command = 'bowtie2-build %s %s %s' % (additional_arguments, self.reference_fasta_path, index_path)
-        subprocess.check_call(command, shell=True)
+        tk_subproc.check_call(command, shell=True)
 
         self.index_path = index_path
         self.indexed = True
@@ -105,7 +106,7 @@ class Bowtie2Reference:
             cmd = 'bowtie2 %s -x %s -1 %s -2 %s | samtools view -bS - -o %s' % \
                   (additional_options, self.index_path, in_fastq_r1_fn, in_fastq_r2_fn, out_file)
 
-        subprocess.check_call(cmd, shell=True)
+        tk_subproc.check_call(cmd, shell=True)
 
     def align_reads_single(self, in_fastq_fn, out_file, write_sam=False, **kwargs):
         """
@@ -137,7 +138,7 @@ class Bowtie2Reference:
             cmd = 'bowtie2 %s -x %s -U %s | samtools view -bS - -o %s' % \
                   (additional_options, self.index_path, in_fastq_fn, out_file)
 
-        subprocess.check_call(cmd, shell=True)
+        tk_subproc.check_call(cmd, shell=True)
 
 def get_bowtie2_orientation(paired_end, strand):
     """ Determine bowtie2 orientation option given library's paired-end status and strandedness.

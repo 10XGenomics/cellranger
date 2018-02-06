@@ -61,6 +61,33 @@ class PercentDictionaryMetric(DictionaryMetric):
             d[key] = tk_stats.robust_divide(float(value), float(total))
         return d
 
+class CountDistinctIntegerMetric(Metric):
+    def __init__(self, **kwargs):
+        Metric.__init__(self, **kwargs)
+        self.counts = None
+
+    def add(self, value):
+        raise NotImplementedError
+
+    def add_many(self, counts):
+        """ Takes an array of integer counts """
+        if self.counts is None:
+            self.counts = np.copy(counts)
+        else:
+            self.counts += counts
+        self.active = True
+
+    def merge(self, metric):
+        if metric.counts is not None:
+            self.add_many(metric.counts)
+
+    def report(self):
+        if self.counts is None:
+            return 0
+        else:
+            return np.count_nonzero(self.counts)
+
+
 class HistogramMetric(DictionaryMetric):
     def __init__(self, cutoffs, **kwargs):
         DictionaryMetric.__init__(self, **kwargs)
@@ -396,7 +423,8 @@ METRICS = {
     'top_raw_barcodes':            (SubsampledTopNMetric, {'args': [cr_constants.TOP_N, cr_constants.TOP_RAW_SEQUENCE_SAMPLE_RATE]}),
     'effective_barcode_diversity': (EffectiveDiversityMetric, {'prefixes': ['references', 'read_types']}),
 
-    'barcode_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['references', 'regions', 'read_types']}),
+    'transcriptome_conf_mapped_barcoded_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['references']}),
+    'transcriptome_conf_mapped_deduped_barcoded_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['references']}),
 
     ## Subsampled metrics
     'subsampled_duplication_frac': (PercentMetric, {'kwargs': {'always_active': True}, 'prefixes': ['references', 'subsample_types', 'subsample_depths']}),
@@ -410,8 +438,8 @@ METRICS = {
 
 class RawFastqMetricsCache:
     def __init__(self):
-        self.total_reads = 0.0
-        self.total_read_pairs = 0.0
+        self.total_reads = 0.0 # total number of paired-end inserts
+        self.total_read_pairs = 0.0 # total number of inserts with non-empty template sequence on both ends (after stripping BC + UMI)
         self.primer_or_homopolymer_reads = 0.0
         self.homopolymer_reads = collections.defaultdict(float) # nucleotide -> count
         self.primer_reads = collections.defaultdict(float) # primer_name -> count
@@ -445,98 +473,6 @@ class RawFastqMetricsCache:
             get_metric('perfect_primer_frac', primer_name).set_value(count, self.total_reads)
 
         get_metric('read_with_perfect_primer_or_homopolymer_frac').set_value(self.primer_or_homopolymer_reads, self.total_reads)
-
-class AlignedBamMetricsCache:
-    '''Place for caching metrics instead of calling metric.add() for every read.'''
-    def __init__(self, genomes):
-        self.total_reads = 0.0
-        self.unmapped_reads = 0.0
-        self.good_umi_reads = 0.0
-        self.good_bc_reads = 0.0
-        self.corrected_bc_reads = 0.0
-        self.genomes = genomes + [cr_constants.MULTI_REFS_PREFIX]
-        self.regions = cr_constants.REGIONS
-        genome_region_dict = lambda: {(g,r): 0.0 for g,r in itertools.product(self.genomes, self.regions)}
-        genome_dict = lambda: {g: 0.0 for g in self.genomes}
-        self.mapped_reads = genome_region_dict()
-        self.conf_mapped_reads = genome_region_dict()
-        self.conf_mapped_bc_reads = genome_region_dict()
-        self.antisense_reads = genome_dict()
-        self.discordant_pairs = genome_dict()
-        self.genome_reads = genome_dict()
-
-    def finalize(self, reporter):
-        get_metric = reporter._get_metric_attr
-        get_metric('unmapped_reads_frac').set_value(self.unmapped_reads, self.total_reads)
-        get_metric('good_umi_frac').set_value(self.good_umi_reads, self.total_reads)
-        get_metric('good_bc_frac').set_value(self.good_bc_reads, self.total_reads)
-        get_metric('corrected_bc_frac').set_value(self.corrected_bc_reads, self.total_reads)
-
-        mapping_sets = {
-            cr_constants.MAPPED_READ_TYPE: self.mapped_reads,
-            cr_constants.CONF_MAPPED_READ_TYPE: self.conf_mapped_reads,
-            cr_constants.CONF_MAPPED_BC_READ_TYPE: self.conf_mapped_bc_reads,
-        }
-
-        for read_type, mapping_set in mapping_sets.iteritems():
-            for (genome, region), count in mapping_set.iteritems():
-                get_metric('reads_frac', genome, region, read_type).set_value(count, self.total_reads)
-
-        for genome, count in self.antisense_reads.iteritems():
-            conf_mapped_reads = self.conf_mapped_reads[(genome, cr_constants.GENOME_REGION)]
-            get_metric('antisense_reads_frac', genome).set_value(count, conf_mapped_reads)
-
-        for genome, count in self.discordant_pairs.iteritems():
-            conf_mapped_reads = self.conf_mapped_reads[(genome, cr_constants.GENOME_REGION)]
-            get_metric('discordant_pairs_frac', genome).set_value(count, conf_mapped_reads)
-
-class RawBarcodeMetricsCache:
-    def __init__(self):
-        self.total_bcs = 0.0
-        self.miss_whitelist_bcs = 0.0
-        self.has_n_bcs = 0.0
-        self.homopolymer_bcs = 0.0
-        self.low_min_qual_bcs = 0.0
-        self.filtered_miss_whitelist_bcs = 0.0
-
-    def finalize(self, reporter):
-        get_metric = reporter._get_metric_attr
-        property_metric = 'barcode_property_frac'
-        filter_metric = 'barcode_filter_frac'
-
-        get_metric(property_metric, cr_constants.MISS_WHITELIST_BARCODE_FILTER).set_value(self.miss_whitelist_bcs, self.total_bcs)
-        get_metric(property_metric, cr_constants.HAS_N_BARCODE_FILTER).set_value(self.has_n_bcs, self.total_bcs)
-        get_metric(property_metric, cr_constants.HOMOPOLYMER_BARCODE_FILTER).set_value(self.homopolymer_bcs, self.total_bcs)
-        get_metric(property_metric, cr_constants.LOW_MIN_QUAL_BARCODE_FILTER).set_value(self.low_min_qual_bcs, self.total_bcs)
-
-        get_metric(filter_metric, cr_constants.MISS_WHITELIST_BARCODE_FILTER).set_value(self.filtered_miss_whitelist_bcs, self.total_bcs)
-
-class RawUmiMetricsCache:
-    def __init__(self):
-        self.total_umis = 0.0
-        self.has_n_umis = 0.0
-        self.homopolymer_umis = 0.0
-        self.low_min_qual_umis = 0.0
-        self.primer_umis = 0.0
-        self.polyt_umis = 0.0
-        self.filtered_has_n_umis = 0.0
-        self.filtered_homopolymer_umis = 0.0
-        self.filtered_low_min_qual_umis = 0.0
-
-    def finalize(self, reporter):
-        get_metric = reporter._get_metric_attr
-        property_metric = 'umi_property_frac'
-        filter_metric = 'umi_filter_frac'
-
-        get_metric(property_metric, cr_constants.LOW_MIN_QUAL_UMI_FILTER).set_value(self.low_min_qual_umis, self.total_umis)
-        get_metric(property_metric, cr_constants.HAS_N_UMI_FILTER).set_value(self.has_n_umis, self.total_umis)
-        get_metric(property_metric, cr_constants.HOMOPOLYMER_UMI_FILTER).set_value(self.homopolymer_umis, self.total_umis)
-        get_metric(property_metric, cr_constants.PRIMER_UMI_FILTER).set_value(self.primer_umis, self.total_umis)
-        get_metric(property_metric, cr_constants.POLYT_UMI_FILTER).set_value(self.polyt_umis, self.total_umis)
-
-        get_metric(filter_metric, cr_constants.LOW_MIN_QUAL_UMI_FILTER).set_value(self.filtered_low_min_qual_umis, self.total_umis)
-        get_metric(filter_metric, cr_constants.HAS_N_UMI_FILTER).set_value(self.filtered_has_n_umis, self.total_umis)
-        get_metric(filter_metric, cr_constants.HOMOPOLYMER_UMI_FILTER).set_value(self.filtered_homopolymer_umis, self.total_umis)
 
 class Reporter:
     def __init__(self, umi_length=None, primers=None,
@@ -698,7 +634,10 @@ class Reporter:
         _, si_seq, si_qual = si_read
         _, umi_seq, umi_qual = umi_read
 
-        cache.total_reads += (2 if seq2 else 1)
+        # These both mean the same thing
+        cache.total_reads += 1
+        cache.total_read_pairs += 1
+
         cache.total_reads_per_gem_group[gem_group] += 1
         self._set_seq_qual_metrics(seq, qual, 'read', cache)
 
@@ -708,7 +647,6 @@ class Reporter:
 
         if seq2:
             self._set_seq_qual_metrics(seq2, qual2, 'read2', cache)
-            cache.total_read_pairs += 1
 
         if bc_seq:
             self._set_seq_qual_metrics(bc_seq, bc_qual, 'bc', cache)
@@ -728,6 +666,8 @@ class Reporter:
         read_with_perfect_primer_or_homopolymer = False
         for nuc, homopolymer_seq in self.homopolymers.iteritems():
             perfect_homopolymer = homopolymer_seq in seq
+            if seq2:
+                perfect_homopolymer = perfect_homopolymer or homopolymer_seq in seq2
             read_with_perfect_primer_or_homopolymer = (
                 read_with_perfect_primer_or_homopolymer or perfect_homopolymer)
 
@@ -738,6 +678,8 @@ class Reporter:
             primer_seq = primer['seq']
             primer_seq_rc = primer['seq_rc']
             present = primer_seq in seq or primer_seq_rc in seq
+            if seq2:
+                present = present or primer_seq in seq2 or primer_seq_rc in seq2
 
             perfect_primer = present > 0
             read_with_perfect_primer_or_homopolymer = (
@@ -748,35 +690,6 @@ class Reporter:
 
         if read_with_perfect_primer_or_homopolymer:
             cache.primer_or_homopolymer_reads += 1
-
-    def _set_mapping_metrics(self, read_type, read_type_set):
-        for genome, region in itertools.product(self.genomes, self.regions):
-            is_read_type = (genome, region) in read_type_set
-            reads_frac = self._get_metric_attr('reads_frac', genome, region, read_type)
-            reads_frac.add(1, filter=is_read_type)
-
-        for region in self.regions:
-            is_read_type = any([(genome, region) in read_type_set for genome in self.genomes])
-            multi_reads_frac = self._get_metric_attr('reads_frac', cr_constants.MULTI_REFS_PREFIX, region,
-                                                     read_type)
-            multi_reads_frac.add(1, filter=is_read_type)
-
-    def _set_barcode_reads_metrics(self, read_type, read_type_set, bc):
-        for genome in self.genomes:
-            is_read_type = (genome, cr_constants.TRANSCRIPTOME_REGION) in read_type_set
-            if is_read_type:
-                barcode_reads = self._get_metric_attr(
-                    'barcode_reads', genome, cr_constants.TRANSCRIPTOME_REGION, read_type)
-                barcode_reads.add(bc)
-
-        # Don't always-report the multi prefix for the barcode_reads metrics
-        if self.has_multiple_genomes:
-            is_read_type = any([(genome, cr_constants.TRANSCRIPTOME_REGION) in read_type_set for genome in self.genomes])
-            if is_read_type:
-                multi_barcode_reads = self._get_metric_attr(
-                    'barcode_reads', cr_constants.MULTI_REFS_PREFIX,
-                    cr_constants.TRANSCRIPTOME_REGION, read_type)
-                multi_barcode_reads.add(bc)
 
     def raw_umi_cb(self, seq, qual):
         """ Returns the processed sequence """
@@ -836,135 +749,6 @@ class Reporter:
     def extract_reads_finalize(self):
         self.raw_fastq_cache.finalize(self)
 
-    def attach_bcs_init(self):
-        self.aligned_bam_cache = AlignedBamMetricsCache(self.genomes)
-        self.raw_barcode_cache = RawBarcodeMetricsCache()
-        self.raw_umi_cache = RawUmiMetricsCache()
-
-    def attach_bcs_finalize(self):
-        self.aligned_bam_cache.finalize(self)
-        self.raw_barcode_cache.finalize(self)
-        self.raw_umi_cache.finalize(self)
-
-    def aligned_bam_cb(self, genome_alignments, transcript_insert_sizes, gene_ids, regions,
-                       barcode_info=None, umi_info=None, any_antisense=False, any_discordant_pairs=False):
-        assert len(genome_alignments) == len(regions)
-        get_metric = self._get_metric_attr
-        cache = self.aligned_bam_cache
-
-        read_mapped, read_conf_mapped, read_antisense, read_pair_discordant  = set(), set(), set(), set()
-        any_conf_mapped_to_txome = False
-        seen_genomes = set()
-        for alignment, region in itertools.izip(genome_alignments, regions):
-            genome = cr_utils.get_genome_from_read(alignment, self.chroms, self.genomes)
-
-            if genome: seen_genomes.add(genome)
-            is_mapped = not alignment.is_unmapped
-            is_conf_mapped = is_mapped and alignment.mapq >= self.high_conf_mapq
-            if is_mapped:
-                read_mapped.add((genome, cr_constants.GENOME_REGION))
-                if region: read_mapped.add((genome, region)) # should be one of: exonic, intronic, intergenic
-                if len(gene_ids) > 0:
-                    read_mapped.add((genome, cr_constants.TRANSCRIPTOME_REGION))
-            if is_conf_mapped:
-                read_conf_mapped.add((genome, cr_constants.GENOME_REGION))
-                if region: read_conf_mapped.add((genome, region)) # should be one of: exonic, intronic, intergenic
-                if len(gene_ids) == 1:
-                    read_conf_mapped.add((genome, cr_constants.TRANSCRIPTOME_REGION))
-                    any_conf_mapped_to_txome = True
-                if any_antisense:
-                    read_antisense.add(genome)
-                if any_discordant_pairs:
-                    read_pair_discordant.add(genome)
-
-        cache.total_reads += 1
-        for genome in seen_genomes:
-            cache.genome_reads[genome] += 1
-
-        if len(read_mapped) == 0:
-            cache.unmapped_reads += 1
-
-        seen_regions = set()
-        for genome, region in read_mapped:
-            cache.mapped_reads[(genome, region)] += 1
-            if region not in seen_regions:
-                cache.mapped_reads[(cr_constants.MULTI_REFS_PREFIX, region)] += 1
-            seen_regions.add(region)
-
-        seen_regions = set()
-        for genome, region in read_conf_mapped:
-            cache.conf_mapped_reads[(genome, region)] += 1
-            if region not in seen_regions:
-                cache.conf_mapped_reads[(cr_constants.MULTI_REFS_PREFIX, region)] += 1
-            seen_regions.add(region)
-
-        for genome in read_antisense:
-            cache.antisense_reads[genome] += 1
-        if len(read_antisense) > 0:
-            cache.antisense_reads[cr_constants.MULTI_REFS_PREFIX] += 1
-
-        for genome in read_pair_discordant:
-            cache.discordant_pairs[genome] += 1
-        if len(read_pair_discordant) > 0:
-            cache.discordant_pairs[cr_constants.MULTI_REFS_PREFIX] += 1
-
-        # Compute insert size
-        if any_conf_mapped_to_txome and len(transcript_insert_sizes) > 0:
-            median_insert_size = np.median(transcript_insert_sizes)
-            self._set_insert_size_metrics(genome_alignments[0], median_insert_size)
-
-        # Barcode and umi metrics
-        if umi_info:
-            get_metric('top_raw_umis').add(umi_info.raw_seq)
-
-            if umi_info.processed_seq:
-                cache.good_umi_reads += 1
-                get_metric('effective_umi_diversity').add(umi_info.processed_seq)
-                get_metric('top_processed_umis').add(umi_info.processed_seq)
-
-            read_conf_mapped_umi = read_conf_mapped and umi_info.processed_seq
-            if read_conf_mapped_umi:
-                # Only record these metrics for all genomes combined
-                conf_mapped_effective_umi_diversity = get_metric(
-                    'effective_umi_diversity', cr_constants.MULTI_REFS_PREFIX,
-                    cr_constants.CONF_MAPPED_READ_TYPE)
-                conf_mapped_effective_umi_diversity.add(umi_info.processed_seq)
-
-                conf_mapped_top_processed_umis = get_metric(
-                    'top_processed_umis', cr_constants.MULTI_REFS_PREFIX,
-                    cr_constants.CONF_MAPPED_READ_TYPE)
-                conf_mapped_top_processed_umis.add(umi_info.processed_seq)
-
-        if barcode_info:
-            if cr_utils.is_barcode_corrected(barcode_info.raw_seq, barcode_info.processed_seq):
-                cache.corrected_bc_reads += 1
-
-            get_metric('top_raw_barcodes').add(barcode_info.raw_seq)
-
-            read_conf_mapped_bc = read_conf_mapped if read_conf_mapped and barcode_info.processed_seq else set()
-            seen_regions = set()
-            for genome, region in read_conf_mapped_bc:
-                cache.conf_mapped_bc_reads[(genome, region)] += 1
-                if region not in seen_regions:
-                    cache.conf_mapped_bc_reads[(cr_constants.MULTI_REFS_PREFIX, region)] += 1
-                seen_regions.add(region)
-
-            if barcode_info.processed_seq:
-                cache.good_bc_reads += 1
-                get_metric('barcodes_detected').add(barcode_info.processed_seq)
-                get_metric('effective_barcode_diversity').add(barcode_info.processed_seq)
-                get_metric('barcode_reads').add(barcode_info.processed_seq)
-                self._set_barcode_reads_metrics(cr_constants.MAPPED_READ_TYPE, read_mapped, barcode_info.processed_seq)
-                self._set_barcode_reads_metrics(cr_constants.CONF_MAPPED_READ_TYPE, read_conf_mapped, barcode_info.processed_seq)
-                self._set_barcode_reads_metrics(cr_constants.CONF_MAPPED_BC_READ_TYPE, read_conf_mapped_bc, barcode_info.processed_seq)
-
-            if read_conf_mapped_bc:
-                genome, _ = next(iter(read_conf_mapped))
-                for reference in [genome, cr_constants.MULTI_REFS_PREFIX]:
-                    conf_mapped_effective_barcode_diversity = get_metric(
-                        'effective_barcode_diversity', reference, cr_constants.CONF_MAPPED_READ_TYPE)
-                    conf_mapped_effective_barcode_diversity.add(barcode_info.processed_seq)
-
     def _set_dupe_metrics(self, read, dupe_type, genome):
         dupe_reads_frac = self._get_metric_attr('dupe_reads_frac', genome, dupe_type)
         dupe_reads_rate = self._get_metric_attr('dupe_reads_rate', genome, dupe_type)
@@ -1017,53 +801,73 @@ class Reporter:
         processed_umi_seq = cr_utils.get_read_umi(read)
         self._get_metric_attr('corrected_umi_frac').add(1, filter=cr_utils.is_umi_corrected(raw_umi_seq, processed_umi_seq))
 
-    def count_genes_bam_cb(self, read, use_umis=True):
+    def _get_gene_bc_umi(self, read):
+        ''' If a read is worthy of being counted by COUNT_GENES, return the relevant info. Otherwise return None. '''
+        if read.is_unmapped or read.is_secondary or read.mapq < self.high_conf_mapq:
+            return None
+        gene_ids = cr_utils.get_read_gene_ids(read)
+        if gene_ids is None or len(gene_ids) != 1:
+            return None
+        bc = cr_utils.get_read_barcode(read)
+        if bc is None:
+            return None
+        umi = cr_utils.get_read_umi(read) # could be None
+        return gene_ids[0], bc, umi
+
+    def count_genes_bam_cb(self, reads, use_umis=True):
         assert self.high_conf_mapq
 
-        # ignore read2 to avoid double-counting. the mapping + annotation should be equivalent.
-        if read.is_secondary or read.is_read2:
+        read1, read2, gene1, gene2, bc, umi = None, None, None, None, None, None
+        for read in reads:
+            gene_bc_umi = self._get_gene_bc_umi(read)
+            if gene_bc_umi is not None:
+                gene, bc, umi = gene_bc_umi
+                if read.is_read2:
+                    read2, gene2 = read, gene
+                else:
+                    read1, gene1 = read, gene
+
+        read = read1 if read1 is not None else read2
+        gene_id = gene1 if gene1 is not None else gene2
+
+        if read is None or gene_id is None:
             return False, None, None, None
 
-        if use_umis:
-            conf_mapped_deduped = cr_utils.is_read_conf_mapped_to_transcriptome_deduped(read, self.high_conf_mapq)
-        else:
-            conf_mapped_deduped = cr_utils.is_read_conf_mapped_to_transcriptome_barcoded(read, self.high_conf_mapq)
+        # ignore discordant pairs
+        if gene1 is not None and gene2 is not None and gene1 != gene2:
+            return False, None, None, None
 
         genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
+
+        for reference in [genome] + ([cr_constants.MULTI_REFS_PREFIX] if self.has_multiple_genomes else []):
+            conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads', reference)
+            conf_mapped_barcode_reads.add(bc)
+
+        conf_mapped_deduped = not read.is_duplicate
+        if use_umis:
+            conf_mapped_deduped = conf_mapped_deduped and umi is not None
+
         for reference in self.references:
-            conf_mapped_deduped_frac = self._get_metric_attr(
-                'reads_frac', reference,
-                cr_constants.TRANSCRIPTOME_REGION,
-                cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
+            conf_mapped_deduped_frac = self._get_metric_attr('reads_frac', reference,
+                    cr_constants.TRANSCRIPTOME_REGION, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
             conf_mapped_deduped_frac.add(1, filter=conf_mapped_deduped and reference in [genome, cr_constants.MULTI_REFS_PREFIX])
 
         if conf_mapped_deduped:
-            bc = cr_utils.get_read_barcode(read)
-            umi = cr_utils.get_read_umi(read)
             for reference in [genome, cr_constants.MULTI_REFS_PREFIX]:
-                if bc:
-                    conf_mapped_deduped_effective_barcode_diversity = self._get_metric_attr(
-                        'effective_barcode_diversity', reference,
-                        cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
-                    conf_mapped_deduped_effective_barcode_diversity.add(bc)
+                conf_mapped_deduped_effective_barcode_diversity = self._get_metric_attr('effective_barcode_diversity',
+                        reference, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
+                conf_mapped_deduped_effective_barcode_diversity.add(bc)
 
-                    # Only report barcode_reads for multi_* if there are multiple genomes
-                    if reference != cr_constants.MULTI_REFS_PREFIX or self.has_multiple_genomes:
-                        conf_mapped_deduped_barcode_reads = self._get_metric_attr(
-                            'barcode_reads', reference,
-                            cr_constants.TRANSCRIPTOME_REGION,
-                            cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
-                        conf_mapped_deduped_barcode_reads.add(bc)
+                # Only report barcode_reads for multi_* if there are multiple genomes
+                if reference != cr_constants.MULTI_REFS_PREFIX or self.has_multiple_genomes:
+                    conf_mapped_deduped_barcode_reads = self._get_metric_attr(
+                        'transcriptome_conf_mapped_deduped_barcoded_reads', reference)
+                    conf_mapped_deduped_barcode_reads.add(bc)
 
-                if umi:
+                if umi is not None:
                     conf_mapped_deduped_effective_umi_diversity = self._get_metric_attr(
-                        'effective_umi_diversity', reference,
-                        cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
+                        'effective_umi_diversity', reference, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
                     conf_mapped_deduped_effective_umi_diversity.add(umi)
-
-            gene_ids = cr_utils.get_read_gene_ids(read)
-            assert len(gene_ids) == 1
-            gene_id = gene_ids[0]
 
             return True, genome, gene_id, bc
 
@@ -1133,8 +937,6 @@ class Reporter:
             subsampled_filtered_bcs_median_counts = self._get_metric_attr('subsampled_filtered_bcs_median_counts', genome, subsample_type, subsample_depth)
             subsampled_filtered_bcs_median_counts.set_value(median_counts)
 
-
-
     def store_pipeline_metadata(self, version):
         if self.metadata is None:
             self.metadata = {}
@@ -1202,6 +1004,12 @@ class Reporter:
         with open(filename, 'w') as f:
             tk_safe_json.dump_numpy(tk_safe_json.json_sanitize(data), f, pretty=True)
 
+    def report_barcodes_csv(self, filename):
+        barcodes = sorted(self._get_metric_attr('barcodes_detected').d)
+        with open(filename, 'w') as f:
+            for bc in barcodes:
+                f.write(bc + '\n')
+
     def report_barcodes_h5(self, filename):
         data = self.report('barcodes')
 
@@ -1221,7 +1029,6 @@ class Reporter:
             bc_table_cols[metric_name] = counts
 
         cr_utils.write_h5(filename, bc_table_cols)
-
 
     def save(self, filename):
         with open(filename, 'wb') as f:

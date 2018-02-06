@@ -8,8 +8,9 @@ import itertools
 import re
 import os.path
 import martian
-import subprocess
+import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
+import cellranger.constants as cr_constants
 import cellranger.chemistry as cr_chem
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
@@ -48,20 +49,30 @@ R2_THREE_PRIME_REV_COMP_SEQS = ['spacer', 'R1', 'P5']
 R2_THREE_PRIME_SEQS = ['polyA', 'rt_primer']
 
 
-def get_vdj_trim_metrics(reporter, stdout_file):
+def get_vdj_trim_metrics(reporter, stdout_file, paired_end):
     with open(stdout_file, 'r') as f:
         for line in f:
             if not line.startswith('==='):
                 continue
             if line.startswith('=== Summary'):
                 f.next()
-                npairs = int(re.sub(',', '', f.next().split()[4]))
+
+                if paired_end:
+                    npairs = int(re.sub(',', '', f.next().split()[4]))
+                else:
+                    npairs = int(re.sub(',', '', f.next().split()[3]))
             else:
-                match = re.match(r'=== (\S+) read: Adapter (\S+) ===', line)
-                read_name, seq_name = match.group(1, 2)
+                if paired_end:
+                    match = re.match(r'=== (\S+) read: Adapter (\S+) ===', line)
+                    read_name, seq_name = match.group(1, 2)
+                else:
+                    match = re.match(r'=== Adapter (\S+) ===', line)
+                    read_name, seq_name = (None, match.group(1))
 
                 if read_name in ('First', 'Second'):
                     read_name = 'read1' if read_name == 'First' else 'read2'
+                elif not paired_end:
+                    read_name = 'read1'
                 else:
                     raise ValueError('Unrecognized read-type in cutadapt output: %s' % read_name)
 
@@ -76,45 +87,67 @@ def get_vdj_trim_metrics(reporter, stdout_file):
                 metric.add(npairs - ntrimmed, filter=False)
 
 
-def run_cutadapt(args, out_read1s, out_read2s):
-    paired_end = cr_chem.is_paired_end(args.chemistry_def)
+def run_cutadapt(args, out_read1s, out_read2s, chemistry_def):
+    paired_end = cr_chem.is_paired_end(chemistry_def)
 
+    # If single end, determine which read the single read is (R1 or R2)
+    if paired_end:
+        single_read = None
+    else:
+        single_read = cr_chem.get_rna_read_def(chemistry_def).read_type
+        assert single_read in ('R1', 'R2')
+
+    out_r1_file = cr_utils.open_maybe_gzip(out_read1s, 'w')
+
+    # Note: The complexity of forcing cutadapt to output a compressed file
+    #       means we'll have to give up on that for now.
     cmd = ['cutadapt',
-           '--minimum-length', '50', '--times', '3', '--overlap', '5',
-           '-o', out_read1s]
+           '-e', '0.12', '--times', '3', '--overlap', '5',
+           '-f', 'fastq',
+           '-o', '/proc/%d/fd/%d' % (os.getpid(), out_r1_file.fileno())]
 
     if paired_end:
-        cmd.extend(['-p', out_read2s])
+        out_r2_file = cr_utils.open_maybe_gzip(out_read2s, 'w')
+        cmd.extend(['-p', '/proc/%d/fd/%d' % (os.getpid(), out_r2_file.fileno())])
 
     primers = {anno['name']:anno['seq'] for anno in args.primers}
 
-    for name in R1_ANCHORED_FIVE_PRIME_SEQS:
-        if name in primers:
-            cmd.extend(['-g', '%s=^%s' % (name, primers[name])])
+    if paired_end or single_read == 'R1':
+        # R1 adapters
+        for name in R1_ANCHORED_FIVE_PRIME_SEQS:
+            if name in primers:
+                cmd.extend(['-g', '%s=^%s' % (name, primers[name])])
 
-    for name in R1_THREE_PRIME_REV_COMP_SEQS:
-        if name in primers:
-            cmd.extend(['-a', '%s_rc=%s' % (name, tk_seq.get_rev_comp(primers[name]))])
+        for name in R1_THREE_PRIME_REV_COMP_SEQS:
+            if name in primers:
+                cmd.extend(['-a', '%s_rc=%s' % (name, tk_seq.get_rev_comp(primers[name]))])
 
-    for name in R1_THREE_PRIME_SEQS:
-        if name in primers:
-            cmd.extend(['-a', '%s=%s' % (name, primers[name])])
+        for name in R1_THREE_PRIME_SEQS:
+            if name in primers:
+                cmd.extend(['-a', '%s=%s' % (name, primers[name])])
 
-    if paired_end:
+    if paired_end or single_read == 'R2':
         for name in R2_THREE_PRIME_REV_COMP_SEQS:
             if name in primers:
-                cmd.extend(['-A', '%s_rc=%s' % (name, tk_seq.get_rev_comp(primers[name]))])
+                flag = '-A' if paired_end else '-a'
+                cmd.extend([flag, '%s_rc=%s' % (name, tk_seq.get_rev_comp(primers[name]))])
 
         for name in R2_THREE_PRIME_SEQS:
             if name in primers:
-                cmd.extend(['-A', '%s=%s' % (name, primers[name])])
+                flag = '-A' if paired_end else '-a'
+                cmd.extend([flag, '%s=%s' % (name, primers[name])])
 
-    cmd.extend([args.read1s_chunk])
+
+    read1_file = cr_utils.open_maybe_gzip(args.read1s_chunk)
+    cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read1_file.fileno())])
 
     if paired_end:
-        cmd.extend([args.read2s_chunk])
+        read2_file = cr_utils.open_maybe_gzip(args.read2s_chunk)
+        cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read2_file.fileno())])
 
-    status = subprocess.check_call(cmd)
+    print cmd
+
+    status = tk_subproc.check_call(cmd)
     return status
 
 
@@ -134,7 +167,13 @@ def split(args):
 
 
 def main(args, outs):
-    status = run_cutadapt(args, outs.read1s, outs.read2s)
+    paired_end = cr_chem.is_paired_end(args.chemistry_def)
+
+    # Write compressed files
+    outs.read1s += cr_constants.LZ4_SUFFIX
+    outs.read2s += cr_constants.LZ4_SUFFIX
+
+    status = run_cutadapt(args, outs.read1s, outs.read2s, args.chemistry_def)
 
     if args.read2s_chunk == None:
         outs.read2s = None
@@ -144,7 +183,8 @@ def main(args, outs):
     else:
         reporter = vdj_report.VdjReporter(primers=cr_utils.get_primers_from_dicts(args.primers))
         get_vdj_trim_metrics(reporter,
-                             os.path.join(os.path.dirname(outs.chunked_reporter), '..', '_stdout'))
+                             os.path.join(os.path.dirname(outs.chunked_reporter), '..', '_stdout'),
+                             paired_end)
         reporter.save(outs.chunked_reporter)
 
 

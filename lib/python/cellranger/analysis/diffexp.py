@@ -90,7 +90,7 @@ def compute_sseq_params(x, zeta_quantile=SSEQ_ZETA_QUANTILE):
 
     ## Compute the shrunken dispersion estimates
     ## Interpolate between the MoM estimates and zeta_hat by delta
-    phi_g = np.full(float(G), np.nan)
+    phi_g = np.full(G, np.nan)
     if np.any(phi_mm_g[use_g] > 0):
         phi_g[use_g] = (1-delta)*phi_mm_g[use_g] + delta*zeta_hat
     else:

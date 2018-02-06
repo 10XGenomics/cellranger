@@ -25,7 +25,9 @@ VDJ_METRICS = {
     # VDJ general metrics
     'vdj_filtered_bcs': (cr_report.CountMetric, {}),
     'vdj_filtered_bcs_cum_frac': (cr_report.PercentMetric, {}),
-    'vdj_filtered_bc_contig_kth_umi_readpair_threshold': (cr_report.CountMetric, {'prefixes': ['gem_groups']}),
+    'vdj_filter_bcs_rpu_threshold': (cr_report.CountMetric, {'prefixes': ['gem_groups']}),
+    'vdj_filter_bcs_umi_threshold': (cr_report.CountMetric, {'prefixes': ['gem_groups']}),
+    'vdj_filter_bcs_confidence': (cr_report.CountMetric, {'prefixes': ['gem_groups']}),
     'vdj_corrected_bc_frac': (cr_report.PercentMetric, {}),
     'vdj_corrected_umi_frac': (cr_report.PercentMetric, {}),
     'vdj_good_bc_frac': (cr_report.PercentMetric, {}),
@@ -49,10 +51,8 @@ VDJ_METRICS = {
 
     # VDJ UMI filtering metrics
     'vdj_recombinome_readpairs_per_umi_distribution': (cr_report.DictionaryMetric, {'prefixes': ['vdj_genes']}),
-    'vdj_recombinome_readpairs_per_umi_threshold': (cr_report.CountMetric, {'prefixes': ['vdj_genes', 'gem_groups']}),
+    'vdj_recombinome_low_support_reads_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_genes']}),
     'vdj_recombinome_readpairs_per_umi_n50': (cr_report.CountMetric, {'prefixes': ['vdj_genes', 'gem_groups']}),
-    'vdj_assembly_subsample_rate': (cr_report.PercentMetric, {'prefixes': ['gem_groups']}),
-    'vdj_assembly_overall_subsample_rate': (cr_report.PercentMetric, {}),
 
     # VDJ primer trimming metrics
     'vdj_trim_read1_frac': (cr_report.PercentMetric, {'prefixes': ['primer_names_plus_rc']}),
@@ -84,6 +84,7 @@ VDJ_METRICS = {
 
     'vdj_assembly_contig_pair_productive_full_len_bc_count': (cr_report.CountMetric, {'prefixes': ['vdj_gene_pairs']}),
     'vdj_assembly_contig_pair_productive_full_len_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_gene_pairs']}),
+    'vdj_assembly_gt0prodcdr_contig_pair_productive_full_len_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_gene_pairs']}),
     'vdj_assembly_cdr_detected_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_genes']}),
     'vdj_assembly_prod_cdr_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_genes']}),
     'vdj_assembly_gt1cdr_cdrPosBc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_genes']}),
@@ -170,10 +171,9 @@ class VdjReporter(cr_report.Reporter):
         self.canonical_vdj_gene_pairs_nomulti = vdj_constants.CANONICAL_VDJ_GENE_PAIRS
         self.vdj_clonotype_types = vdj_constants.VDJ_CLONOTYPE_TYPES
 
-        vdj_reference_path = kwargs.get('vdj_reference_path')
-        if vdj_reference_path is not None:
-            self.vdj_reference_path = vdj_reference_path
-            self.vdj_reference = vdj_reference.VdjReference(vdj_reference_path)
+        if 'vdj_reference_path' in kwargs:
+            self.vdj_reference_path = kwargs['vdj_reference_path']
+            self.vdj_reference = vdj_reference.VdjReference(kwargs['vdj_reference_path'])
             kwargs.pop('vdj_reference_path')
 
         self.primer_names_plus_rc = []
@@ -184,7 +184,7 @@ class VdjReporter(cr_report.Reporter):
         cr_report.Reporter.__init__(self, **kwargs)
 
     def vdj_filter_barcodes_cb(self, cell_barcodes, barcodes, counts,
-                               total_read_pairs, assemblable_read_pairs,
+                               total_read_pairs,
                                recovered_cells):
         self._get_metric_attr('vdj_filtered_bcs').set_value(len(cell_barcodes))
         cell_barcodes = set(cell_barcodes)
@@ -197,12 +197,8 @@ class VdjReporter(cr_report.Reporter):
 
         self._get_metric_attr('vdj_filtered_bcs_cum_frac').set_value(cell_read_pairs, barcoded_read_pairs)
         self._get_metric_attr('vdj_total_raw_read_pairs_per_filtered_bc').set_value(total_read_pairs, len(cell_barcodes))
-        self._get_metric_attr('vdj_assemblable_read_pairs_per_filtered_bc').set_value(assemblable_read_pairs, len(cell_barcodes))
-
-        self._get_metric_attr('vdj_sequencing_efficiency').set_value(assemblable_read_pairs, total_read_pairs)
 
         self._get_metric_attr('vdj_filtered_bcs_relative_difference_from_recovered_cells').set_value(len(cell_barcodes) - recovered_cells, recovered_cells)
-
 
     def vdj_recombinome_bam_cb(self, read1, read2, bam, strand):
         """ Report on a single read-to-germline-segment alignment.
@@ -301,12 +297,23 @@ class VdjReporter(cr_report.Reporter):
                     chain_umis[chain].extend(umis)
                     chain_umis[cr_constants.MULTI_REFS_PREFIX].extend(umis)
 
+        numis_by_chain = {c: len(set(chain_umis.get(c, []))) for c in self.vdj_genes}
+
         for chain in self.vdj_genes:
-            numis = len(set(chain_umis.get(chain, [])))
+            # Don't count this cell if this chain is exceeded in UMIs by another chain
+            #   in its first exclusive set. E.g., if IGK is present and IGL is absent
+            #   then don't include the 0 in IGL's median.
+            exclusive_sets = filter(lambda s: chain in s, vdj_constants.EXCLUSIVE_VDJ_GENES)
+            if len(exclusive_sets) > 0:
+                counts = [numis_by_chain[c] for c in exclusive_sets[0]]
+
+                if numis_by_chain[chain] != max(counts):
+                    continue
+
             metric = self._get_metric_attr('vdj_assembly_umis_per_cell_median', chain)
-            metric.add(numis)
+            metric.add(numis_by_chain[chain])
             metric = self._get_metric_attr('vdj_assembly_umis_per_cell_distribution', chain)
-            metric.add(numis)
+            metric.add(numis_by_chain[chain])
 
         if umi_summary_df is None:
             frac_unassigned = 0.0
@@ -351,17 +358,24 @@ class VdjReporter(cr_report.Reporter):
             # Assign a chain to this contig. Note: gene here is actually chain.
             v_hits = annotation.get_region_hits(vdj_constants.VDJ_V_FEATURE_TYPES)
             j_hits = annotation.get_region_hits(vdj_constants.VDJ_J_FEATURE_TYPES)
-            contig_genes = list(set(h.feature.chain for h in v_hits+j_hits))
+            contig_gene = annotation.get_single_chain()
 
-            if len(contig_genes) == 1:
-                contig_gene = contig_genes[0]
-            elif len(contig_genes) == 0 or len(contig_genes) > 1:
-                contig_gene = None
+            # First count unannotated vs annotated
+            if contig_gene is None:
+                # Unannotated
+                self._get_metric_attr('vdj_assembly_unannotated_contig_frac').add(1, filter=True)
+            else:
+                self._get_metric_attr('vdj_assembly_unannotated_contig_frac').add(1, filter=False)
 
+            # Next count chimeras - overwrites contig_gene for use below
             chimeric_contig_frac = self._get_metric_attr('vdj_assembly_chimeric_contig_frac')
-            chimeric_contig_frac.add(1, filter=len(contig_genes) > 1)
+            if contig_gene == 'Multi':
+                # Chimeric
+                chimeric_contig_frac.add(1, filter=True)
+                contig_gene =  None
+            else:
+                chimeric_contig_frac.add(1, filter=False)
 
-            self._get_metric_attr('vdj_assembly_unannotated_contig_frac').add(1, filter=len(contig_genes) == 0)
 
             contig_type_counts[contig_gene] = 1 + contig_type_counts.get(contig_gene, 0)
 
@@ -489,6 +503,11 @@ class VdjReporter(cr_report.Reporter):
 
             prod_pair_full_len_bc_frac = self._get_metric_attr('vdj_assembly_contig_pair_productive_full_len_bc_frac', gene_pair)
             prod_pair_full_len_bc_frac.add(1, filter=prod_pair)
+
+            # Frac cells paired, conditional on the presence of a single productive contig
+            if len(productive_contigs) > 0:
+                hasprod_prod_pair_full_len_bc_frac = self._get_metric_attr('vdj_assembly_gt0prodcdr_contig_pair_productive_full_len_bc_frac', gene_pair)
+                hasprod_prod_pair_full_len_bc_frac.add(1, filter=prod_pair)
 
         return bc_fields
 

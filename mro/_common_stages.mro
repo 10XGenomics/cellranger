@@ -5,31 +5,34 @@ filetype bam;
 filetype bam.bai;
 filetype fastq;
 filetype json;
-filetype h5;
 filetype pickle;
 
 stage CELLRANGER_PREFLIGHT(
-    in map[]  sample_def,
-    in string chemistry_name,
-    in map    custom_chemistry_def,
-    in path   reference_path,
-    in path   vdj_reference_path,
-    in bool   check_executables,
-    in int    recovered_cells,
-    in int    force_cells,
-    src py     "stages/common/cellranger_preflight",
+    in  map[]    sample_def,
+    in  string   chemistry_name,
+    in  map      custom_chemistry_def,
+    in  path     reference_path,
+    in  bool     check_executables,
+    in  int      recovered_cells,
+    in  int      force_cells,
+    in  string[] allowed_chems,
+    in  int      r1_length,
+    in  int      r2_length,
+    src py       "stages/common/cellranger_preflight",
 )
 
 stage CELLRANGER_PREFLIGHT_LOCAL(
-    in map[]  sample_def,
-    in string chemistry_name,
-    in map    custom_chemistry_def,
-    in path   reference_path,
-    in path   vdj_reference_path,
-    in bool   check_executables,
-    in int    recovered_cells,
-    in int    force_cells,
-    src py     "stages/common/cellranger_preflight",
+    in  map[]    sample_def,
+    in  string   chemistry_name,
+    in  map      custom_chemistry_def,
+    in  path     reference_path,
+    in  bool     check_executables,
+    in  int      recovered_cells,
+    in  int      force_cells,
+    in  string[] allowed_chems,
+    in  int      r1_length,
+    in  int      r2_length,
+    src py       "stages/common/cellranger_preflight",
 )
 
 stage SETUP_CHUNKS(
@@ -61,14 +64,14 @@ stage EXTRACT_READS(
     in  int      initial_reads,
     in  map[]    primers,
     in  map      align,
-    in  int      rna_read_length,
+    in  int      r1_length,
+    in  int      r2_length,
     in  bool     skip_metrics,
     out pickle   chunked_reporter,
     out json     summary,
     out json     barcode_counts,
     out fastq[]  reads,
     out fastq[]  read2s,
-    out bam[]    trimmed_seqs,
     out int[]    gem_groups,
     out string[] read_groups,
     out map      align,

@@ -15,6 +15,7 @@ stage ANALYZER_PREFLIGHT(
     in  h5    raw_matrices_h5,
     in  h5    filtered_matrices_h5,
     in  csv   use_genes,
+    in  csv   exclude_genes,
     in  csv   use_bcs,
     in  int   num_analysis_bcs,
     in  int   force_cells,
@@ -97,6 +98,9 @@ def main(args, outs):
             analysis_genes = validate_csv(args.use_genes, "genes", cr_constants.GENE_ID_CSV_COLNAME)
         else:
             analysis_genes = total_genes
+
+        if args.exclude_genes:
+            validate_csv(args.exclude_genes, "exclude_genes", cr_constants.GENE_ID_CSV_COLNAME)
 
         # get parameters or their defaults
         pca_bcs = option(args.num_pca_bcs, analysis_bcs)

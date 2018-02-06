@@ -14,6 +14,7 @@ import cellranger.utils as cr_utils
 import cellranger.molecule_counter as cr_mol_counter
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
+from cellranger.webshim.constants.gex import AggrSampleProperties
 from cellranger.webshim.constants.shared import PIPELINE_AGGR
 
 __MRO__ = """
@@ -37,7 +38,7 @@ stage SUMMARIZE_AGGREGATED_REPORTS(
 def split(args):
     matrix_mem_gb = cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.filtered_matrices_h5)
     chunks = [{
-        '__mem_gb': matrix_mem_gb,
+        '__mem_gb': max(matrix_mem_gb, cr_constants.MIN_MEM_GB),
     }]
     return {'chunks': chunks}
 
@@ -79,6 +80,9 @@ def main(args, outs):
     for genome in flt_conf_mapped_per_genome:
         frac_reads_in_cells = tk_stats.robust_divide(flt_conf_mapped_per_genome[genome], raw_conf_mapped_per_genome[genome])
         summary['%s_filtered_bcs_conf_mapped_barcoded_reads_cum_frac' % genome] = frac_reads_in_cells
+    tot_frac_reads_in_cells = tk_stats.robust_divide(sum(flt_conf_mapped_per_genome.itervalues()),
+                                                     sum(raw_conf_mapped_per_genome.itervalues()))
+    summary['%s_filtered_bcs_conf_mapped_barcoded_reads_cum_frac' % cr_constants.MULTI_REFS_PREFIX] = tot_frac_reads_in_cells
 
     # Pass chemistry metrics through to output
     summary.update({k:v for k,v in mol_counter_metrics.iteritems() if k.startswith('chemistry_')})
@@ -131,7 +135,12 @@ def main(args, outs):
         json.dump(summary, f, indent=4, sort_keys=True)
 
     # build web summary
-    sample_properties = cr_webshim.get_sample_properties(args.aggregation_id, args.aggregation_desc, genomes, version=martian.get_pipelines_version(), agg_batches=agg_batches)
+    sample_properties = AggrSampleProperties(sample_id=args.aggregation_id,
+                                             sample_desc=args.aggregation_desc,
+                                             genomes=genomes,
+                                             version=martian.get_pipelines_version(),
+                                             agg_batches=agg_batches)
+    sample_properties = dict(sample_properties._asdict())
 
     sample_data_paths = cr_webshim_data.SampleDataPaths(
         summary_path=outs.summary,

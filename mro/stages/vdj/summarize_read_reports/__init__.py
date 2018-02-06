@@ -5,6 +5,8 @@
 
 # This stage only exists to force earlier VDR of prior stages.
 
+import itertools
+import cellranger.chemistry as cr_chem
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 
@@ -19,9 +21,11 @@ stage SUMMARIZE_READ_REPORTS(
     in  string[] read_groups,
     in  map      align,
     in  string[] bam_comments,
-    in  fastq[]  bc_corrected_read1s,
-    in  fastq[]  bc_corrected_read2s,
+    in  fastq[]  read1s,
+    in  fastq[]  read2s,
     in  bool     retain_fastqs,
+    in  json     trim_reads_summary,
+    in  map      chemistry_def,
     out json     summary,
     out json     raw_barcode_counts,
     out json     corrected_barcode_counts,
@@ -30,40 +34,60 @@ stage SUMMARIZE_READ_REPORTS(
     out string[] read_groups,
     out map      align,
     out string[] bam_comments,
-    out fastq[]  bc_corrected_read1s,
-    out fastq[]  bc_corrected_read2s,
+    out fastq[]  read1s,
+    out fastq[]  read2s,
     src py       "stages/vdj/summarize_read_reports",
 ) split using (
-    in  fastq    read1s,
-    in  fastq    read2s,
+    in  fastq    read1,
+    in  fastq    read2,
+    in  tsv      bcs,
 )
 """
 
 def split(args):
+    paired_end = cr_chem.is_paired_end(args.chemistry_def)
+    if paired_end:
+        assert len(args.read1s) == len(args.read2s)
+    assert len(args.corrected_bcs) == len(args.read1s)
+
     chunks = []
 
     if args.retain_fastqs:
-        for read1s, read2s in zip(args.bc_corrected_read1s, args.bc_corrected_read2s):
+        for read1, read2, bcs in itertools.izip_longest(args.read1s, args.read2s, args.corrected_bcs):
             chunks.append({
-                'read1s': read1s,
-                'read2s': read2s,
+                'read1': read1,
+                'read2': read2 if paired_end else None,
+                'bcs': bcs,
             })
-    else:
-        chunks = [{'read1s': None, 'read2s': None}]
 
     return {'chunks': chunks}
 
 
 def main(args, outs):
-    if args.read1s is not None:
-        cr_utils.copy(args.read1s, outs.bc_corrected_read1s)
-    if args.read2s is not None:
-        cr_utils.copy(args.read2s, outs.bc_corrected_read2s)
+    if args.read1 is not None:
+        # Ensure same extension
+        out_path, _ = cr_utils.splitexts(outs.read1s)
+        _, in_ext = cr_utils.splitexts(args.read1)
+        outs.read1s = out_path + in_ext
+        cr_utils.copy(args.read1, outs.read1s)
+
+    if args.read2 is not None:
+        out_path, _ = cr_utils.splitexts(outs.read2s)
+        _, in_ext = cr_utils.splitexts(args.read2)
+        outs.read2s = out_path + in_ext
+        cr_utils.copy(args.read2, outs.read2s)
+
+    if args.bcs is not None:
+        out_path, _ = cr_utils.splitexts(outs.corrected_bcs)
+        _, in_ext = cr_utils.splitexts(args.bcs)
+        outs.corrected_bcs = out_path + in_ext
+        cr_utils.copy(args.bcs, outs.corrected_bcs)
 
 def join(args, outs, chunk_defs, chunk_outs):
     summary_files = [
         args.extract_reads_summary,
         args.correct_barcodes_summary,
+        args.trim_reads_summary,
     ]
 
     summary_files = [sum_file for sum_file in summary_files if not sum_file is None]
@@ -78,5 +102,6 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.align = args.align
     outs.bam_comments = args.bam_comments
 
-    outs.bc_corrected_read1s = [out.bc_corrected_read1s for out in chunk_outs]
-    outs.bc_corrected_read2s = [out.bc_corrected_read2s for out in chunk_outs]
+    outs.read1s = [co.read1s for co in chunk_outs]
+    outs.read2s = [co.read2s for co in chunk_outs]
+    outs.corrected_bcs = [co.corrected_bcs for co in chunk_outs]

@@ -7,21 +7,37 @@
 
 source $TENX_SCRIPTDIR/common/_includes
 
+# Add pipeline-specific required args
+DOCOPT_PREAMBLE_FASTQS=${DOCOPT_PREAMBLE_FASTQS/\[options\]/--transcriptome=DIR
+        \[options\]}
+
+DOCOPT_PREAMBLE_FASTQS=${DOCOPT_PREAMBLE_FASTQS}'
+    transcriptome   Path of folder containing 10x-compatible reference.'
+
+
+#Path of folder containing 10X-compatible transcriptome.
 DOCOPT_SPEC="$(cat <<EOF
 '$TENX_PRODUCT $TENX_SUBCMD' quantifies single-cell gene expression.
 
 $DOCOPT_PREAMBLE_FASTQS
 
 Options:
-# Single Cell
-    $DOCOPT_OPTIONS_FASTQS
+# Single Cell Gene Expression
     $DOCOPT_OPTIONS_SAMPLE_INFO
-    --transcriptome=DIR Path of folder containing 10X-compatible transcriptome.
-    --expect-cells=NUM  Expected number of recovered cells. Optional.
+    --expect-cells=NUM  Expected number of recovered cells.
     --force-cells=NUM   Force pipeline to use this number of cells, bypassing
-                            the cell detection algorithm. Optional.
+                            the cell detection algorithm.
     --nosecondary       Disable secondary analysis, e.g. clustering. Optional.
-    --cells=NUM         \(Deprecated\) Equivalent to --expect-cells. Optional.
+    --r1-length=NUM     Hard trim the input Read 1 to this length before
+                            analysis.
+    --r2-length=NUM     Hard trim the input Read 2 to this length before
+                            analysis.
+    --chemistry=CHEM    Assay configuration. One of: 'auto' for autodetection,
+                            'threeprime' for Single Cell 3', 'fiveprime' for
+                            Single Cell 5', 'SC3Pv1' or 'SC3Pv2' for Single
+                            Cell 3' v1/v2, 'SC5P-PE' or 'SC5P-R2' for
+                            Single Cell 5' paired-end/R2-only. Default: auto.
+    $DOCOPT_OPTIONS_FASTQS
 
 # Martian Runtime
     $DOCOPT_OPTIONS_MRP_CLUSTER
@@ -39,6 +55,13 @@ function implement_process_options {
         reference_path=\"\"
     fi
 
+    # --chemistry
+    if [ -z "$chemistry" ]; then
+        chemistry=\"auto\"
+    else
+        chemistry=\"$chemistry\"
+    fi
+
     # NOTE: docopt automatically converts dashes to underscores (e.g. force-cells becomes force_cells)
 
     # --expect_cells
@@ -53,6 +76,16 @@ function implement_process_options {
     # --force_cells
     if [ -z "$force_cells" ]; then
         force_cells=null
+    fi
+
+    # --r1-length
+    if [ -z "$r1_length" ]; then
+        r1_length=null
+    fi
+
+    # --r2-length
+    if [ -z "$r2_length" ]; then
+        r2_length=null
     fi
 }
 
@@ -85,6 +118,9 @@ call SC_RNA_COUNTER_CS(
     recovered_cells = $expect_cells,
     force_cells = $force_cells,
     no_secondary_analysis = $nosecondary,
+    chemistry = $chemistry,
+    r1_length = $r1_length,
+    r2_length = $r2_length,
 )
 EOF
 }

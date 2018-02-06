@@ -17,7 +17,7 @@ stage COUNT_GENES(
     in  path   reference_path,
     in  map    chemistry_def,
     in  string barcode_whitelist,
-    in  h5     barcode_summary,
+    in  csv    barcodes_detected,
     in  int[]  gem_groups,
     in  map    align,
     out h5     matrices_h5,
@@ -50,7 +50,7 @@ def split(args):
     if barcode_whitelist is not None:
         num_barcodes = len(barcode_whitelist) * max(args.gem_groups)
     else:
-        num_barcodes = cr_utils.get_num_barcodes_from_barcode_summary(args.barcode_summary)
+        num_barcodes = cr_utils.get_num_barcodes_from_barcode_csv(args.barcode_summary)
 
     max_bc_diversity_entries = num_barcodes
     max_umi_diversity_entries = 4 ** cr_chem.get_umi_length(args.chemistry_def)
@@ -88,7 +88,7 @@ def main(args, outs):
     chroms = in_bam.references
 
     barcode_whitelist = cr_utils.load_barcode_whitelist(args.barcode_whitelist)
-    barcode_summary = cr_utils.load_barcode_summary(args.barcode_summary) if not barcode_whitelist else None
+    barcode_summary = cr_utils.load_barcode_tsv(args.barcodes_detected) if not barcode_whitelist else None
 
     gene_index = cr_reference.GeneIndex.load_pickle(cr_utils.get_reference_genes_index(args.reference_path))
     reporter = cr_report.Reporter(reference_path=args.reference_path,
@@ -108,8 +108,8 @@ def main(args, outs):
     genes = cr_utils.split_genes_by_genomes(gene_index.get_genes(), genomes)
     matrices = cr_matrix.GeneBCMatrices(genomes, genes, barcode_seqs)
 
-    for read in in_bam:
-        is_conf_mapped_deduped, genome, gene_id, bc = reporter.count_genes_bam_cb(read,
+    for qname, reads_iter, _ in cr_utils.iter_by_qname(in_bam, None):
+        is_conf_mapped_deduped, genome, gene_id, bc = reporter.count_genes_bam_cb(reads_iter,
                                                                                   use_umis=cr_chem.has_umis(args.chemistry_def))
         if is_conf_mapped_deduped:
             matrices.add(genome, gene_id, bc)

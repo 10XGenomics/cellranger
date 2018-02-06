@@ -2,10 +2,14 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+from collections import namedtuple
 import cellranger.constants as cr_constants
 import cellranger.webshim.constants.shared as shared
-import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.utils as vdj_utils
+
+# This defines information about the sample required to generate a web summary
+VdjSampleProperties = namedtuple('VdjSampleProperties',
+                                 ['sample_id', 'sample_desc', 'chain_type', 'version'])
 
 
 def vdj_gene_pair_format(gene_pair_str):
@@ -67,8 +71,14 @@ GOOD_BCS_METRIC = {
 NUMBER_OF_CELLS_METRIC = {
     'name': 'vdj_filtered_bcs',
     'display_name': 'Estimated Number of Cells',
-    'description': 'The number of barcodes estimated to be associated with cells that express targeted V(D)J transcripts. A barcode is cell-associated if its highest-UMI-count contig has at least 2 UMIs with sufficient read support.',
+    'description': 'The number of barcodes estimated to be associated with cells that express targeted V(D)J transcripts. A barcode is cell-associated if has 2 UMIs with sufficient read support.',
     'format': 'integer',
+}
+CELL_CONFIDENCE_METRIC = {
+    'name': '1_vdj_filter_bcs_confidence',
+    'display_name': 'Cell Count Confidence',
+    'description': 'A measure of the goodness-of-fit of the model used to call cell barcodes based on total UMI counts. This is computed as the fraction of cell barcodes whose predicted posterior probability of being a cell exceeds 99%. Low values indicate that Cell Ranger had trouble estimating the number of cells. Note: This is the value for the first gem group only - this only matters if multiple libraries were combined into one vdj run.',
+    'format': 'percent',
 }
 
 MEAN_READ_PAIRS_PER_CELL_METRIC = {
@@ -80,16 +90,9 @@ MEAN_READ_PAIRS_PER_CELL_METRIC = {
 MEAN_ASSEMBLED_READ_PAIRS_PER_CELL_METRIC = {
     'name': 'vdj_assemblable_read_pairs_per_filtered_bc',
     'display_name': 'Mean Used Read Pairs per Cell',
-    'description': 'Mean number of read pairs used in assembly per cell-associated barcode. These reads must have a cell-associated barcode, map to a V(D)J gene, and have a UMI with sufficient read support. This value is counted after subsampling to a fixed N50 reads per UMI (See Assembly Subsampling Rate).',
+    'description': 'Mean number of read pairs used in assembly per cell-associated barcode. These reads must have a cell-associated barcode, map to a V(D)J gene, and have a UMI with sufficient read support.',
     'format': 'integer',
 }
-ASSEMBLY_SUBSAMPLE_RATE_METRIC = {
-    'name': 'vdj_assembly_overall_subsample_rate',
-    'display_name': 'Assembly Subsampling Rate',
-    'description': 'Fraction of usable (assemblable) reads retained for assembly. The assembler uniformly subsamples reads to achieve a target N50 reads per UMI. If multiple gem groups were given as input, this is the weighted average across all gem groups, where each gem group is weighted by its total number of reads with a valid barcode and UMI.',
-    'format': 'percent',
-}
-
 
 FRAC_READS_IN_CELLS_METRIC = {
     'name': 'vdj_filtered_bcs_cum_frac',
@@ -99,46 +102,50 @@ FRAC_READS_IN_CELLS_METRIC = {
 }
 
 MULTI_READS_MAPPED_TO_RECOMBINOME_METRIC = {
-    'name': 'multi_vdj_recombinome_mapped_reads_frac',
+    'name': 'multi_vdj_recombinome_mapped_read_pairs_frac',
     'display_name': 'Reads Mapped to Any V(D)J Gene',
     'description': 'Fraction of reads that partially or wholly map to any germline V(D)J gene segment.',
     'format': 'percent',
 }
 READS_MAPPED_TO_RECOMBINOME_METRIC = {
-    'name': 'vdj_recombinome_mapped_reads_frac',
+    'name': 'vdj_recombinome_mapped_read_pairs_frac',
     'display_name': 'Reads Mapped to %s',
     'description': 'Fraction of reads that map partially or wholly to a germline %s gene segment.',
     'format': 'percent',
     'prefix': 'canonical_vdj_genes_nomulti',
 }
-TR_READS_MAPPED_TO_RECOMBINOME_METRIC = dict(READS_MAPPED_TO_RECOMBINOME_METRIC, prefix_filter=vdj_constants.CANONICAL_TR_GENES)
 
 MEDIAN_UMIS_PER_CELL_METRIC = {
     'name': 'vdj_assembly_umis_per_cell_median',
     'display_name': 'Median %s UMIs per Cell',
-    'description': 'Median number of UMIs assigned to a %s contig per cell.',
+    'description': 'Median number of UMIs assigned to a %s contig per cell. For B cells, only the max of {IGK, IGL} are counted.',
     'prefix': 'canonical_vdj_genes_nomulti',
     'format': '%0.1f',
 }
 TRA_MEDIAN_UMIS_PER_CELL_METRIC = dict(MEDIAN_UMIS_PER_CELL_METRIC, prefix_filter='TRA')
 TRB_MEDIAN_UMIS_PER_CELL_METRIC = dict(MEDIAN_UMIS_PER_CELL_METRIC, prefix_filter='TRB')
 
-
+MULTI_NUM_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
+    'name': 'multi_vdj_assembly_contig_pair_productive_full_len_bc_count',
+    'display_name': 'Number of Cells With Productive V-J Spanning Pair',
+    'description': 'Number of cell barcodes for which at least 1 sequence was found for each gene in a receptor pair. Both sequences must have an annotated CDR3, must be predicted to be productive, and must span the beginning of the 5\' end of the V region to at least 2bp from the 3\' end of the J region.',
+    'format': 'integer',
+}
 NUM_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
     'name': 'vdj_assembly_contig_pair_productive_full_len_bc_count',
     'display_name': 'Number of Cells With Productive V-J Spanning %s Pair',
-    'description': 'Number of cell barcodes for which at least 1 sequence was found for each gene in the receptor pair - TRA and TRB for T cell receptors. Both sequences must have an annotated CDR3, must be predicted to be productive, and must span the beginning of the 5\' end of the V region to at least 2bp from the 3\' end of the J region.',
+    'description': 'Number of cell barcodes for which at least 1 sequence was found for each gene in a receptor pair. Both sequences must have an annotated CDR3, must be predicted to be productive, and must span the beginning of the 5\' end of the V region to at least 2bp from the 3\' end of the J region.',
     'prefix': 'canonical_vdj_gene_pairs',
     'prefix_format': vdj_gene_pair_format,
     'format': 'integer',
 }
-# Make this name/prefix combo static internal target purposes
-TR_NUM_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
-    'name': vdj_constants.CANONICAL_TR_GENE_PAIRS[0] + '_vdj_assembly_contig_pair_productive_full_len_bc_count',
-    'display_name': 'Number of Cells With Productive V-J Spanning %s Pair' % vdj_gene_pair_format(vdj_constants.CANONICAL_TR_GENE_PAIRS[0]),
-    'description': 'Number of cell barcodes for which at least 1 sequence was found for each of TRA and TRB. Both sequences must have an annotated CDR3, must be predicted to be productive, and must span the beginning of the 5\' end of the V region to at least 2bp from the the 3\' end of the J region.',
-    'format': 'integer',
-}
+# # Make this name/prefix combo static internal target purposes
+# TR_NUM_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
+#     'name': vdj_constants.CANONICAL_TR_GENE_PAIRS[0] + '_vdj_assembly_contig_pair_productive_full_len_bc_count',
+#     'display_name': 'Number of Cells With Productive V-J Spanning %s Pair' % vdj_gene_pair_format(vdj_constants.CANONICAL_TR_GENE_PAIRS[0]),
+#     'description': 'Number of cell barcodes for which at least 1 sequence was found for each of TRA and TRB. Both sequences must have an annotated CDR3, must be predicted to be productive, and must span the beginning of the 5\' end of the V region to at least 2bp from the the 3\' end of the J region.',
+#     'format': 'integer',
+# }
 
 PAIRED_CLONOTYPE_DIVERSITY_METRIC = {
     'name': 'multi_raw_vdj_paired_clonotype_diversity',
@@ -154,22 +161,21 @@ UNANNOTATED_CONTIG_FRAC_METRIC = {
     'format': 'percent',
 }
 
+MULTI_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
+    'name': 'multi_vdj_assembly_contig_pair_productive_full_len_bc_frac',
+    'display_name': 'Cells With Productive V-J Spanning Pair',
+    'description': 'Fraction of cell-associated barcodes with at least one contig for each chain of the receptor pair satisfying the following: ' + \
+    'the contig annotations span the 5\' end of the V region to at least 2 bp from the 3\' end of the J region of the chain, a start codon was found in the expected part of the V sequence, an in-frame CDR3 amino acid motif was found, and no stop codons were found in the aligned V-J region.',
+    'format': 'percent',
+}
 FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
     'name': 'vdj_assembly_contig_pair_productive_full_len_bc_frac',
     'display_name': 'Cells With Productive V-J Spanning %s Pair',
     'description': 'Fraction of cell-associated barcodes with at least one contig for each chain of the receptor pair satisfying the following: ' + \
     'the contig annotations span the 5\' end of the V region to at least 2 bp from the 3\' end of the J region of the chain, a start codon was found in the expected part of the V sequence, an in-frame CDR3 amino acid motif was found, and no stop codons were found in the aligned V-J region.',
     'format': 'percent',
-    'prefix': 'canonical_vdj_gene_pairs',
+    'prefix': 'canonical_vdj_gene_pairs_nomulti',
     'prefix_format': vdj_gene_pair_format,
-}
-# Make this name/prefix combo static internal target purposes
-TR_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC = {
-    'name': vdj_constants.CANONICAL_TR_GENE_PAIRS[0] + '_vdj_assembly_contig_pair_productive_full_len_bc_frac',
-    'display_name': 'Cells With Productive V-J Spanning %s Pair' % vdj_gene_pair_format(vdj_constants.CANONICAL_TR_GENE_PAIRS[0]),
-    'description': 'Fraction of cell-associated barcodes with at least one contig for each chain of the receptor pair satisfying the following: ' + \
-    'the contig annotations span the 5\' end of the V region to at least 2bp from the 3\' end of the J region of the chain, a start codon was found in the expected part of the V sequence, an in-frame CDR3 amino acid motif was found, and no stop codons were found in the aligned V-J region.',
-    'format': 'percent',
 }
 
 FRAC_CELLS_VDJ_GENE_DETECTED_METRIC = {
@@ -179,7 +185,6 @@ FRAC_CELLS_VDJ_GENE_DETECTED_METRIC = {
     'format': 'percent',
     'prefix': 'canonical_vdj_genes_nomulti',
 }
-TR_FRAC_CELLS_VDJ_GENE_DETECTED_METRIC = dict(FRAC_CELLS_VDJ_GENE_DETECTED_METRIC, prefix_filter=vdj_constants.CANONICAL_TR_GENES)
 
 FRAC_CELLS_CDR3_DETECTED_METRIC = {
     'name': 'vdj_assembly_cdr_detected_bc_frac',
@@ -188,16 +193,14 @@ FRAC_CELLS_CDR3_DETECTED_METRIC = {
     'format': 'percent',
     'prefix': 'canonical_vdj_genes_nomulti',
 }
-TR_FRAC_CELLS_CDR3_DETECTED_METRIC = dict(FRAC_CELLS_CDR3_DETECTED_METRIC, prefix_filter=vdj_constants.CANONICAL_TR_GENES)
 
 FRAC_CELLS_VJ_SPANNING_METRIC = {
     'name': 'vdj_assembly_contig_full_len_bc_frac',
     'display_name': 'Cells With V-J Spanning %s Contig',
     'description': 'Fraction of cell-associated barcodes with at least one contig spanning the 5\' end of the V region to at least 2bp from the 3\' end of the J region for %s.',
     'format': 'percent',
-    'prefix': 'canonical_vdj_genes',
+    'prefix': 'canonical_vdj_genes_nomulti',
 }
-TR_FRAC_CELLS_VJ_SPANNING_METRIC = dict(FRAC_CELLS_VJ_SPANNING_METRIC, prefix_filter=vdj_constants.CANONICAL_TR_GENES)
 
 FRAC_CELLS_PRODUCTIVE_METRIC = {
     'name': 'vdj_assembly_prod_cdr_bc_frac',
@@ -206,12 +209,11 @@ FRAC_CELLS_PRODUCTIVE_METRIC = {
     'format': 'percent',
     'prefix': 'canonical_vdj_genes_nomulti',
 }
-TR_FRAC_CELLS_PRODUCTIVE_METRIC = dict(FRAC_CELLS_PRODUCTIVE_METRIC, prefix_filter=vdj_constants.CANONICAL_TR_GENES)
 
 SUMMARY_METRICS = [
     NUMBER_OF_CELLS_METRIC,
     MEAN_READ_PAIRS_PER_CELL_METRIC,
-    TR_NUM_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC,
+    MULTI_NUM_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC,
 ]
 
 SEQUENCING_METRICS = [
@@ -221,29 +223,29 @@ SEQUENCING_METRICS = [
 
 ENRICHMENT_METRICS = [
     MULTI_READS_MAPPED_TO_RECOMBINOME_METRIC,
-    TR_READS_MAPPED_TO_RECOMBINOME_METRIC,
+    READS_MAPPED_TO_RECOMBINOME_METRIC,
 ]
 
 CELL_METRICS = [
     NUMBER_OF_CELLS_METRIC,
+    CELL_CONFIDENCE_METRIC,
     MEAN_READ_PAIRS_PER_CELL_METRIC,
     MEAN_ASSEMBLED_READ_PAIRS_PER_CELL_METRIC,
-    ASSEMBLY_SUBSAMPLE_RATE_METRIC,
     FRAC_READS_IN_CELLS_METRIC,
 ]
 
 VDJ_EXPRESSION_METRICS = [
-    TRA_MEDIAN_UMIS_PER_CELL_METRIC,
-    TRB_MEDIAN_UMIS_PER_CELL_METRIC,
+    MEDIAN_UMIS_PER_CELL_METRIC,
 ]
 
 VDJ_ANNOTATION_METRICS = [
+    MULTI_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC,
+    FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC,
     PAIRED_CLONOTYPE_DIVERSITY_METRIC,
-    TR_FRAC_CELLS_VDJ_GENE_DETECTED_METRIC,
-    TR_FRAC_CELLS_CDR3_DETECTED_METRIC,
-    TR_FRAC_CELLS_VJ_SPANNING_METRIC,
-    TR_FRAC_CELLS_PRODUCTIVE_METRIC,
-    TR_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC,
+    FRAC_CELLS_VDJ_GENE_DETECTED_METRIC,
+    FRAC_CELLS_CDR3_DETECTED_METRIC,
+    FRAC_CELLS_VJ_SPANNING_METRIC,
+    FRAC_CELLS_PRODUCTIVE_METRIC,
     UNANNOTATED_CONTIG_FRAC_METRIC,
 ]
 
@@ -287,7 +289,7 @@ CHARTS = [
                 'type': 'log',
             },
             'yaxis': {
-                'title': 'Read Pairs on 2nd UMI of Top Contig',
+                'title': 'UMI counts',
                 'type': 'log',
             },
         },
@@ -372,15 +374,15 @@ METRIC_ALARMS = [
         },
     },
     {
-        'name': TR_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC['name'],
-        'format': TR_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC['format'],
+        'name': MULTI_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC['name'],
+        'format': MULTI_FRAC_CELLS_PAIRED_VJ_SPANNING_PROD_METRIC['format'],
         'error': {
-            'title': 'Low Cells With Productive V-J Spanning %s Pair.' % vdj_gene_pair_format(vdj_constants.CANONICAL_TR_GENE_PAIRS[0]),
+            'title': 'Low Cells With Productive V-J Spanning Pair.',
             'message': 'Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance is likely to be affected',
             'test': '< 0.2',
         },
         'warn': {
-            'title': 'Low Cells With Productive V-J Spanning %s Pair.' % vdj_gene_pair_format(vdj_constants.CANONICAL_TR_GENE_PAIRS[0]),
+            'title': 'Low Cells With Productive V-J Spanning Pair.',
             'message': 'Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected',
             'test': '< 0.3',
         },
@@ -399,24 +401,56 @@ METRIC_ALARMS = [
             'test': '< 0.70',
         },
     },
+    # Note: alerts don't support programmatic prefixes, so we have to hardcode TRA/TRB here.
     {
-        # Note: alerts don't support programmatic prefixes, so we have to hardcode TRA/TRB here.
         'name': 'TRA_vdj_assembly_umis_per_cell_median',
-        'format': TRA_MEDIAN_UMIS_PER_CELL_METRIC['format'],
+        'format': '%0.1f',
         'warn': {
             'title': 'Zero Median TRA UMIs per Cell',
             'message': 'Ideal > 0. This can indicate cells with extremely low TRA expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
             'test': '< 0.1',
         },
+        'filters': [{'chain_type': 'TR'}]
     },
     {
         'name': 'TRB_vdj_assembly_umis_per_cell_median',
-        'format': TRB_MEDIAN_UMIS_PER_CELL_METRIC['format'],
+        'format': '%0.1f',
         'warn': {
             'title': 'Zero Median TRB UMIs per Cell',
             'message': 'Ideal > 0. This can indicate cells with extremely low TRB expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
             'test': '< 0.1',
         },
+        'filters': [{'chain_type': 'TR'}]
+    },
+    {
+        'name': 'IGH_vdj_assembly_umis_per_cell_median',
+        'format': '%0.1f',
+        'warn': {
+            'title': 'Zero Median IGH UMIs per Cell',
+            'message': 'Ideal > 0. This can indicate cells with extremely low IGH expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
+            'test': '< 0.1',
+        },
+        'filters': [{'chain_type': 'IG'}]
+    },
+    {
+        'name': 'IGK_vdj_assembly_umis_per_cell_median',
+        'format': '%0.1f',
+        'warn': {
+            'title': 'Zero Median IGK UMIs per Cell',
+            'message': 'Ideal > 0. This can indicate cells with extremely low IGK expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
+            'test': '< 0.1',
+        },
+        'filters': [{'chain_type': 'IG'}]
+    },
+    {
+        'name': 'IGL_vdj_assembly_umis_per_cell_median',
+        'format': '%0.1f',
+        'warn': {
+            'title': 'Zero Median IGL UMIs per Cell',
+            'message': 'Ideal > 0. This can indicate cells with extremely low IGL expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
+            'test': '< 0.1',
+        },
+        'filters': [{'chain_type': 'IG'}]
     },
     {
         'name': GOOD_BCS_METRIC['name'],

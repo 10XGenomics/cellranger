@@ -5,6 +5,7 @@ import os
 import random
 import subprocess
 import unittest
+import tenkit.log_subprocess as tk_subproc
 
 keyStrUriSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$"
 
@@ -263,7 +264,7 @@ class LZStringUnitTest(unittest.TestCase):
 
     def decompress(self, compressed):
         cwd = os.path.dirname(os.path.realpath(__file__))
-        p = subprocess.Popen(['node', 'decompress.js'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=cwd)
+        p = tk_subproc.Popen(['node', 'decompress.js'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=cwd)
         stdout, _ = p.communicate(input=compressed)
         self.assertTrue(p.returncode == 0)
         return stdout

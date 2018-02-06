@@ -21,7 +21,7 @@
         <td style="{{row[0].s}}">{{row[0].f}}</td>
         <td style="{{row[1].s}}" ng-bind-html="row[1].f | lineSplit:';'"></td>
         <td style="{{row[2].s}}">{{row[2].f}}</td>
-        <td style="{{row[3].s}}">{{row[3].f | percent1 }}</td>
+        <td style="{{row[3].s}}" ng-bind="row[3].f | percent1"></td>
       </tr>
     </tbody>
   </table>

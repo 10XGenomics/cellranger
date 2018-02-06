@@ -25,3 +25,9 @@ class LogPerf:
         print '%s\tchildren_postmaxrss_mb\t%0.1f' % (self.note, resource.getrusage(resource.RUSAGE_CHILDREN)[2]/1e3)
         print '%s\telapsed_sec\t%d' % (self.note, time.time() - self.start)
         sys.stdout.flush()
+
+    @staticmethod
+    def mem():
+        print 'self_maxrss_mb\t%0.1f' % (resource.getrusage(resource.RUSAGE_SELF)[2]/1e3)
+        print 'children_maxrss_mb\t%0.1f' % (resource.getrusage(resource.RUSAGE_CHILDREN)[2]/1e3)
+        sys.stdout.flush()

@@ -18,6 +18,7 @@ import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
 import cellranger.stats as cr_stats
 import cellranger.utils as cr_utils
+from numpy.compat import asbytes
 
 MATRIX_H5_FILETYPE = 'matrix'
 
@@ -108,8 +109,47 @@ class GeneBCMatrix:
             arr = np.array(getattr(self.m, attr), dtype=dtype)
             self._save_h5(f, group, attr, arr)
 
+    def save_mex(self, target):
+        """
+        Writes the sparse matrix `self.m` to Matrix Market file `target`.
+        Parameters
+        ----------
+        target : str
+            Matrix Market filename (extension .mtx).
+        """
+
+        # Add the extension if necessary
+        if target[-4:] != '.mtx':
+            target = target + '.mtx'
+
+        # Supports only integers currently
+        assert( self.m.dtype in ['uint32', 'int32', 'uint64', 'int64'] )
+        # Ensure that the matrix is in the COO format
+        assert( type(self.m) == sp_sparse.coo.coo_matrix )
+
+        rows, cols = self.m.shape
+        # Header fields in the file
+        rep = 'coordinate'
+        field = 'integer'
+        symmetry = 'general'
+        comment=''
+
+        with open(target, 'wb') as stream:
+            # write initial header line
+            stream.write(asbytes('%%MatrixMarket matrix {0} {1} {2}\n'.format(rep, field, symmetry)))
+
+            # write comments
+            for line in comment.split('\n'):
+                stream.write(asbytes('%%%s\n' % (line)))
+
+            # write shape spec
+            stream.write(asbytes('%i %i %i\n' % (rows, cols, self.m.nnz)))
+            # write row, col, val in 1-based indexing
+            for r, c, d in itertools.izip(self.m.row+1, self.m.col+1, self.m.data):
+                stream.write(asbytes(("%i %i %i\n" % (r, c, d))))
+
     @staticmethod
-    def preprocess_matrix(matrix, num_bcs=None, use_bcs=None, use_genes=None, force_cells=None):
+    def preprocess_matrix(matrix, num_bcs=None, use_bcs=None, use_genes=None, exclude_genes=None, force_cells=None):
         if force_cells is not None:
             bc_counts = matrix.get_reads_per_bc()
             bc_indices, _, _ = cr_stats.filter_cellular_barcodes_fixed_cutoff(bc_counts, force_cells)
@@ -122,10 +162,19 @@ class GeneBCMatrix:
             bc_indices = np.sort(np.random.choice(np.arange(matrix.bcs_dim), size=num_bcs, replace=False))
             matrix = matrix.select_barcodes(bc_indices)
 
+        include_indices = list(range(matrix.genes_dim))
         if use_genes is not None:
-            gene_ids = cr_utils.load_csv_rownames(use_genes)
-            gene_indices = matrix.gene_ids_to_ints(gene_ids)
-            matrix = matrix.select_genes(gene_indices)
+            include_ids = cr_utils.load_csv_rownames(use_genes)
+            include_indices = matrix.gene_ids_to_ints(include_ids)
+
+        exclude_indices = []
+        if exclude_genes is not None:
+            exclude_ids = cr_utils.load_csv_rownames(exclude_genes)
+            exclude_indices = matrix.gene_ids_to_ints(exclude_ids)
+
+        gene_indices = np.array(sorted(list(set(include_indices) - set(exclude_indices))), dtype=int)
+
+        matrix = matrix.select_genes(gene_indices)
 
         matrix, _, _ = matrix.select_nonzero_axes()
         return matrix
@@ -141,7 +190,7 @@ class GeneBCMatrix:
     def get_mem_gb_from_matrix_dim(nonzero_entries):
         ''' Estimate memory usage of loading a matrix. '''
         matrix_mem_gb = round(np.ceil(1.0 * nonzero_entries / cr_constants.NUM_MATRIX_ENTRIES_PER_MEM_GB))
-        return cr_constants.MATRIX_MEM_GB_MULTIPLIER * max(cr_constants.MIN_MEM_GB, matrix_mem_gb)
+        return cr_constants.MATRIX_MEM_GB_MULTIPLIER * matrix_mem_gb
 
     @staticmethod
     def get_mem_gb_from_matrix_h5(matrix_h5):
@@ -508,7 +557,7 @@ class GeneBCMatrices:
 
     def save_mex(self, base_dir):
         """ Save matrices in Matrix Market Exchange format """
-        self.tocsc()
+        self.tocoo()
         for name, matrix in self.matrices.iteritems():
             mex_dir = os.path.join(base_dir, name)
             cr_utils.makedirs(mex_dir, allow_existing=True)
@@ -517,8 +566,7 @@ class GeneBCMatrices:
             out_genes_fn = os.path.join(mex_dir, 'genes.tsv')
             out_barcodes_fn = os.path.join(mex_dir, 'barcodes.tsv')
 
-            # NOTE: mex does not understand unsigned types, so cast here
-            sp_io.mmwrite(out_matrix_prefix, matrix.m.astype('int32'))
+            matrix.save_mex(out_matrix_prefix)
             with open(out_genes_fn, 'w') as f:
                 for gene in matrix.genes:
                     f.write(gene.id + '\t' + gene.name + '\n')
@@ -548,6 +596,8 @@ class GeneBCMatrices:
         """
         bc_sequences = None
         bc_table_cols = {}
+        total_conf_mapped_deduped_reads = None
+
         for (genome, matrix) in self.matrices.iteritems():
             if bc_sequences is None:
                 bc_sequences = np.array(matrix.bcs)
@@ -555,9 +605,24 @@ class GeneBCMatrices:
             conf_mapped_deduped_reads_key = cr_utils.format_barcode_summary_h5_key(genome,
                 cr_constants.TRANSCRIPTOME_REGION, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
             conf_mapped_deduped_reads = matrix.get_reads_per_bc()
+
             if len(bc_sequences) != len(conf_mapped_deduped_reads):
                 raise ValueError('Cannot write barcode summary since different genomes have different number of barcodes!')
             bc_table_cols[conf_mapped_deduped_reads_key] = conf_mapped_deduped_reads
+
+            # Track total counts (across genomes)
+            if total_conf_mapped_deduped_reads is None:
+                total_conf_mapped_deduped_reads = conf_mapped_deduped_reads.copy()
+            else:
+                total_conf_mapped_deduped_reads += conf_mapped_deduped_reads
+
+        # Record the 'multi'-prefixed (aka total) counts
+        # for the web summary to display the barcode rank plot.
+        key = cr_utils.format_barcode_summary_h5_key(cr_constants.MULTI_REFS_PREFIX,
+                                                     cr_constants.TRANSCRIPTOME_REGION,
+                                                     cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
+        bc_table_cols[key] = total_conf_mapped_deduped_reads
+
         cr_utils.write_h5(filename, bc_table_cols)
 
     def merge(self, filename):
@@ -715,12 +780,24 @@ class GeneBCMatrices:
                 if read_type in cr_constants.MATRIX_USE_MATRIX_FOR_READ_TYPE:
                     n_reads = total_umi_counts
                 else:
-                    h5_keys = ['%s_%s_%s_barcode_reads' % (txome,
-                                                           cr_constants.TRANSCRIPTOME_REGION,
-                                                           read_type) for txome in self.matrices.keys()]
+                    h5_keys = ['%s_%s_%s_reads' % (txome, cr_constants.TRANSCRIPTOME_REGION, read_type) for txome in self.matrices.keys()]
                     h5_keys = [x for x in h5_keys if x in barcode_summary_h5]
                     n_reads = sum(np.array(barcode_summary_h5[h5_key]).sum() for h5_key in h5_keys)
                 d[metric] = tk_stats.robust_divide(n_reads, n_cell_bcs_union)
+
+        # Report frac reads in cells across all genomes
+        total_conf_mapped_reads_in_cells = 0
+        total_conf_mapped_barcoded_reads = 0
+
+        for txome, matrix in self.matrices.iteritems():
+            h5_key = '%s_%s_%s_reads' % (txome, cr_constants.TRANSCRIPTOME_REGION,
+                                      cr_constants.CONF_MAPPED_BC_READ_TYPE)
+            cmb_reads = barcode_summary_h5[h5_key]
+            cell_bc_indices = matrix.bcs_to_ints(cell_bcs_union)
+            total_conf_mapped_reads_in_cells += cmb_reads[list(cell_bc_indices)].sum() if cell_bc_indices else 0
+            total_conf_mapped_barcoded_reads += cmb_reads[()].sum()
+        d['multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac'] = tk_stats.robust_divide(total_conf_mapped_reads_in_cells, total_conf_mapped_barcoded_reads)
+
 
         # Compute fraction of reads usable (conf mapped, barcoded, filtered barcode)
         unique_barcodes = set(cell_bcs_union)
@@ -730,7 +807,7 @@ class GeneBCMatrices:
         usable_reads = 0
 
         for txome in self.matrices.keys():
-            h5_key = '%s_%s_%s_barcode_reads' % (txome,
+            h5_key = '%s_%s_%s_reads' % (txome,
                                                  cr_constants.TRANSCRIPTOME_REGION,
                                                  cr_constants.CONF_MAPPED_BC_READ_TYPE)
 

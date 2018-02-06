@@ -28,4 +28,5 @@ SUBCMDS=(
 )
 
 export TENX_SCRIPTDIR=$(dirname `readlink -f $0`)
+echo $TENX_SCRIPTDIR
 source $TENX_SCRIPTDIR/../tenkit/bin/common/_master

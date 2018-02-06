@@ -91,6 +91,7 @@ tiles_supplied=0
 delete_undetermined=0
 ignore_dual_index=0
 jobmode=local
+localcores=0
 pipestance_id=""
 
 ##########################################################
@@ -150,8 +151,13 @@ case $arg in
         shift
         ;;
     # trap mrp arg flags
-    --uiport=*|--localcores=*|--localmem=*|--mempercore=*|--maxjobs=*|--jobinterval=*)
+    --uiport=*|--localmem=*|--mempercore=*|--maxjobs=*|--jobinterval=*)
         mrp_opts="$mrp_opts $arg"
+        ;;
+    --localcores=*)
+        mrp_opts="$mrp_opts $arg"
+        localcores=${arg#*=}
+        shift
         ;;
     # trap jobmode
     --jobmode=*)
@@ -429,18 +435,36 @@ for threads in "${threads_ar[@]}"; do
     ((threads > threads_max)) && threads_max=$threads
 done
 
-# if threads_max is set and jobmode != local, override -d/-p if not set
-# to avoid cluster oversubscription
-if [[ "$jobmode" != "local" ]]; then
-    if [[ $bcl2fastq2_p -eq 0 ]]; then
-        bcl2fastq2_opts="$bcl2fastq2_opts -p $threads_max"
+# if threads_max exceeds localcores, localcores takes precedence
+if [[ $localcores -ne 0 ]]; then
+    if [[ $threads_max -gt $localcores ]]; then
+        threads_max=$localcores
     fi
-    if [[ $bcl2fastq2_d -eq 0 ]]; then
-        if [[ $threads_max -gt 6 ]]; then
-            bcl2fastq2_opts="$bcl2fastq2_opts -d 6"
-        else
-            bcl2fastq2_opts="$bcl2fastq2_opts -d $threads_max"
-        fi
+    if [[ $bcl2fastq2_r -gt $localcores ]]; then
+        bcl2fastq2_r=$localcores
+    fi
+    if [[ $bcl2fastq2_w -gt $localcores ]]; then
+        bcl2fastq2_w=$localcores
+    fi
+    if [[ $bcl2fastq2_p -gt $localcores ]]; then
+        bcl2fastq2_p=$localcores
+    fi
+    if [[ $bcl2fastq2_d -gt $localcores ]]; then
+        bcl2fastq2_d=$localcores
+    fi
+fi
+
+# if threads_max is set, override -d/-p if not set
+# to avoid cluster oversubscription/job reaping
+
+if [[ $bcl2fastq2_p -eq 0 ]]; then
+    bcl2fastq2_opts="$bcl2fastq2_opts -p $threads_max"
+fi
+if [[ $bcl2fastq2_d -eq 0 ]]; then
+    if [[ $threads_max -gt 6 ]]; then
+        bcl2fastq2_opts="$bcl2fastq2_opts -d 6"
+    else
+        bcl2fastq2_opts="$bcl2fastq2_opts -d $threads_max"
     fi
 fi
 # if -d/-p set explicitly, propagate

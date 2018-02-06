@@ -402,7 +402,7 @@ def get_record_genotype_qual(record, sample_num=0):
     data = sample_call.data
     return getattr(data, 'GQ', None)
 
-def set_record_genotype_likelihoods(record, genotype_likelihoods):     
+def set_record_genotype_likelihoods(record, genotype_likelihoods):
     set_data_field(record, 'GL', genotype_likelihoods)
 
 def get_record_depth(record, sample_num=0):
@@ -730,7 +730,7 @@ def get_read_haplotype(read):
     except KeyError:
         return None
 
-def get_target_regions_dict(targets_file):
+def get_target_regions_dict(targets_file, feature_name=None):
     """ Gets the target regions from a targets file as a chrom-indexed dictionary,
     with every entry given as a list of (start, end) tuples
     """
@@ -741,6 +741,9 @@ def get_target_regions_dict(targets_file):
             continue
         if len(line.strip()) == 0:
             continue
+        if feature_name is not None:
+            if len(info) < 4 or info[3] != feature_name:
+                continue
         chrom = info[0]
         start = int(info[1])
         end = int(info[2])
@@ -748,11 +751,11 @@ def get_target_regions_dict(targets_file):
         chrom_targs.append((start, end))
     return targets
 
-def get_target_regions(targets_file):
+def get_target_regions(targets_file, feature_name=None):
     """ Gets the target regions from a targets file as a chrom-indexed dictionary,
     with every entry given as a list of Regions objects
     """
-    targets_dict = get_target_regions_dict(targets_file)
+    targets_dict = get_target_regions_dict(targets_file, feature_name)
     target_regions = {}
     for (chrom, starts_ends) in targets_dict.iteritems():
         chrom_regions = Regions(regions=starts_ends)
@@ -934,9 +937,3 @@ class CopyNumberIO():
         # for profile_id
     # convert_bedGraph_to_bigWig
 # class CopyNumberIO
-
-
-
-
-
-

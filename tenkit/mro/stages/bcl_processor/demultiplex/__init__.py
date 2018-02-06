@@ -113,7 +113,7 @@ class FastqParser:
 
     def read_fastq(self):
         if self.file[-2:] == "gz":
-            proc = subprocess.Popen(["gunzip", "--stdout", self.file], stdout=subprocess.PIPE)
+            proc = martian.Popen(["gunzip", "--stdout", self.file], stdout=subprocess.PIPE)
             reader = proc.stdout
         else:
             reader = file(self.file, "r")
@@ -378,7 +378,7 @@ def main_demultiplex_go(args, outs):
                     '--chunk', str(args.chunk_number)]
     if args.rc_i2_read:
         subproc_args += ['--rci2read']
-    subprocess.check_call(subproc_args)
+    martian.check_call(subproc_args)
 
 # DEPRECATED
 # This code is only here for the case where demultiplex = False

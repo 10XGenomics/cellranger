@@ -29,6 +29,8 @@ stage FILTER_CONTIGS(
 )
 """
 
+EXTRA_CONTIG_MIN_UMI_RATIO = 0.2
+
 def split(args):
     mem_gb = max(cr_constants.MIN_MEM_GB,
                  vdj_utils.get_mem_gb_from_annotations_json(args.contig_annotations))
@@ -50,6 +52,7 @@ def main(args, outs):
 
     for (bc, chain), group in itertools.groupby(contigs, key=lambda c: (c.barcode, c.get_single_chain())):
         first_cdr3 = None
+        first_cdr3_umis = None
         seen_cdr3s = set()
 
         for contig in group:
@@ -60,13 +63,15 @@ def main(args, outs):
 
             if first_cdr3 is None:
                 first_cdr3 = contig.cdr3_seq
+                first_cdr3_umis = contig.umi_count
 
             # Mark as low confidence:
             # 1) Any additional CDR3s beyond the highest-(productive,UMI,read,length) contig's CDR3
-            #    with a single UMI, or
+            #    with a single UMI or low UMIs relative to the first contig, or
             extraneous_cdr3 = first_cdr3 is not None \
                and contig.cdr3_seq != first_cdr3 \
-               and contig.umi_count == 1
+               and (contig.umi_count == 1 or \
+                    (float(contig.umi_count) / first_cdr3_umis) < EXTRA_CONTIG_MIN_UMI_RATIO)
 
             # 2) Any contigs with a repeated CDR3.
             repeat_cdr3 = contig.cdr3_seq in seen_cdr3s

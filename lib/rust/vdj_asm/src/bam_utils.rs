@@ -2,7 +2,7 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
-use tada::kmer;
+use debruijn::bits_to_ascii;
 use sw;
 use utils;
 use graph_read;
@@ -15,6 +15,7 @@ use std::path::{Path};
 use std::collections::{HashMap};
 
 use rust_htslib::bam::{self, Read};
+use rust_htslib::bam::record::CigarString;
 
 pub fn concatenate_bams(bam_filenames: &Vec<String>, merged_bam: &String) {
     let mut concat_header = bam::header::Header::new();
@@ -110,16 +111,16 @@ pub fn sort_and_index(unsorted_bam: &String, output_bam: &String) {
 
 /// Populate the input Header object with reference sequence info.
 pub fn add_ref_to_bam_header(header: &mut bam::header::Header,
-                             seq_name: &String, seq_len: usize) {
+                             seq_name: &str, seq_len: usize) {
     let mut header_rec = bam::header::HeaderRecord::new(b"SQ");
-    header_rec.push_tag(b"SN", seq_name);
+    header_rec.push_tag(b"SN", &seq_name);
     header_rec.push_tag(b"LN", &seq_len);
     header.push_record(&header_rec);
 }
 
 pub fn read_to_bam_record_opts(read: &graph_read::Read,
-                          alignment: Option<sw::Alignment>,
-                          mate_alignment: Option<sw::Alignment>,
+                          alignment: &Option<sw::AlignmentPacket>,
+                          mate_alignment: &Option<sw::AlignmentPacket>,
                           strip_qname: bool,
                           set_augmented_tags: bool) -> bam::record::Record {
 
@@ -140,17 +141,17 @@ pub fn read_to_bam_record_opts(read: &graph_read::Read,
     let is_paired = read.is_paired();
     assert!(is_paired || mate_alignment.is_none());
 
-    match alignment.clone() {
-        Some(al) => read.validate_alignment(&al),
+    match alignment.as_ref() {
+        Some(al) => read.validate_alignment(al),
         None => true,
     };
 
     // We do NOT ensure that rule 4 is satisfied.
     let adj_qual = read.quals.clone();
-    let adj_seq = read.seq.iter().map(|x| kmer::bits_to_ascii(x)).collect::<Vec<u8>>();
+    let adj_seq: Vec<u8> = read.seq.iter().map(|x| bits_to_ascii(x)).collect();
 
-    let (unmapped_bit, cigar) = match alignment.clone() {
-        Some(al) => (0, al.bam_cigar()),
+    let (unmapped_bit, cigar) = match alignment.as_ref() {
+        Some(al) => (0, al.alignment.bam_cigar(false)), // bool to specify soft clipping
         None => (4, Vec::<bam::record::Cigar>::new())
     };
 
@@ -162,7 +163,7 @@ pub fn read_to_bam_record_opts(read: &graph_read::Read,
             new_header.header.as_bytes()
         };
 
-    rec.set(qname, &cigar, &adj_seq, &adj_qual);
+    rec.set(qname, &CigarString(cigar), &adj_seq, &adj_qual);
 
     if set_augmented_tags {
         for (tag, value) in new_header.tags.iter() {
@@ -172,21 +173,21 @@ pub fn read_to_bam_record_opts(read: &graph_read::Read,
         }
     }
 
-    let (tid, pos, mapq) = match (alignment.clone(), mate_alignment.clone()) {
+    let (tid, pos, mapq) = match (alignment.as_ref(), mate_alignment.as_ref()) {
         (Some(al), Some(mate_al)) => {
             if is_paired && mate_al.ref_idx == al.ref_idx {
-                let max_end = std::cmp::max(al.alignment_end(), mate_al.alignment_end()) as i32;
-                let min_start = std::cmp::min(al.start_pos, mate_al.start_pos) as i32;
-                if al.start_pos <= mate_al.start_pos {
+                let max_end = std::cmp::max(al.alignment.yend, mate_al.alignment.yend) as i32;
+                let min_start = std::cmp::min(al.alignment.ystart, mate_al.alignment.ystart) as i32;
+                if al.alignment.ystart <= mate_al.alignment.ystart {
                     rec.set_insert_size(max_end - min_start);
                 } else {
-                    rec.set_insert_size(mate_al.start_pos as i32 - al.alignment_end() as i32);
+                    rec.set_insert_size(mate_al.alignment.ystart as i32 - al.alignment.yend as i32);
                 }
             }
-            (al.ref_idx as i32, al.start_pos as i32, 255)
+            (al.ref_idx as i32, al.alignment.ystart as i32, 255)
         },
-        (Some(al), None) => (al.ref_idx as i32, al.start_pos as i32, 255),
-        (None, Some(mate_al)) => (mate_al.ref_idx as i32, mate_al.start_pos as i32, 0),
+        (Some(al), None) => (al.ref_idx as i32, al.alignment.ystart as i32, 255),
+        (None, Some(mate_al)) => (mate_al.ref_idx as i32, mate_al.alignment.ystart as i32, 0),
         (None, None) => (-1, 0, 0),
     };
     rec.set_tid(tid);
@@ -195,10 +196,10 @@ pub fn read_to_bam_record_opts(read: &graph_read::Read,
     rec.set_mapq(mapq); // this is not really a MAPQ...
 
     let mate_unmapped_bit;
-    match mate_alignment {
+    match mate_alignment.as_ref() {
         Some(al) => {
             rec.set_mtid(al.ref_idx as i32);
-            rec.set_mpos(al.start_pos as i32);
+            rec.set_mpos(al.alignment.ystart as i32);
             mate_unmapped_bit = 0;
         },
         None => {
@@ -216,9 +217,9 @@ pub fn read_to_bam_record_opts(read: &graph_read::Read,
         (is_mate_rc as u16) * 32 + // assume if one is RC then the other is not
         {if read.is_first_in_template() {64} else {128}});
 
-    match alignment {
+    match alignment.as_ref() {
         Some(al) => {
-            rec.push_aux(b"AS", &bam::record::Aux::Integer(al.score as i32));
+            rec.push_aux(b"AS", &bam::record::Aux::Integer(al.alignment.score as i32));
             rec.push_aux(b"NM", &bam::record::Aux::Integer(al.edit_distance() as i32));
         },
         None => {},
@@ -230,8 +231,8 @@ pub fn read_to_bam_record_opts(read: &graph_read::Read,
 
 
 pub fn read_to_bam_record(read: &graph_read::Read,
-                          alignment: Option<sw::Alignment>,
-                          mate_alignment: Option<sw::Alignment>) -> bam::record::Record {
+                          alignment: &Option<sw::AlignmentPacket>,
+                          mate_alignment: &Option<sw::AlignmentPacket>) -> bam::record::Record {
 
     read_to_bam_record_opts(read, alignment, mate_alignment, false, false)
                           }
@@ -249,7 +250,7 @@ mod tests {
 
     fn init_test() {
         if Path::new(OUTDIR).is_dir() {
-            let _ = fs::remove_dir_all(OUTDIR);
+            return;
         }
         let _ = fs::create_dir_all(OUTDIR);
     }
@@ -286,12 +287,12 @@ mod tests {
             let mut true_sorted_bam = bam::IndexedReader::from_path(&Path::new(&(true_sorted_bam_name.to_string()))).unwrap();
             let mut sorted_bam = bam::IndexedReader::from_path(&out_bam_name).unwrap();
 
-            let _ = true_sorted_bam.seek(1, 0, 1000);
-            let _ = sorted_bam.seek(1, 0, 1000);
+            let _ = true_sorted_bam.fetch(1, 0, 1000);
+            let _ = sorted_bam.fetch(1, 0, 1000);
             assert_eq!(sorted_bam.records().count(), 4);
 
-            let _ = true_sorted_bam.seek(1, 0, 1000);
-            let _ = sorted_bam.seek(1, 0, 1000);
+            let _ = true_sorted_bam.fetch(1, 0, 1000);
+            let _ = sorted_bam.fetch(1, 0, 1000);
             assert_eq!(true_sorted_bam.records().count(), sorted_bam.records().count());
         }
     }

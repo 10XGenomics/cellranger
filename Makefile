@@ -3,16 +3,16 @@
 #
 # Build cellranger.
 #
-SHELL = /bin/bash
+SHELL := /bin/bash -O extglob
 
 VERSION=$(shell git describe --tags --always --dirty)
 
 ### Rust
 RUST_SRC_PATH=$(shell pwd)/lib/rust
 export CARGO_HOME=$(RUST_SRC_PATH)/.cargo
-RUST_BINS=vdj_asm chunk_reads
+RUST_BINS=vdj_asm chunk_reads annotate_reads detect_chemistry
 
-.PHONY: all  clean $(RUST_BINS)   louvain rust-clean 
+.PHONY: all  clean $(RUST_BINS)   louvain rust-clean  version-files
 
 #
 # Targets for development builds.

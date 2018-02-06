@@ -5,11 +5,16 @@
 import numpy as np
 import os.path
 
+# Chain types
 TR_CHAIN_TYPE = 'TR'
 IG_CHAIN_TYPE = 'IG'
 VDJ_CHAIN_TYPES = [TR_CHAIN_TYPE, IG_CHAIN_TYPE]
 
-# Actually "chains", not "genes"
+ALL_CHAIN_TYPES = 'all'    # Do not filter on chain type
+AUTO_CHAIN_TYPE = 'auto'  # Autodetect the chain type filter
+CHAIN_TYPE_SPECS = VDJ_CHAIN_TYPES + [ALL_CHAIN_TYPES, AUTO_CHAIN_TYPE]
+
+# Chains (inconsistently called "genes" in the code)
 VDJ_GENES = ['TRA', 'TRB', 'TRG', 'TRD', 'IGH', 'IGK', 'IGL']
 CANONICAL_VDJ_GENES = ['TRA', 'TRB', 'IGH', 'IGK', 'IGL']
 
@@ -17,12 +22,16 @@ CANONICAL_TR_GENES = ['TRA', 'TRB']
 
 CHAINS_WITH_ISOTYPES = ['IGH']
 
-# Actually, chain pairs, not "gene pairs"
+# Chain pairs (inconsistently called "gene pairs" in the code)
 VDJ_GENE_PAIRS = [
     ('TRA_TRB'),
     ('TRG_TRD'),
     ('IGK_IGH'),
     ('IGL_IGH'),
+]
+# Used to exclude cells from the per-chain median UMI counts per cell calculation
+EXCLUSIVE_VDJ_GENES = [
+    ['IGK', 'IGL'],
 ]
 CANONICAL_VDJ_GENE_PAIRS = [
     ('TRA_TRB'),
@@ -42,10 +51,10 @@ VDJ_CONTIG_LENGTH_PERCENTILES = np.arange(0, 1.1, 0.05)
 
 # VDJ annotation constants
 VDJ_ANNOTATION_MATCH_SCORE = 2
-VDJ_ANNOTATION_MISMATCH_PENALTY = 2
-VDJ_ANNOTATION_GAP_OPEN_PENALTY = 4
+VDJ_ANNOTATION_MISMATCH_PENALTY = 3
+VDJ_ANNOTATION_GAP_OPEN_PENALTY = 5
 VDJ_ANNOTATION_EXTEND_PENALTY = 1
-VDJ_ANNOTATION_MIN_SCORE_RATIO = 0.95
+VDJ_ANNOTATION_MIN_SCORE_RATIO = 0.75
 VDJ_ANNOTATION_MIN_WORD_SIZE = 15
 VDJ_PRIMER_ANNOTATION_MIN_FRACTION_MATCHED = 0.8
 
@@ -62,7 +71,7 @@ VDJ_ORDERED_REGIONS = [VDJ_5U_FEATURE_TYPES,
 
 # Max possible CDR3 length (in bases)
 # See https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4998859/
-VDJ_MAX_CDR3_LEN = 63
+VDJ_MAX_CDR3_LEN = 80
 VDJ_MIN_CDR3_LEN = 26
 
 # Max clonotypes for plotting frequencies

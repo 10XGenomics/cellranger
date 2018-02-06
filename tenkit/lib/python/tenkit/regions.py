@@ -108,7 +108,7 @@ class Regions(object):
 
         self.starts = new_starts
         self.ends = new_ends
-    
+
     def intersect(self, regions):
         intersected_regions = Regions()
         for region in self.get_region_list():
@@ -172,19 +172,19 @@ class Regions(object):
     def get_closest_region_to_region(self, start, stop, direction = None):
         """Closest region to a given region and distance.
         direction: 1 means try to get the closest upstream region, -1 means
-        closest downstream, None means in any direction. If there are 
+        closest downstream, None means in any direction. If there are
         overlapping regions, the direction is ignored.
 
         Return value:
-        (start, stop, dist) where (start, stop) is the closest region (in the 
+        (start, stop, dist) where (start, stop) is the closest region (in the
         requested direction) and dist is the distance.
-        Distance is set to 0 if the region is overlapping. 
+        Distance is set to 0 if the region is overlapping.
         If there are no regions (or no regions in the requested direction),
         then the return value is (None, None, np.inf).
         """
         if len(self.starts) == 0:
             return (None, None, np.inf)
-        
+
         ov_regions = self.overlapping_regions(start, stop)
         if len(ov_regions) > 0:
             # Return the first overlapping region
@@ -221,14 +221,13 @@ class Regions(object):
                 idx = bisect.bisect_left(new_ends, start) - 1
                 return (new_starts[idx], new_ends[idx], start - new_ends[idx])
         else:
-            # If this is negative, the closest region is to the right of stop 
+            # If this is negative, the closest region is to the right of stop
             # (so it has to be stop's closest region)
             if left_dist < 0:
                 return (left_start, left_stop, left_start - stop)
             if right_dist > 0 and (left_dist > right_dist):
                 return (right_start, right_stop, right_dist)
             return (left_start, left_stop, left_dist)
-        
 
 
     def overlaps_region(self, start, end):
@@ -278,7 +277,7 @@ class NamedRegions(Regions):
             self.starts = [r[0] for r in sorted_regions]
             self.ends = [r[1] for r in sorted_regions]
             self.names = [r[2] for r in sorted_regions]
-            
+
             end_sorted_regions = sorted(regions, key = lambda x:(x[1], x[0], x[2]))
             self.e_starts = [r[0] for r in end_sorted_regions]
             self.e_ends = [r[1] for r in end_sorted_regions]
@@ -321,4 +320,3 @@ class NamedRegions(Regions):
             self.current_iter += 1
             return NamedRegion(self.starts[self.current_iter - 1], self.ends[self.current_iter - 1],
                                self.names[self.current_iter - 1])
-    

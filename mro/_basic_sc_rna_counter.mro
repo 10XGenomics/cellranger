@@ -2,52 +2,84 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 @include "_basic_sc_rna_counter_stages.mro"
-@include "_bcsorter.mro"
+@include "_common_stages.mro"
 
 pipeline _BASIC_SC_RNA_COUNTER(
-    in  string   sample_id,
-    in  map      chemistry_def,
-    in  string   barcode_whitelist,
-    in  fastq[]  read1s,
-    in  fastq[]  read2s,
-    in  bam[]    trimmed_seqs,
-    in  int[]    gem_groups,
-    in  string[] read_groups,
-    in  json     barcode_counts,
-    in  json     extract_reads_summary,
-    in  string[] bam_comments,
-    in  float    barcode_confidence_threshold,
-    in  int      umi_min_qual_threshold,
-    in  map      align,
-    in  int      align_threads,
-    in  path     reference_path,
-    in  int      recovered_cells,
-    in  int      force_cells,
-    in  json     cell_barcodes                  "Cell barcode override",
-    in  bool     correct_barcodes,
-    in  bool     rescue_multimappers,
-    in  bool     skip_metrics,
-    in  map      annotation_params,
-    in  int      mark_dupes_mem_gb,
-    out bam[]    bc_attached_bam_chunks,
-    out bam[]    dup_marked_bam_chunks,
-    out map[]    subsampled_matrices,
-    out csv      filtered_barcodes,
-    out bam      possorted_genome_bam,
-    out bam.bai  possorted_genome_bam_index,
-    out json     summary,
-    out h5       barcode_summary,
-    out h5       molecule_info,
-    out h5       raw_gene_bc_matrices_h5,
-    out path     raw_gene_bc_matrices_mex,
-    out h5       filtered_gene_bc_matrices_h5,
-    out path     filtered_gene_bc_matrices_mex,
+    in  string  sample_id,
+    in  map     chemistry_def,
+    in  string  barcode_whitelist,
+    in  map[]   chunks,
+    in  float   barcode_confidence_threshold,
+    in  int     umi_min_qual_threshold,
+    in  map     align,
+    in  int     align_threads,
+    in  path    reference_path,
+    in  int     recovered_cells,
+    in  int     force_cells,
+    in  json    cell_barcodes                  "Cell barcode override",
+    in  bool    correct_barcodes,
+    in  bool    rescue_multimappers,
+    in  bool    skip_metrics,
+    in  map     annotation_params,
+    in  int     mark_dupes_mem_gb,
+    in  bool    retain_fastqs,
+    in  float   subsample_rate,
+    in  int     initial_reads,
+    in  map[]   primers,
+    in  int     r1_length,
+    in  int     r2_length,
+    out map[]   subsampled_matrices,
+    out csv     filtered_barcodes,
+    out bam     possorted_genome_bam,
+    out bam.bai possorted_genome_bam_index,
+    out json    summary,
+    out h5      barcode_summary,
+    out h5      molecule_info,
+    out h5      raw_gene_bc_matrices_h5,
+    out path    raw_gene_bc_matrices_mex,
+    out h5      filtered_gene_bc_matrices_h5,
+    out path    filtered_gene_bc_matrices_mex,
+    out map     align,
+    out int[]   gem_groups,
+    out fastq[] read1s,
 )
 {
+    call volatile CHUNK_READS(
+        chunks         = self.chunks,
+        reads_per_file = 5000000,
+    )
+
+    call volatile EXTRACT_READS(
+        chunks            = CHUNK_READS.out_chunks,
+        chemistry_def     = self.chemistry_def,
+        barcode_whitelist = self.barcode_whitelist,
+        reads_per_file    = 5000000,
+        subsample_rate    = self.subsample_rate,
+        initial_reads     = self.initial_reads,
+        primers           = self.primers,
+        align             = self.align,
+        r1_length         = self.r1_length,
+        r2_length         = self.r2_length,
+        skip_metrics      = false,
+    )
+
+    call volatile SUMMARIZE_READ_REPORTS(
+        extract_reads_summary = EXTRACT_READS.summary,
+        barcode_counts        = EXTRACT_READS.barcode_counts,
+        gem_groups            = EXTRACT_READS.gem_groups,
+        read_groups           = EXTRACT_READS.read_groups,
+        align                 = EXTRACT_READS.align,
+        bam_comments          = EXTRACT_READS.bam_comments,
+        read1s                = EXTRACT_READS.reads,
+        read2s                = EXTRACT_READS.read2s,
+        retain_fastqs         = self.retain_fastqs,
+        chemistry_def         = self.chemistry_def,
+    )
+
     call volatile ALIGN_READS(
-        reads             = self.read1s,
-        read2s            = self.read2s,
-        read_groups       = self.read_groups,
+        reads             = EXTRACT_READS.reads,
+        read2s            = EXTRACT_READS.read2s,
+        read_groups       = SUMMARIZE_READ_REPORTS.read_groups,
         reference_path    = self.reference_path,
         threads           = self.align_threads,
         max_hits_per_read = -1,
@@ -55,32 +87,45 @@ pipeline _BASIC_SC_RNA_COUNTER(
 
     call volatile ATTACH_BCS_AND_UMIS(
         genome_inputs                = ALIGN_READS.genome_output,
-        trimmed_inputs               = self.trimmed_seqs,
         reference_path               = self.reference_path,
-        gem_groups                   = self.gem_groups,
+        gem_groups                   = SUMMARIZE_READ_REPORTS.gem_groups,
         chemistry_def                = self.chemistry_def,
         annotation_params            = self.annotation_params,
         barcode_whitelist            = self.barcode_whitelist,
-        barcode_counts               = self.barcode_counts,
+        barcode_counts               = SUMMARIZE_READ_REPORTS.barcode_counts,
         barcode_confidence_threshold = self.barcode_confidence_threshold,
         umi_min_qual_threshold       = self.umi_min_qual_threshold,
-        bam_comments                 = self.bam_comments,
+        bam_comments                 = SUMMARIZE_READ_REPORTS.bam_comments,
         rescue_multimappers          = self.rescue_multimappers,
         skip_metrics                 = self.skip_metrics,
         correct_barcodes             = self.correct_barcodes,
-        paired_end                   = ALIGN_READS.paired_end,
     )
 
-    call _BCSORTER(
+    call volatile SUMMARIZE_ATTACH(
+        summary           = ATTACH_BCS_AND_UMIS.summary,
+        barcodes_detected = ATTACH_BCS_AND_UMIS.barcodes_detected,
+    )
+
+    call volatile BUCKET_BY_BC(
+        nbases         = 2,
         inputs         = ATTACH_BCS_AND_UMIS.output,
         num_alignments = ATTACH_BCS_AND_UMIS.num_alignments,
     )
 
+    call volatile SORT_BY_BC(
+        buckets = BUCKET_BY_BC.buckets,
+    )
+
     call volatile MARK_DUPLICATES(
-        input          = _BCSORTER.bcsorted_bam,
+        input          = SORT_BY_BC,
         reference_path = self.reference_path,
-        align          = self.align,
+        align          = SUMMARIZE_READ_REPORTS.align,
         mem_gb         = self.mark_dupes_mem_gb,
+    )
+
+    call volatile SUMMARIZE_MKDUP(
+        summary           = MARK_DUPLICATES.summary,
+        barcodes_detected = null,
     )
 
     call SORT_BY_POS(
@@ -93,23 +138,23 @@ pipeline _BASIC_SC_RNA_COUNTER(
         sample_id         = self.sample_id,
         inputs            = MARK_DUPLICATES.output,
         reference_path    = self.reference_path,
-        gem_groups        = self.gem_groups,
-        align             = self.align,
+        gem_groups        = SUMMARIZE_READ_REPORTS.gem_groups,
+        align             = SUMMARIZE_READ_REPORTS.align,
         chemistry_def     = self.chemistry_def,
         barcode_whitelist = self.barcode_whitelist,
-        barcode_summary   = ATTACH_BCS_AND_UMIS.barcode_summary,
+        barcodes_detected = SUMMARIZE_ATTACH.barcodes_detected,
     )
 
     call FILTER_BARCODES(
         sample_id          = self.sample_id,
         matrices_h5        = COUNT_GENES.matrices_h5,
-        raw_fastq_summary  = self.extract_reads_summary,
-        attach_bcs_summary = ATTACH_BCS_AND_UMIS.summary,
+        raw_fastq_summary  = SUMMARIZE_READ_REPORTS.summary,
+        attach_bcs_summary = SUMMARIZE_ATTACH.summary,
         recovered_cells    = self.recovered_cells,
         force_cells        = self.force_cells,
-        barcode_summary    = ATTACH_BCS_AND_UMIS.barcode_summary,
+        barcode_summary    = COUNT_GENES.barcode_summary,
         barcode_whitelist  = self.barcode_whitelist,
-        gem_groups         = self.gem_groups,
+        gem_groups         = SUMMARIZE_READ_REPORTS.gem_groups,
         chemistry_def      = self.chemistry_def,
         cell_barcodes      = self.cell_barcodes,
     )
@@ -117,12 +162,12 @@ pipeline _BASIC_SC_RNA_COUNTER(
     call REPORT_MOLECULES(
         inputs                      = MARK_DUPLICATES.output,
         reference_path              = self.reference_path,
-        align                       = self.align,
+        align                       = SUMMARIZE_READ_REPORTS.align,
         barcode_whitelist           = self.barcode_whitelist,
-        gem_groups                  = self.gem_groups,
-        extract_reads_summary       = self.extract_reads_summary,
-        attach_bcs_and_umis_summary = ATTACH_BCS_AND_UMIS.summary,
-        mark_duplicates_summary     = MARK_DUPLICATES.summary,
+        gem_groups                  = SUMMARIZE_READ_REPORTS.gem_groups,
+        extract_reads_summary       = SUMMARIZE_READ_REPORTS.summary,
+        attach_bcs_and_umis_summary = SUMMARIZE_ATTACH.summary,
+        mark_duplicates_summary     = SUMMARIZE_MKDUP.summary,
         recovered_cells             = self.recovered_cells,
         force_cells                 = self.force_cells,
         filtered_barcodes           = FILTER_BARCODES.filtered_barcodes,
@@ -134,35 +179,34 @@ pipeline _BASIC_SC_RNA_COUNTER(
     )
 
     call SUMMARIZE_BASIC_REPORTS(
-        reference_path                      = self.reference_path,
-        align                               = self.align,
-        barcode_whitelist                   = self.barcode_whitelist,
-        gem_groups                          = self.gem_groups,
-        extract_reads_summary               = self.extract_reads_summary,
-        attach_bcs_and_umis_summary         = ATTACH_BCS_AND_UMIS.summary,
-        attach_bcs_and_umis_barcode_summary = ATTACH_BCS_AND_UMIS.barcode_summary,
-        mark_duplicates_summary             = MARK_DUPLICATES.summary,
-        count_genes_reporter_summary        = COUNT_GENES.reporter_summary,
-        count_genes_barcode_summary         = COUNT_GENES.barcode_summary,
-        filter_barcodes_summary             = FILTER_BARCODES.summary,
-        subsample_molecules_summary         = SUBSAMPLE_READS.summary,
-        raw_gene_bc_matrices_h5             = COUNT_GENES.matrices_h5,
-        filtered_gene_bc_matrices_h5        = FILTER_BARCODES.filtered_matrices_h5,
+        reference_path               = self.reference_path,
+        align                        = SUMMARIZE_READ_REPORTS.align,
+        barcode_whitelist            = self.barcode_whitelist,
+        gem_groups                   = SUMMARIZE_READ_REPORTS.gem_groups,
+        extract_reads_summary        = SUMMARIZE_READ_REPORTS.summary,
+        attach_bcs_and_umis_summary  = SUMMARIZE_ATTACH.summary,
+        mark_duplicates_summary      = SUMMARIZE_MKDUP.summary,
+        count_genes_reporter_summary = COUNT_GENES.reporter_summary,
+        filter_barcodes_summary      = FILTER_BARCODES.summary,
+        subsample_molecules_summary  = SUBSAMPLE_READS.summary,
+        raw_gene_bc_matrices_h5      = COUNT_GENES.matrices_h5,
+        filtered_gene_bc_matrices_h5 = FILTER_BARCODES.filtered_matrices_h5,
     )
 
     return (
-        bc_attached_bam_chunks        = ATTACH_BCS_AND_UMIS.output,
-        dup_marked_bam_chunks         = MARK_DUPLICATES.output,
         subsampled_matrices           = SUBSAMPLE_READS.subsampled_matrices,
         filtered_barcodes             = FILTER_BARCODES.filtered_barcodes,
         possorted_genome_bam          = SORT_BY_POS.output,
         possorted_genome_bam_index    = SORT_BY_POS.index,
         summary                       = SUMMARIZE_BASIC_REPORTS.summary,
-        barcode_summary               = SUMMARIZE_BASIC_REPORTS.barcode_summary,
+        barcode_summary               = COUNT_GENES.barcode_summary,
         molecule_info                 = REPORT_MOLECULES.output,
         raw_gene_bc_matrices_h5       = COUNT_GENES.matrices_h5,
         raw_gene_bc_matrices_mex      = COUNT_GENES.matrices_mex,
         filtered_gene_bc_matrices_h5  = FILTER_BARCODES.filtered_matrices_h5,
         filtered_gene_bc_matrices_mex = FILTER_BARCODES.filtered_matrices_mex,
+        align                         = SUMMARIZE_READ_REPORTS.align,
+        gem_groups                    = SUMMARIZE_READ_REPORTS.gem_groups,
+        read1s                        = SUMMARIZE_READ_REPORTS.read1s,
     )
 }

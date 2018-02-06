@@ -13,6 +13,7 @@ pipeline SC_RNA_REANALYZER_CS(
     in  csv    aggregation_csv,
     in  csv    barcodes_csv,
     in  csv    genes_csv,
+    in  csv    exclude_genes_csv,
     in  int    force_cells,
     out path   analysis              "Secondary analysis output CSV",
     out html   web_summary           "Secondary analysis web summary",
@@ -37,10 +38,13 @@ pipeline SC_RNA_REANALYZER_CS(
     )
 
     call SC_RNA_ANALYZER(
-        raw_matrices_h5       = null,# don't support barnyard re-analysis (but see note below)
-        filtered_matrices_h5  = self.filtered_matrices_h5,# NOTE: if using force_cells, this might actually be the raw matrix
+        # don't support barnyard re-analysis (but see note below)
+        raw_matrices_h5       = null,
+        # NOTE: if using force_cells, this might actually be the raw matrix
+        filtered_matrices_h5  = self.filtered_matrices_h5,
         no_secondary_analysis = false,
         use_genes             = self.genes_csv,
+        exclude_genes         = self.exclude_genes_csv,
         use_bcs               = self.barcodes_csv,
         num_analysis_bcs      = PARSE_PARAM_CSV.num_analysis_bcs,
         random_seed           = PARSE_PARAM_CSV.random_seed,

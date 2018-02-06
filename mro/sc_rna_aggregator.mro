@@ -85,6 +85,7 @@ pipeline SC_RNA_AGGREGATOR(
         tsne_theta            = self.tsne_theta,
         random_seed           = self.random_seed,
         use_genes             = null,
+        exclude_genes         = null,
         use_bcs               = null,
         tsne_max_dims         = self.tsne_max_dims,
         tsne_max_iter         = self.tsne_max_iter,

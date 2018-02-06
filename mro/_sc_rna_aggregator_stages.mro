@@ -12,8 +12,8 @@ filetype html;
 filetype pickle;
 
 stage AGGREGATOR_PREFLIGHT(
-    in map[]  sample_defs,
-    in string normalization_mode,
+    in  map[]  sample_defs,
+    in  string normalization_mode,
     src py     "stages/aggregator/aggregator_preflight",
 )
 
@@ -52,17 +52,17 @@ stage COUNT_GENES_FROM_MOLECULES(
 )
 
 stage DETECT_CELLS(
-    in  h5[]  molecule_chunks,
-    out csv   cell_barcodes,
-    out map   gem_group_metrics,
-    src py    "stages/aggregator/detect_cells",
+    in  h5[] molecule_chunks,
+    out csv  cell_barcodes,
+    out map  gem_group_metrics,
+    src py   "stages/aggregator/detect_cells",
 ) split using (
-    in  h5    molecule_h5,
-    in  int   chunk_start,
-    in  int   chunk_len,
-    in  int   gem_group,
-    in  int   recovered_cells,
-    in  int   force_cells,
+    in  h5   molecule_h5,
+    in  int  chunk_start,
+    in  int  chunk_len,
+    in  int  gem_group,
+    in  int  recovered_cells,
+    in  int  force_cells,
 )
 
 stage MERGE_MOLECULES(

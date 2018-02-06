@@ -11,6 +11,7 @@ import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_utils
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
+from cellranger.webshim.constants.gex import ReanalyzeSampleProperties
 from cellranger.webshim.constants.shared import PIPELINE_REANALYZE
 
 __MRO__ = """
@@ -47,7 +48,11 @@ def main(args, outs):
     with open(outs.summary, 'w') as f:
         json.dump(summary, f, indent=4, sort_keys=True)
 
-    sample_properties = cr_webshim.get_sample_properties(args.analysis_id, args.analysis_desc, genomes, version=martian.get_pipelines_version())
+    sample_properties = ReanalyzeSampleProperties(sample_id=args.analysis_id,
+                                                  sample_desc=args.analysis_desc,
+                                                  genomes=genomes,
+                                                  version=martian.get_pipelines_version())
+    sample_properties = dict(sample_properties._asdict())
 
     sample_data_paths = cr_webshim_data.SampleDataPaths(
         summary_path=outs.summary,

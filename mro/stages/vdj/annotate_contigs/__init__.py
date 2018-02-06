@@ -6,6 +6,7 @@
 # Also report variants relative to the reference feaures.
 
 import cPickle
+import json
 import os.path
 import pandas as pd
 from pandas.io.common import EmptyDataError
@@ -18,24 +19,24 @@ import tenkit.fasta as tk_fasta
 
 __MRO__ = """
 stage ANNOTATE_CONTIGS(
-    in  path       vdj_reference_path,
-    in  fasta      contigs,
-    in  fastq      contigs_fastq,
-    in  string[][] barcodes_in_chunks,
-    in  map[]      primers,
-    in  csv        filter_summary,
-    in  tsv        contig_summary,
-    in  map        min_score_ratios     "dict of min score ratios by feature type to use for filtering annotations",
-    in  map        min_word_sizes       "dict of min word sizes by feature type to use for filtering annotations",
-    in  json       cell_barcodes,
-    out pickle     chunked_annotations,
-    out json       annotations          "Annotations for filtered contigs",
-    out json       raw_annotations      "Annotations for all contigs",
-    out bed        annotations_bed      "BED for IGV",
-    out csv        annotations_csv,
-    src py         "stages/vdj/annotate_contigs",
+    in  path   vdj_reference_path,
+    in  fasta  contigs,
+    in  fastq  contigs_fastq,
+    in  json[] barcodes_in_chunks,
+    in  map[]  primers,
+    in  csv    filter_summary,
+    in  tsv    contig_summary,
+    in  map    min_score_ratios     "dict of min score ratios by feature type to use for filtering annotations",
+    in  map    min_word_sizes       "dict of min word sizes by feature type to use for filtering annotations",
+    in  json   cell_barcodes,
+    out pickle chunked_annotations,
+    out json   annotations          "Annotations for filtered contigs",
+    out json   raw_annotations      "Annotations for all contigs",
+    out bed    annotations_bed      "BED for IGV",
+    out csv    annotations_csv,
+    src py     "stages/vdj/annotate_contigs",
 ) split using (
-    in  string[]   barcodes,
+    in  json   barcodes,
 )
 """
 
@@ -84,7 +85,7 @@ def split(args):
     # Reuse the chunks from assemble VDJ to chunk
     if args.barcodes_in_chunks is None:
         # Assume that data are bulk
-        barcodes_in_chunks = [['']]  # the get barcode name function returns '' for all bulk contig names
+        barcodes_in_chunks = [None]
     else:
         barcodes_in_chunks = args.barcodes_in_chunks
 
@@ -93,16 +94,19 @@ def split(args):
             'barcodes': barcodes,
         })
 
-    join_mem = max(6.0, 12.0 * float(len(chunks)) / 1000.0)
+    join_mem = max(6.0, 15.0 * float(len(chunks)) / 1000.0)
     return {'chunks': chunks, 'join': {'__mem_gb': join_mem }}
 
 
 def main(args, outs):
-    if args.vdj_reference_path is None:
-        outs.chunked_annotations = None
-        return
     chunk_contigs = []
-    barcodes_in_chunk = set(args.barcodes)
+
+    if args.barcodes is not None:
+        with open(args.barcodes) as f:
+            barcodes_in_chunk = set(json.load(f))
+    else:
+        # the get barcode name function returns '' for all bulk contig names
+        barcodes_in_chunk = ['']
 
     # Set of barcodes that were called as cells
     if args.cell_barcodes:
@@ -152,7 +156,8 @@ def main(args, outs):
         contig_name = header.split(' ')[0]
 
         # Only annotate barcodes assigned to this chunk and contigs with enough read support
-        if barcode in barcodes_in_chunk:
+        no_barcodes = len(barcodes_in_chunk) == 1 and list(barcodes_in_chunk)[0] == ''
+        if barcode in barcodes_in_chunk or no_barcodes:
             if filter_summary is not None:
                 filtered = vdj_utils.is_contig_filtered(filter_summary, contig_name)
             else:

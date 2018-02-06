@@ -6,7 +6,7 @@
 #
 import os
 import pysam
-import subprocess
+import log_subprocess
 import random
 import logging
 import shutil
@@ -210,7 +210,7 @@ def sort(file_name, sorted_prefix=None):
         sorted_prefix = file_name.replace('.bam', '') + '_sorted'
 
     sorted_name = sorted_prefix + ".bam"
-    subprocess.check_call(['samtools','sort', '-o', sorted_name, file_name])
+    log_subprocess.check_call(['samtools','sort', '-o', sorted_name, file_name])
 
 def index(file_name):
     pysam.index(str(file_name))
@@ -224,7 +224,7 @@ def sort_and_index(file_name, sorted_prefix=None):
         sorted_prefix = file_name.replace('.bam', '') + '_sorted'
 
     sorted_name = sorted_prefix + '.bam'
-    subprocess.check_call(['samtools','sort', '-o', sorted_name, file_name])
+    log_subprocess.check_call(['samtools','sort', '-o', sorted_name, file_name])
     pysam.index(sorted_name)
 
 def merge(out_file_name, input_file_names, threads = 1):
@@ -233,7 +233,7 @@ def merge(out_file_name, input_file_names, threads = 1):
     # gets too long -- use the API version instead.
     #args = ['samtools', 'merge', out_file_name]
     #args.extend(input_file_names)
-    #subprocess.check_call(args)
+    #log_subprocess.check_call(args)
 
     if threads > 1:
         args = ["-c", "-p", "-s", "0", "-@", str(threads)]
@@ -265,7 +265,7 @@ def concatenate(out_file_name, all_in_file_names):
     if len(in_file_names) > 1:
         args = ['samtools', 'cat', '-o', out_file_name]
         args.extend(in_file_names)
-        subprocess.check_call(args)
+        log_subprocess.check_call(args)
     elif len(in_file_names) == 0:
         # If all the BAMs are empty, just copy 1 over
         shutil.copy(all_in_file_names[0], out_file_name)
@@ -276,12 +276,12 @@ def merge_by_name(out_file_name, in_file_names):
     """ Merge name-sorted bam files into bam file sorted by name"""
     args = ['samtools', 'merge', '-n', out_file_name]
     args.extend(in_file_names)
-    subprocess.check_call(args)
+    log_subprocess.check_call(args)
 
 def remove_dups(in_name, out_name):
     """ remove paired-end duplicates using samtools
     """
-    subprocess.check_call(['samtools', 'rmdup', in_name, out_name])
+    log_subprocess.check_call(['samtools', 'rmdup', in_name, out_name])
 
 def sort_by_name(file_name, sorted_prefix=None):
     """ Sorts a bam file by the read name, for paired-end
@@ -292,7 +292,7 @@ def sort_by_name(file_name, sorted_prefix=None):
     sorted_name = sorted_prefix + '.bam'
     # NOTE -- need to update our internal samtools in order to use pysam.sort
     #pysam.sort('-n', file_name, sorted_prefix)
-    subprocess.check_call(['samtools', 'sort', '-n', file_name, sorted_prefix])
+    log_subprocess.check_call(['samtools', 'sort', '-n', file_name, sorted_prefix])
 
     return pysam.Samfile(sorted_name, 'rb')
 
@@ -900,7 +900,6 @@ class BamIndex:
     def save_key_index(self):
         f = open(self.index_file_name, 'w')
         out_index = csv.writer(f, delimiter='\t')
-        nreads = 1
 
         self.in_bam.reset()
 
@@ -910,9 +909,8 @@ class BamIndex:
             if i == 0:
                 last_key = self.key_func(read)
                 out_index.writerow((last_key, last_pos))
-            elif i % nreads == 0:
+            else:
                 key = self.key_func(read)
-
                 cmp_value = self.cmp_func(key, last_key)
                 if cmp_value < 0:
                     print read
@@ -922,8 +920,7 @@ class BamIndex:
                     out_index.writerow((key, last_pos))
                     last_key = key
 
-            if i % nreads == nreads - 1:
-                last_pos = self.in_bam.tell()
+            last_pos = self.in_bam.tell()
 
         f.close()
 
@@ -958,20 +955,18 @@ class BamIndex:
                 low, high = mid, mid
                 break
 
-        _, pos = self.keys[low - 1 if low > 0 else 0]
+        _, pos = self.keys[low]
         self.in_bam.seek(pos)
 
         # Iterate through reads to find reads with associated key
-        last_pos = pos
         for read in self.in_bam:
             read_key = self.key_func(read)
 
             cmp_value = self.cmp_func(key, read_key)
             if cmp_value == 0:
-                yield read, last_pos
+                yield read
             elif cmp_value < 0:
                 break
-            last_pos = self.in_bam.tell()
 
 def qname_key_func(read):
     return read.qname

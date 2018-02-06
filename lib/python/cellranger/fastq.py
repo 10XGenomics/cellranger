@@ -7,7 +7,9 @@ import itertools
 import json
 import numpy as np
 import os
-import tenkit.bam as tk_bam
+import re
+import sys
+import tenkit.constants as tk_constants
 import tenkit.fasta as tk_fasta
 import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
@@ -15,27 +17,13 @@ import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
 import cellranger.utils as cr_utils
 
-# Specify which parts of the read need to be retained.
-#  pre/post-slice: The prefix and postfix slices of the "discarded" regions of the read
-#  bam_to_fastq: String that defines how to reconstruct the fastq from the trimmed regions and bam tags
-TrimDef = collections.namedtuple('TrimDef', ['pre_slice', 'post_slice', 'bam_to_fastq'])
-
-# The result of extracting a substring from a read.
-#  read - tuple of (name, seq, qual) for extracted sequence.
-#  trimmed_seq - remaining sequence
-#  trimmed_qual - remaining sequence
-ExtractReadResult = collections.namedtuple('ExtractReadResult', ['read',
-                                                                 'trimmed_seq',
-                                                                 'trimmed_qual'])
-
-def compute_trim_defs(read_defs, destination_tags, retain_trimmed_suffix_read):
+def get_bamtofastq_defs(read_defs, destination_tags):
     """ Determine which portions of reads need to be retained.
         Args: read_defs - list(ReadDef)
               destination_tags - list((str,str)) - list of (seq_tag, qual_tag) or
                                                    None if the read comes from the READ/QUAL fields
-              retain_trimmed_suffix_read         - The read for which to retain a trimmed suffix
         NOTE: Assumes that the read defs are contiguous - sequence in gaps between extracted seqs will be lost.
-        Returns dict of {read_type (str): TrimDef} """
+        Returns dict of {read_type (str): str} """
 
     assert len(read_defs) == len(destination_tags)
 
@@ -64,19 +52,9 @@ def compute_trim_defs(read_defs, destination_tags, retain_trimmed_suffix_read):
             else:
                 bam_to_fastq_entries.append('%s:%s' % dest_tag)
 
-        # Special case for reads where we retain the suffix
-        # Prefix trimming unimplemented
-        pre_slice = slice(0,0)
-        post_slice = slice(0,0)
-        if retain_trimmed_suffix_read == read_type:
-            bam_to_fastq_entries.append('%s:%s' % (cr_constants.TRIMMED_SEQ_TAG, cr_constants.TRIMMED_QUAL_TAG))
-            post_slice = slice(read_type_defs[-1].offset + read_type_defs[-1].length, None)
+        # Interpreted by bamtofastq
+        trim_defs[read_type] = '10x_bam_to_fastq:' + read_type + '(' + ','.join(bam_to_fastq_entries) + ')'
 
-        bam_to_fastq = '10x_bam_to_fastq:' + read_type + '(' + ','.join(bam_to_fastq_entries) + ')'
-
-        trim_defs[read_type] = TrimDef(pre_slice=pre_slice,
-                                       post_slice=post_slice,
-                                       bam_to_fastq=bam_to_fastq)
     return trim_defs
 
 
@@ -125,8 +103,12 @@ class BarcodeCounter:
             with open(self.out_counts, 'w') as f:
                 tk_safe_json.dump_numpy(list(self.barcode_counts), f)
 
-def extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, trim_def):
+def extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, r1_length=None, r2_length=None):
     """ Args: read_tuple: (name, read, qual)
+              read_def: ReadDef object
+              reads_interleaved: bool
+              r1_length (int): Hard trim on 3' end of input R1
+              r2_length (int): Hard trim on 3' end of input R2
         Yields: ExtractReadResult """
     if reads_interleaved and read_def.read_type == 'R1':
         name, seq, qual = cr_utils.get_fastq_read1(read_tuple, None, True)
@@ -135,26 +117,26 @@ def extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, trim_def)
     else:
         name, seq, qual = read_tuple
 
+    # Apply hard trimming on input
+    hard_end = sys.maxint
+    if read_def.read_type == 'R1' and r1_length is not None:
+        hard_end = r1_length
+    elif read_def.read_type == 'R2' and r2_length is not None:
+        hard_end = r2_length
+
+    # Extract interval requested by the read def
     if read_def.length is not None:
-        read_slice = slice(read_def.offset, read_def.offset + read_def.length)
+        end = min(hard_end, read_def.offset + read_def.length)
+        read_slice = slice(read_def.offset, end)
     else:
-        read_slice = slice(read_def.offset, None)
+        read_slice = slice(read_def.offset, hard_end)
 
-    # Store the trimmed sequence
-    if trim_def is not None:
-        trimmed_seq = seq[trim_def.pre_slice] + seq[trim_def.post_slice]
-        trimmed_qual = qual[trim_def.pre_slice] + qual[trim_def.post_slice]
-    else:
-        trimmed_seq = ''
-        trimmed_qual = ''
+    return (name, seq[read_slice], qual[read_slice])
 
-    return ExtractReadResult((name, seq[read_slice], qual[read_slice]),
-                             trimmed_seq, trimmed_qual)
-
-def get_read_generator_fastq(fastq_open_file, read_def, reads_interleaved, trim_def):
+def get_read_generator_fastq(fastq_open_file, read_def, reads_interleaved, r1_length=None, r2_length=None):
     read_iter = tk_fasta.read_generator_fastq(fastq_open_file, paired_end=reads_interleaved and read_def.read_type in ['R1', 'R2'])
     for read_tuple in read_iter:
-        yield extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, trim_def)
+        yield extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, r1_length, r2_length)
 
 def get_fastq_from_read_type(fastq_dict, read_def, reads_interleaved):
     if read_def.read_type == 'R2' and reads_interleaved:
@@ -165,11 +147,11 @@ def get_fastq_from_read_type(fastq_dict, read_def, reads_interleaved):
 class FastqReader:
     # Extracts specified regions from input fastqs
     # For example, extract UMIs from the first 10 bases of the "R2" read
-    def __init__(self, in_filenames, read_def, reads_interleaved, trim_defs):
+    def __init__(self, in_filenames, read_def, reads_interleaved, r1_length, r2_length):
         """ Args:
               in_filenames - list(str): Paths to fastq files
               read_def - ReadDef
-              trim_defs - dict of {read_type (str): TrimDef} """
+        """
 
         self.in_fastq = None
         self.in_iter = iter([])
@@ -182,15 +164,11 @@ class FastqReader:
             if in_filename:
                 self.in_fastq = cr_utils.open_maybe_gzip(in_filename, 'r')
 
-                if trim_defs is None:
-                    read_trim_def = None
-                else:
-                    read_trim_def = trim_defs[read_def.read_type]
-
                 self.in_iter = get_read_generator_fastq(self.in_fastq,
                                                         read_def=read_def,
                                                         reads_interleaved=reads_interleaved,
-                                                        trim_def=read_trim_def)
+                                                        r1_length=r1_length,
+                                                        r2_length=r2_length)
 
     def close(self):
         if self.in_fastq:
@@ -238,30 +216,28 @@ class ChunkedWriter:
 
 class ChunkedFastqWriter(ChunkedWriter):
     def __init__(self, *args, **kwargs):
+        compression = kwargs.pop('compression')
+
         ChunkedWriter.__init__(self, *args, **kwargs)
 
+        if compression is None:
+            self.suffix = ''
+        elif compression == 'gzip':
+            self.suffix = cr_constants.GZIP_SUFFIX
+        elif compression == 'lz4':
+            self.suffix = cr_constants.LZ4_SUFFIX
+        else:
+            raise ValueError('Unknown compression type: %s' % compression)
+        self.compression = compression
+
     def generate_filename(self):
-        return '%d.fastq' % self.index
+        return '%d.fastq%s' % (self.index, self.suffix or '')
 
     def open_file(self, filename):
-        return open(filename, 'w')
+        return cr_utils.open_maybe_gzip(filename, 'w')
 
     def write_data(self, data):
         tk_fasta.write_read_fastq(self.curr_file, *data)
-
-class ChunkedBamWriter(ChunkedWriter):
-    def __init__(self, *args, **kwargs):
-        ChunkedWriter.__init__(self, *args, **kwargs)
-
-    def generate_filename(self):
-        return '%d.bam' % self.index
-
-    def open_file(self, filename):
-        # Create a dummy header to prevent samtools / pysam crashing
-        return tk_bam.create_bam_outfile(filename, ['dummy'], [8])[0]
-
-    def write_data(self, data):
-        self.curr_file.write(data)
 
 class AugmentedFastqHeader:
     """ Store 10x specific tags in fastq qname """
@@ -298,3 +274,139 @@ class AugmentedFastqHeader:
         augmented_word = self.TAG_SEP.join([hdr_words[0]] + tag_strings)
 
         return self.WORD_SEP.join([augmented_word] + hdr_words[1:])
+
+# Copied from tenkit because tenkit/preflight.py is utterly broken (imports martian)
+def check_sample_indices(sample_item, sample_index_key = "sample_indices"):
+    sample_indices = sample_item[sample_index_key]
+    if type(sample_indices) != list:
+        return None, "Sample indices must be of type list"
+    if len(sample_indices) == 0:
+        return None, "Sample indices must be a non-empty list"
+
+    new_sample_indices = []
+    for sample_index in sample_indices:
+        if sample_index == "any":
+            return ['*'], None
+        elif tk_constants.SAMPLE_INDEX_MAP.get(sample_index):
+            new_sample_indices.extend(tk_constants.SAMPLE_INDEX_MAP.get(sample_index))
+        elif re.match("^[%s]+$" % "".join(tk_seq.NUCS), sample_index):
+            new_sample_indices.append(sample_index)
+        else:
+            return None, ("Sample index '%s' is not valid. Must be one of: any, SI-<number>, "
+                          "SI-<plate>-<well coordinate>, 220<part number>, or "
+                          "a nucleotide sequence." % sample_index)
+
+    return new_sample_indices, None
+
+
+class FastqSpecException(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+    def __str__(self):
+        return self.msg
+
+def _require_sample_def_key(sd, key):
+    if key not in sd:
+        raise FastqSpecException('Sample def is missing the key "%s." % key')
+
+class FastqSpec(object):
+    """ All info required to find FASTQ files """
+    def __init__(self, fastq_mode, read_path, lanes, sample_indices, sample_names, interleaved):
+        self.fastq_mode = fastq_mode
+        self.read_path = read_path
+        self.lanes = lanes
+        self.sample_indices = sample_indices
+        self.sample_names = sample_names
+        self.interleaved = interleaved
+
+    @staticmethod
+    def from_sample_def(sd):
+        _require_sample_def_key(sd, 'fastq_mode')
+        _require_sample_def_key(sd, 'read_path')
+        _require_sample_def_key(sd, 'lanes')
+
+        if sd['fastq_mode'] == tk_constants.ILMN_BCL2FASTQ_FASTQ_MODE:
+            _require_sample_def_key(sd, 'sample_names')
+
+            return FastqSpec(fastq_mode=sd['fastq_mode'],
+                             read_path=sd['read_path'],
+                             lanes=sd['lanes'],
+                             sample_indices=None,
+                             sample_names=sd['sample_names'],
+                             interleaved=False,
+            )
+
+        elif sd['fastq_mode'] == tk_constants.BCL_PROCESSOR_FASTQ_MODE:
+            _require_sample_def_key(sd, 'sample_indices')
+
+            # Check and optionally translate sample index sets to
+            # sample index sequences
+            si_strings, msg = check_sample_indices(sd)
+            if si_strings is None:
+                raise FastqSpecException(msg)
+
+            return FastqSpec(fastq_mode=sd['fastq_mode'],
+                             read_path=sd['read_path'],
+                             lanes=sd['lanes'],
+                             sample_indices=si_strings,
+                             sample_names=None,
+                             interleaved=True,
+            )
+
+        else:
+            raise FastqSpecException('Sample def contained unrecognized fastq_mode  "%s."' % sd['fastq_mode'])
+
+    def get_group_spec_iter(self):
+        """ Each group corresponds to a single sample_name or sample_index in
+            the original sample_def. This method slices on that.
+            Yields: (sample_index_or_name, FastQSpec) """
+        if self.sample_indices is not None:
+            for si in self.sample_indices:
+                yield si, FastqSpec(fastq_mode=self.fastq_mode,
+                                    read_path=self.read_path,
+                                    lanes=self.lanes,
+                                    sample_indices=[si],
+                                    sample_names=None,
+                                    interleaved=self.interleaved)
+        elif self.sample_names is not None:
+            for sn in self.sample_names:
+                yield sn, FastqSpec(fastq_mode=self.fastq_mode,
+                                    read_path=self.read_path,
+                                    lanes=self.lanes,
+                                    sample_indices=None,
+                                    sample_names=[sn],
+                                    interleaved=self.interleaved)
+        else:
+            raise ValueError("Cannote iterate over FastqSpec with no sample indices or names specified.")
+
+    def is_single_group(self):
+        """ Returns true if this spec contains a single sample index/name """
+        return (self.sample_indices is not None and len(self.sample_indices) == 1) or \
+            (self.sample_names is not None and len(self.sample_names) == 1)
+
+    def get_fastqs(self, read_type):
+        """ read_type (str) - One of RA,R1,R2,R3,R4,I1,I2 """
+
+        if read_type == 'RA' and not self.interleaved:
+            raise ValueError('Read type "%s" was requested but is only supported for non-interleaved FASTQs.' % read_type)
+
+        # If interleaved, translate R1|R2 => RA
+        if self.interleaved and read_type in ('R1', 'R2'):
+            read_type = 'RA'
+
+        fastqs = []
+
+        if self.fastq_mode == tk_constants.BCL_PROCESSOR_FASTQ_MODE:
+            for group, _ in self.get_group_spec_iter():
+                fastqs.extend(tk_fasta.find_input_fastq_files_10x_preprocess(
+                    self.read_path, read_type, group, self.lanes))
+
+        elif self.fastq_mode == tk_constants.ILMN_BCL2FASTQ_FASTQ_MODE:
+            for group, _ in self.get_group_spec_iter():
+                fastqs.extend(tk_fasta.find_input_fastq_files_bcl2fastq_demult(
+                    self.read_path, read_type, group, self.lanes))
+
+        return fastqs
+
+    def __str__(self):
+        return str(self.__dict__)

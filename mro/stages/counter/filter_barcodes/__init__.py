@@ -38,7 +38,9 @@ stage FILTER_BARCODES(
 """
 
 def split(args):
-    mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
+    mem_gb = 2 * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
+    mem_gb = max(mem_gb, cr_constants.MIN_MEM_GB)
+
     chunks = [{
         '__mem_gb': mem_gb,
     }]

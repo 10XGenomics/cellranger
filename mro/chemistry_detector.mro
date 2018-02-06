@@ -1,0 +1,29 @@
+@include "_chemistry_detector_stages.mro"
+
+pipeline CHEMISTRY_DETECTOR(
+    in  string   sample_id,
+    in  map[]    sample_def,
+    in  path     reference_path,
+    in  path     vdj_reference_path,
+    in  string   chemistry_name_spec,
+    in  string[] allowed_chems,
+    out json     summary,
+    out txt      report,
+    out string   chemistry_type,
+)
+{
+    call DETECT_CHEMISTRY(
+        sample_id           = self.sample_id,
+        reference_path      = self.reference_path,
+        vdj_reference_path  = self.vdj_reference_path,
+        sample_def          = self.sample_def,
+        chemistry_name_spec = self.chemistry_name_spec,
+        allowed_chems       = self.allowed_chems,
+    )
+
+    return (
+        summary        = DETECT_CHEMISTRY.summary,
+        chemistry_type = DETECT_CHEMISTRY.chemistry_type,
+        report         = DETECT_CHEMISTRY.report,
+    )
+}

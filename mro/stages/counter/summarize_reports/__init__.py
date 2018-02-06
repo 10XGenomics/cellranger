@@ -7,6 +7,7 @@ import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
+from cellranger.webshim.constants.gex import CountSampleProperties
 from cellranger.webshim.constants.shared import PIPELINE_COUNT
 
 __MRO__ = """
@@ -52,7 +53,11 @@ def main(args, outs):
     )
 
     genomes = cr_utils.get_reference_genomes(args.reference_path)
-    sample_properties = cr_webshim.get_sample_properties(args.sample_id, args.sample_desc, genomes, version=martian.get_pipelines_version())
+    sample_properties = CountSampleProperties(sample_id=args.sample_id,
+                                              sample_desc=args.sample_desc,
+                                              genomes=genomes,
+                                              version=martian.get_pipelines_version())
+    sample_properties = dict(sample_properties._asdict())
 
     sample_data = cr_webshim.load_sample_data(sample_properties, sample_data_paths)
 

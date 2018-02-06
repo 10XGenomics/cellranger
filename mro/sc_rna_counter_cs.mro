@@ -12,10 +12,13 @@ pipeline SC_RNA_COUNTER_CS(
     in  int     recovered_cells,
     in  bool    no_secondary_analysis,
     in  int     force_cells,
+    in  string  chemistry,
+    in  int     r1_length,
+    in  int     r2_length,
     out html    web_summary                   "Run summary HTML",
     out csv     metrics_summary               "Run summary CSV",
-    out bam     possorted_genome_bam          "BAM"                                    "possorted_genome_bam.bam",
-    out bam.bai possorted_genome_bam_index    "BAM index"                              "possorted_genome_bam.bam.bai",
+    out bam     possorted_genome_bam          "BAM"                      "possorted_genome_bam.bam",
+    out bam.bai possorted_genome_bam_index    "BAM index"                "possorted_genome_bam.bam.bai",
     out path    filtered_gene_bc_matrices     "Filtered gene-barcode matrices MEX",
     out h5      filtered_gene_bc_matrices_h5  "Filtered gene-barcode matrices HDF5",
     out path    raw_gene_bc_matrices          "Unfiltered gene-barcode matrices MEX",
@@ -28,23 +31,66 @@ pipeline SC_RNA_COUNTER_CS(
     call SC_RNA_COUNTER(
         sample_id                    = self.sample_id,
         sample_def                   = self.sample_def,
-        chemistry_name               = "auto",
+        chemistry_name               = self.chemistry,
         custom_chemistry_def         = null,
         sample_desc                  = self.sample_desc,
         barcode_confidence_threshold = 0.975,
         umi_min_qual_threshold       = 10,
-        align                        = {"aligner":"star","high_conf_mapq":null},
+        align                        = {
+            "aligner": "star",
+            "high_conf_mapq": null
+        },
         align_threads                = 4,
         reference_path               = self.reference_path,
-        primers                      = [{"name":"P5","seq":"AATGATACGGCGACCACCGAGATCT"},{"name":"P7","seq":"CAAGCAGAAGACGGCATACGAGAT"},{"name":"R1","seq":"ACACTCTTTCCCTACACGACG"},{"name":"R2","seq":"GTGACTGGAGTTCAGACGTGTG"},{"name":"switch_oligo","seq":"AAGCAGTGGTATCAACGCAGAGTACATGGG"},{"name":"polyA","seq":"AAAAAAAAAAAAAAAAAAAA"}],
+        primers                      = [
+            {
+                "name": "P5",
+                "seq": "AATGATACGGCGACCACCGAGATCT"
+            },
+            {
+                "name": "P7",
+                "seq": "CAAGCAGAAGACGGCATACGAGAT"
+            },
+            {
+                "name": "R1",
+                "seq": "ACACTCTTTCCCTACACGACG"
+            },
+            {
+                "name": "R2",
+                "seq": "GTGACTGGAGTTCAGACGTGTG"
+            },
+            {
+                "name": "switch_oligo",
+                "seq": "AAGCAGTGGTATCAACGCAGAGTACATGGG"
+            },
+            {
+                "name": "polyA",
+                "seq": "AAAAAAAAAAAAAAAAAAAA"
+            }
+        ],
         recovered_cells              = self.recovered_cells,
         force_cells                  = self.force_cells,
         subsample_rate               = 1,
         initial_reads                = null,
-        rna_read_length              = null,
+        r1_length                    = self.r1_length,
+        r2_length                    = self.r2_length,
         annotation_params            = null,
         no_secondary_analysis        = self.no_secondary_analysis,
         mark_dupes_mem_gb            = null,
+        retain_fastqs                = false,
+        allowed_chems                = [
+            "auto",
+            "custom",
+            "threeprime",
+            "fiveprime",
+            "SC3P_auto",
+            "SC5P_auto",
+            "SC3Pv1",
+            "SC3Pv2",
+            "SC5P-PE",
+            "SC5P-R2",
+            "SC5P-R1"
+        ],
     )
 
     call CLOUPE_PREPROCESS(

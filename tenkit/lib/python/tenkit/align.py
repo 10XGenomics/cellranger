@@ -10,6 +10,7 @@ import tenkit.fasta as tk_fasta
 from exceptions import NotSupportedException
 import subprocess
 import logging
+import log_subprocess
 
 class Aligner(object):
     """
@@ -45,7 +46,7 @@ def bwa_index_ref(ref_fasta):
     Only needs to be called once per reference.  Creates index files in the same directory as the
     reference
     """
-    subprocess.check_call(['bwa', 'index', '-a', 'bwtsw', ref_fasta])
+    log_subprocess.check_call(['bwa', 'index', '-a', 'bwtsw', ref_fasta])
 
 def bwa_align_unpaired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hits=None, read_group_header=None, num_threads=24):
     """ Runs bwa aligner on reads without using paired-information (using bam as input format).
@@ -60,7 +61,7 @@ def bwa_align_unpaired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hit
         sam_name = out_name + '.sam'
 
         sam_out_file = open(sam_name, 'w')
-        subprocess.check_call(['bwa', 'mem', '-t', str(num_threads), '-M', '-R', read_group_header, ref_fasta, read_fastq], stdout=sam_out_file)
+        log_subprocess.check_call(['bwa', 'mem', '-t', str(num_threads), '-M', '-R', read_group_header, ref_fasta, read_fastq], stdout=sam_out_file)
         sam_out_file.close()
 
         # Create final bam file from the sam file
@@ -76,12 +77,12 @@ def bwa_align_unpaired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hit
 
         sam_out_file = open(sam_name, 'w')
         index_file = open(index_name, 'w')
-        subprocess.check_call(['bwa', 'aln', '-t', str(num_threads), ref_fasta, read_fastq], stdout=index_file)
+        log_subprocess.check_call(['bwa', 'aln', '-t', str(num_threads), ref_fasta, read_fastq], stdout=index_file)
         index_file.close()
         if max_hits:
-            subprocess.check_call(['bwa', 'samse', '-n', str(max_hits), ref_fasta, index_name, read_fastq], stdout=sam_out_file)
+            log_subprocess.check_call(['bwa', 'samse', '-n', str(max_hits), ref_fasta, index_name, read_fastq], stdout=sam_out_file)
         else:
-            subprocess.check_call(['bwa', 'samse', ref_fasta, index_name, read_fastq], stdout=sam_out_file)
+            log_subprocess.check_call(['bwa', 'samse', ref_fasta, index_name, read_fastq], stdout=sam_out_file)
         sam_out_file.close()
 
         # Create final bam file from the sam file
@@ -111,19 +112,19 @@ def bwa_align_paired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hits=
             assert(len(read_fastq) == 2)
             ## This restricts to primary alignments only
             out_file = open(out_name, 'w')
-            ps = subprocess.Popen(['bwa', 'mem', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq[0], read_fastq[1]], stdout=subprocess.PIPE)
-            #subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file) # restore once bug fixed
+            ps = log_subprocess.Popen(['bwa', 'mem', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq[0], read_fastq[1]], stdout=subprocess.PIPE)
+            #log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file) # restore once bug fixed
             errors_file = open(out_name + '_ERRORS', 'w')
-            subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file, stderr=errors_file)
+            log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file, stderr=errors_file)
             out_file.close()
             errors_file.close()
         else:
             ## This restricts to primary alignments only
             out_file = open(out_name, 'w')
-            ps = subprocess.Popen(['bwa', 'mem', '-p', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq], stdout=subprocess.PIPE)
-            #subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file) # restore once bug fixed
+            ps = log_subprocess.Popen(['bwa', 'mem', '-p', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq], stdout=subprocess.PIPE)
+            #log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file) # restore once bug fixed
             errors_file = open(out_name + '_ERRORS', 'w')
-            subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file, stderr=errors_file)
+            log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file, stderr=errors_file)
             out_file.close()
             errors_file.close()
 
@@ -146,17 +147,17 @@ def bwa_align_paired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hits=
         # Create the bwa index files
         index_file_1 = open(index_name_1, 'w')
         index_file_2 = open(index_name_2, 'w')
-        subprocess.check_call(['bwa', 'aln', '-t', str(num_threads), ref_fasta, temp_fastq_name1], stdout=index_file_1)
-        subprocess.check_call(['bwa', 'aln', '-t', str(num_threads), ref_fasta, temp_fastq_name2], stdout=index_file_2)
+        log_subprocess.check_call(['bwa', 'aln', '-t', str(num_threads), ref_fasta, temp_fastq_name1], stdout=index_file_1)
+        log_subprocess.check_call(['bwa', 'aln', '-t', str(num_threads), ref_fasta, temp_fastq_name2], stdout=index_file_2)
         index_file_1.close()
         index_file_2.close()
 
         # Create the sorted SAM file
         sam_out_file = open(sam_name, 'w')
         if max_hits:
-            subprocess.check_call(['bwa', 'sampe', '-n', str(max_hits), ref_fasta, index_name_1, index_name_2, temp_fastq_name1, temp_fastq_name2], stdout=sam_out_file)
+            log_subprocess.check_call(['bwa', 'sampe', '-n', str(max_hits), ref_fasta, index_name_1, index_name_2, temp_fastq_name1, temp_fastq_name2], stdout=sam_out_file)
         else:
-            subprocess.check_call(['bwa', 'sampe', ref_fasta, index_name_1, index_name_2, temp_fastq_name1, temp_fastq_name2], stdout=sam_out_file)
+            log_subprocess.check_call(['bwa', 'sampe', ref_fasta, index_name_1, index_name_2, temp_fastq_name1, temp_fastq_name2], stdout=sam_out_file)
 
         sam_out_file.close()
 

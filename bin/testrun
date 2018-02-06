@@ -48,6 +48,7 @@ function implement_process_options {
     reference_path=\"$(abspath $tiny_ref)\"
     recovered_cells=null
     force_cells=null
+    chemistry=\"SC3Pv2\"
 }
 
 function implement_generate_sample_defs {
@@ -79,6 +80,9 @@ call SC_RNA_COUNTER_CS(
     recovered_cells = $recovered_cells,
     no_secondary_analysis = $no_secondary_analysis,
     force_cells = $force_cells,
+    chemistry = $chemistry,
+    r1_length = null,
+    r2_length = null,
 )
 EOF
 }

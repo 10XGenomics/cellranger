@@ -18,6 +18,7 @@ ProcessedRead = collections.namedtuple('ProcessedRead', 'raw_seq, processed_seq,
 BAM_FILE_STREAM = '-' # filename telling samtools and pysam to read stdin / write stdout
 
 GZIP_SUFFIX = '.gz'
+LZ4_SUFFIX = '.lz4'
 NUM_CHECK_BARCODES_FOR_ORIENTATION = 1000
 REVCOMP_BARCODE_THRESHOLD = 0.75
 
@@ -28,6 +29,7 @@ NO_INPUT_FASTQS_MESSAGE = "No input FASTQs were found with the requested sample 
 
 NUM_HITS_TAG = 'NH'
 MULTIMAPPER_TAG = 'MM'
+ANTISENSE_TAG = 'AN'
 RAW_BARCODE_TAG = 'CR'
 PROCESSED_BARCODE_TAG = 'CB'
 RAW_BARCODE_QUAL_TAG = 'CY'
@@ -38,8 +40,6 @@ TRANSCRIPTS_TAG = 'TX'
 GENE_IDS_TAG = 'GX'
 GENE_NAMES_TAG = 'GN'
 MAPPING_REGION_TAG = 'RE'
-TRIMMED_SEQ_TAG = 'TR'
-TRIMMED_QUAL_TAG = 'TQ'
 GEM_GROUP_SEP = '-'
 
 MATE_RESCUE_TAG = 'MR'
@@ -67,7 +67,7 @@ ALL_READ_TYPE = 'all'
 MAPPED_READ_TYPE = 'mapped'
 CONF_MAPPED_READ_TYPE = 'conf_mapped'
 CONF_MAPPED_BC_READ_TYPE = 'conf_mapped_barcoded'
-CONF_MAPPED_DEDUPED_READ_TYPE = 'conf_mapped_deduped'
+CONF_MAPPED_DEDUPED_READ_TYPE = 'conf_mapped_deduped_barcoded'
 READ_TYPES = [
     ALL_READ_TYPE,
     MAPPED_READ_TYPE,
@@ -137,6 +137,12 @@ REGIONS = [
     INTRONIC_REGION,
 ]
 
+REGION_TAG_MAP = {
+    'E': EXONIC_REGION,
+    'N': INTRONIC_REGION,
+    'I': INTERGENIC_REGION,
+}
+
 '''
 Duplicate types:
     cdna_pcr_uncorrected: determined by gene ID, barcode, strand, uncorrected umi
@@ -201,6 +207,9 @@ BARCODE_PROPERTIES = [
 FORWARD_STRAND = '+'
 REVERSE_STRAND = '-'
 STRANDS = [FORWARD_STRAND, REVERSE_STRAND]
+
+THREE_PRIME = 'three_prime'
+FIVE_PRIME = 'five_prime'
 
 READ_POSITION_CUTOFFS = range(0, 5100, 100)
 INSERT_SIZE_CUTOFFS = range(0,1550,50)
@@ -358,6 +367,7 @@ MAX_INSERT_SIZE = 1000
 
 ''' Chemistry detection '''
 DETECT_CHEMISTRY_MIN_FRAC_WHITELIST = 0.10
+DETECT_5P_CHEMISTRY_MIN_R1_LEN_PE = 28
 DETECT_CHEMISTRY_INITIAL_READS = 100000
 
 PACKAGE_VERSION_CMDS = [

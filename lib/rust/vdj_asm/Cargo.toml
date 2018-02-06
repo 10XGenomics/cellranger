@@ -3,16 +3,19 @@ name = "vdj_asm"
 version = "0.1.0"
 authors = ["Sofia <sofia@10xtechnologies.com>"]
 
-[dependencies.tada]
-path = "external/tada"
-
 [dependencies]
 flate2 = "*"
-itertools = "0.4"
+itertools = "^0.6"
 docopt = "*"
-rustc-serialize = "*"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
 time = "*"
 num = "*"
-bio = { git = "https://github.com/pmarks/rust-bio.git", branch="pmarks/banded-sw"}
+libc = "*"
+bio = { git = "https://github.com/pryvkin10x/rust-bio.git", branch="pmarks/banded-sw" }
 rand = "0.3"
-rust-htslib = { git = "https://github.com/rust-bio/rust-htslib.git", branch="master"}
+rust-htslib = "0.13.0"
+debruijn = { git = "https://github.com/10XGenomics/rust-debruijn.git" }
+lazy_static = "*"
+lz4 = "*"

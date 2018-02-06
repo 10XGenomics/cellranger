@@ -2,13 +2,15 @@
 #
 # Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
 #
-import collections
+from collections import defaultdict
 import json
-import math
 import os
 import pandas as pd
+import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
 import cellranger.utils as cr_utils
+import cellranger.vdj.annotations as vdj_annotations
+import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
 import cellranger.vdj.reference as vdj_ref
@@ -22,17 +24,26 @@ stage REPORT_CONTIGS(
     in  csv   filter_summary,
     in  tsv   contig_summary,
     in  tsv   umi_summary,
+    in  json  reads_summary,
+    in  json  assemble_metrics_summary,
     out json  summary,
     src py    "stages/vdj/report_contigs",
 ) split using (
 )
 """
 
-MEM_GB_PER_ANNOTATIONS_JSON_GB = 20
+MIN_CHAIN_TYPE_CONTIG_FRAC = 0.05
+
+MEM_GB_PER_UMI_SUMMARY_GB = 4.5
 
 def split(args):
-    annotation_json_gb = float(os.path.getsize(args.annotations))/1e9
-    mem_gb = int(math.ceil(float(MEM_GB_PER_ANNOTATIONS_JSON_GB) * annotation_json_gb))
+    mem_gb_annot = vdj_utils.get_mem_gb_from_annotations_json(args.annotations)
+
+    umi_summary_bytes = os.path.getsize(args.umi_summary) if args.umi_summary else 0
+    mem_gb_umi = MEM_GB_PER_UMI_SUMMARY_GB * float(umi_summary_bytes)/1e9
+
+    mem_gb = max(mem_gb_annot, mem_gb_umi)
+
     print 'requested %d' % mem_gb
     return {
         'chunks': [{
@@ -43,7 +54,7 @@ def split(args):
 def main(args, outs):
     reporter = vdj_report.VdjReporter()
 
-    barcode_contigs = collections.defaultdict(list)
+    barcode_contigs = defaultdict(list)
     contig_annotations = {}
 
     # Get annotations for each contig
@@ -108,7 +119,42 @@ def main(args, outs):
 
         reporter.vdj_assembly_cb(bc_contig_summary, bc_umi_summary, annotations, reference)
 
+    ## Compute post-assembly per-cell metrics
+    # Load the assembly metrics summary to get the total assemblable reads
+    if args.assemble_metrics_summary and args.reads_summary:
+        assemblable_read_pairs_by_bc = cr_utils.get_metric_from_json(args.assemble_metrics_summary, 'assemblable_read_pairs_by_bc')
+        assemblable_read_pairs = sum(assemblable_read_pairs_by_bc.get(bc, 0) for bc in barcodes)
+
+        total_read_pairs = cr_utils.get_metric_from_json(args.reads_summary, 'total_read_pairs')
+
+        reporter._get_metric_attr('vdj_assemblable_read_pairs_per_filtered_bc').set_value(assemblable_read_pairs, len(barcodes))
+        reporter._get_metric_attr('vdj_sequencing_efficiency').set_value(assemblable_read_pairs, total_read_pairs)
+
+    ## Try to autodetect the chain type
+    # Find all chains w/ a significant presence.
+    # If there's exactly one, set the chain type filter to that.
+    # Otherwise, show all chain types.
+
+    chain_count = defaultdict(int)
+    for anno_dict in contig_annotations.itervalues():
+        contig = vdj_annotations.AnnotatedContig.from_dict(anno_dict, reference)
+        if contig.is_cell and contig.high_confidence and contig.productive:
+            for anno in contig.annotations:
+                if anno.feature.chain_type in vdj_constants.VDJ_CHAIN_TYPES:
+                    chain_count[anno.feature.chain_type] += 1
+
+    outs.chain_type = vdj_constants.ALL_CHAIN_TYPES
+
+    print chain_count
+
+    if len(chain_count) > 0:
+        n_contigs = sum(chain_count.itervalues())
+        sig_chains = [ct for ct, count in chain_count.iteritems() if tk_stats.robust_divide(count, n_contigs) >= MIN_CHAIN_TYPE_CONTIG_FRAC]
+        if len(sig_chains) == 1:
+            outs.chain_type = sig_chains[0]
+
     reporter.report_summary_json(outs.summary)
 
 def join(args, outs, chunk_defs, chunk_outs):
+    outs.chain_type = chunk_outs[0].chain_type
     cr_utils.copy(chunk_outs[0].summary, outs.summary)

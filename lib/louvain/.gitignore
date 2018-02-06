@@ -5,7 +5,7 @@
 *.o
 
 #ignore exec
-./louvain
-./convert
-./matrix
-./hierarchy
+louvain
+convert
+matrix
+hierarchy

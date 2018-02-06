@@ -29,12 +29,12 @@ func countQ30Bases(qualityInfo *QualityInfo, fastqReader *fastq.FastqReader, sta
 			return err
 		}
 
-		endIndex := startIndex + length
+		endIndex := startIndex+length
 		if length == READ_TO_END {
 			endIndex = len(read.Seq)
 		}
 
-		seqQual := read.Qual[startIndex:endIndex]
+		seqQual := read.Qual[startIndex : endIndex]
 		for _, qual := range seqQual {
 			qualInt := uint32(qual) - 33
 			if qualInt >= 30 {
@@ -47,6 +47,7 @@ func countQ30Bases(qualityInfo *QualityInfo, fastqReader *fastq.FastqReader, sta
 	qualityInfo.TotalBaseCount = totalBaseCount
 	return nil
 }
+
 
 func main() {
 	doc := `Tenkit Q30% Counter.

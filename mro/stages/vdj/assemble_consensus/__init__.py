@@ -6,21 +6,21 @@
 # of the member cells and computes the base qualities of the consensus sequences.
 
 from collections import defaultdict, Counter
+import itertools
 import json
 import martian
 import numpy as np
 from numpy.random import choice, seed
-import cPickle
 import os
 import pysam
 import re
 import shutil
-import subprocess
 import sys
 import tenkit.bam as tk_bam
 import tenkit.fasta as tk_fasta
+import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
-from cellranger.constants import PROCESSED_UMI_TAG, PROCESSED_BARCODE_TAG
+from cellranger.constants import PROCESSED_UMI_TAG, PROCESSED_BARCODE_TAG, MIN_MEM_GB
 import cellranger.fastq as cr_fastq
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
@@ -30,11 +30,11 @@ import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
 
 __MRO__ = """
-stage ASSEMBLE_INFERRED_CONSENSUS(
+stage ASSEMBLE_CONSENSUS(
     in  path       vdj_reference_path,
     in  map[]      primers,
     in  string     metric_prefix                "to prefix summary metrics (eg. if you're running for raw and inferred clonotypes)",
-    in  pickle     annotations                  "contig annotations",
+    in  json       annotations_json,
     in  json       clonotype_assignments,
     in  tsv        umi_summary_tsv,
     in  fastq      contigs_fastq,
@@ -60,7 +60,8 @@ stage ASSEMBLE_INFERRED_CONSENSUS(
     out csv        clonotypes                   "info about clonotypes",
     src py         "stages/vdj/assemble_consensus",
 ) split using (
-    in  string[][] chunk_clonotypes,
+    in  string[]   chunk_clonotypes,
+    in  json       chunk_annotations,
 )
 """
 
@@ -80,6 +81,13 @@ MAX_READS_PER_CONTIG = 20000
 # If fewer contigs than this, we'll just pick one as the consensus.
 MIN_CONTIGS_FOR_CONSENSUS = 2
 
+# Merge consensus BAMs every N files
+MERGE_BAMS_EVERY = 10
+
+def rm_files(filenames):
+    for filename in filenames:
+        cr_utils.remove(filename, allow_nonexisting=True)
+
 def split(args):
     seed(1)
 
@@ -95,9 +103,12 @@ def split(args):
     clonotypes_per_chunk = max(MIN_CLONOTYPES_PER_CHUNK, np.ceil(float(num_clonotypes) / MAX_CHUNKS))
     num_chunks = int(np.ceil(float(num_clonotypes) / clonotypes_per_chunk))
 
-    chunk_clonotypes = [[] for _ in range(num_chunks)]
+    chunk_clonotypes = [[] for _ in xrange(num_chunks)]
 
     chunks = []
+
+    full_annot_mem = vdj_utils.get_mem_gb_from_annotations_json(args.annotations_json)
+    join_mem_gb = max(16.0, full_annot_mem)
 
     if num_clonotypes > 0:
         # Pick a chunk 0..num_chunks num_clonotypes times.
@@ -105,12 +116,42 @@ def split(args):
         for idx, clonotype_id in enumerate(clonotypes.iterkeys()):
             chunk_clonotypes[chunk_assignments[idx]].append(clonotype_id)
 
-        chunks = [{'chunk_clonotypes':c, '__mem_gb': 12.0} for c in chunk_clonotypes if len(c) > 0]
+        # Remove empty chunks
+        chunk_clonotypes = [x for x in chunk_clonotypes if len(x) > 0]
+
+        # Map clonotype to chunk
+        clo2chunk = {}
+        for chunk_idx, clo_ids in enumerate(chunk_clonotypes):
+            for clo_id in clo_ids:
+                clo2chunk[clo_id] = chunk_idx
+
+        ### Split the contig annotation json into chunks
+        chunk_annot_fns = [martian.make_path('annot-%04d.json' % i) for i,_ in enumerate(chunk_clonotypes)]
+
+        clo_key = '%s_clonotype_id' % args.metric_prefix
+        cons_key = '%s_consensus_id' % args.metric_prefix
+        with open(args.annotations_json) as input_fh, \
+             vdj_utils.CachedJsonDictListWriters(chunk_annot_fns) as writers:
+            for contig_dict in vdj_utils.get_json_obj_iter(input_fh):
+                clo_id = contig_dict.get('info', {}).get(clo_key)
+                cons_id = contig_dict.get('info', {}).get(cons_key)
+                if clo_id is not None and cons_id is not None:
+                    writers.write(contig_dict, clo2chunk[clo_id])
+
+
+        for clo_list, annot_fn in itertools.izip(chunk_clonotypes, chunk_annot_fns):
+            chunk_mem_gb = max(MIN_MEM_GB, vdj_utils.get_mem_gb_from_annotations_json(annot_fn))
+
+            chunks.append({
+                'chunk_clonotypes': clo_list,
+                'chunk_annotations': annot_fn,
+                '__mem_gb': chunk_mem_gb,
+            })
 
     if len(chunks) == 0:
-        chunks = [{'chunk_clonotypes':[]}]
+        return {'chunks': []}
 
-    return {'chunks': chunks, 'join': {'__mem_gb': 16.0}}
+    return {'chunks': chunks, 'join': {'__mem_gb': join_mem_gb}}
 
 
 def main(args, outs):
@@ -125,15 +166,36 @@ def main(args, outs):
         reporter.save(outs.chunked_reporter)
         return
 
-    with open(args.annotations) as f:
-        contigs = cPickle.load(f)
+    # Get the clonotype-barcode assignments
     with open(args.clonotype_assignments) as f:
         clonotypes = json.load(f)
+
+    # Partition contig annotations by consensus id
+    consensus_to_contigs = defaultdict(list)
+    relevant_contig_ids = set()
+
+    with open(args.chunk_annotations) as f:
+        contigs = vdj_annot.load_contig_list_from_json(f, args.vdj_reference_path)
+
+    clo_key = '%s_clonotype_id' % args.metric_prefix
+    cons_key = '%s_consensus_id' % args.metric_prefix
+
+    for contig in contigs:
+        clo_id = contig.info_dict.get(clo_key)
+        cons_id = contig.info_dict.get(cons_key)
+        assert clo_id in chunk_clonotypes and cons_id is not None
+
+        consensus_to_contigs[cons_id].append(contig)
+        relevant_contig_ids.add(contig.contig_name)
+
+    assert len(consensus_to_contigs) > 0
+
     in_bam = tk_bam.create_bam_infile(args.contig_bam)
 
-    contig_read_counts = {c.contig_name:c.read_count for c in contigs}
-    contig_umi_counts = {c.contig_name:c.umi_count for c in contigs}
+    n_merged_bams = 0
 
+    # For all contigs relevant to this chunk,
+    #   get the assembler umi data required for base qual recalculation.
     # Do not attempt to read into a pandas object because it can be huge.
     contig_umis = defaultdict(set)
     with open(args.umi_summary_tsv, 'r') as umi_file:
@@ -142,10 +204,10 @@ def main(args, outs):
             umi = fields[2]
             if umi == 'umi' or len(fields) < 7:
                 continue
-            good_umi = fields[5] == 'True'
-            contig_names = fields[6].split(',')
-            if good_umi:
-                for c in contig_names:
+            good_umi = fields[5].lower() == 'true'
+            contig_ids = set(fields[6].split(','))
+            if good_umi and len(contig_ids & relevant_contig_ids) > 0:
+                for c in contig_ids:
                     contig_umis[c].add(umi)
 
     consensus_fastq = open(outs.consensus_fastq, 'w')
@@ -165,7 +227,12 @@ def main(args, outs):
         for consensus_id, consensus in clonotype['consensuses'].iteritems():
             cdr = consensus['cdr3_seq']
 
-            sel_contigs = set(consensus['cell_contigs']) # Get the contigs that should be merged
+            # Verify that the contig annotation data are consistent with the clonotype assignment data
+            assert set(consensus['cell_contigs']) == \
+                set(c.contig_name for c in consensus_to_contigs[consensus_id])
+            sel_contigs = consensus_to_contigs[consensus_id]
+            sel_contig_ids = [c.contig_name for c in sel_contigs]
+
             # Keep track of the "best" contig. This will be used in case the
             # merging fails.
             best_contig = None
@@ -174,21 +241,19 @@ def main(args, outs):
             # Will use to report rate of discrepancies.
             feature_annotations = defaultdict(set)
 
-            for contig in contigs:
-                if contig.contig_name in sel_contigs:
+            for contig in sel_contigs:
+                for anno in contig.annotations:
+                    feature_annotations[anno.feature.region_type].add(anno.feature.gene_name)
 
-                    for anno in contig.annotations:
-                        feature_annotations[anno.feature.region_type].add(anno.feature.gene_name)
+                # Always choose a productive over a non-productive. Between
+                # contigs with the same productivity, choose the one that had more UMIs.
+                if best_contig is None or (not best_contig.productive and contig.productive) or \
+                   (best_contig.productive == contig.productive and \
+                    best_contig.umi_count < contig.umi_count):
 
-                    # Always choose a productive over a non-productive. Between
-                    # contigs with the same productivity, choose the one that had more UMIs.
-                    if best_contig is None or (not best_contig.productive and contig.productive) or \
-                       (best_contig.productive == contig.productive and \
-                        len(contig_umis[best_contig.contig_name]) < len(contig_umis[contig.contig_name])):
+                    best_contig = contig
 
-                        best_contig = contig
-
-            assert not best_contig is None
+            assert best_contig is not None
 
             anno_count = np.max([len(feature_annotations[v]) for v in VDJ_V_FEATURE_TYPES])
             metric = reporter._get_metric_attr('vdj_clonotype_gt1_v_annotations_contig_frac', args.metric_prefix)
@@ -198,41 +263,44 @@ def main(args, outs):
             metric = reporter._get_metric_attr('vdj_clonotype_gt1_j_annotations_contig_frac', args.metric_prefix)
             metric.add(1, filter=anno_count > 1)
 
-            # Order contigs by decreasing UMI support
-            ordered_contigs = list(sorted(sel_contigs, key=lambda x:len(contig_umis[x]), reverse=True))
-            ordered_contigs = ordered_contigs[0:min(MAX_CELLS_FOR_BASE_QUALS, len(sel_contigs))]
-
             wrong_cdr_metric = reporter._get_metric_attr('vdj_clonotype_consensus_wrong_cdr_contig_frac', args.metric_prefix)
 
             tmp_dir = martian.make_path(consensus_id + '_outs')
             cr_utils.mkdir(tmp_dir, allow_existing=True)
 
-            res = get_consensus_seq(consensus_id, sel_contigs, best_contig.contig_name, tmp_dir, args)
+            res = get_consensus_seq(consensus_id, sel_contig_ids, best_contig.contig_name, tmp_dir, args)
             (best_seq, best_quals, consensus_seq, contig_to_cons_bam, contig_fastq, contig_fasta) = res
 
             outs.chunked_consensus_bams.append(contig_to_cons_bam)
 
             # make sure the bam file has the right header (single sequence with this consensus name)
             tmp_bam = tk_bam.create_bam_infile(contig_to_cons_bam)
-            assert(list(tmp_bam.references) == [consensus_id])
+            if list(tmp_bam.references) != [consensus_id]:
+                # Print some info to help us debug
+                print tmp_bam.references, consensus_id
+                assert(list(tmp_bam.references) == [consensus_id])
             tmp_bam.close()
 
             if consensus_seq:
                 # If this is not None, we actually built a consensus, so we have to compute the quals from scratch.
+                # Use a subset of the contigs for computing quals.
+                contig_ids = map(lambda c: c.contig_name, sorted(sel_contigs, key=lambda c:c.umi_count, reverse=True))
+                contig_ids = contig_ids[0:MAX_CELLS_FOR_BASE_QUALS]
+
                 consensus_quals = get_consensus_quals(in_bam, consensus_id, contig_fasta,
-                                                      ordered_contigs, contig_umis, tmp_dir)
+                                                      contig_ids, contig_umis, tmp_dir)
             else:
                 consensus_seq = best_seq
                 consensus_quals = best_quals
 
             assert(len(consensus_seq) == len(consensus_quals))
 
-            total_read_count = np.sum([contig_read_counts[c] for c in sel_contigs])
-            total_umi_count = np.sum([contig_umi_counts[c] for c in sel_contigs])
+            total_read_count = sum([c.read_count for c in sel_contigs])
+            total_umi_count = sum([c.umi_count for c in sel_contigs])
 
             contig_info_dict = {
                 'cells': clonotype['barcodes'],
-                'cell_contigs': sel_contigs,
+                'cell_contigs': sel_contig_ids,
                 'clonotype_freq': clonotype['freq'],
                 'clonotype_prop': clonotype['prop'],
             }
@@ -318,12 +386,11 @@ def main(args, outs):
                     'vdj_asm', 'base-quals',
                     martian.make_path(consensus_id + '_contigs'),
                     tmp_dir,
-                    '--single-end',
-                    '--global' # use global alignment if a good seed isn't found - everything must get aligned
+                    '--single-end'
                 ]
                 sys.stderr.write('Running ' + ' '.join(cmd) + '\n')
 
-                subprocess.check_call(cmd, cwd=os.getcwd())
+                tk_subproc.check_call(cmd, cwd=os.getcwd())
 
                 # Move out of tmp dir
                 rec_bam = martian.make_path(consensus_id + '_reference.bam')
@@ -332,6 +399,26 @@ def main(args, outs):
 
             if os.path.isdir(tmp_dir):
                 shutil.rmtree(tmp_dir)
+
+            # Clean up unneeded files ASAP
+            rm_files([consensus_id + '_contigs.fasta',
+                      consensus_id + '_contigs.fastq'])
+
+            # Merge N most recent BAM files to avoid filesystem overload
+            if len(outs.chunked_consensus_bams) >= MERGE_BAMS_EVERY:
+                assert len(outs.chunked_consensus_bams) == len(outs.chunked_concat_ref_bams)
+
+                new_cons_bam = martian.make_path('merged-consensus-%03d.bam' % n_merged_bams)
+                concatenate_bams(new_cons_bam, outs.chunked_consensus_bams)
+                rm_files(outs.chunked_consensus_bams)
+                outs.chunked_consensus_bams = [new_cons_bam]
+
+                new_ref_bam = martian.make_path('merged-ref-%03d.bam' % n_merged_bams)
+                concatenate_bams(new_ref_bam, outs.chunked_concat_ref_bams)
+                rm_files(outs.chunked_concat_ref_bams)
+                outs.chunked_concat_ref_bams = [new_ref_bam]
+
+                n_merged_bams += 1
 
     in_bam.close()
 
@@ -441,7 +528,7 @@ def get_consensus_seq(clonotype_name, sel_contigs, best_contig, out_dir, args):
         ]
         sys.stderr.write('Running ' + ' '.join(cmd) + '\n')
 
-        subprocess.check_call(cmd, cwd=os.getcwd())
+        tk_subproc.check_call(cmd, cwd=os.getcwd())
 
         with open(os.path.join(out_dir, clonotype_name + '_contigs.fasta'), 'r') as contig_f:
             lines = contig_f.readlines()
@@ -465,12 +552,11 @@ def get_consensus_seq(clonotype_name, sel_contigs, best_contig, out_dir, args):
         'vdj_asm', 'base-quals',
         martian.make_path(clonotype_name + '_contigs'),
         out_dir,
-        '--single-end',
-        '--global' # use global alignment if a good seed isn't found - everything must get aligned
+        '--single-end'
     ]
     sys.stderr.write('Running ' + ' '.join(cmd) + '\n')
 
-    subprocess.check_call(cmd, cwd=os.getcwd())
+    tk_subproc.check_call(cmd, cwd=os.getcwd())
 
     # Move the BAM of the contigs aligned against the consensus out of the outs
     # (Will overwrite this bam which was already used as input to assembly).
@@ -561,7 +647,7 @@ def get_consensus_quals(in_bam, clonotype_name, in_fasta, sel_contigs, contig_um
     ]
     sys.stderr.write('Running ' + ' '.join(cmd) + '\n')
 
-    subprocess.check_call(cmd, cwd=os.getcwd())
+    tk_subproc.check_call(cmd, cwd=os.getcwd())
 
     with open(os.path.join(out_dir, pref + '.fastq'), 'r') as f:
         lines = f.readlines()
@@ -610,6 +696,12 @@ def annotate_consensus_contig(reference_path, min_score_ratios, min_word_sizes,
 
 
 def join(args, outs, chunk_defs, chunk_outs):
+    if len(chunk_outs) == 0:
+        # Set all outputs to null
+        for slot in outs.slots:
+            setattr(outs, slot, None)
+        return
+
     reporters = [chunk_out.chunked_reporter for chunk_out in chunk_outs]
     final_report = cr_report.merge_reporters(reporters)
     final_report.report_summary_json(outs.summary)
@@ -681,8 +773,11 @@ def join(args, outs, chunk_defs, chunk_outs):
 
 def concatenate_and_index_fastas(out_fasta, fastas):
     cr_utils.concatenate_files(out_fasta, fastas)
-    subprocess.check_call(['samtools', 'faidx', out_fasta], cwd=os.getcwd())
+    tk_subproc.check_call(['samtools', 'faidx', out_fasta], cwd=os.getcwd())
 
+def concatenate_bams(out_bam, bams):
+    # Drop the UMI tag since it's useless
+    vdj_utils.concatenate_and_fix_bams(out_bam, bams, drop_tags=[PROCESSED_UMI_TAG])
 
 def concatenate_sort_and_index_bams(out_bam, bams):
     tmp_bam = out_bam.replace('.bam', '_tmp.bam')

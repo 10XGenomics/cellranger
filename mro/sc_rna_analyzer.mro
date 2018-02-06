@@ -8,6 +8,7 @@ pipeline SC_RNA_ANALYZER(
     in  h5    filtered_matrices_h5,
     in  bool  no_secondary_analysis,
     in  csv   use_genes,
+    in  csv   exclude_genes,
     in  csv   use_bcs,
     in  int   num_analysis_bcs,
     in  int   random_seed,
@@ -37,6 +38,7 @@ pipeline SC_RNA_ANALYZER(
         raw_matrices_h5      = self.raw_matrices_h5,
         filtered_matrices_h5 = self.filtered_matrices_h5,
         use_genes            = self.use_genes,
+        exclude_genes        = self.exclude_genes,
         use_bcs              = self.use_bcs,
         num_analysis_bcs     = self.num_analysis_bcs,
         force_cells          = self.force_cells,
@@ -58,13 +60,14 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call volatile PREPROCESS_MATRIX(
-        matrix_h5   = self.filtered_matrices_h5,
-        random_seed = self.random_seed,
-        use_genes   = self.use_genes,
-        use_bcs     = self.use_bcs,
-        num_bcs     = self.num_analysis_bcs,
-        force_cells = self.force_cells,
-        skip        = ANALYZER_PREFLIGHT.skip,
+        matrix_h5     = self.filtered_matrices_h5,
+        random_seed   = self.random_seed,
+        use_genes     = self.use_genes,
+        exclude_genes = self.exclude_genes,
+        use_bcs       = self.use_bcs,
+        num_bcs       = self.num_analysis_bcs,
+        force_cells   = self.force_cells,
+        skip          = ANALYZER_PREFLIGHT.skip,
     )
 
     call volatile RUN_MULTIGENOME_ANALYSIS(

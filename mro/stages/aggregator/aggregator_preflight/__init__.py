@@ -20,10 +20,10 @@ def main(args, outs):
     if args.normalization_mode is not None and args.normalization_mode not in cr_constants.NORM_MODES:
         martian.exit("Normalization mode must be one of: %s" % ', '.join(cr_constants.NORM_MODES))
 
-    global_mkref_version = None
     global_fasta_hash = None
     global_gtf_hash = None
-    global_chemistry = None
+    chemistries = set()
+    global_whitelist = None
 
     # TODO make assertions about the required metrics!
 
@@ -67,29 +67,28 @@ def main(args, outs):
             if not mol_cr_version:
                 martian.exit("Molecule file was produced with old cellranger version (missing version number): %s" % mol_h5)
 
-            mol_mkref_version = counter.get_metric('reference_mkref_version')
-            if global_mkref_version is None:
-                global_mkref_version = mol_mkref_version
-            elif global_mkref_version != mol_mkref_version:
-                martian.exit("Molecules were produced using different mkref versions (%s, %s)" % (global_mkref_version, mol_mkref_version))
-
             mol_fasta_hash = counter.get_metric('reference_fasta_hash')
             if global_fasta_hash is None:
                 global_fasta_hash = mol_fasta_hash
             elif global_fasta_hash != mol_fasta_hash:
-                martian.exit("Molecules were produced using different mkref versions (%s, %s)" % (global_fasta_hash, mol_fasta_hash))
+                martian.exit("Molecules were produced using different genome references (%s, %s)" % (global_fasta_hash, mol_fasta_hash))
 
             mol_gtf_hash = counter.get_metric('reference_gtf_hash')
             if global_gtf_hash is None:
                 global_gtf_hash = mol_gtf_hash
             elif global_gtf_hash != mol_gtf_hash:
-                martian.exit("Molecules were produced using different mkref versions (%s, %s)" % (global_gtf_hash, mol_gtf_hash))
+                martian.exit("Molecules were produced using different annotation GTFs (%s, %s)" % (global_gtf_hash, mol_gtf_hash))
 
-            mol_chemistry = counter.get_metric('chemistry_name')
-            if global_chemistry is None:
-                global_chemistry = mol_chemistry
-            elif global_chemistry != mol_chemistry:
-                martian.exit("Molecules were produced with different chemistries (%s, %s)" % (global_chemistry, mol_chemistry))
+            mol_whitelist = counter.get_metric('chemistry_barcode_whitelist')
+            chemistry = counter.get_metric('chemistry_name')
+            if global_whitelist is None:
+                global_whitelist = mol_whitelist
+            elif global_whitelist != mol_whitelist:
+                chem_list = ', '.join(sorted(list(chemistries)))
+                verb = 'is' if len(chemistries) == 1 else 'are'
+                martian.exit("Molecules were produced with chemistries with incompatible barcode whitelists: %s %s incompatible with %s" % (chem_list, verb, chemistry))
+            chemistries.add(chemistry)
+
 
             if counter.is_aggregated():
                 martian.exit("Molecule file was aggregated from multiple samples: %s.\n Aggregated outputs cannot be re-aggregated, please pass each of the original samples instead." % mol_h5)

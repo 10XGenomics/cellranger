@@ -4,6 +4,7 @@
 #
 
 import itertools
+import json
 import numpy as np
 import tenkit.bam as tk_bam
 import cellranger.chemistry as cr_chem
@@ -14,14 +15,14 @@ import cellranger.vdj.utils as vdj_utils
 
 __MRO__ = '''
 stage REPORT_CONTIG_ALIGNMENTS(
-    in  bam        contig_bam,
-    in  string[][] barcodes_in_chunks,
-    in  map        chemistry_def,
-    out pickle     chunked_reporter,
-    out json       summary,
-    src py         "stages/vdj/report_contig_alignments",
+    in  bam      contig_bam,
+    in  json[]   barcodes_in_chunks,
+    in  map      chemistry_def,
+    out pickle   chunked_reporter,
+    out json     summary,
+    src py       "stages/vdj/report_contig_alignments",
 ) split using (
-    in  string[]   contigs,
+    in  string[] contigs,
 )
 '''
 
@@ -55,7 +56,8 @@ def split(args):
             chunks.append({'contigs': contig_names})
     else:
         for barcode_chunk in args.barcodes_in_chunks:
-            barcode_chunk = set(barcode_chunk)
+            with open(barcode_chunk) as f:
+                barcode_chunk = set(json.load(f))
             contig_names = [contig for contig in all_contigs if vdj_utils.get_barcode_from_contig_name(contig) in barcode_chunk]
             chunks.append({'contigs': contig_names, '__mem_gb':6})
 

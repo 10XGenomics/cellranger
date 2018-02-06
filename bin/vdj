@@ -7,6 +7,14 @@
 
 source $TENX_SCRIPTDIR/common/_includes
 
+# Add pipeline-specific required args
+DOCOPT_PREAMBLE_FASTQS=${DOCOPT_PREAMBLE_FASTQS/\[options\]/[--reference=DIR]
+        \[options\]}
+
+DOCOPT_PREAMBLE_FASTQS=${DOCOPT_PREAMBLE_FASTQS}'
+    reference   Path of folder containing 10x-compatible VDJ reference.
+                    Optional if '--denovo' is specified.'
+
 DOCOPT_SPEC="$(cat <<EOF
 '$TENX_PRODUCT $TENX_SUBCMD' assembles single-cell V\(D\)J immune receptor
 sequences.
@@ -14,12 +22,16 @@ sequences.
 $DOCOPT_PREAMBLE_FASTQS
 
 Options:
-# Single Cell
-    $DOCOPT_OPTIONS_FASTQS
+# Single Cell V(D)J assembly
     $DOCOPT_OPTIONS_SAMPLE_INFO
-    --reference=DIR     Path of folder containing 10x-compatible VDJ reference.
+    --denovo            Run in reference-free mode (do not use annotations).
+    --chain=CHAIN_SPEC  Chain type to display metrics for: 'TR' for T cell
+                            receptors, 'IG' for B cell receptors, 'all'
+                            to display all, or 'auto' to autodetect.
+                            Default: 'auto.'
     --force-cells=NUM   Force pipeline to use this number of cells, bypassing
-                            the cell detection algorithm. Optional.
+                            the cell detection algorithm.
+    $DOCOPT_OPTIONS_FASTQS
 
 # Martian Runtime
     $DOCOPT_OPTIONS_MRP_CLUSTER
@@ -34,7 +46,17 @@ function implement_process_options {
     if [ -n "$reference" ]; then
         vdj_reference_path=\"$(abspath $reference)\"
     else
-        vdj_reference_path=\"\"
+        vdj_reference_path=null
+    fi
+
+    # --denovo
+    # docopt automatically assigns true/false - nothing to do
+
+    # --chain
+    if [ -n "$chain" ]; then
+        chain=\"$chain\"
+    else
+        chain=\"auto\"
     fi
 
     # NOTE: docopt automatically converts dashes to underscores (e.g. force-cells becomes force_cells)
@@ -71,7 +93,9 @@ call SC_VDJ_ASSEMBLER_CS(
     sample_def = $sample_def,
     sample_desc = $sample_desc,
     vdj_reference_path = $vdj_reference_path,
+    denovo = $denovo,
     force_cells = $force_cells,
+    chain_type = $chain,
 )
 EOF
 }

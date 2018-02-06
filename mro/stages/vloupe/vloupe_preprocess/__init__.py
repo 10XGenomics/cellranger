@@ -6,6 +6,7 @@
 import os.path
 import martian
 import subprocess
+import tenkit.log_subprocess as tk_subproc
 
 __MRO__ = """
 stage VLOUPE_PREPROCESS(
@@ -45,12 +46,12 @@ def main(args, outs):
     Memory usage not expected to be excessive with this (thus no custom split/join
     as of yet); it will need to load a few full files (bam.bai, fasta.fai) into memory.
     """
-    if not os.path.isfile(args.concat_ref_bam) or \
-       not os.path.isfile(args.consensus_bam) or \
-       not os.path.isfile(args.contig_bam_bai):
+    if args.concat_ref_bam is None or not os.path.isfile(args.concat_ref_bam) or \
+       args.consensus_bam is None or not os.path.isfile(args.consensus_bam) or \
+       args.contig_bam_bai is None or not os.path.isfile(args.contig_bam_bai):
         martian.log_info('One or more bam files missing - cannot make vloupe file')
         return
-   
+
     call = ["vlconverter",
             args.sample_id,
             args.pipestance_type,
@@ -74,9 +75,16 @@ def main(args, outs):
             "--contig-fasta-index", args.contig_fasta_fai,
             "--description", args.sample_desc]
 
+    # the sample desc may be unicode, so send the whole
+    # set of args str utf-8 to check_output
+    unicode_call = [arg.encode('utf-8') for arg in call]
+
+    # but keep the arg 'call' here because log_info inherently
+    # attempts to encode the message... (TODO: should log_info
+    # figure out the encoding of the input string)
     martian.log_info("Running vlconverter: %s" % " ".join(call))
     try:
-        results = subprocess.check_output(call)
+        results = tk_subproc.check_output(unicode_call)
         martian.log_info("vlconverter output: %s" % results)
     except subprocess.CalledProcessError, e:
         outs.output_for_vloupe = None

@@ -2,10 +2,9 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
-extern crate tada;
-use tada::bitenc;
+extern crate bio;
+use debruijn::dna_string::DnaString;
 
-use fastq::CellrangerFastqHeader;
 use sw;
 use bam_utils;
 use constants::{UmiType, ReadType};
@@ -35,7 +34,7 @@ macro_rules! flag {
 #[derive(Clone, Debug)]
 pub struct Read {
     pub name: String,
-    pub seq: bitenc::BitEnc,
+    pub seq: DnaString,
     pub quals: Vec<u8>,
     pub id: ReadType,
     pub umi: UmiType,
@@ -43,7 +42,7 @@ pub struct Read {
 }
 
 impl Read {
-    pub fn new(id: ReadType, umi: UmiType, name: String, seq: bitenc::BitEnc, quals: Vec<u8>) -> Read {
+    pub fn new(id: ReadType, umi: UmiType, name: String, seq: DnaString, quals: Vec<u8>) -> Read {
         Read {
             name: name,
             id: id,
@@ -63,55 +62,54 @@ impl Read {
         let read_name = String::from_utf8_lossy(record.qname()).into_owned();
         let seq_bytes = record.seq().as_bytes();
 
+        let v: Vec<u8> = seq_bytes.iter().enumerate().map(|(i, x)| utils::base_to_bits_hash(*x, &read_name, i)).collect();
+        let seq_dna_string = DnaString::from_bytes(&v);
+
         let read = Read {
             name: read_name.clone(),
             id: id,
             umi: umi,
-            // NOTE: rust_htslib and bitencs use different representations of the bases!!
+            // NOTE: rust_htslib and DnaString use different representations of the bases!!
             // as bytes returns a vector, one element per base. The elements are u8
             // representations of 'A', 'C', 'G', 'T', or 'N'
-            seq: bitenc::BitEnc::from_bytes(&(seq_bytes.iter().enumerate().map(|(i, x)| utils::base_to_bits_hash(*x, &read_name, i)).collect())),
+            seq: seq_dna_string,
             quals: record.qual().to_vec(),
             flags: record.flags(),
         };
         read
     }
 
-    pub fn get_tag(&self, tag: &String) -> Option<String> {
-        CellrangerFastqHeader::new(self.name.clone()).get_tag(tag)
-    }
-
-    pub fn barcode(&self) -> Option<String> {
-        CellrangerFastqHeader::new(self.name.clone()).get_barcode()
-    }
-
     pub fn len(&self) -> usize {
         self.seq.len()
     }
 
-    pub fn to_bam_record(&self, alignment: Option<sw::Alignment>,
-                         mate_alignment: Option<sw::Alignment>) -> bam::record::Record {
+    pub fn to_bam_record(&self, alignment: &Option<sw::AlignmentPacket>,
+                         mate_alignment: &Option<sw::AlignmentPacket>) -> bam::record::Record {
         bam_utils::read_to_bam_record(&self, alignment, mate_alignment)
     }
 
-    pub fn to_bam_record_strip_augmented(&self, alignment: Option<sw::Alignment>,
-                         mate_alignment: Option<sw::Alignment>) -> bam::record::Record {
+    pub fn to_bam_record_strip_augmented(&self, alignment: &Option<sw::AlignmentPacket>,
+                         mate_alignment: &Option<sw::AlignmentPacket>) -> bam::record::Record {
         bam_utils::read_to_bam_record_opts(&self, alignment, mate_alignment, true, true)
                          }
 
     pub fn to_unmapped_bam_record(&self) -> bam::record::Record {
-        self.to_bam_record(None, None)
+        self.to_bam_record_strip_augmented(&None, &None)
     }
 
     /// True if the provided alignment has an implied length equal to this read's length.
-    pub fn validate_alignment(&self, alignment: &sw::Alignment) -> bool {
-        let mut cigar_len = 0;
-        for step in alignment.alignment.iter() {
-            cigar_len += match *step {
-                sw::AlignmentStep::Del => 0,
-                _ => 1,
+    pub fn validate_alignment(&self, al_pack: &sw::AlignmentPacket) -> bool {
+        use bio::alignment::AlignmentOperation::*;
+        let ref alignment = al_pack.alignment;
+        let mut cigar_len = alignment.xstart;
+        for &step in alignment.operations.iter() {
+            cigar_len += match step {
+                Match | Subst | Ins => 1,
+                _ => 0,
             };
         }
+        
+        cigar_len += alignment.xlen - alignment.xend;
         cigar_len == self.seq.len()
     }
 
@@ -131,6 +129,7 @@ impl Read {
 
 #[cfg(test)]
 mod tests {
+    use bio::alignment::{Alignment, AlignmentOperation, AlignmentMode};
     use rust_htslib::bam;
     use rust_htslib::bam::Read;
     use std::path::Path;
@@ -154,13 +153,36 @@ mod tests {
             let read2 = super::Read::from_bam_record(i * 2 + 1 as ReadType, 0, &rec2);
 
             // read1 is 124, read2 iw 150 bases
-            let al1 = sw::Alignment::new(10.0, 0, 0, vec![sw::AlignmentStep::Match; read1.len()]);
-            let al2 = sw::Alignment::new(10.0, 0, 100, vec![sw::AlignmentStep::Match; read2.len()]);
-
+            let al1 = Alignment {
+                score: read1.len() as i32,
+                xstart: 0,
+                ystart: 0,
+                xend: read1.len(),
+                yend: read1.len(),
+                ylen: 300,
+                xlen: read1.len(),
+                operations: vec![AlignmentOperation::Match; read1.len()],
+                mode: AlignmentMode::Semiglobal,
+            };
+            let al_pack1 = Some(sw::AlignmentPacket::new(0, al1));
+            let al2 = Alignment {
+                score: read2.len() as i32,
+                xstart: 0,
+                ystart: 100,
+                xend: read2.len(),
+                yend: 100 + read2.len(),
+                ylen: 300,
+                xlen: read2.len(),
+                operations: vec![AlignmentOperation::Match; read2.len()],
+                mode: AlignmentMode::Semiglobal,
+            };
+            let al_pack2 = Some(sw::AlignmentPacket::new(0, al2));
+            
             {
+
                 // Test 1: both reads mapped
-                let new_rec1 = read1.to_bam_record(Some(al1.clone()), Some(al2.clone()));
-                let new_rec2 = read2.to_bam_record(Some(al2.clone()), Some(al1.clone()));
+                let new_rec1 = read1.to_bam_record(&al_pack1, &al_pack2);
+                let new_rec2 = read2.to_bam_record(&al_pack2, &al_pack1);
                 assert_eq!(new_rec1.insert_size(), 250);
                 assert_eq!(new_rec2.insert_size(), -250);
                 assert!(!new_rec1.is_unmapped());
@@ -184,13 +206,13 @@ mod tests {
                 assert_eq!(new_rec2.qual(), rec2.qual());
                 assert_eq!(new_rec2.seq().as_bytes(), rec2.seq().as_bytes());
 
-                assert_eq!(new_rec1.cigar(), vec![bam::record::Cigar::Equal(read1.len() as u32)]);
-                assert_eq!(new_rec2.cigar(), vec![bam::record::Cigar::Equal(read2.len() as u32)]);
+                assert_eq!(new_rec1.cigar().iter().cloned().collect::<Vec<_>>(), vec![bam::record::Cigar::Equal(read1.len() as u32)]);
+                assert_eq!(new_rec2.cigar().iter().cloned().collect::<Vec<_>>(), vec![bam::record::Cigar::Equal(read2.len() as u32)]);
             }
-
+            
             {
                 // Test 2: First read mapped, second unmapped. Make sure tids are set correctly.
-                let new_rec1 = read1.to_bam_record(Some(al1.clone()), None);
+                let new_rec1 = read1.to_bam_record(&al_pack1, &None);
                 assert!(!new_rec1.is_unmapped());
                 assert!(new_rec1.is_mate_unmapped());
                 assert_eq!(new_rec1.insert_size(), 0);
@@ -202,10 +224,10 @@ mod tests {
                 assert_eq!(new_rec1.qual(), rec1.qual());
                 assert_eq!(new_rec1.seq().as_bytes(), rec1.seq().as_bytes());
             }
-
+            
             {
                 // Test 3: First read unmapped, second mapped. Make sure tids are set correctly.
-                let new_rec1 = read1.to_bam_record(None, Some(al2.clone()));
+                let new_rec1 = read1.to_bam_record(&None, &al_pack2);
                 assert!(new_rec1.is_unmapped());
                 assert!(!new_rec1.is_mate_unmapped());
                 // unmapped mate should have the coordinates of the mapped one
@@ -215,20 +237,20 @@ mod tests {
                 assert_eq!(new_rec1.qname(), rec1.qname());
                 assert_eq!(new_rec1.qual(), rec1.qual());
 
-                let new_rec2 = read2.to_bam_record(None, Some(al2.clone()));
+                let new_rec2 = read2.to_bam_record(&None, &al_pack2);
                 assert_eq!(new_rec2.seq().as_bytes(), rec2.seq().as_bytes());
             }
-
+            
             {
                 // Test 4: Both reads unmapped. Make sure tids and flags are set correctly.
                 // Make sure insert size is set to 0.
-                let new_rec1 = read1.to_bam_record(None, None);
+                let new_rec1 = read1.to_bam_record(&None, &None);
                 assert!(new_rec1.is_unmapped());
                 assert!(new_rec1.is_mate_unmapped());
                 assert_eq!(new_rec1.tid(), -1);
                 assert_eq!(new_rec1.mtid(), -1);
 
-                let new_rec2 = read2.to_bam_record(None, None);
+                let new_rec2 = read2.to_bam_record(&None, &None);
                 assert_eq!(new_rec2.seq().as_bytes(), rec2.seq().as_bytes());
 
                 assert_eq!(new_rec1.insert_size(), 0);
@@ -237,59 +259,103 @@ mod tests {
             {
                 // Test 5: Make sure that insert size is set correctly.
 
-                // Read1 cigar should be 3S 101M 1I 1D 19S
+                // Read1 cigar is 3S 100M 1X 1I 1D 19S
                 // It extends from base 0 (inclusive) to base 102 (exclusive).
-                let mut cigar1 = vec![sw::AlignmentStep::Clip, sw::AlignmentStep::Clip, sw::AlignmentStep::Clip];
-                for _ in 0..100 { cigar1.push(sw::AlignmentStep::Match); }
-                cigar1.push(sw::AlignmentStep::Mismatch);
-                cigar1.push(sw::AlignmentStep::Ins);
-                cigar1.push(sw::AlignmentStep::Del);
-                for _ in 0..(read1.len() - cigar1.len() + 1) {
-                    cigar1.push(sw::AlignmentStep::Clip);
-                }
-                let al1 = sw::Alignment::new(10.0, 0, 0, cigar1);
+                let mut op = vec![AlignmentOperation::Xclip(3)];
+                for _ in 0..100 { op.push(AlignmentOperation::Match); }
+                op.push(AlignmentOperation::Subst);
+                op.push(AlignmentOperation::Ins);
+                op.push(AlignmentOperation::Del);
+                op.push(AlignmentOperation::Xclip(19));
+                op.push(AlignmentOperation::Yclip(198));
 
-                // Read2 cigar should be 3S 100M 47S
+                let al1 = Alignment {
+                    score: 95,
+                    xstart: 3,
+                    ystart: 0,
+                    xend: 105,
+                    yend: 102,
+                    ylen: 300,
+                    xlen: read1.len(),
+                    operations: op,
+                    mode: AlignmentMode::Custom,
+                };
+                let al_pack1 = Some(sw::AlignmentPacket::new(0, al1));
+
+                // Read2 cigar is 3S 100M 47S
                 // It extends from base 100 to base 200 (exclusive) (so after read1)
-                let mut cigar2 = vec![sw::AlignmentStep::Clip, sw::AlignmentStep::Clip, sw::AlignmentStep::Clip];
-                for _ in 0..100 { cigar2.push(sw::AlignmentStep::Match); }
-                for _ in 0..(read2.len() - cigar2.len()) {
-                    cigar2.push(sw::AlignmentStep::Clip);
-                }
-                let al2 = sw::Alignment::new(10.0, 0, 100, cigar2);
+                let mut op = vec![AlignmentOperation::Xclip(3), AlignmentOperation::Yclip(100)];
+                for _ in 0..100 { op.push(AlignmentOperation::Match); }
+                op.push(AlignmentOperation::Xclip(47));
+                op.push(AlignmentOperation::Yclip(100));
 
-                let new_rec1 = read1.to_bam_record(Some(al1.clone()), Some(al2.clone()));
-                let new_rec2 = read2.to_bam_record(Some(al2.clone()), Some(al1.clone()));
+                let al2 = Alignment {
+                    score: 98,
+                    xstart: 3,
+                    ystart: 100,
+                    xend: 103,
+                    yend: 200,
+                    ylen: 300,
+                    xlen: read2.len(),
+                    operations: op,
+                    mode: AlignmentMode::Custom,
+                };
+                let al_pack2 = Some(sw::AlignmentPacket::new(0, al2));
+
+                let new_rec1 = read1.to_bam_record(&al_pack1, &al_pack2);
+                let new_rec2 = read2.to_bam_record(&al_pack2, &al_pack1);
                 assert_eq!(new_rec1.insert_size(), 200);
                 assert_eq!(new_rec2.insert_size(), -200);
 
-                // Read2 cigar should be 3S 100M 47S
+                // Read2 cigar is 3S 100M 47S
                 // It extends from base 10 to base 110 (exclusive) (so partially overlapping read1)
-                cigar2 = vec![sw::AlignmentStep::Clip, sw::AlignmentStep::Clip, sw::AlignmentStep::Clip];
-                for _ in 0..100 { cigar2.push(sw::AlignmentStep::Match); }
-                for _ in 0..(read2.len() - cigar2.len()) {
-                    cigar2.push(sw::AlignmentStep::Clip);
-                }
-                let al2 = sw::Alignment::new(10.0, 0, 10, cigar2);
+                let mut op = vec![AlignmentOperation::Xclip(3), AlignmentOperation::Yclip(10)];
+                for _ in 0..100 { op.push(AlignmentOperation::Match); }
+                op.push(AlignmentOperation::Xclip(47));
+                op.push(AlignmentOperation::Yclip(190));
+                let al2 = Alignment {
+                    score: 98,
+                    xstart: 3,
+                    ystart: 10,
+                    xend: 103,
+                    yend: 110,
+                    ylen: 300,
+                    xlen: read2.len(),
+                    operations: op,
+                    mode: AlignmentMode::Custom,
+                };
+                let al_pack2 = Some(sw::AlignmentPacket::new(0, al2));
 
-                let new_rec1 = read1.to_bam_record(Some(al1.clone()), Some(al2.clone()));
-                let new_rec2 = read2.to_bam_record(Some(al2.clone()), Some(al1.clone()));
+                let new_rec1 = read1.to_bam_record(&al_pack1, &al_pack2);
+                let new_rec2 = read2.to_bam_record(&al_pack2, &al_pack1);
                 assert_eq!(new_rec1.insert_size(), 110);
                 assert_eq!(new_rec2.insert_size(), -110);
+                
 
                 // Read2 cigar should be 3S 10M 147S
                 // It extends from base 0 to base 10 (exclusive) (so completely contained within read1)
-                cigar2 = vec![sw::AlignmentStep::Clip, sw::AlignmentStep::Clip, sw::AlignmentStep::Clip];
-                for _ in 0..10 { cigar2.push(sw::AlignmentStep::Match); }
-                for _ in 0..(read2.len() - cigar2.len()) {
-                    cigar2.push(sw::AlignmentStep::Clip);
-                }
-                let al2 = sw::Alignment::new(10.0, 0, 0, cigar2);
+                let mut op = vec![AlignmentOperation::Xclip(3)];
+                for _ in 0..10 { op.push(AlignmentOperation::Match); }
+                op.push(AlignmentOperation::Xclip(147));
+                op.push(AlignmentOperation::Yclip(290));
+                let al2 = Alignment {
+                    score: 98,
+                    xstart: 3,
+                    ystart: 0,
+                    xend: 13,
+                    yend: 10,
+                    ylen: 300,
+                    xlen: read2.len(),
+                    operations: op,
+                    mode: AlignmentMode::Custom,
+                };
+                let al_pack2 = Some(sw::AlignmentPacket::new(0, al2));
 
-                let new_rec1 = read1.to_bam_record(Some(al1.clone()), Some(al2.clone()));
-                let new_rec2 = read2.to_bam_record(Some(al2.clone()), Some(al1.clone()));
+                let new_rec1 = read1.to_bam_record(&al_pack1, &al_pack2);
+                let new_rec2 = read2.to_bam_record(&al_pack2, &al_pack1);
                 assert_eq!(new_rec1.insert_size(), 102);
                 assert_eq!(new_rec2.insert_size(), 102); // Is that the right behavior??
+                
             }
         }
     }

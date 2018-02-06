@@ -157,7 +157,8 @@ def get_illumina_sequencing_metrics(flowcell_path):
                 else:
                     results[tag] = None
                     results[tag_by_cycle] = None
-    except illuminate.InteropFileNotFoundError:
+    except BaseException, e:
+        print "Cannot read InterOp Quality Metrics: %s" % e.message
         # error case-- null out all the results
         q_levels = [ 20, 30 ]
         for q in q_levels:
@@ -186,7 +187,8 @@ def get_illumina_sequencing_metrics(flowcell_path):
         # PhiX error rate of worst tile
         worst_tile_phix = em.df.groupby(em.df.tile).mean().rate.max()
         results["PhiX_error_worst_tile"] = worst_tile_phix
-    except illuminate.InteropFileNotFoundError:
+    except BaseException, e:
+        print "Cannot read InterOp Error Metrics: %s" % e.message
         # PhiX was not run -- fill in None
         for (read_name, rid) in read_names.items():
             tag = read_name + "_PhiX_error_by_cycle"
@@ -213,13 +215,15 @@ def get_illumina_sequencing_metrics(flowcell_path):
             tag = read_name + "_mean_phasing"
             pretag = read_name + "_mean_prephasing"
 
-            if rid is None:
+            # TileMetrics v3 lookahead: this is not available
+            if rid is None or not tm.mean_phasing:
                 results[tag] = None
                 results[pretag] = None
             else:
                 results[tag] = tm.mean_phasing[rid-1]
                 results[pretag] = tm.mean_prephasing[rid-1]
-    except illuminate.InteropFileNotFoundError:
+    except BaseException, e:
+        print "Cannot read InterOp Error Metrics: %s" % e.message
         # for some reason we don't have tile metrics -- blank out everything
         results['mean_cluster_density'] = None
         results['mean_cluster_density_pf'] = None
@@ -243,23 +247,31 @@ def get_illumina_sequencing_metrics(flowcell_path):
             results['signoise_ratio'] = cim.df['signoise_ratio'].mean()
         else:
             results['signoise_ratio'] = None
-    except illuminate.InteropFileNotFoundError:
+    except BaseException, e:
+        print "Cannot read InterOp CorrectedIntensity Metrics: %s" % e.message
         results['signoise_ratio'] = None
 
     try:
         exm = ds.ExtractionMetrics()
         ex_df = exm.df
+        # looking ahead to ExtractionMetrics v4
+        if hasattr(exm, 'channelcount'):
+            channelcount = exm.channelcount
+            for idx in range(channelcount):
+                results['fwhm_%d' % idx] = ex_df['fwhm_%d' % idx].mean()
+                results['intensity_%d' % idx] = ex_df['intensity_%d' % idx].mean()
+        else:
+            results['fwhm_A'] = ex_df['fwhm_A'].mean()
+            results['fwhm_C'] = ex_df['fwhm_C'].mean()
+            results['fwhm_G'] = ex_df['fwhm_G'].mean()
+            results['fwhm_T'] = ex_df['fwhm_T'].mean()
 
-        results['fwhm_A'] = ex_df['fwhm_A'].mean()
-        results['fwhm_C'] = ex_df['fwhm_C'].mean()
-        results['fwhm_G'] = ex_df['fwhm_G'].mean()
-        results['fwhm_T'] = ex_df['fwhm_T'].mean()
-
-        results['intensity_A'] = ex_df['intensity_A'].mean()
-        results['intensity_C'] = ex_df['intensity_C'].mean()
-        results['intensity_G'] = ex_df['intensity_G'].mean()
-        results['intensity_T'] = ex_df['intensity_T'].mean()
-    except illuminate.InteropFileNotFoundError:
+            results['intensity_A'] = ex_df['intensity_A'].mean()
+            results['intensity_C'] = ex_df['intensity_C'].mean()
+            results['intensity_G'] = ex_df['intensity_G'].mean()
+            results['intensity_T'] = ex_df['intensity_T'].mean()
+    except BaseException, e:
+        print "Cannot read InterOp Extraction Metrics: %s" % e.message
         results['fwhm_A'] = None
         results['fwhm_C'] = None
         results['fwhm_G'] = None

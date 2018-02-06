@@ -1,0 +1,14 @@
+language: rust
+rust:
+  - 1.19.0
+addons:
+  apt:
+    sources:
+      - sourceline: "deb http://apt.llvm.org/trusty/ llvm-toolchain-trusty-4.0 main"
+      - sourceline: "deb-src http://apt.llvm.org/trusty/ llvm-toolchain-trusty-4.0 main"
+    packages:
+      - samtools
+      - clang-4.0
+      - lldb-4.0
+script:
+  - make
