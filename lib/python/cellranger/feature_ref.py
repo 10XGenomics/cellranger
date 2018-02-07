@@ -111,6 +111,10 @@ class FeatureReference(object):
             matches = filter(lambda bc_hit: bc_hit[2], matches)
 
             # Take the longest observed sequence as the canonical sequence
+            # NOTE: If there are multiple whitelist hits of equal length,
+            #   we choose an arbitrary sequence as the canonical sequence.
+            # However, information is not lost because the feature IDs tag
+            #   contains a list of each hit's unique feature ID.
             best_hit = max(matches, key=lambda bc_hit: len(bc_hit[0]))
             barcode, qual = best_hit[0:2]
 
