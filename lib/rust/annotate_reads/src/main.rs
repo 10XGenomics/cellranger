@@ -401,11 +401,11 @@ mod tests {
             arg_in_metrics_list:    None,
             arg_out_json:           None,
             arg_out_bc_csv:         None,
-            arg_feature_ref:        None,
             arg_feature_dist:       None,
             arg_library_type:       None,
             flag_fiveprime:         false,
             flag_bam_comments:      None,
+            flag_feature_ref:       None,
         };
         annotate_reads_main(args_main);
 
@@ -425,11 +425,11 @@ mod tests {
             arg_in_metrics_list:    Some(format!("test/{}/{}/chunked_metrics.txt", reference, sample).into()),
             arg_out_json:           Some(format!("{}/summary.json", out_dir.to_str().unwrap()).into()),
             arg_out_bc_csv:         Some(format!("{}/barcodes_detected.csv", out_dir.to_str().unwrap()).into()),
-            arg_feature_ref:        None,
             arg_feature_dist:       None,
             arg_library_type:       None,
             flag_fiveprime:         false,
             flag_bam_comments:      None,
+            flag_feature_ref:       None,
         };
         annotate_reads_join(args_join);
     }
