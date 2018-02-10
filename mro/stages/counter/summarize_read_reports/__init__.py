@@ -51,13 +51,14 @@ def split(args):
 
     chunks = []
 
-    if args.retain_fastqs:
-        for read1, read2, tags in itertools.izip_longest(args.read1s, args.read2s, args.tags):
-            chunks.append({
-                'read1': read1,
-                'read2': read2 if paired_end else None,
-                'tags': tags,
-            })
+    for read1, read2, tags in itertools.izip_longest(args.read1s, args.read2s, args.tags):
+        # Conditionally retain input fastqs.
+        # Always retain tag fastq.
+        chunks.append({
+            'read1': read1 if args.retain_fastqs else None,
+            'read2': read2 if paired_end and args.retain_fastqs else None,
+            'tags': tags,
+        })
 
     return {'chunks': chunks}
 
