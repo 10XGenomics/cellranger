@@ -32,6 +32,8 @@ stage EXTRACT_READS(
     in  int      r1_length,
     in  int      r2_length,
     in  bool     skip_metrics,
+    in  csv      feature_reference,
+    in  bool     augment_fastq,
     out pickle   chunked_reporter,
     out json     summary,
     out json     barcode_counts,
@@ -75,11 +77,12 @@ def split(args):
     return {'chunks': chunks, 'join': join}
 
 def join(args, outs, chunk_defs, chunk_outs):
-    outs.reads, outs.read2s, outs.gem_groups, outs.library_types, outs.read_groups = [], [], [], [], []
+    outs.reads, outs.read2s, outs.tags, outs.gem_groups, outs.library_types, outs.read_groups = [], [], [], [], [], []
 
     for chunk_out in chunk_outs:
         outs.reads += [read for read in chunk_out.reads]
         outs.read2s += [read2 for read2 in chunk_out.read2s]
+        outs.tags += [tags for tags in chunk_out.tags]
         outs.gem_groups += [gem_group for gem_group in chunk_out.gem_groups]
         outs.library_types += [lt for lt in chunk_out.library_types]
         outs.read_groups += [read_group for read_group in chunk_out.read_groups]
@@ -181,7 +184,6 @@ def main(args, outs):
         print "Input arg r2_length = ", args.r2_length
         r2_reader.close()
 
-
     # Setup read iterators.
     r1_length = args.r1_length
     r2_length = args.r2_length
@@ -214,6 +216,10 @@ def main(args, outs):
     read1_writer = ChunkedFastqWriter(outs.reads, args.reads_per_file, compression=COMPRESSION)
     if paired_end:
         read2_writer = ChunkedFastqWriter(outs.read2s, args.reads_per_file, compression=COMPRESSION)
+
+    tag_writer = None
+    if not args.augment_fastq:
+        tag_writer = ChunkedFastqWriter(outs.tags, args.reads_per_file, compression=COMPRESSION)
 
     bc_counter = BarcodeCounter(args.barcode_whitelist, outs.barcode_counts)
 
@@ -286,7 +292,11 @@ def main(args, outs):
             fastq_header1.set_tag(cr_constants.PROCESSED_FEATURE_BARCODE_TAG, feat_proc_bc)
             fastq_header1.set_tag(cr_constants.FEATURE_IDS_TAG, feat_ids)
 
-        read1_writer.write((fastq_header1.to_string(), rna_read[1], rna_read[2]))
+        if args.augment_fastq:
+            read1_writer.write((fastq_header1.to_string(), rna_read[1], rna_read[2]))
+        else:
+            read1_writer.write((rna_read[0], rna_read[1], rna_read[2]))
+            tag_writer.write((fastq_header1.to_string(), '', ''))
 
         if paired_end:
             fastq_header2 = AugmentedFastqHeader(rna_read2[0])
@@ -304,7 +314,10 @@ def main(args, outs):
                 fastq_header2.set_tag(cr_constants.PROCESSED_FEATURE_BARCODE_TAG, feat_proc_bc)
                 fastq_header2.set_tag(cr_constants.FEATURE_IDS_TAG, feat_ids)
 
-            read2_writer.write((fastq_header2.to_string(), rna_read2[1], rna_read2[2]))
+            if args.augment_fastq:
+                read2_writer.write((fastq_header2.to_string(), rna_read2[1], rna_read2[2]))
+            else:
+                read2_writer.write((rna_read2[0], rna_read2[1], rna_read2[2]))
 
     reporter.extract_reads_finalize()
 
@@ -319,6 +332,8 @@ def main(args, outs):
     read1_writer.close()
     if paired_end:
         read2_writer.close()
+    if not args.augment_fastq:
+        tag_writer.close()
     bc_counter.close()
 
     # Write feature BC read counts
@@ -328,21 +343,30 @@ def main(args, outs):
     # Set stage output parameters.
     if len(read1_writer.file_paths) > 0:
         outs.reads = read1_writer.get_out_paths()
+
         if paired_end:
             outs.read2s = read2_writer.get_out_paths(len(outs.reads))
         else:
             outs.read2s = []
+
+        if args.augment_fastq:
+            outs.tags = []
+        else:
+            outs.tags = tag_writer.get_out_paths(len(outs.tags))
+
         outs.gem_groups = [args.gem_group] * len(outs.reads)
         outs.library_types = [args.library_type] * len(outs.reads)
         outs.read_groups = [args.read_group] * len(outs.reads)
     else:
         outs.reads = []
         outs.read2s = []
+        outs.tags = []
         outs.gem_groups = []
         outs.library_types = []
         outs.read_groups = []
 
     assert len(outs.gem_groups) == len(outs.reads)
+    assert args.augment_fastq or len(outs.tags) == len(outs.reads)
 
     if paired_end:
         assert len(outs.reads) == len(outs.read2s)

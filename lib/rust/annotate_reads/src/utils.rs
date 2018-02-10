@@ -7,6 +7,8 @@ use std::str::FromStr;
 use std::fs::File;
 use std::collections::{HashMap};
 use std::path::Path;
+use std::ffi::OsStr;
+use lz4;
 
 use rust_htslib::bam::record::{Record, Cigar};
 use serde::de::DeserializeOwned;
@@ -127,7 +129,7 @@ pub struct CellrangerFastqHeader {
 }
 
 impl CellrangerFastqHeader {
-    pub fn new(header: String) -> CellrangerFastqHeader {
+    pub fn new(header: &str) -> CellrangerFastqHeader {
         let parts = header.clone().split("|||").map(|x| x.to_string()).collect::<Vec<String>>();
 
         let mut tags = HashMap::new();
@@ -142,7 +144,7 @@ impl CellrangerFastqHeader {
 
         CellrangerFastqHeader {
             qname: parts[0].to_string(),
-            header: header,
+            header: header.to_owned(),
             tags: tags,
         }
     }
@@ -194,6 +196,19 @@ pub fn intersect_vecs<T: PartialOrd + Eq + Clone>(x: &Vec<T>, y: &Vec<T>)
         }
     }
     result
+}
+
+pub fn open_lz4<P: AsRef<Path>>(filename: P) -> lz4::Decoder<File> {
+    let f = File::open(filename).expect("Failed to open file for reading");
+    lz4::Decoder::new(f).expect("Failed to create lz4 decoder")
+}
+
+pub fn open_maybe_compressed<P: AsRef<Path>>(filename: P) -> Box<Read> {
+    match filename.as_ref().extension().and_then(OsStr::to_str) {
+        Some("lz4") => Box::new(open_lz4(filename)) as Box<Read>,
+        _ => Box::new(File::open(filename)
+                      .expect("Failed to open file for reading")) as Box<Read>,
+    }
 }
 
 #[cfg(test)]

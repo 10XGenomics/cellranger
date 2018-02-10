@@ -16,6 +16,7 @@ import cellranger.utils as cr_utils
 __MRO__ = '''
 stage ATTACH_BCS_AND_UMIS(
     in  bam[]    genome_inputs,
+    in  fastq[]  tags,
     in  path     reference_path,
     in  csv      feature_reference,
     in  int[]    gem_groups,
@@ -60,10 +61,11 @@ def split(args):
     join_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
 
     chunks = []
-    for chunk_genome_input, gem_group, library_type in itertools.izip_longest(
-            args.genome_inputs, args.gem_groups, args.library_types):
+    for chunk_genome_input, tags, gem_group, library_type in itertools.izip_longest(
+            args.genome_inputs, args.tags, args.gem_groups, args.library_types):
         chunks.append({
             'chunk_genome_input': chunk_genome_input,
+            'tags': tags,
             'gem_group': gem_group,
             'library_type': library_type,
             'bam_comments_json': bam_comment_fn,
@@ -87,6 +89,7 @@ def main(args, outs):
     cmd = [
         'annotate_reads', 'main',
         args.chunk_genome_input,
+        args.tags,
         outs.output,
         outs.chunked_reporter,
         args.reference_path,

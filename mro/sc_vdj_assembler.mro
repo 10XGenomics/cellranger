@@ -149,6 +149,7 @@ pipeline SC_VDJ_ASSEMBLER(
         r2_length         = self.r2_length,
         skip_metrics      = self.skip_metrics,
         feature_reference = null,
+        augment_fastq     = true,
     )
 
     call volatile CORRECT_BARCODES(

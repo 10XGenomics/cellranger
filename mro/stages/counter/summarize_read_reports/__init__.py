@@ -21,6 +21,7 @@ stage SUMMARIZE_READ_REPORTS(
     in  string[] bam_comments,
     in  fastq[]  read1s,
     in  fastq[]  read2s,
+    in  fastq[]  tags,
     in  bool     retain_fastqs,
     in  map      chemistry_def,
     out json     summary,
@@ -34,6 +35,7 @@ stage SUMMARIZE_READ_REPORTS(
     out string[] bam_comments,
     out fastq[]  read1s,
     out fastq[]  read2s,
+    out fastq[]  tags,
     src py       "stages/counter/summarize_read_reports",
 ) split using (
     in  fastq    read1,
@@ -45,14 +47,16 @@ def split(args):
     paired_end = cr_chem.is_paired_end(args.chemistry_def)
     if paired_end:
         assert len(args.read1s) == len(args.read2s)
+    assert len(args.tags) == len(args.read1s)
 
     chunks = []
 
     if args.retain_fastqs:
-        for read1, read2 in itertools.izip_longest(args.read1s, args.read2s):
+        for read1, read2, tags in itertools.izip_longest(args.read1s, args.read2s, args.tags):
             chunks.append({
                 'read1': read1,
                 'read2': read2 if paired_end else None,
+                'tags': tags,
             })
 
     return {'chunks': chunks}
@@ -69,6 +73,11 @@ def main(args, outs):
         _, in_ext = cr_utils.splitexts(args.read2)
         outs.read2s = out_path + in_ext
         cr_utils.copy(args.read2, outs.read2s)
+    if args.tags is not None:
+        out_path, _ = cr_utils.splitexts(outs.tags)
+        _, in_ext = cr_utils.splitexts(args.tags)
+        outs.tags = out_path + in_ext
+        cr_utils.copy(args.tags, outs.tags)
 
 def join(args, outs, chunk_defs, chunk_outs):
     cr_utils.copy(args.extract_reads_summary, outs.summary)
@@ -83,3 +92,4 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     outs.read1s = [co.read1s for co in chunk_outs]
     outs.read2s = [co.read2s for co in chunk_outs]
+    outs.tags = [co.tags for co in chunk_outs]

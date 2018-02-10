@@ -16,6 +16,8 @@ extern crate serde;
 #[macro_use] extern crate serde_json;
 extern crate flate2;
 #[macro_use] extern crate bitflags;
+extern crate bio;
+extern crate lz4;
 
 mod barcodes;
 mod features;
@@ -51,7 +53,7 @@ use utils::CellrangerFastqHeader;
 
 const USAGE: &'static str = "
 Usage:
-  annotate_reads main <in-bam> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> [--fiveprime] [--bam-comments=F] [--feature-ref=F]
+  annotate_reads main <in-bam> <in-tags> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> [--fiveprime] [--bam-comments=F] [--feature-ref=F]
   annotate_reads join <in-metrics-list> <out-json> <out-bc-csv>
   annotate_reads (-h | --help)
 
@@ -70,6 +72,7 @@ struct Args {
 
     // main args
     arg_in_bam:             Option<String>,
+    arg_in_tags:            Option<String>,
     arg_out_bam:            Option<String>,
     arg_out_metrics:        Option<String>,
     arg_reference_path:     Option<String>,
@@ -172,11 +175,20 @@ fn annotate_reads_main(args: Args) {
     let mut reporter = Reporter::new(chroms, genomes, &annotator.get_transcript_index(), &annotator.get_params());
 
     println!("Processing reads");
-    // TODO untangle this mess and handle errors
+
     let mut num_alignments = 0;
-    for (qname, genome_alignments) in in_bam.records().map(|res| res.unwrap()).group_by(|rec| str::from_utf8(rec.qname()).unwrap().to_string()) {
+
+    let qname_iter = in_bam.records()
+        .map(|res| res.unwrap())
+        .group_by(|rec| str::from_utf8(rec.qname()).unwrap().to_string());
+
+    let tags_file = utils::open_maybe_compressed(args.arg_in_tags.unwrap());
+    let tags_iter = bio::io::fastq::Reader::new(BufReader::new(tags_file)).records();
+
+    for ((_qname, genome_alignments), tags_rec) in qname_iter.zip(tags_iter) {
         num_alignments += genome_alignments.len();
-        process_qname(qname, genome_alignments, &mut reporter,
+        process_qname(tags_rec.unwrap().id(),
+                      genome_alignments, &mut reporter,
                       &annotator, &bc_umi_checker, &feature_checker,
                       &mut out_bam, &gem_group);
     }
@@ -263,13 +275,14 @@ fn rescue_alignments(r1_data: &mut Vec<RecordData>, mut maybe_r2_data: Option<&m
     true
 }
 
-fn process_qname(qname: String, genome_alignments: Vec<Record>, reporter: &mut Reporter,
+fn process_qname(tag_string: &str,
+                 genome_alignments: Vec<Record>, reporter: &mut Reporter,
                  annotator: &TranscriptAnnotator,
                  bc_umi_checker: &BarcodeUmiChecker,
                  feature_checker: &Option<FeatureChecker>,
                  out_bam: &mut bam::Writer,
                  gem_group: &u8) {
-    let fastq_header = CellrangerFastqHeader::new(qname);
+    let fastq_header = CellrangerFastqHeader::new(tag_string);
 
     let bc_umi_data = bc_umi_checker.process_barcodes_and_umis(&fastq_header.tags);
 
@@ -389,6 +402,7 @@ mod tests {
             cmd_main:               true,
             cmd_join:               false,
             arg_in_bam:             Some(format!("test/{}/{}/align_reads.bam", reference, sample).into()),
+            arg_in_tags:            Some(format!("test/{}/{}/tags.fastq.lz4", reference, sample).into()),
             arg_out_bam:            Some(format!("{}/annotate_reads.bam", out_dir.to_str().unwrap()).into()),
             arg_out_metrics:        Some(format!("{}/metrics.bincode", out_dir.to_str().unwrap()).into()),
             arg_reference_path:     Some(format!("test/{}", reference).into()),
@@ -413,6 +427,7 @@ mod tests {
             cmd_main:               false,
             cmd_join:               true,
             arg_in_bam:             None,
+            arg_in_tags:            None,
             arg_out_bam:            None,
             arg_out_metrics:        None,
             arg_reference_path:     None,

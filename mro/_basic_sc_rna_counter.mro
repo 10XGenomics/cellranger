@@ -63,6 +63,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
         r2_length         = self.r2_length,
         skip_metrics      = false,
         feature_reference = self.feature_reference,
+        augment_fastq     = false,
     )
 
     call volatile SUMMARIZE_READ_REPORTS(
@@ -76,6 +77,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
         bam_comments          = EXTRACT_READS.bam_comments,
         read1s                = EXTRACT_READS.reads,
         read2s                = EXTRACT_READS.read2s,
+        tags                  = EXTRACT_READS.tags,
         retain_fastqs         = self.retain_fastqs,
         chemistry_def         = self.chemistry_def,
     )
@@ -92,6 +94,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
 
     call volatile ATTACH_BCS_AND_UMIS(
         genome_inputs                = ALIGN_READS.genome_output,
+        tags                         = SUMMARIZE_READ_REPORTS.tags,
         reference_path               = self.reference_path,
         feature_reference            = self.feature_reference,
         gem_groups                   = SUMMARIZE_READ_REPORTS.gem_groups,

@@ -21,6 +21,7 @@ stage SUMMARIZE_READ_REPORTS(
     in  string[] bam_comments,
     in  fastq[]  read1s,
     in  fastq[]  read2s,
+    in  fastq[]  tags,
     in  bool     retain_fastqs,
     in  map      chemistry_def,
     out json     summary,
@@ -33,10 +34,12 @@ stage SUMMARIZE_READ_REPORTS(
     out string[] bam_comments,
     out fastq[]  read1s,
     out fastq[]  read2s,
+    out fastq[]  tags,
     src py       "stages/counter/summarize_read_reports",
 ) split using (
     in  fastq    read1,
     in  fastq    read2,
+    in  fastq    tags,
 )
 
 stage SUMMARIZE_ATTACH(
@@ -73,6 +76,7 @@ stage ALIGN_READS(
 
 stage ATTACH_BCS_AND_UMIS(
     in  bam[]    genome_inputs,
+    in  fastq[]  tags,
     in  path     reference_path,
     in  csv      feature_reference,
     in  int[]    gem_groups,
@@ -99,7 +103,7 @@ stage ATTACH_BCS_AND_UMIS(
     src py       "stages/counter/attach_bcs_and_umis",
 ) split using (
     in  bam      chunk_genome_input,
-    in  bam      chunk_trimmed_input,
+    in  fastq    tags,
     in  int      gem_group,
     in  string   library_type,
     in  json     bam_comments_json,

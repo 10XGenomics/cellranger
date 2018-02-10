@@ -19,6 +19,8 @@ bincode = "*"
 rust-htslib = { git = "https://github.com/10xGenomics/rust-htslib", branch = "paul/set-qname" }
 flate2 = "*"
 bitflags = "*"
+bio = "*"
+lz4 = "*"
 
 [profile.release]
 #debug = true
