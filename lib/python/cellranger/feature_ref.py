@@ -145,8 +145,8 @@ class FeatureReference(object):
 def validate_sequence(seq):
     if len(seq) == 0:
         raise FeatureDefException('Feature sequence must be non-empty.')
-    if not re.match('^[ACGT]+', seq):
-        raise FeatureDefException('Invalid sequence: "%s". The only allowed characters are A, C, G, and T.' % seq)
+    if not re.match('^[ACGTN]+', seq):
+        raise FeatureDefException('Invalid sequence: "%s". The only allowed characters are A, C, G, T, and N.' % seq)
 
 def compile_pattern(pattern_str, length):
     ''' Compile a feature definition pattern into a regex '''
@@ -154,10 +154,15 @@ def compile_pattern(pattern_str, length):
         raise FeatureDefException('Invalid pattern: "%s". The pattern must contain the string "(BC)".' % pattern_str)
 
     check_pattern = re.sub('\(BC\)', '', pattern_str)
-    if not re.match('\^{0,1}[ACGT]*\${0,1}', check_pattern):
-        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "^", optionally end with "$", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, and T')
+    if not re.match('\^{0,1}[ACGTN]*\${0,1}', check_pattern):
+        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "^", optionally end with "$", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.')
 
-    regex_str = re.sub('\(BC\)', '(.{%d,%d})' % (length, length), pattern_str)
+    # Allow Ns to match anything
+    regex_str = re.sub('N', '.', pattern_str)
+
+    # Capture the feature barcode
+    regex_str = re.sub('\(BC\)', '(.{%d,%d})' % (length, length), regex_str)
+
     try:
         regex = re.compile(regex_str)
     except re.error:
