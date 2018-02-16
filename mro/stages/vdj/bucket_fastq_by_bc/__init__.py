@@ -68,6 +68,7 @@ def split(args):
             'read2s_chunk': fastq2 if paired_end else None,
             'bcs': bcs,
             'chunks_per_gem_group': chunks_per_gem_group,
+            '__mem_gb': 6,
         })
     return {'chunks': chunks}
 
