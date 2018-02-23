@@ -52,6 +52,7 @@ pipeline SC_RNA_COUNTER(
     out int[]    gem_groups,
     out map[]    subsampled_matrices,
     out csv      filtered_barcodes,
+    out string   chemistry_type,
 )
 {
     call preflight CELLRANGER_PREFLIGHT(
@@ -188,5 +189,6 @@ pipeline SC_RNA_COUNTER(
         gem_groups                    = _BASIC_SC_RNA_COUNTER.gem_groups,
         subsampled_matrices           = _BASIC_SC_RNA_COUNTER.subsampled_matrices,
         filtered_barcodes             = _BASIC_SC_RNA_COUNTER.filtered_barcodes,
+        chemistry_type                = CHEMISTRY_DETECTOR.chemistry_type,
     )
 }

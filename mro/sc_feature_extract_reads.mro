@@ -32,6 +32,7 @@ pipeline SC_FEATURE_EXTRACT_READS(
     in  csv      feature_reference,
     out bam      possorted_feature_bam,
     out json     feature_extract_summary,
+    out string   barcode_whitelist,
 )
 {
     call preflight CELLRANGER_PREFLIGHT(
@@ -100,5 +101,6 @@ pipeline SC_FEATURE_EXTRACT_READS(
     return (
         possorted_feature_bam   = _BASIC_SC_RNA_COUNTER.possorted_genome_bam,
         feature_extract_summary = _BASIC_SC_RNA_COUNTER.summary,
+        barcode_whitelist       = SETUP_CHUNKS.barcode_whitelist,
     )
 }
