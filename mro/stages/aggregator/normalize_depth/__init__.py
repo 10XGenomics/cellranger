@@ -72,7 +72,8 @@ def split(args):
                 'downsample_map': downsample_map,
                 'chunk_start': str(chunk_start),
                 'chunk_len': str(chunk_len),
-                '__mem_gb': cr_mol_counter.MoleculeCounter.estimate_mem_gb(chunk_len),
+                # Request enough for two copies
+                '__mem_gb': cr_mol_counter.MoleculeCounter.estimate_mem_gb(chunk_len, scale=2.0),
             })
     return {
         'chunks': chunks,

@@ -4,6 +4,7 @@
 #
 from collections import namedtuple, defaultdict
 import itertools
+import math
 import multiprocessing
 import numpy as np
 import tables
@@ -107,9 +108,10 @@ class MoleculeCounter:
         return sum([np.dtype(x).itemsize for x in MOLECULE_INFO_COLUMNS.values()])
 
     @staticmethod
-    def estimate_mem_gb(chunk_len):
+    def estimate_mem_gb(chunk_len, scale=1.0):
+        """ Estimate memory usage of this object given a number of records. """
         mol_entries_per_gb = int(1e9 / MoleculeCounter.get_record_bytes())
-        return max(cr_constants.MIN_MEM_GB, chunk_len / mol_entries_per_gb)
+        return max(cr_constants.MIN_MEM_GB, round(math.ceil(scale * chunk_len / mol_entries_per_gb)))
 
     @staticmethod
     def open(filename, mode, start=None, length=None):
