@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 #
 @include "_basic_sc_rna_counter.mro"
@@ -8,7 +8,7 @@
 filetype bam;
 filetype json;
 
-pipeline SC_FEATURE_EXTRACT_READS(
+pipeline _SC_FEATURE_COUNTER(
     in  string   sample_id,
     in  map[]    sample_def,
     in  string[] library_type_filter,
