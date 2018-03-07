@@ -30,7 +30,7 @@ class TestAnnotations(tk_test.UnitTestBase):
         assert(not cr_annotations.filter_alignment(res, 0, 1))
 
 
-    def test_setup_feature_aligner(self): 
+    def test_setup_feature_aligner(self):
         score_ratios = {"5U":0.8,"C":0.8,"D":0.5,"J":0.8,"V":0.8}
         word_sizes = {"5U":2,"C":3,"D":3,"J":5,"V":6}
         test_ref = in_path('annotation_setup_test_ref')
@@ -42,7 +42,7 @@ class TestAnnotations(tk_test.UnitTestBase):
 
         seq = 'TTAAAAAAAATTTTCCCC'
         for t, al, f in zip(features, aligners, filters):
-            alignments = cr_annotations.collect_annotations(al, seq, seq, f, False)
+            alignments = cr_annotations.collect_annotations(al, seq, seq, f)
             if t == '5U' or t == 'V' or t == 'D':
                 assert(alignments)
             else:
@@ -50,7 +50,7 @@ class TestAnnotations(tk_test.UnitTestBase):
                 # C doesn't have a good enough hit
                 assert(not alignments)
 
-    
+
     def test_coordinates(self):
         """Test that coordinates for matches are 0-based, half-open.
         """
@@ -62,7 +62,7 @@ class TestAnnotations(tk_test.UnitTestBase):
         aligner = [(al, f) for (t, al, f) in zip(features, aligners, filters) if t == 'V'][0]
 
         seq = 'AAAAAAAA'
-        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1], True)
+        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1])
         self.assertEqual(len(alignments), 1)
         anno = alignments[0]
         self.assertEqual(len(anno.mismatches), 0)
@@ -74,25 +74,24 @@ class TestAnnotations(tk_test.UnitTestBase):
         seq = 'AAATAAAA'
         features, aligners, filters = cr_annotations.setup_feature_aligners(test_ref, score_ratios, word_sizes)
         aligner = [(al, f) for (t, al, f) in zip(features, aligners, filters) if t == 'V'][0]
-        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1], True)
+        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1])
         anno = alignments[0]
-
-        self.assertEqual(len(anno.mismatches), 1)
+        mismatches = anno.annotate_mismatches(seq, anno.feature.sequence)
         mismatch = {'region_type':'MISMATCH',
                     'contig_match_start':3,
                     'contig_match_end':4}
-        self.assertEqual(anno.mismatches[0], mismatch)
+        self.assertEqual(mismatches[0], mismatch)
 
         test_ref = in_path('annotation_setup_test_ref')
         features, aligners, filters = cr_annotations.setup_feature_aligners(test_ref, score_ratios, word_sizes)
 
         aligner = [(al, f) for (t, al, f) in zip(features, aligners, filters) if t == 'V'][0]
-        
+
         test_ref = in_path('annotation_setup_test_ref2')
         fasta = vdj_reference.get_vdj_reference_fasta(test_ref)
         features, aligners, filters = cr_annotations.setup_feature_aligners(test_ref, score_ratios, word_sizes)
         aligner = [(al, f) for (t, al, f) in zip(features, aligners, filters) if t == 'V'][0]
-        
+
         with open(fasta, 'r') as f:
             true_seq = f.readlines()[1].strip()
 
@@ -100,23 +99,22 @@ class TestAnnotations(tk_test.UnitTestBase):
         middle = len(true_seq) / 2
         seq = true_seq[0:middle] + true_seq[middle+3:]
 
-        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1], True)
+        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1])
         anno = alignments[0]
+        mismatches = anno.annotate_mismatches(seq, anno.feature.sequence)
         mismatch = {'region_type':'D',
                     'contig_match_start':middle,
                     'contig_match_end':middle + 1, # convention
                     'deletion_length':3}
-        self.assertEqual(anno.mismatches[0], mismatch)
+        self.assertEqual(mismatches[0], mismatch)
 
         # Test insertion coordinates
         seq = true_seq[0:middle] + 'AAA' + true_seq[middle:]
 
-        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1], True)
+        alignments = cr_annotations.collect_annotations(aligner[0], seq, seq, aligner[1])
         anno = alignments[0]
-        print anno.mismatches, anno.cigar
+        mismatches = anno.annotate_mismatches(seq, anno.feature.sequence)
         mismatch = {'region_type':'I',
                     'contig_match_start':middle,
                     'contig_match_end':middle + 3}
-        self.assertEqual(anno.mismatches[0], mismatch)
-
-        
+        self.assertEqual(mismatches[0], mismatch)
