@@ -528,7 +528,6 @@ class STAR:
 
         args = [
             'STAR', '--genomeDir', self.reference_star_path,
-            '--readFilesIn', read1_fastq_fn, read2_fastq_fn,
             '--outSAMmultNmax', str(max_report_alignments_per_read),
             '--runThreadN', str(threads),
             '--readNameSeparator', 'space',
@@ -542,10 +541,21 @@ class STAR:
             args.append('--outSAMattrRGline')
             args.extend(read_group_tags)
 
+        args.append('--readFilesIn')
         if read1_fastq_fn.endswith(cr_constants.GZIP_SUFFIX):
-            args.extend(['--readFilesCommand', 'gzip -c -d'])
-        if read1_fastq_fn.endswith(cr_constants.LZ4_SUFFIX):
-            args.extend(['--readFilesCommand', 'lz4 -c -d'])
+            args.append('<(gzip -c -d \'%s\')' % read1_fastq_fn)
+            if read2_fastq_fn:
+                args.append('<(gzip -c -d \'%s\')' % read2_fastq_fn)
+
+        elif read1_fastq_fn.endswith(cr_constants.LZ4_SUFFIX):
+            args.append('<(lz4 -c -d \'%s\')' % read1_fastq_fn)
+            if read2_fastq_fn:
+                args.append('<(lz4 -c -d \'%s\')' % read2_fastq_fn)
+
+        else:
+            args.append(read1_fastq_fn)
+            if read2_fastq_fn:
+                args.append(read2_fastq_fn)
 
         if out_genome_bam_fn == cr_constants.BAM_FILE_STREAM:
             # stream to pipe for downstream processing
@@ -560,7 +570,41 @@ class STAR:
             # now streaming output can be read using pysam.Samfile('-', 'r')
             # NOTE: since this does not await termination of the process, we can't reliably check the return code
         else:
-            star = tk_subproc.Popen(args, stdout=subprocess.PIPE, cwd=cwd)
+            # NOTE: We'd like to pipe fastq files through a decompressor and feed those
+            # streams into STAR.
+            # STAR provides --readFilesCommand which will do this. But it uses a named pipe which
+            # breaks on some filesystems.
+
+            # We could also use anonymous pipes but we'd need a way to refer to them
+            # on the command line and apparently not all systems support the same
+            # /dev/fdN or procfs-like paths.
+
+            # So we're forced to use the shell and process subsitution, as is recommended
+            # here: https://groups.google.com/forum/#!msg/rna-star/MQdL1WxkAAw/eG6EatoOCgAJ
+
+            # Wrap arguments in single quotes
+            quoted_args = []
+            for arg in args:
+                if arg.startswith('<'):
+                    # We want the shell to interpret this as a process substitution
+                    quoted_args.append(arg)
+
+                elif "'" in arg:
+                    # We can't escape single quotes within single quoted strings.
+                    # But we can concatenate different quoting mechanisms.
+                    # ' => '"'"'
+                    # This is relevant if the RG string contains quotes, which
+                    # can happen if the user specifies such a library name.
+                    arg = arg.replace("'", "'\"'\"'")
+                    quoted_args.append("'%s'" % arg)
+
+                else:
+                    # Normal argument
+                    quoted_args.append("'%s'" % arg)
+
+            star_cmd = ' '.join(quoted_args)
+
+            star = tk_subproc.Popen(star_cmd, stdout=subprocess.PIPE, cwd=cwd, shell=True, executable='bash')
             star_log = os.path.join(cwd, 'Log.out')
 
             with open(out_genome_bam_fn, 'w') as f:
