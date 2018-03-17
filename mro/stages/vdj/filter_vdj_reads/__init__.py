@@ -78,7 +78,7 @@ def split(args):
             'read1_chunk': read1_fq,
             'read2_chunk': read2_fq,
             'barcodes_chunk': barcodes_json,
-            '__mem_gb': 3.0,
+            '__mem_gb': 3,
         })
 
     # Martian doesn't like empty chunk lists so create a chunk w/ empty data

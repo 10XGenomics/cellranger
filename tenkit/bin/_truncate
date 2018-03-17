@@ -1,0 +1,178 @@
+#!/usr/bin/env python
+#
+# Copyright (c) 2018 10x Genomics, Inc. All rights reserved.
+
+"""Truncate a text file by eliding all the but the first and last several
+lines, or a json file by substituting placeholders in such a way as to still be
+mostly usable by things which attempt to deserialize them."""
+
+import json
+import os
+import sys
+from collections import deque
+
+MAX_LOAD_SIZE = 256 * 1024 * 1024
+OUT_SIZE = 1024 * 1024
+
+BEGIN_LINES = 100
+END_LINES = 500
+MAX_LINE_LEN = 160
+
+
+def _copy_start(data, dest):
+    """Reads the first BEGIN_LINES from data, with safety to prevent loading
+    more than MAX_LOAD_SIZE bytes.  Leaves data no more than MAX_LOAD_SIZE from
+    the end of the file, noting the number of skipped bytes, if any.
+
+    :return: True if end of file was reached.
+
+    """
+    # First read the first BEGIN_LINES.  If any line is >= OUT_SIZE,
+    # abort reading those lines.
+    for _ in range(BEGIN_LINES):
+        line = data.readline(OUT_SIZE)
+        if not line:
+            return True
+        elif len(line) > MAX_LINE_LEN:
+            dest.write(line[:MAX_LINE_LEN - 4])
+            dest.write('...\n')
+            if len(line) == OUT_SIZE:
+                # Didn't actually find the end of the line. Stop reading lines
+                # and prepare to seek ahead.
+                break
+        else:
+            dest.write(line)
+    # Find out how much is left to read.  If it's > MAX_LOAD_SIZE, seek to
+    # OUT_SIZE before the end of the file and continue scanning lines from
+    # there.
+    start_point = data.tell()
+    data.seek(0, os.SEEK_END)
+    size = data.tell()
+    if size <= start_point:
+        return True
+    if size > MAX_LOAD_SIZE and size > start_point + OUT_SIZE:
+        dest.write('... %d bytes elided ...\n' %
+                   (size - OUT_SIZE - start_point))
+        data.seek(-OUT_SIZE, os.SEEK_END)
+    else:
+        # Continue from where we left off.
+        data.seek(start_point)
+    return False
+
+
+def truncate_text(data, dest):
+    """Take the first BEGIN_LINES and last END_LINES lines from a file.
+
+    Note the number of elided lines.
+
+    """
+    if _copy_start(data, dest):
+        return
+    buf = deque(maxlen=END_LINES)
+    elided = 0
+    # Safe to read entire lines because we've already checked the file size.
+    for line in data:
+        if len(buf) >= END_LINES:
+            elided += 1
+        if len(line) > MAX_LINE_LEN:
+            line = line[:MAX_LINE_LEN - 4] + '...\n'
+        buf.append(line)
+    if elided:
+        dest.write('... %d lines elided ...\n' % elided)
+    for line in buf:
+        dest.write(line)
+
+
+MAX_STR_LEN = 16
+MAX_LIST_LEN = 16
+
+
+def _truncate_object(obj):
+    """Remove elements from a json object to reduce its size.
+
+    Notes the original size in such a way as to not break expected types
+    for later readers.
+
+    - Integers and booleans are left alone.
+    - Strings less than _MAX_STR_LEN are left alone.  Longer strings are replaced with
+      "...suffix".
+    - Lists or objects of _MAX_LIST_LEN or fewer elements are truncated
+      recursively.
+    - For lists of more than _MAX_LIST_LEN elements, the first
+      (_MAX_LIST_LEN-1) elements are truncated recursively, and the next is
+      replaced by _truncate_report.
+    - Objects of more than 2 elements are replaced with {"truncated": <N>}
+
+    """
+    if isinstance(obj, dict):
+        if len(obj) > MAX_LIST_LEN:
+            return {'truncated': len(obj)}
+        return {key: _truncate_object(value) for key, value in obj.items()}
+    elif isinstance(obj, basestring):
+        if len(obj) > MAX_STR_LEN:
+            obj = os.path.basename(obj)
+        if len(obj) > MAX_STR_LEN:
+            return obj[:MAX_STR_LEN - 9] + '...' + obj[-6:]
+    elif isinstance(obj, list):
+        to_truncate = len(obj) - MAX_LIST_LEN
+        obj = [_truncate_object(item) for item in obj[:MAX_LIST_LEN]]
+        if to_truncate > 0:
+            obj[-1] = _truncate_report(obj[-1], to_truncate)
+    return obj
+
+
+def _truncate_report(obj, size):
+    """Returns the integer size wrapped to be the same type as obj.
+
+    - "str" -> "<size>"
+    - 1 -> <size>
+    - {...} -> {"truncated elements": <size>}
+    - empty list -> [<size>]
+    - non-empty lists recurse.
+
+    """
+    if isinstance(obj, basestring):
+        return '[%d more]' % size
+    elif isinstance(obj, dict):
+        return {'truncated elements': size}
+    elif isinstance(obj, list):
+        if obj:
+            return [_truncate_report(obj[0], size)]
+        return [size]
+    return size
+
+
+def truncate_json(obj, dest):
+    """json-serialize a truncated version of obj to dest."""
+    try:
+        obj = _truncate_object(obj)
+    except:
+        obj = {'truncated': True}
+    json.dump(obj, dest)
+
+
+def truncate_file(filename):
+    """Open the given named file and print a truncated version to stdout."""
+    with open(filename, 'r') as data:
+        is_json = False
+        data.seek(0, os.SEEK_END)
+        size = data.tell()
+        data.seek(0)
+        if size <= MAX_LOAD_SIZE:
+            is_json = True
+            try:
+                obj = json.load(data)
+            except:
+                is_json = False
+        try:
+            if is_json:
+                truncate_json(obj, sys.stdout)
+            else:
+                data.seek(0)
+                truncate_text(data, sys.stdout)
+        except UnicodeDecodeError:
+            sys.stdout.write('[binary data]\n')
+
+
+if __name__ == '__main__':
+    truncate_file(sys.argv[1])

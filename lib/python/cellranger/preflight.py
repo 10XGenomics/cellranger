@@ -72,16 +72,11 @@ def check_refdata(reference_path):
         if not os.path.isfile(p):
             raise PreflightException("Your reference does not contain the expected files, or they are not readable. Please check your reference folder on %s." % hostname)
 
-    fasta_path = os.path.join(reference_path, cr_constants.REFERENCE_FASTA_PATH)
     for filename in cr_constants.STAR_REQUIRED_FILES:
         p = os.path.join(reference_path, cr_constants.REFERENCE_STAR_PATH, filename)
         if not os.path.exists(p):
             raise PreflightException("Your reference doesn't appear to be indexed. Please run the mkreference tool")
 
-        # catch if fasta has been modified - buffer accounts for potential changed modification times based on copy/tarball extraction order
-        mtime_buffer = 60
-        if os.path.getmtime(p) + mtime_buffer < os.path.getmtime(fasta_path):
-             raise PreflightException("Timestamps on the STAR index files have changed. Please reindex your reference using the mkreference tool")
 
 def check_chemistry(name, custom_def, allowed_chems):
     check(cr_chem.check_chemistry_defs())

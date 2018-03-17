@@ -168,7 +168,21 @@ def prepare_transcriptome_indexes(reference_path, vdj_reference_path):
     ## Build kmer index
     martian.update_progress('Building kmer index...')
     kmer_idx_path = martian.make_path('kmers.idx')
-    run(['detect_chemistry', 'index-transcripts', out_fa_path, kmer_idx_path])
+
+    ## Use a larger step size as the reference grows.
+    ## This ensure the index size stays sane.  
+    ## Should get to a step of <10 for the whole genome, which 
+    ## is still 3x overlap w/ 32-mers
+    fa_size = os.path.getsize(os.path.realpath(out_fa_path))
+    step = fa_size / 400000000
+    skip = step - 1
+
+    index_args = ['detect_chemistry', 'index-transcripts']
+    if skip > 0:
+        index_args.append('--skip=%d' % skip)
+
+    index_args.extend([out_fa_path, kmer_idx_path])
+    run(index_args)
 
     # Build VDJ kmer index (optional)
     vdj_idx_path = None
@@ -273,7 +287,7 @@ def infer_sc3p_or_sc5p(chunks, kmer_idx_path, vdj_idx_path):
 
 # The only reason we split is to allow VDR to kill intermediate files
 def split(args):
-    return {'chunks': [{}]}
+    return {'chunks': [{'__mem_gb': 8}]}
 
 def main(args, outs):
     # Check chemistry restrictions

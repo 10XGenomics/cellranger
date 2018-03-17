@@ -1,4 +1,4 @@
-# Building Cell Ranger 2.1.0
+# Building Cell Ranger 2.1.1
 ## Build dependencies
 - Python 2.7.13
 - rust 1.19.0
@@ -36,7 +36,7 @@ source /path/to/cellranger/sourceme.bash
 
 ## Note about Loupe
 The binaries required to generate Loupe Cell Browser (.cloupe) and Loupe V(D)J Browser files (.vloupe) are not included in this repository or in the binary dependencies package Ranger. By default, you will get empty .cloupe/.vloupe files when running a version of Cell Ranger built from this repository. The necessary binaries can be obtained from an existing binary version of Cell Ranger by running:
-`cp /path/to/cellranger-2.1.0/cellranger-cs/*/lib/bin/{crconverter,vlconverter} /path/to/open-source-cellranger/lib/bin/`
+`cp /path/to/cellranger-2.1.1/cellranger-cs/*/lib/bin/{crconverter,vlconverter} /path/to/open-source-cellranger/lib/bin/`
 
 # Support
 We do not provide support for building and running this code.

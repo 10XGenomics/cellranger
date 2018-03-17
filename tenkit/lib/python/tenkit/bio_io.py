@@ -604,7 +604,10 @@ def combine_vcfs(output_filename, input_vcf_filenames):
     tk_tabix.sort_vcf(tmp_filename, output_filename)
     tk_tabix.index_vcf(output_filename)
 
-    os.remove(tmp_filename)
+    try:
+        os.remove(tmp_filename)
+    except:
+        pass
 
 
 def get_locus_info(locus):

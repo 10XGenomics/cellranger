@@ -6,6 +6,7 @@
 #
 
 source $TENX_SCRIPTDIR/../tenkit/bin/common/_includes
+$TENX_SCRIPTDIR/../tenkit/bin/common/_deprecation || exit 1
 
 # Source 10x environment for this product
 sourceme

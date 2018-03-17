@@ -15,6 +15,7 @@ import glob
 import socket
 import tenkit.log_subprocess
 import tenkit.bcl as tk_bcl
+import tenkit.lane as tk_lane
 import shutil
 import xml.etree.ElementTree as etree
 import martian
@@ -24,27 +25,33 @@ __MRO__ = """
 stage BARCODE_AWARE_BCL2FASTQ(
     in  path   run_path,
     in  int    num_threads,
+    in  bool   split_by_tile,
     out path   raw_fastq_path,
-    out bool   rc_i2_read,
-    out string si_read_type,
     src py     "stages/bcl_processor/barcode_aware_bcl2fastq",
 )
 split using (
+    in  string tile_suffix,
 )
 """
-
 def split(args):
     # Illumina bcl2fastq2 guide recommends 32GB RAM
-    return { 'chunks': [{'__threads':6, '__mem_gb': 32}] }
+    # empirical measurement on tile-divided NovaSeq S2 run = 8GB or so, 16 to be safe
+
+    if args.split_by_tile:
+        chunk_defs = [{'tile_suffix': char, '__threads': 6, '__mem_gb': 16} for char in "0123456789"]
+    else:
+        chunk_defs = [{'tile_suffix': '*', '__threads': 6, '__mem_gb': 32}]
+    return {'chunks': chunk_defs}
 
 def main(args, outs):
     process_raw_ilmn_data(args, outs)
 
 def join(args, outs, chunk_args, chunk_outs):
-    chunk = chunk_outs[0]
-    shutil.move(chunk.raw_fastq_path, outs.raw_fastq_path)
-    outs.rc_i2_read = chunk.rc_i2_read
-    outs.si_read_type = chunk.si_read_type
+    os.makedirs(outs.raw_fastq_path)
+    for chunk_out in chunk_outs:
+        for f in os.listdir(chunk_out.raw_fastq_path):
+            in_file = os.path.join(chunk_out.raw_fastq_path, f)
+            shutil.move(in_file, outs.raw_fastq_path)
 
 def process_raw_ilmn_data(args, outs):
     """
@@ -66,7 +73,6 @@ def process_raw_ilmn_data(args, outs):
     # Determine the RTA version of the run and whether this instrument
     # requires i2 to RC'd
     (rta_version, rc_i2_read, bcl_params) = tk_bcl.get_rta_version(args.run_path)
-    outs.rc_i2_read = rc_i2_read
     martian.log_info("BCL folder RTA Version: %s" % rta_version)
     martian.log_info("BCL params: %s" % str(bcl_params))
 
@@ -77,9 +83,8 @@ def process_raw_ilmn_data(args, outs):
     (major_ver, full_ver) = tk_bcl.check_bcl2fastq(hostname, rta_version)
 
     martian.log_info("Using bcl2fastq version: %s" % full_ver)
-    martian.log_info("RC'ing i2 read: %s" % str(rc_i2_read))
 
-    outs.si_read_type = get_si_read_type(read_info)
+    tile_split = args.tile_suffix != '*'
 
     try:
         # Internal use only. Move aside Illumina sample sheet so
@@ -105,6 +110,9 @@ def process_raw_ilmn_data(args, outs):
     new_environ['LD_LIBRARY_PATH'] = os.environ['_TENX_LD_LIBRARY_PATH']
 
     if major_ver == tk_bcl.BCL2FASTQ_V1:
+        if tile_split:
+            martian.throw("Cannot support NovaSeq demux scheme on bcl2fastq v1.  Exiting.")
+
         # configure
         # write bigger fastq chunks to avoid blow-up of chunks
         cmd = [ "configureBclToFastq.pl",  "--fastq-cluster-count", "20000000",
@@ -138,26 +146,56 @@ def process_raw_ilmn_data(args, outs):
             martian.throw("Bcl2Fastq was killed with signal %d." % ret)
 
     elif major_ver == tk_bcl.BCL2FASTQ_V2:
+        if tile_split:
+            proj_output_dir = os.path.join(output_dir, "Tile%s" % args.tile_suffix, "Project_%s" % flowcell)
+        else:
+            proj_output_dir = os.path.join(output_dir, "Project_%s" % flowcell)
 
-        proj_output_dir = os.path.join(output_dir, "Project_%s" % flowcell)
         fastq_output_dir = os.path.join(proj_output_dir, "fastq")
         interop_output_dir = os.path.join(proj_output_dir, "interop")
+
+        if not os.path.exists(fastq_output_dir):
+            os.makedirs(fastq_output_dir)
 
         if not os.path.exists(interop_output_dir):
             os.makedirs(interop_output_dir)
 
         min_read_length = min([x["read_length"] for x in read_info])
 
-        cmd = [ "bcl2fastq" ,
-                "--minimum-trimmed-read-length", str(min_read_length),
-                # PIPELINES-1140 - required in bcl2fastq 2.17 to generate correct index read fastqs
-                "--mask-short-adapter-reads", str(min_read_length),
-                # LONGRANGER-121 - ignore missing bcl data
-                "--ignore-missing-bcls", "--ignore-missing-filter", "--ignore-missing-positions", "--ignore-missing-controls",
-                '-r', str(args.__threads), '-w', str(args.__threads),
-                "--use-bases-mask=" + use_bases_mask_val, "-R", args.run_path,
-                "--output-dir=" + fastq_output_dir,
-                "--interop-dir=" + interop_output_dir ]
+        if tile_split:
+            flowcell_info = tk_lane.get_flowcell_layout(run_info_xml)
+            if flowcell_info.tile_length is None:
+                martian.throw("Cannot determine tile name length from RunInfo.xml")
+
+            tiles_regex_prefix = "[0-9]"*(flowcell_info.tile_length-1)
+            tiles_regex = "%s%s" % (tiles_regex_prefix, args.tile_suffix)
+            cmd = [ "bcl2fastq" ,
+                    "--minimum-trimmed-read-length", str(min_read_length),
+                    # PIPELINES-1140 - required in bcl2fastq 2.17 to generate correct index read fastqs
+                    "--mask-short-adapter-reads", str(min_read_length),
+                    # LONGRANGER-121 - ignore missing bcl data
+                    "--ignore-missing-bcls", "--ignore-missing-filter", "--ignore-missing-positions", "--ignore-missing-controls",
+                    '-r', str(args.__threads), '-w', str(args.__threads),
+                    # TENKIT-72 avoid CPU oversubscription
+                    '-p', str(args.__threads),
+                    "--use-bases-mask=" + use_bases_mask_val, "-R", args.run_path,
+                    "--output-dir=" + fastq_output_dir,
+                    "--interop-dir=" + interop_output_dir,
+                    "--tiles=" + tiles_regex]
+        else:
+            cmd = ["bcl2fastq",
+                   "--minimum-trimmed-read-length", str(min_read_length),
+                   # PIPELINES-1140 - required in bcl2fastq 2.17 to generate correct index read fastqs
+                   "--mask-short-adapter-reads", str(min_read_length),
+                   # LONGRANGER-121 - ignore missing bcl data
+                   "--ignore-missing-bcls", "--ignore-missing-filter", "--ignore-missing-positions",
+                   "--ignore-missing-controls",
+                   '-r', str(args.__threads), '-w', str(args.__threads),
+                   # TENKIT-72 avoid CPU oversubscription
+                   '-p', str(args.__threads),
+                   "--use-bases-mask=" + use_bases_mask_val, "-R", args.run_path,
+                   "--output-dir=" + fastq_output_dir,
+                   "--interop-dir=" + interop_output_dir]
 
         martian.log_info("Running bcl2fastq 2: %s" % (" ".join(cmd)))
 
@@ -172,34 +210,15 @@ def process_raw_ilmn_data(args, outs):
             martian.exit("bcl2fastq was killed with signal %d." % ret)
 
    # Glob over all lanes - demultiplex handles whether to collapse them
-    fastq_glob = os.path.join(output_dir, "Project_" + flowcell, "*", "*.fastq*")
+    if tile_split:
+        fastq_glob = os.path.join(output_dir, "Tile*", "Project_" + flowcell, "*", "*.fastq*")
+    else:
+        fastq_glob = os.path.join(output_dir, "Project_" + flowcell, "*", "*.fastq*")
     start_fastq_files = glob.glob(fastq_glob)
 
     # File renaming -- bcl2fastq names the reads R1, R2, R3, R4
     # Use our conventions to make them R1, I1, I2, R2, as the case may be.
     rename_fastq_files(read_info, start_fastq_files)
-
-
-def get_si_read_type(read_info):
-    si_read_type = None
-    # First search for an index read of the default length
-    for read in read_info:
-        if read["index_read"] and read["read_length"] == DEMULTIPLEX_DEFAULT_SAMPLE_INDEX_LENGTH:
-            si_read_type = read["read_name"]
-            break
-    # Fall back to searching for an index read that is not the old 10x barcode length
-    if si_read_type is None:
-        for read in read_info:
-            if read["index_read"] and read["read_length"] != DEMULTIPLEX_BARCODE_LENGTH:
-                si_read_type = read["read_name"]
-                break
-
-    if si_read_type:
-        martian.log_info("SI read type: %s" % si_read_type)
-    else:
-        martian.log_info("No SI read detected")
-
-    return si_read_type
 
 
 def rename_fastq_files(read_info, file_list):

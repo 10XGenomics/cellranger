@@ -158,6 +158,20 @@ def get_rta_version(input_path):
     return (rta_version, rc_i2, params)
 
 
+def get_sequencer_type(input_path):
+    """
+    Returns the sequencer type from runParameters.xml in the input path.
+
+    TODO: Perhaps look at the flowcell ID instead (see Preyas'
+    Illumina identification code to see if that's more robust)
+    """
+    _, _, params = get_rta_version(input_path)
+    if 'ApplicationName' in params:
+        return params['ApplicationName'].split()[0]
+    else:
+        return None
+
+
 def load_run_info(run_info_xml):
     """
     Get the read names and read lengths from the Illumina RunInfo.xml file

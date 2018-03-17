@@ -10,10 +10,13 @@ import log_subprocess
 import subprocess
 import gzip
 
+# Manual fix for vcfsort command-line tool, but extend the number of header lines permitted from 1k to 10k
+# don't use the vcfsort cmd-line tool!
 def sort_vcf(input_filename, output_filename):
-    out_file = open(output_filename, 'w')
-    log_subprocess.check_call(['vcfsort', input_filename], stdout=out_file)
-    out_file.close()
+    with open(output_filename, 'w') as out_file:
+        args = "head -10000 %s | grep \"^#\"; cat %s | grep -v \"^#\" | sort -k1,1d -k2,2n" % (input_filename, input_filename)
+        subprocess.check_call(args, shell=True, stdout=out_file)
+
 
 def index_vcf(filename):
     pysam.tabix_index(filename, preset='vcf', force=True)

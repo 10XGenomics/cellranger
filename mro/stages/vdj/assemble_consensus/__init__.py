@@ -108,7 +108,7 @@ def split(args):
     chunks = []
 
     full_annot_mem = vdj_utils.get_mem_gb_from_annotations_json(args.annotations_json)
-    join_mem_gb = max(16.0, full_annot_mem)
+    join_mem_gb = max(16, full_annot_mem)
 
     if num_clonotypes > 0:
         # Pick a chunk 0..num_chunks num_clonotypes times.

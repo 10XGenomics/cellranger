@@ -586,13 +586,26 @@ def infer_sc5p_chemistry(fq_spec):
 def infer_scvdj_chemistry(fq_spec):
     """ Infer the SCVDJ chemistry from the R1 length.
         fq_spec (FastqSpec) - for a single sample index/name """
-    name = infer_sc5p_chemistry(fq_spec)
+    assert fq_spec.is_single_group()
 
-    if name == 'SC5P-PE':
-        return 'SCVDJ'
-    elif name == 'SC5P-R2':
-        return 'SCVDJ-R2'
-    elif name == 'SC5P-R1':
-        raise ValueError("Single-end (SC5P-R1) is not supported for V(D)J.")
+    r1_fastqs = fq_spec.get_fastqs('R1')
+
+    if len(r1_fastqs) == 0:
+        raise NoInputFastqsException()
+
+    r1_len = _compute_r1_length(r1_fastqs, reads_interleaved=fq_spec.interleaved)
+
+
+    if fq_spec.interleaved:
+        # Single-end + interleaved is unsupported.
+        single_end = False
     else:
-        raise ValueError("Cannot translate chemistry %s from SC5P to SCVDJ.")
+        r2_fastqs = fq_spec.get_fastqs('R2')
+        single_end = len(r2_fastqs) == 0
+
+    if single_end:
+        raise ValueError("Single-end (SC5P-R1) is not supported for V(D)J.")
+    elif r1_len >= cr_constants.DETECT_VDJ_CHEMISTRY_MIN_R1_LEN_PE:
+        return 'SCVDJ'
+    else:
+        return 'SCVDJ-R2'

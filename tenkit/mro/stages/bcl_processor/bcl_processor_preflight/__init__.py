@@ -9,7 +9,7 @@ import xml.etree.ElementTree
 import martian
 import tenkit.constants as tk_constants
 import tenkit.preflight as tk_preflight
-import tenkit.bcl
+import tenkit.bcl as tk_bcl
 
 __MRO__ = """
 stage BCL_PROCESSOR_PREFLIGHT(
@@ -19,7 +19,6 @@ stage BCL_PROCESSOR_PREFLIGHT(
     src py   "stages/preflight/bcl_processor",
 )
 """
-
 def main(args, outs):
     hostname = socket.gethostname()
 
@@ -61,7 +60,7 @@ def main(args, outs):
         print "Checking bcl2fastq..."
         # Determine the RTA version of the run and whether this instrument
         # requires i2 to RC'd
-        (rta_version, rc_i2_read, bcl_params) = tenkit.bcl.get_rta_version(args.run_path)
+        (rta_version, rc_i2_read, bcl_params) = tk_bcl.get_rta_version(args.run_path)
         martian.log_info("RTA Version: %s" % rta_version)
         martian.log_info("BCL Params: %s" % str(bcl_params))
 
@@ -69,7 +68,7 @@ def main(args, outs):
         # Determine the best available bcl2fastq version to use
         # Will call martian.exit() with an error message if there isn't
         # a compatible version available
-        (major_ver, full_ver) = tenkit.bcl.check_bcl2fastq(hostname, rta_version)
+        (major_ver, full_ver) = tk_bcl.check_bcl2fastq(hostname, rta_version)
         martian.log_info("Running bcl2fastq mode: %s.  Version: %s" % (major_ver, full_ver))
 
     ok, msg = tk_preflight.check_open_fh()

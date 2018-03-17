@@ -1086,7 +1086,8 @@ def make_library_map_aggr(gem_group_index):
     # store gem group mapping for use by Cell Loupe
     library_ids = []
     original_gem_groups = []
-    for ng, (lid, og) in sorted(gem_group_index.iteritems()):
+    # Sort numerically by new gem group
+    for ng, (lid, og) in sorted(gem_group_index.iteritems(), key=lambda pair: int(pair[0])):
         library_ids.append(lid)
         original_gem_groups.append(og)
     library_map = {

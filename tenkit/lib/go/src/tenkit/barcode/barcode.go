@@ -5,6 +5,7 @@ package barcode
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"sort"
@@ -27,12 +28,13 @@ const BLANK_WHITELIST_FILE = "none"
 func NewBarcodeCounter(whitelistFile string) *BarcodeCounter {
 	if whitelistFile == BLANK_WHITELIST_FILE {
 		return &BarcodeCounter{
-			barcodeCounts: make(map[string]int),
-			whitelistArray: []string{},
+			barcodeCounts:   make(map[string]int),
+			whitelistArray:  []string{},
 			whitelistExists: false,
-			mismatchCount: 0, totalCount: 0}
+			mismatchCount:   0, totalCount: 0}
 	}
 	file, _ := os.Open(whitelistFile)
+	defer file.Close()
 	reader := bufio.NewReader(file)
 	barcodeCounts := make(map[string]int)
 	whitelistArray := []string{}
@@ -48,11 +50,11 @@ func NewBarcodeCounter(whitelistFile string) *BarcodeCounter {
 		}
 	}
 	return &BarcodeCounter{
-		barcodeCounts: barcodeCounts,
-		whitelistArray: whitelistArray,
+		barcodeCounts:   barcodeCounts,
+		whitelistArray:  whitelistArray,
 		whitelistExists: true,
-		mismatchCount: 0,
-		totalCount: 0}
+		mismatchCount:   0,
+		totalCount:      0}
 }
 
 func (c *BarcodeCounter) CountBarcode(barcode string, barcodeQual []byte) {
@@ -176,11 +178,9 @@ type BarcodeValidator struct {
 	bcConfidenceThreshold float64
 }
 
-func NewBarcodeValidator(whitelist_filename string, max_expected_barcode_errors float64, barcodeCounts string, bcConfidenceThreshold float64, gemGroup string) *BarcodeValidator {
-	if whitelist_filename == "none" || barcodeCounts == "none" {
-		return &BarcodeValidator{whitelist: map[string]bool{}, max_expected_errors: max_expected_barcode_errors, whitelist_exists: false}
-	}
+func loadWhitelist(whitelist_filename string) (map[string]bool, []string) {
 	file, _ := os.Open(whitelist_filename)
+	defer file.Close()
 	reader := bufio.NewReader(file)
 	whitelist_map := map[string]bool{}
 	whitelistArray := []string{}
@@ -196,22 +196,52 @@ func NewBarcodeValidator(whitelist_filename string, max_expected_barcode_errors 
 		}
 	}
 	sort.Strings(whitelistArray)
+	return whitelist_map, whitelistArray
+}
+
+func getCountsForGem(barcodeCounts string, gemGroup string) []int {
 	//load barcode counts
 	bcCountFile, _ := os.Open(barcodeCounts)
+	defer bcCountFile.Close()
 	decoder := json.NewDecoder(bcCountFile)
 	var barcodeCountsObj map[string]BarcodeCounts
 	decoder.Decode(&barcodeCountsObj)
-	barcodeRates := map[string]float64{}
+	return barcodeCountsObj[gemGroup].Bc_counts
+}
+
+func NewBarcodeValidator(whitelist_filename string, max_expected_barcode_errors float64, barcodeCounts string, bcConfidenceThreshold float64, gemGroup string) *BarcodeValidator {
+	if whitelist_filename == "none" || barcodeCounts == "none" {
+		return &BarcodeValidator{
+			whitelist:           map[string]bool{},
+			max_expected_errors: max_expected_barcode_errors,
+			whitelist_exists:    false,
+		}
+	}
+	whitelist_map, whitelistArray := loadWhitelist(whitelist_filename)
+	bc_counts := getCountsForGem(barcodeCounts, gemGroup)
+	if len(bc_counts) > len(whitelistArray) {
+		panic(fmt.Sprintf(
+			"Expected no more than %d barcode counts for gem group %s in %s, "+
+				"but found %d.  There should not be counts for barcodes not in %s",
+			len(whitelistArray), gemGroup, barcodeCounts,
+			len(bc_counts),
+			whitelist_filename))
+	}
+	barcodeRates := make(map[string]float64, len(bc_counts))
 	barcodeSum := 0.0
-	for _, count := range barcodeCountsObj[gemGroup].Bc_counts {
+	for _, count := range bc_counts {
 		barcodeSum += float64(count + 1)
 	}
-	for index, count := range barcodeCountsObj[gemGroup].Bc_counts {
+	for index, count := range bc_counts {
 		barcodeRates[whitelistArray[index]] = float64(count+1) / barcodeSum
 	}
-	return &BarcodeValidator{whitelist: whitelist_map,
-		max_expected_errors: max_expected_barcode_errors,
-		whitelist_exists:    true, barcodeRates: barcodeRates, bcConfidenceThreshold: bcConfidenceThreshold}
+	return &BarcodeValidator{
+		whitelist:             whitelist_map,
+		max_expected_errors:   max_expected_barcode_errors,
+		whitelist_exists:      true,
+		barcodeRates:          barcodeRates,
+		bcConfidenceThreshold: bcConfidenceThreshold,
+	}
 }
 
 type BarcodeCounts struct {

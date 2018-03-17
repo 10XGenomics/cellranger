@@ -23,22 +23,34 @@ pipeline BCL_PROCESSOR(
         check_executables = true,
     )
 
-    call volatile BARCODE_AWARE_BCL2FASTQ(
-        run_path    = self.run_path,
-        num_threads = 6,
+    call COMPUTE_DEMUX_PARAMS(
+        run_path = self.run_path,
     )
 
-    call DEMULTIPLEX(
+    call volatile BARCODE_AWARE_BCL2FASTQ(
+        run_path      = self.run_path,
+        num_threads   = 6,
+        split_by_tile = COMPUTE_DEMUX_PARAMS.split_by_tile,
+    )
+
+    call volatile DEMULTIPLEX(
         raw_fastq_path          = BARCODE_AWARE_BCL2FASTQ.raw_fastq_path,
-        rc_i2_read              = BARCODE_AWARE_BCL2FASTQ.rc_i2_read,
-        si_read_type            = BARCODE_AWARE_BCL2FASTQ.si_read_type,
+        rc_i2_read              = COMPUTE_DEMUX_PARAMS.rc_i2_read,
+        si_read_type            = COMPUTE_DEMUX_PARAMS.si_read_type,
         sample_index_error_rate = 0.15,
         interleave              = true,
+        split_by_tile           = COMPUTE_DEMUX_PARAMS.split_by_tile,
+    )
+
+    call MERGE_FASTQS_FROM_TILES(
+        demultiplexed_fastq_path = DEMULTIPLEX.demultiplexed_fastq_path,
+        common_bcs               = DEMULTIPLEX.common_bcs,
+        split_by_tile            = COMPUTE_DEMUX_PARAMS.split_by_tile,
     )
 
     return (
-        fastq_path          = DEMULTIPLEX.demultiplexed_fastq_path,
+        fastq_path          = MERGE_FASTQS_FROM_TILES.demultiplexed_fastq_path,
         demultiplex_summary = DEMULTIPLEX.demultiplex_summary,
-        si_read_type        = BARCODE_AWARE_BCL2FASTQ.si_read_type,
+        si_read_type        = COMPUTE_DEMUX_PARAMS.si_read_type,
     )
 }

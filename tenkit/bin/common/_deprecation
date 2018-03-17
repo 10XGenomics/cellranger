@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2018 10x Genomics, Inc. All rights reserved.
+#
+# Common functions to detect and warn against deprecated operating systems.
+#
+
+function check {
+    if [ ! -z "$1" ]; then
+        echo "WARNING: This operating system version is unsupported or will soon be unsupported:"
+        echo "($1)"
+        echo "Future releases of this pipeline will require RedHat/CentOS 6 or greater,"
+        echo "or Ubuntu 12 or greater."
+        echo "For more information, see support.10xgenomics.com/os-support."
+        echo ""
+        echo "To continue running this version for now, set TENX_IGNORE_DEPRECATED_OS=1"
+        echo "in your environment."
+        exit 1
+    fi
+}
+
+if [ -z "$TENX_IGNORE_DEPRECATED_OS" ]; then
+    # Check for deprecated red-hat derivatives
+    check "$(grep -sh ' 5\.' /etc/redhat-release /etc/rocks-release /etc/os-release /etc/system-release)"
+    # Check for Ubuntu or Suse 10 or 11
+    check "$(grep -sh ' 1[01]\.' /etc/lsb-release)"
+    check "$(grep -sh ' [1-9]\.' /etc/lsb-release)"
+    check "$(grep -sh 'SUSE.* 1[01]\b' /etc/SuSE-release)"
+    # Check for Debian 6 or earlier
+    check "$(grep -sh 'PRETTY_NAME="Debian.*\b[1-6]\.' /etc/os-release)"
+fi

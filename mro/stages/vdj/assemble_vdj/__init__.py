@@ -107,7 +107,7 @@ def split(args):
 
         # The assembly step takes roughly num_reads * MEM_BYTES_PER_READ bytes of memory to complete each BC.
         if args.mem_gb is None:
-            mem_gb = max(2.0, int(np.ceil(MEM_BYTES_PER_READ * max_reads / 1e9)))
+            mem_gb = max(2, int(np.ceil(MEM_BYTES_PER_READ * max_reads / 1e9)))
         else:
             mem_gb = args.mem_gb
 

@@ -62,8 +62,8 @@ def split(args):
     else:
         subsampling_deciles = []
 
-    # All target depths
-    target_rpcs = cr_constants.SUBSAMPLE_READS_PER_CELL + subsampling_deciles
+    # All target depths - make integers and uniqify
+    target_rpcs = sorted(list(set(map(int, cr_constants.SUBSAMPLE_READS_PER_CELL + subsampling_deciles))))
 
     for subsample_type, rpc_multiplier in [(cr_constants.RAW_SUBSAMPLE_TYPE, mapped_read_frac),
                                            (cr_constants.MAPPED_SUBSAMPLE_TYPE, 1.0)]:

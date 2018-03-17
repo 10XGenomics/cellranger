@@ -95,7 +95,8 @@ pub fn index_transcripts_mphf<R: Read, K: Kmer + Hash>(fa_reader: fasta::Reader<
                                                        est_n_kmers: usize,
                                                        skip_bases: usize,
                                                        gamma: f64) -> BBHashKmerIndex<K> {
-    let mut kmers = Vec::<K>::with_capacity(est_n_kmers);
+    let est_index_kmers = est_n_kmers / (1 + skip_bases);
+    let mut kmers = Vec::<K>::with_capacity(est_index_kmers);
 
     for rec in fa_reader.records()
         .map(|rec| rec.expect("Failed to parse FASTA record"))
@@ -118,13 +119,23 @@ pub fn index_transcripts_mphf<R: Read, K: Kmer + Hash>(fa_reader: fasta::Reader<
     let mphf = Mphf::new(gamma, &kmers, None);
 
     info!("Arranging {} unique kmers", kmers.len());
-    // Permuting in-place murders the cache, so copy
-    let mut arranged_kmers = vec![K::empty(); kmers.len()];
-    for kmer in kmers {
-        arranged_kmers[mphf.hash(&kmer) as usize] = kmer;
+
+    // In-place permutation to avoid doubling the memory consumption
+    // I _think_ this is within a constant factor of the copying version ~ one cache miss per element.
+    for i in 0 .. kmers.len() {
+        loop {
+            let kmer_slot = mphf.hash(&kmers[i]) as usize;
+            if i == kmer_slot { break; }
+            kmers.swap(i, kmer_slot);
+        }
     }
 
-    BBHashKmerIndex::new(arranged_kmers, mphf)
+    // use loop below to verify correct ordering of kmers
+    //for i in 0 .. kmers.len() {
+    //    assert_eq!(i, mphf.hash(&kmers[i]) as usize);
+    //}
+
+    BBHashKmerIndex::new(kmers, mphf)
 }
 
 // Get the type of kmer index stored in a file

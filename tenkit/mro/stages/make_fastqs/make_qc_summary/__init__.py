@@ -360,21 +360,24 @@ def join(args, outs, chunk_args, chunk_outs):
                 }
         samples_qc[sample] = sample_qc
 
-    # finish with sequencing run interop parsing
-    sequencing_stats = tk_qc.get_illumina_sequencing_metrics(args.run_path)
+    try:
+        # finish with sequencing run interop parsing
+        sequencing_stats = tk_qc.get_illumina_sequencing_metrics(args.run_path)
 
-    # add barcode stats
-    sequencing_stats = tk_qc.infer_symbolic_read_metrics(
-        sequencing_stats, "barcode", args.bc_read_type, args.bc_start_index, args.bc_length)
-
-    # add sample index stats
-    sequencing_stats = tk_qc.infer_symbolic_read_metrics(
-        sequencing_stats, "sample_index", args.si_read_type, start_idx=0, length=8)
-
-    # add UMI stats if present
-    if args.umi_read_type:
+        # add barcode stats
         sequencing_stats = tk_qc.infer_symbolic_read_metrics(
-            sequencing_stats, "umi", args.umi_read_type, args.umi_start_index, args.umi_length)
+            sequencing_stats, "barcode", args.bc_read_type, args.bc_start_index, args.bc_length)
+
+        # add sample index stats
+        sequencing_stats = tk_qc.infer_symbolic_read_metrics(
+            sequencing_stats, "sample_index", args.si_read_type, start_idx=0, length=8)
+
+        # add UMI stats if present
+        if args.umi_read_type:
+            sequencing_stats = tk_qc.infer_symbolic_read_metrics(
+                sequencing_stats, "umi", args.umi_read_type, args.umi_start_index, args.umi_length)
+    except BaseException:
+        sequencing_stats = {}
 
     sequencing_stats.update({'sample_qc': samples_qc})
     sequencing_stats = shim_standard_qc_synonyms(sequencing_stats, replace=True)

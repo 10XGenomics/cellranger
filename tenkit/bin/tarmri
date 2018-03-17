@@ -10,7 +10,7 @@ ecode=$2
 cmdline=$3
 email="support@10xgenomics.com"
 tarfile=$(basename $folder).mri.tgz
-files="input_samplesheet.csv summary_cs.csv summary.json summary.txt summary_cs.txt metrics_summary_csv.csv metrics_summary_json.json web_summary.html"
+files="samplesheet.csv input_samplesheet.csv summary_cs.csv summary.json summary.txt summary_cs.txt metrics_summary_csv.csv metrics_summary_json.json web_summary.html Log.out"
 limit_filesize_patterns=(.json)
 
 if [ -d $folder ]; then
@@ -35,9 +35,33 @@ if [ -d $folder ]; then
 	files_options="$files_options -o -name $f ${more_options}"
     done
 
+    # Find large metadata files and make truncated versions of them.
+    truncated_files=""
+    for f in $(find $folder -type f \( -size +1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" -name '_*' \)); do
+        _truncate "$f" > "$f._truncated_"
+        truncated_files="$truncated_files \"$f._truncated_\""
+    done
+
     # Generate log tar file.
     echo -e "Saving pipestance info to $folder/$tarfile"
-    find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | tar zcf $tarfile --null -T -
+
+    # Use transform option if it exists to rewrite truncated file names to
+    # their originals. CentOS 5's tar version lacks the --transform option,
+    # however, so in that case we just leave the file names alone.
+    tar --help | grep -e --transform > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | \
+            tar zcf $tarfile --null --transform='s/\._truncated_$//' -T -
+    else
+        find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | \
+            tar zcf $tarfile --null -T -
+    fi
+    # Clean up truncated versions of files, if any were created.
+    if [ -n "$truncated_files" ]; then
+        for f in $truncated_files; do
+            rm -f $f
+        done
+    fi
     mv -t $folder $tarfile
 
     if [ -n "$TENX_AUTOSUPPORT_SENDER" ]; then

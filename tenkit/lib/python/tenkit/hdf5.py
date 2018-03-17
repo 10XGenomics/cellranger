@@ -335,6 +335,35 @@ def read_data_frame(fn, query_cols=[]):
 
         return df
 
+def read_data_frame_limited(fn, query_cols=[], max_rows=None):
+    ''' Load a pandas DataFrame from an HDF5 file. If a column list is specified, only load the matching columns '''
+
+    with h5py.File(fn, 'r') as f:
+
+        column_names = f.attrs.get("column_names")
+        column_names = get_column_intersection(column_names, query_cols)
+
+        sz = f[column_names[0]].shape[0]
+        if max_rows:
+            sz = min(sz, max_rows)
+
+        df = p.DataFrame()
+
+        # Add the columns progressively to save memory
+        for name in column_names:
+            ds = f[name]
+            if has_levels(ds):
+                indices = ds[:sz]
+                uniques = get_levels(ds)
+                # This method of constructing of Categorical avoids copying the indices array
+                # which saves memory for big datasets
+                df[name] = p.Categorical(indices, categories=uniques, ordered=False, fastpath=True)
+            else:
+                df[name] = p.Series(ds[:sz])
+
+        return df
+
+
 
 def read_data_frame_filtered(fn, filter_func, query_cols=[], chunk_size=5000000):
     ''' Load a pandas DataFrame from an HDF5 file. If a column list is specified, only load the matching columns.

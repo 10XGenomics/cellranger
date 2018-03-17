@@ -22,8 +22,8 @@ pub trait Metric {
 
 #[derive(Serialize, Deserialize)]
 pub struct PercentMetric {
-    numerator: i32,
-    denominator: i32,
+    numerator: i64,
+    denominator: i64,
 }
 
 impl PercentMetric {

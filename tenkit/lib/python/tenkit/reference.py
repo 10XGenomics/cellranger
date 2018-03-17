@@ -7,7 +7,7 @@ import gzip
 
 # 10X generated references that should
 # have genes, regions, and snps files
-KNOWN_GENOMES = ['10X_hg19_ucsc', '10X_b37']
+KNOWN_GENOMES = ['10X_hg19_ucsc', '10X_b37', '10X_GRCh38_no_alt_decoy']
 
 def open_reference(reference_path):
     ''' Open a reference fasta and rename the contigs to strip any fasta comments'''

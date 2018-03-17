@@ -10,7 +10,8 @@ LIBSSW_BUILD=$(LIBSSW_BUILD_DIR)/libssw.so
 VERSION=$(shell git describe --tags --always --dirty)
 GOBINS=barcodeqc godemux q30count
 
-export GOPATH=$(shell pwd)/lib/go
+PWD=$(shell pwd)
+export GOPATH=$(PWD)/lib/go
 
 GO_VERSION=$(strip $(shell go version | sed 's/.*go\([0-9]*\.[0-9]*\).*/\1/'))
 
@@ -18,7 +19,7 @@ GO_VERSION=$(strip $(shell go version | sed 's/.*go\([0-9]*\.[0-9]*\).*/\1/'))
 # or error on that syntax, and use "-X foo=bar" instead.
 LINK_SEPERATOR=$(if $(filter 1.5, $(word 1, $(sort 1.5 $(GO_VERSION)))),=, )
 
-.PHONY: test
+.PHONY: test go_generate
 
 all: $(LIBSSW_BUILD) $(GOBINS)
 
@@ -42,7 +43,11 @@ libssw-clean:
 lib/bin:
 	mkdir -p lib/bin
 
-$(GOBINS): lib/bin
+go_generate:
+	PYTHONPATH=$(PYTHONPATH):$(PWD)/$(LIBPY) \
+	go generate tenkit/...
+
+$(GOBINS): lib/bin go_generate
 	go install -ldflags "-X $@.__VERSION__$(LINK_SEPERATOR)'$(VERSION)'" $@
 	cp lib/go/bin/$@ lib/bin
 

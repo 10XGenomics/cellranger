@@ -32,6 +32,56 @@ def get_flowcell_lane_count(run_info_xml):
     flowcell_layout = run_node.find("FlowcellLayout")
     return int(flowcell_layout.attrib["LaneCount"])
 
+def get_flowcell_layout(run_info_xml):
+    """
+    :param run_info_xml: Path to RunInfo.xml
+    :return: PatternedFlowcellLayout info, or none if the run isn't from a patterned flowcell
+    """
+    tree = etree.parse(run_info_xml)
+    run_node = tree.getroot().find("Run")
+    flowcell_layout = run_node.find("FlowcellLayout")
+    if flowcell_layout is not None:
+        return DeclaredFlowcellLayout.from_flowcell_layout_node(flowcell_layout)
+    else:
+        return None
+
+
+class DeclaredFlowcellLayout(object):
+    NAMING_CONVENTION_TILE_LENGTHS = {
+        "FiveDigit": 5,
+        "FourDigit": 4
+    }
+    def __init__(self, *args, **kwargs):
+        self.lane_count = kwargs.get('lane_count', None)
+        self.surface_count = kwargs.get('surface_count', None)
+        self.swath_count = kwargs.get('swath_count', None)
+        self.tile_count = kwargs.get('tile_count', None)
+        self.section_per_lane = kwargs.get('section_per_lane', None)
+        self.lane_per_section = kwargs.get('lane_per_section', None)
+        self.tile_length = kwargs.get('tile_length', None)
+
+    @classmethod
+    def from_flowcell_layout_node(cls, node):
+        """
+        Construct a PatternedFlowcellLayout object from the FlowcellLayout
+        node on RunInfo.xml.
+        """
+        intAttrOrNone = lambda key: int(node.attrib.get(key)) if node.attrib.get(key) is not None else None
+        tile_length = None
+
+        tile_set = node.find("TileSet")
+        if tile_set is not None:
+            tile_length = cls.NAMING_CONVENTION_TILE_LENGTHS.get(tile_set.attrib.get("TileNamingConvention"))
+
+        return cls(
+            lane_count=intAttrOrNone('LaneCount'),
+            surface_count=intAttrOrNone('SurfaceCount'),
+            swath_count=intAttrOrNone('SwathCount'),
+            tile_count=intAttrOrNone('TileCount'),
+            section_per_lane=intAttrOrNone('SectionPerLane'),
+            lane_per_section = intAttrOrNone('LanePerSection'),
+            tile_length=tile_length
+        )
 
 class LaneLayout:
     ''' Extents of a particular flowcell, lane combination '''

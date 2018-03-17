@@ -33,41 +33,54 @@ import glob
 import gzip
 import collections
 import martian
+import shutil
 import tenkit.cache as tk_cache
 import tenkit.dict_utils as tk_dict
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
 from tenkit.fasta import IlmnFastqFile
+from tenkit.constants import DEMULTIPLEX_INVALID_SAMPLE_INDEX
 
 __MRO__ = """
 stage DEMULTIPLEX(
-    in  path   raw_fastq_path,
-    in  float  sample_index_error_rate,
-    in  bool   interleave,
-    in  bool   rc_i2_read,
-    out path   demultiplexed_fastq_path,
-    out json   demultiplex_summary,
-    src py     "stages/bcl_processor/demultiplex",
+    in  path     raw_fastq_path,
+    in  float    sample_index_error_rate,
+    in  bool     interleave,
+    in  bool     rc_i2_read,
+    in  bool     split_by_tile,
+    out path     demultiplexed_fastq_path,
+    out json     demultiplex_summary,
+    out string[] common_bcs,
+    src py       "stages/bcl_processor/demultiplex",
 ) split using (
     in  bool   demultiplex,
     in  string common_bcs,
     in  string input_files,
     in  string read_types,
     in  int    chunk_number,
+    in  string tile_folder,
 )
 """
 
-MAX_INDICES = 1000
-INVALID_SAMPLE_INDEX = 'X'
+MAX_INDICES = 1500
 
 def join(args, outs, chunk_defs, chunk_outs):
-    os.mkdir(outs.demultiplexed_fastq_path)
-
+    os.makedirs(outs.demultiplexed_fastq_path)
+    
     # Move output file to final location
     for chunk_out in chunk_outs:
         for f in os.listdir(chunk_out.demultiplexed_fastq_path):
             in_file = os.path.join(chunk_out.demultiplexed_fastq_path, f)
-            subprocess.call(['mv', in_file, outs.demultiplexed_fastq_path])
+            # if this is a tile
+            if os.path.isdir(in_file):
+                target_dir = os.path.join(outs.demultiplexed_fastq_path, os.path.basename(in_file))
+                if not os.path.exists(target_dir):
+                    os.makedirs(target_dir)
+                for g in os.listdir(in_file):
+                    tile_file = os.path.join(in_file, g)
+                    shutil.move(tile_file, target_dir)
+            else: 
+                shutil.move(in_file, outs.demultiplexed_fastq_path)
 
     # Combine result data
     r = {'num_reads':0, 'num_clusters': 0, 'invalid_count':0, 'sample_index_counts':{}}
@@ -76,8 +89,8 @@ def join(args, outs, chunk_defs, chunk_outs):
         summary_counts = json.load(open(chunk_out.demultiplex_summary))
         num_clusters = sum(summary_counts.values())
         num_reads = 2 * num_clusters
-        invalid_reads = summary_counts[INVALID_SAMPLE_INDEX]
-        del summary_counts[INVALID_SAMPLE_INDEX]
+        invalid_reads = summary_counts[DEMULTIPLEX_INVALID_SAMPLE_INDEX]
+        del summary_counts[DEMULTIPLEX_INVALID_SAMPLE_INDEX]
         summary_counts = {k:2*v for (k,v) in summary_counts.iteritems()}
         r['num_clusters'] += num_clusters
         r['num_reads'] += num_reads
@@ -86,6 +99,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     r['invalid_frac'] = tk_stats.robust_divide(r['invalid_count'], r['num_clusters'])
 
     json.dump(r, open(outs.demultiplex_summary, 'w'))
+    outs.common_bcs = chunk_defs[0].common_bcs
 
 
 def main(args, outs):
@@ -133,7 +147,7 @@ class FastqParser:
         reader.close()
 
 class FindCommonBarcodes:
-    def get_index_counts(self, fastqs, sample_size=1e6):
+    def get_index_counts(self, fastqs, sample_size=2e6):
         #sample_per_fastq = sample_size / len(fastqs)
         index_counts = {}
 
@@ -161,17 +175,17 @@ class FindCommonBarcodes:
         for i in range(len(index_counts)):
             c += items_list[i][1]
 
-            if c > 0.75 * total_counts:
+            if c > 0.90 * total_counts:
                 break
 
-        # number of barcodes that account for 75% of reads
-        c75 = i
+        # number of barcodes that account for 90% of reads
+        c90 = i
 
-        # median # of observations of barcodes accounting for the 75%
-        num_obs_good_bcs = numpy.median([ count for (bc, count) in items_list[:(c75+1)] ])
-        martian.log_info("Median counts of good barcodes in 1e6 reads: %s" % num_obs_good_bcs)
+        # median # of observations of barcodes accounting for the 90%
+        num_obs_good_bcs = numpy.median([ count for (bc, count) in items_list[:(c90+1)] ])
+        martian.log_info("Median counts of good barcodes in 2e6 reads: %s" % num_obs_good_bcs)
 
-        min_obs_bc = max(num_obs_good_bcs / 200, 25)
+        min_obs_bc = max(num_obs_good_bcs / 250, 20)
 
         # only demultiplex a reasonable number of sample indices
         if len(items_list) > MAX_INDICES:
@@ -208,7 +222,7 @@ def process_fastq_chunk(seq_iters, filenames, no_match_filenames, file_cache,
         if bc_seq in valid_bcs:
             summary_counts[bc_seq] += 1
         else:
-            summary_counts[INVALID_SAMPLE_INDEX] += 1
+            summary_counts[DEMULTIPLEX_INVALID_SAMPLE_INDEX] += 1
 
         #target_streams = out_streams.get(bc_seq, no_match_out_streams)
         tfn = filenames.get(bc_seq, no_match_filenames)
@@ -243,7 +257,7 @@ def process_fastq_chunk_no_demult(seq_iters, filenames, file_cache,
 
     for read_set in read_iterators:
         # Log the counts for each sample index
-        summary_counts[INVALID_SAMPLE_INDEX] += 1
+        summary_counts[DEMULTIPLEX_INVALID_SAMPLE_INDEX] += 1
 
         target_streams = [file_cache.get(x) for x in filenames]
 
@@ -268,11 +282,18 @@ def groupby(f, items):
     return groups
 
 
+def _tile_for_fastq_file(args, ilmnFastqFile):
+    relpath = os.path.relpath(ilmnFastqFile.filename, args.raw_fastq_path)
+    return relpath.split(os.path.sep)[0]
+
 def split(args):
     # Code supports non-interleaved mode, but we're not currently passing that argument
     #do_interleave = True
 
-    file_glob = os.path.join(args.raw_fastq_path, "Project_*", "*", "*.fastq*")
+    if args.split_by_tile:
+        file_glob = os.path.join(args.raw_fastq_path, "Tile*", "Project_*", "*", "*.fastq*")
+    else:
+        file_glob = os.path.join(args.raw_fastq_path, "Project_*", "*", "*.fastq*")
     print file_glob
     files = glob.glob(file_glob)
 
@@ -289,10 +310,14 @@ def split(args):
     #    martian.log_info("Observed multiple prefixes: %s" % prefixes)
     #    return 1
 
-    file_groups = groupby(lambda x: (x.s, x.lane, x.group), file_info).items()
-
-    # Order the demultiplex by the group filename
-    file_groups.sort(key = lambda (k,files): files[0].group)
+    if args.split_by_tile:
+        file_groups = groupby(lambda x: (_tile_for_fastq_file(args, x), x.s, x.lane, x.group), file_info).items()
+        # order by tile/lane/group
+        file_groups.sort(key = lambda(k, files): (k[0], k[2], k[3]))
+    else:
+        file_groups = groupby(lambda x: (x.s, x.lane, x.group), file_info).items()
+        # Order the demultiplex by the group filename
+        file_groups.sort(key = lambda (k,files): files[0].group)
 
     num_files_per_group = [len(v) for (k,v) in file_groups]
 
@@ -350,6 +375,14 @@ def split(args):
         chunk = {'demultiplex': demultiplex, 'common_bcs': good_bcs, 'read_types': read_types, 'chunk_number': chunk_number}
 
         chunk['input_files'] = [f.filename for (grp, file_list) in grps for f in file_list]
+        if args.split_by_tile:
+            tiles = [_tile_for_fastq_file(args, f) for (grp, file_list) in grps for f in file_list]
+            tile_set = set(tiles)
+            if len(tile_set) > 1:
+                martian.throw("File list spans multiple tiles")
+            chunk['tile_folder'] = tiles[0]
+        else:
+            chunk['tile_folder'] = None
         chunk_defs.append(chunk)
         chunk_number += 1
 
@@ -373,7 +406,14 @@ def main_demultiplex_go(args, outs):
     with open(input_json_path, 'w') as f:
         json.dump(data, f)
 
-    subproc_args = ['godemux', input_json_path, outs.demultiplexed_fastq_path,
+    output_dir = outs.demultiplexed_fastq_path
+    if args.split_by_tile:
+        output_dir = os.path.join(output_dir, args.tile_folder)
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    subproc_args = ['godemux', input_json_path, output_dir,
                     outs.demultiplex_summary, '--demult-read', args.si_read_type,
                     '--chunk', str(args.chunk_number)]
     if args.rc_i2_read:
@@ -410,7 +450,7 @@ def main_demultiplex(args, outs):
 
     # counts of each valid barcode and non-matching barcodes
     summary_counts = { bc:0 for bc in good_bcs }
-    summary_counts[INVALID_SAMPLE_INDEX] = 0
+    summary_counts[DEMULTIPLEX_INVALID_SAMPLE_INDEX] = 0
 
     with tk_cache.FileHandleCache(open_func=gzip.open) as file_cache:
         # Iterate over the file groups

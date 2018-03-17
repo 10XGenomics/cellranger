@@ -18,8 +18,8 @@
     </thead>
     <tbody>
       <tr ng-repeat="row in chart.table.rows">
-        <td class="de_table_cell" style="padding: 0.5ch 1ch" ng-if="!cell.f" ng-repeat="cell in row">{{ cell }}</td>
-        <td class="de_table_cell" ng-style="{'color': cell.s, 'text-align': 'right'}" ng-if="cell.f" ng-repeat="cell in row" data-value="{{ cell.v }}">{{ cell.f }}</td>
+        <td class="de_table_cell" style="padding: 0.5ch 1ch" ng-if="!cell.f" ng-repeat="cell in row track by $index">{{ cell }}</td>
+        <td class="de_table_cell" ng-style="{'color': cell.s, 'text-align': 'right'}" ng-if="cell.f" ng-repeat="cell in row track by $index" data-value="{{ cell.v }}">{{ cell.f }}</td>
       </tr>
     </tbody>
   </table>

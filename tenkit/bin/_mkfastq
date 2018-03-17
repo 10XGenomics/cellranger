@@ -157,7 +157,6 @@ case $arg in
     --localcores=*)
         mrp_opts="$mrp_opts $arg"
         localcores=${arg#*=}
-        shift
         ;;
     # trap jobmode
     --jobmode=*)

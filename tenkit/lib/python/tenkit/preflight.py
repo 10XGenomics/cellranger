@@ -174,8 +174,13 @@ def check_refdata(reference_path, max_contigs = None):
     logging = "reference path %s on %s contains genome: %s." % (reference_path, hostname, str(genome))
     logging += "reference contains %d contigs. max contig length: %d." % (num_contigs, max_len)
 
-    if max_len >= (1<<28):
-        return False, "Reference contains a contig longer than 536.8Mb (2^28 bp), which is not supported due to limitations of the .bai format. Please split this contig."
+    if max_len >= (1<<29):
+        return False, "Reference contains a contig longer than 536.8Mb (2^29 bp), which is not supported due to limitations of the .bai format. Please split this contig."
+
+    # Check for ":" in contig names -- this will break things horribly
+    has_colons = any(":" in ctg_name for ctg_name in fasta.keys())
+    if has_colons:
+        return False, "Reference names contain colon characters: ':'. References names containing colons are not supported."
 
     return True, logging
 

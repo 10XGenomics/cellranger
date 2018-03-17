@@ -108,7 +108,7 @@ def format_clonotype_id(clonotype_index, inferred):
 
 def get_mem_gb_from_annotations_json(filename):
     """ Estimate mem request for loading an entire annotations json into memory """
-    return vdj_constants.MEM_GB_PER_ANNOTATIONS_JSON_GB * float(os.path.getsize(filename))/1e9
+    return int(np.ceil(vdj_constants.MEM_GB_PER_ANNOTATIONS_JSON_GB * float(os.path.getsize(filename))/1e9))
 
 def concatenate_and_fix_bams(out_bamfile, bamfiles, drop_tags=None):
     """Concatenate bams with different references and populate tags.
