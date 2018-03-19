@@ -765,6 +765,12 @@ class SubprocessStream(object):
         self.pipe.write(x)
     def close(self):
         self.pipe.close()
+        # Just in case the job is stuck waiting for its pipe to get flushed,
+        # kill it before we wait on it.
+        try:
+            self.proc.kill()
+        except:
+            pass
         self.proc.wait()
     def __exit__(self, tp, val, tb):
         self.close()

@@ -7,6 +7,7 @@
 import itertools
 import re
 import os.path
+import sys.stdout
 import martian
 import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
@@ -87,7 +88,7 @@ def get_vdj_trim_metrics(reporter, stdout_file, paired_end):
                 metric.add(npairs - ntrimmed, filter=False)
 
 
-def run_cutadapt(args, out_read1s, out_read2s, chemistry_def):
+def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout):
     paired_end = cr_chem.is_paired_end(chemistry_def)
 
     # If single end, determine which read the single read is (R1 or R2)
@@ -106,6 +107,7 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def):
            '-f', 'fastq',
            '-o', '/proc/%d/fd/%d' % (os.getpid(), out_r1_file.fileno())]
 
+    out_r2_file = None
     if paired_end:
         out_r2_file = cr_utils.open_maybe_gzip(out_read2s, 'w')
         cmd.extend(['-p', '/proc/%d/fd/%d' % (os.getpid(), out_r2_file.fileno())])
@@ -141,13 +143,27 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def):
     read1_file = cr_utils.open_maybe_gzip(args.read1s_chunk)
     cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read1_file.fileno())])
 
+    read2_file = None
     if paired_end:
         read2_file = cr_utils.open_maybe_gzip(args.read2s_chunk)
         cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read2_file.fileno())])
 
     print cmd
 
-    status = tk_subproc.check_call(cmd)
+    status = tk_subproc.check_call(cmd, stdout=stdout)
+
+    # closing these files is important both because we need to wait on the
+    # subprocess, if any, or else its rusage isn't accounted for for this
+    # process, and because if we don't have a reference to the objects down
+    # here, then python's garbage collector is free to finalize the objects
+    # before cmd runs, which would result in a failure.
+    out_r1_file.close()
+    if out_r2_file:
+        out_r2_file.close()
+    read1_file.close()
+    if read2_file:
+        read2_file.close()
+
     return status
 
 
@@ -173,7 +189,12 @@ def main(args, outs):
     outs.read1s += cr_constants.LZ4_SUFFIX
     outs.read2s += cr_constants.LZ4_SUFFIX
 
-    status = run_cutadapt(args, outs.read1s, outs.read2s, args.chemistry_def)
+    cutadapt_out = os.path.join(os.path.dirname(outs.chunked_reporter), 'cutadapt_stdout')
+    with open(cutadapt_out, 'w') as cut_stdout:
+        status = run_cutadapt(args,
+                              outs.read1s, outs.read2s,
+                              args.chemistry_def,
+                              cut_stdout)
 
     if args.read2s_chunk == None:
         outs.read2s = None
@@ -183,7 +204,7 @@ def main(args, outs):
     else:
         reporter = vdj_report.VdjReporter(primers=cr_utils.get_primers_from_dicts(args.primers))
         get_vdj_trim_metrics(reporter,
-                             os.path.join(os.path.dirname(outs.chunked_reporter), '..', '_stdout'),
+                             cutadapt_out,
                              paired_end)
         reporter.save(outs.chunked_reporter)
 
