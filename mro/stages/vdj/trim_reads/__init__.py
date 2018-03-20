@@ -7,7 +7,7 @@
 import itertools
 import re
 import os.path
-import sys.stdout
+import sys
 import martian
 import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
