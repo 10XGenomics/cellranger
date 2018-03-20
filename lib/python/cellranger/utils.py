@@ -753,6 +753,7 @@ class SubprocessStream(object):
             self.pipe = self.proc.stdout
         elif mode == 'w':
             self.pipe = self.proc.stdin
+        self._read = mode == 'r'
     def __enter__(self):
         return self
     def __iter__(self):
@@ -765,12 +766,13 @@ class SubprocessStream(object):
         self.pipe.write(x)
     def close(self):
         self.pipe.close()
-        # Just in case the job is stuck waiting for its pipe to get flushed,
-        # kill it before we wait on it.
-        try:
-            self.proc.kill()
-        except:
-            pass
+        if self._read:
+            # Just in case the job is stuck waiting for its pipe to get flushed,
+            # kill it, since there's nothing listening on the other end of the pipe.
+            try:
+                self.proc.kill()
+            except:
+                pass
         self.proc.wait()
     def __exit__(self, tp, val, tb):
         self.close()
