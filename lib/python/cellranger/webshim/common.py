@@ -788,6 +788,10 @@ def build_charts(sample_properties, chart_dicts, sample_data, module=None):
             f = module.get(function)
             if f is not None:
                 break
+
+        if function is not None and f is None:
+            raise ValueError('Could not find webshim chart function "%s"' % function)
+
         kwargs = chart_dict.pop('kwargs', {})
 
         new_chart_obj = f(chart_dict, sample_properties, sample_data, **kwargs)

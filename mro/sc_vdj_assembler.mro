@@ -84,6 +84,7 @@ pipeline SC_VDJ_ASSEMBLER(
     out tsv       umi_summary                      "Internal",
     out csv       barcode_support                  "Internal",
     out h5        umi_info                         "Internal",
+    out string    chain_type                       "Internal - Inferred chain type",
 )
 {
     call preflight VDJ_PREFLIGHT(
@@ -381,5 +382,6 @@ pipeline SC_VDJ_ASSEMBLER(
         umi_summary                 = ASSEMBLE_VDJ.umi_summary_tsv,
         barcode_support             = SUMMARIZE_VDJ_REPORTS.barcode_support,
         umi_info                    = SUMMARIZE_VDJ_REPORTS.umi_info,
+        chain_type                  = REPORT_CONTIGS.chain_type,
     )
 }
