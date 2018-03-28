@@ -1000,10 +1000,15 @@ class Reporter:
 
         return summary
 
-    def report_summary_json(self, filename):
+    def to_json(self):
+        '''Return data as safe-for-json dictionary'''
         data = self.report(cr_constants.DEFAULT_REPORT_TYPE)
+        return tk_safe_json.json_sanitize(data)
+
+    def report_summary_json(self, filename):
+        '''Write to JSON file'''
         with open(filename, 'w') as f:
-            tk_safe_json.dump_numpy(tk_safe_json.json_sanitize(data), f, pretty=True)
+            tk_safe_json.dump_numpy(self.to_json(), f, pretty=True)
 
     def report_barcodes_csv(self, filename):
         barcodes = sorted(self._get_metric_attr('barcodes_detected').d)
