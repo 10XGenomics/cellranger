@@ -303,9 +303,11 @@ class ReferenceBuilder(GtfParser):
                     row[8] = self.format_properties_dict(properties)
 
                     writer.writerow(row)
-                print "WARNING: The following transcripts appear on multiple chromosomes in the GTF:"
-                print '\n'.join(list(cross_chrom_transcripts)) + '\n'
-                print "This can indicate a problem with the reference or annotations. Only the first chromosome will be counted."
+
+                if len(cross_chrom_transcripts) > 0:
+                    print "WARNING: The following transcripts appear on multiple chromosomes in the GTF:"
+                    print '\n'.join(list(cross_chrom_transcripts)) + '\n'
+                    print "This can indicate a problem with the reference or annotations. Only the first chromosome will be counted."
 
     def write_genome_gene_index(self, out_pickle_fn, in_gtf_fn, in_fasta_fn):
         gene_index = GeneIndex(in_gtf_fn, in_fasta_fn)
