@@ -122,13 +122,11 @@ def concatenate_and_fix_bams(out_bamfile, bamfiles, drop_tags=None):
     - drop_tags: Set of tag names to ignore. If None, than all tags will be included.
     """
     template_bam = pysam.Samfile(bamfiles[0])
-    header = template_bam.header
+    header = tk_bam.get_bam_header_as_dict(template_bam)
 
     for bam_fn in bamfiles[1:]:
         bam = pysam.Samfile(bam_fn)
         header['SQ'].extend(bam.header['SQ'])
-
-    refname_to_tid = { ref_head['SN']:idx for (idx, ref_head) in enumerate(header['SQ']) }
 
     bam_out = pysam.Samfile(out_bamfile, "wb", header=header)
 
@@ -136,18 +134,19 @@ def concatenate_and_fix_bams(out_bamfile, bamfiles, drop_tags=None):
         bam = pysam.Samfile(bam_fn)
 
         for rec in bam:
-            if rec.is_unmapped and rec.mate_is_unmapped:
-                rec.reference_id = -1
-                rec.next_reference_id = -1
-            elif rec.is_unmapped and not rec.mate_is_unmapped:
-                rec.next_reference_id = refname_to_tid[bam.references[rec.next_reference_id]]
+            # Convert to string and back to replace the old tid with the new one
+            # This appears to be the only way to do this with pysam (sometime after 0.9)
+            rec = pysam.AlignedSegment.fromstring(rec.to_string(),
+                                                  header=pysam.AlignmentHeader.from_dict(header))
+
+            # I don't know why we do this.
+            if rec.is_unmapped and not rec.mate_is_unmapped:
                 rec.reference_id = rec.next_reference_id
             elif not rec.is_unmapped and rec.mate_is_unmapped:
-                rec.reference_id = refname_to_tid[bam.references[rec.reference_id]]
                 rec.next_reference_id = rec.reference_id
-            else:
-                rec.reference_id = refname_to_tid[bam.references[rec.reference_id]]
-                rec.next_reference_id = refname_to_tid[bam.references[rec.next_reference_id]]
+            elif rec.is_unmapped and rec.mate_is_unmapped:
+                rec.reference_id = -1
+                rec.next_reference_id = -1
 
             # Pull fields out of qname, and make tags, writing out to bam_out
             qname_split = rec.qname.split(cr_fastq.AugmentedFastqHeader.TAG_SEP)
