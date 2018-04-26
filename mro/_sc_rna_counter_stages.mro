@@ -22,5 +22,5 @@ stage SUMMARIZE_REPORTS(
     out html   web_summary,
     out json   alerts,
     src py     "stages/counter/summarize_reports",
-) split using (
+) split (
 )

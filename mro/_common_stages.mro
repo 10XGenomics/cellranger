@@ -55,7 +55,7 @@ stage CHUNK_READS(
     in  int   reads_per_file,
     out map[] out_chunks,
     src py    "stages/common/chunk_reads",
-) split using (
+) split (
     in  map   read_chunks,
 )
 
@@ -86,7 +86,7 @@ stage EXTRACT_READS(
     out map      align,
     out string[] bam_comments,
     src py       "stages/common/extract_reads",
-) split using (
+) split (
     in  map      read_chunks,
     in  int      gem_group,
     in  bool     reads_interleaved,

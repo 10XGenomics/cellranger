@@ -52,7 +52,7 @@ stage PREPROCESS_MATRIX(
     out h5   preprocessed_matrix_h5,
     out bool is_multi_genome,
     src py   "stages/analyzer/preprocess_matrix",
-) split using (
+) split (
 )
 
 stage RUN_MULTIGENOME_ANALYSIS(
@@ -64,7 +64,7 @@ stage RUN_MULTIGENOME_ANALYSIS(
     out path multi_genome_json,
     out json multi_genome_summary,
     src py   "stages/analyzer/run_multigenome_analysis",
-) split using (
+) split (
 )
 
 stage RUN_PCA(
@@ -78,7 +78,7 @@ stage RUN_PCA(
     out h5   pca_h5,
     out path pca_csv,
     src py   "stages/analyzer/run_pca",
-) split using (
+) split (
 )
 
 stage RUN_KMEANS(
@@ -93,7 +93,7 @@ stage RUN_KMEANS(
     out h5   kmeans_h5,
     out path kmeans_csv,
     src py   "stages/analyzer/run_kmeans",
-) split using (
+) split (
     in  int  n_clusters,
 )
 
@@ -113,7 +113,7 @@ stage RUN_GRAPH_CLUSTERING(
     out h5     clusters_h5,
     out path   clusters_csv,
     src py     "stages/analyzer/run_graph_clustering",
-) split using (
+) split (
     in  pickle neighbor_index,
     in  h5     submatrix,
     in  int    row_start,
@@ -131,7 +131,7 @@ stage MERGE_CLUSTERS(
     out h5   clusters_h5,
     out path clusters_csv,
     src py   "stages/analyzer/merge_clusters",
-) split using (
+) split (
 )
 
 stage COMBINE_CLUSTERING(
@@ -156,7 +156,7 @@ stage RUN_DIFFERENTIAL_EXPRESSION(
     out h5     diffexp_h5,
     out path   diffexp_csv,
     src py     "stages/analyzer/run_differential_expression",
-) split using (
+) split (
     in  string clustering_key,
 )
 
@@ -176,7 +176,7 @@ stage RUN_TSNE(
     out h5    tsne_h5,
     out path  tsne_csv,
     src py    "stages/analyzer/run_tsne",
-) split using (
+) split (
     in  int   tsne_dims,
 )
 
@@ -199,7 +199,7 @@ stage SUMMARIZE_ANALYSIS(
     out path analysis_csv,
     out json summary,
     src py   "stages/analyzer/summarize_analysis",
-) split using (
+) split (
 )
 
 stage PARSE_PARAM_CSV(
@@ -232,5 +232,5 @@ stage SUMMARIZE_REANALYSIS(
     out html   web_summary,
     out json   summary,
     src py     "stages/analyzer/summarize_reanalysis",
-) split using (
+) split (
 )

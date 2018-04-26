@@ -38,18 +38,24 @@ pipeline SC_RNA_AGGREGATOR(
     out json   gem_group_index_json,
 )
 {
-    call preflight AGGREGATOR_PREFLIGHT(
+    call AGGREGATOR_PREFLIGHT(
         sample_defs        = self.sample_defs,
         normalization_mode = self.normalization_mode,
+    ) using (
+        preflight = true,
     )
 
-    call volatile SETUP_SAMPLES(
+    call SETUP_SAMPLES(
         sample_defs = self.sample_defs,
+    ) using (
+        volatile = true,
     )
 
-    call volatile MERGE_MOLECULES(
+    call MERGE_MOLECULES(
         sample_defs     = self.sample_defs,
         gem_group_index = SETUP_SAMPLES.gem_group_index,
+    ) using (
+        volatile = true,
     )
 
     call DETECT_CELLS(

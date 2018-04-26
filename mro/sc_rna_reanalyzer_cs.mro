@@ -22,8 +22,10 @@ pipeline SC_RNA_REANALYZER_CS(
     out cloupe cloupe                "Loupe Cell Browser file",
 )
 {
-    call preflight REANALYZER_PREFLIGHT(
+    call REANALYZER_PREFLIGHT(
         filtered_matrices_h5 = self.filtered_matrices_h5,
+    ) using (
+        preflight = true,
     )
 
     call PARSE_PARAM_CSV(

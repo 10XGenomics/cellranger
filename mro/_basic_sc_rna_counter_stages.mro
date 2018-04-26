@@ -36,7 +36,7 @@ stage SUMMARIZE_READ_REPORTS(
     out fastq[]  read2s,
     out fastq[]  tags,
     src py       "stages/counter/summarize_read_reports",
-) split using (
+) split (
     in  fastq    read1,
     in  fastq    read2,
     in  fastq    tags,
@@ -68,7 +68,7 @@ stage ALIGN_READS(
     in  int      max_hits_per_read,
     out bam[]    genome_output,
     src py       "stages/counter/align_reads",
-) split using (
+) split (
     in  fastq    read_chunk,
     in  fastq    read2_chunk,
     in  string[] read_group,
@@ -101,7 +101,7 @@ stage ATTACH_BCS_AND_UMIS(
     out path     metric_chunk_list,
     out json     chunk_metadata,
     src py       "stages/counter/attach_bcs_and_umis",
-) split using (
+) split (
     in  bam      chunk_genome_input,
     in  fastq    tags,
     in  int      gem_group,
@@ -115,7 +115,7 @@ stage BUCKET_BY_BC(
     in  int[] num_alignments,
     out map   buckets,
     src py    "stages/counter/bucket_reads_by_bc",
-) split using (
+) split (
     in  bam   chunk_input,
     in  map[] read_groups,
 )
@@ -125,7 +125,7 @@ stage SORT_BY_BC(
     out int    total_reads,
     out bam,
     src py     "stages/counter/sort_reads_by_bc",
-) split using (
+) split (
     in  string prefix,
     in  bam[]  bucket,
 )
@@ -137,7 +137,7 @@ stage MARK_DUPLICATES(
     out bam[] output,
     out json  summary,
     src comp  "cr_stage martian mark_duplicates",
-) split using (
+) split (
     in  int   chunk_start,
     in  int   chunk_end,
     out json  metrics,
@@ -160,7 +160,7 @@ stage REPORT_MOLECULES(
     in  int    force_cells,
     out h5     output,
     src py     "stages/counter/report_molecules",
-) split using (
+) split (
     in  string chunk_start,
     in  string chunk_end,
 )
@@ -172,7 +172,7 @@ stage SORT_BY_POS(
     out bam     output,
     out bam.bai index,
     src py      "stages/counter/sort_reads_by_pos",
-) split using (
+) split (
     in  bam     chunk_input,
 )
 
@@ -191,7 +191,7 @@ stage COUNT_GENES(
     out json   reporter_summary,
     out h5     barcode_summary,
     src py     "stages/counter/count_genes",
-) split using (
+) split (
     in  bam    chunk_input,
 )
 
@@ -212,7 +212,7 @@ stage FILTER_BARCODES(
     out h5     filtered_matrices_h5,
     out path   filtered_matrices_mex,
     src py     "stages/counter/filter_barcodes",
-) split using (
+) split (
 )
 
 stage SUBSAMPLE_READS(
@@ -222,7 +222,7 @@ stage SUBSAMPLE_READS(
     out pickle chunked_reporter,
     out json   summary,
     src py     "stages/counter/subsample_reads",
-) split using (
+) split (
     in  int    chunk_start,
     in  int    chunk_len,
     in  map    subsample_info,
@@ -243,5 +243,5 @@ stage SUMMARIZE_BASIC_REPORTS(
     in  int[]  gem_groups,
     out json   summary,
     src py     "stages/counter/summarize_basic_reports",
-) split using (
+) split (
 )

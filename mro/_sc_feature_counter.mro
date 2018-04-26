@@ -35,7 +35,7 @@ pipeline _SC_FEATURE_COUNTER(
     out string   barcode_whitelist,
 )
 {
-    call preflight CELLRANGER_PREFLIGHT(
+    call CELLRANGER_PREFLIGHT(
         sample_def           = self.sample_def,
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
@@ -47,9 +47,11 @@ pipeline _SC_FEATURE_COUNTER(
         allowed_chems        = self.allowed_chems,
         r1_length            = self.r1_length,
         r2_length            = self.r2_length,
+    ) using (
+        preflight = true,
     )
 
-    call local preflight CELLRANGER_PREFLIGHT_LOCAL(
+    call CELLRANGER_PREFLIGHT_LOCAL(
         sample_def           = self.sample_def,
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
@@ -61,14 +63,20 @@ pipeline _SC_FEATURE_COUNTER(
         allowed_chems        = self.allowed_chems,
         r1_length            = self.r1_length,
         r2_length            = self.r2_length,
+    ) using (
+        local     = true,
+        preflight = true,
     )
 
-    call local volatile SETUP_CHUNKS(
+    call SETUP_CHUNKS(
         sample_id            = self.sample_id,
         sample_def           = self.sample_def,
         library_type_filter  = self.library_type_filter,
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
+    ) using (
+        local    = true,
+        volatile = true,
     )
 
     call _BASIC_SC_RNA_COUNTER(

@@ -45,12 +45,14 @@ pipeline _BASIC_SC_RNA_COUNTER(
     out fastq[] read1s,
 )
 {
-    call volatile CHUNK_READS(
+    call CHUNK_READS(
         chunks         = self.chunks,
         reads_per_file = 5000000,
+    ) using (
+        volatile = true,
     )
 
-    call volatile EXTRACT_READS(
+    call EXTRACT_READS(
         chunks            = CHUNK_READS.out_chunks,
         chemistry_def     = self.chemistry_def,
         barcode_whitelist = self.barcode_whitelist,
@@ -64,9 +66,11 @@ pipeline _BASIC_SC_RNA_COUNTER(
         skip_metrics      = false,
         feature_reference = self.feature_reference,
         augment_fastq     = false,
+    ) using (
+        volatile = true,
     )
 
-    call volatile SUMMARIZE_READ_REPORTS(
+    call SUMMARIZE_READ_REPORTS(
         extract_reads_summary = EXTRACT_READS.summary,
         barcode_counts        = EXTRACT_READS.barcode_counts,
         feature_counts        = EXTRACT_READS.feature_counts,
@@ -80,9 +84,11 @@ pipeline _BASIC_SC_RNA_COUNTER(
         tags                  = EXTRACT_READS.tags,
         retain_fastqs         = self.retain_fastqs,
         chemistry_def         = self.chemistry_def,
+    ) using (
+        volatile = true,
     )
 
-    call volatile ALIGN_READS(
+    call ALIGN_READS(
         reads             = EXTRACT_READS.reads,
         read2s            = EXTRACT_READS.read2s,
         read_groups       = SUMMARIZE_READ_REPORTS.read_groups,
@@ -90,9 +96,11 @@ pipeline _BASIC_SC_RNA_COUNTER(
         reference_path    = self.reference_path,
         threads           = self.align_threads,
         max_hits_per_read = -1,
+    ) using (
+        volatile = true,
     )
 
-    call volatile ATTACH_BCS_AND_UMIS(
+    call ATTACH_BCS_AND_UMIS(
         genome_inputs                = ALIGN_READS.genome_output,
         tags                         = SUMMARIZE_READ_REPORTS.tags,
         reference_path               = self.reference_path,
@@ -110,32 +118,44 @@ pipeline _BASIC_SC_RNA_COUNTER(
         rescue_multimappers          = self.rescue_multimappers,
         skip_metrics                 = self.skip_metrics,
         correct_barcodes             = self.correct_barcodes,
+    ) using (
+        volatile = true,
     )
 
-    call volatile SUMMARIZE_ATTACH(
+    call SUMMARIZE_ATTACH(
         summary           = ATTACH_BCS_AND_UMIS.summary,
         barcodes_detected = ATTACH_BCS_AND_UMIS.barcodes_detected,
+    ) using (
+        volatile = true,
     )
 
-    call volatile BUCKET_BY_BC(
+    call BUCKET_BY_BC(
         nbases         = 2,
         inputs         = ATTACH_BCS_AND_UMIS.output,
         num_alignments = ATTACH_BCS_AND_UMIS.num_alignments,
+    ) using (
+        volatile = true,
     )
 
-    call volatile SORT_BY_BC(
+    call SORT_BY_BC(
         buckets = BUCKET_BY_BC.buckets,
+    ) using (
+        volatile = true,
     )
 
-    call volatile MARK_DUPLICATES(
+    call MARK_DUPLICATES(
         input          = SORT_BY_BC,
         reference_path = self.reference_path,
         filter_umis    = self.filter_umis,
+    ) using (
+        volatile = true,
     )
 
-    call volatile SUMMARIZE_MKDUP(
+    call SUMMARIZE_MKDUP(
         summary           = MARK_DUPLICATES.summary,
         barcodes_detected = null,
+    ) using (
+        volatile = true,
     )
 
     call SORT_BY_POS(
@@ -183,9 +203,11 @@ pipeline _BASIC_SC_RNA_COUNTER(
         filtered_barcodes           = FILTER_BARCODES.filtered_barcodes,
     )
 
-    call volatile SUBSAMPLE_READS(
+    call SUBSAMPLE_READS(
         molecule_info     = REPORT_MOLECULES.output,
         filtered_barcodes = FILTER_BARCODES.filtered_barcodes,
+    ) using (
+        volatile = true,
     )
 
     call SUMMARIZE_BASIC_REPORTS(
