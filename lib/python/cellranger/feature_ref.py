@@ -188,7 +188,7 @@ def parse_feature_def_file(filename):
 
         for row in reader:
             # Check field presence
-            if set(row.keys()) != set(required_cols):
+            if not(set(required_cols).issubset(set(row.keys()))):
                 raise FeatureDefException('The feature definition file header must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
 
             # Strip flanking whitespace from values
