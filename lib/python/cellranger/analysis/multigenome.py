@@ -21,6 +21,7 @@ class MultiGenomeAnalysis:
 
         self.summary = {}
         self.result = {}
+        self.top_two_txomes = None
 
         # Fix random seed
         np.random.seed(0)
@@ -133,6 +134,9 @@ class MultiGenomeAnalysis:
         txome_counts = [mat.m.sum() for mat in self.raw_matrices.matrices.values()]
         top_txome_idx = sorted(np.argsort(txome_counts)[::-1][0:2])
         top_two_txomes = [self.raw_matrices.matrices.keys()[i] for i in top_txome_idx]
+
+        self.top_two_txomes = top_two_txomes
+
         top_txome_cell_bc_seqs = [self.filtered_matrices.matrices.values()[i].bcs for i in top_txome_idx]
         use_barcodes = self.raw_matrices.union_barcodes(top_txome_cell_bc_seqs, top_two_txomes)
 
