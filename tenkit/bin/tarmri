@@ -44,18 +44,8 @@ if [ -d $folder ]; then
 
     # Generate log tar file.
     echo -e "Saving pipestance info to $folder/$tarfile"
-
-    # Use transform option if it exists to rewrite truncated file names to
-    # their originals. CentOS 5's tar version lacks the --transform option,
-    # however, so in that case we just leave the file names alone.
-    tar --help | grep -e --transform > /dev/null 2>&1
-    if [ $? -eq 0 ]; then
-        find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | \
-            tar zcf $tarfile --null --transform='s/\._truncated_$//' -T -
-    else
-        find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | \
-            tar zcf $tarfile --null -T -
-    fi
+    find $folder -type f \( -size -1024k -not -name $tarfile -not -path "*files*" -not -path "*journal*" $files_options \) -print0 | \
+        tar zcf $tarfile --null --transform='s/\._truncated_$//' -T -
     # Clean up truncated versions of files, if any were created.
     if [ -n "$truncated_files" ]; then
         for f in $truncated_files; do
