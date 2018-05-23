@@ -99,6 +99,10 @@ def split(args):
 
 
 def main(args, outs):
+
+    if args.contigs is None:
+        return
+
     chunk_contigs = []
 
     if args.barcodes is not None:
@@ -189,6 +193,15 @@ def main(args, outs):
                  protocol=cPickle.HIGHEST_PROTOCOL)
 
 def join(args, outs, chunk_defs, chunk_outs):
+
+    if args.contigs is None:
+        outs.chunked_annotations = None
+        outs.raw_annotations = None
+        outs.annotations = None
+        outs.annotations_bed = None
+        outs.annotations_csv = None
+        return
+
     # Merge pickles and save JSON
     all_contigs = []
 
