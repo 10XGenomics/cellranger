@@ -11,7 +11,6 @@ import martian
 import tenkit.safe_json as tk_safe_json
 import cellranger.chemistry as cr_chem
 import cellranger.matrix as cr_matrix
-import cellranger.utils as cr_utils
 import cellranger.stats as cr_stats
 import cellranger.constants as cr_constants
 
@@ -41,19 +40,17 @@ def split(args):
     mem_gb = 2 * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
     mem_gb = max(mem_gb, cr_constants.MIN_MEM_GB)
 
-    chunks = [{
-        '__mem_gb': mem_gb,
-    }]
-    return {'chunks': chunks}
+    return {
+        'chunks': [],
+        'join': {
+            '__mem_gb': mem_gb,
+        }
+    }
 
-def join(args, outs, chunk_defs, chunk_outs):
-    chunk_out = chunk_outs[0]
-    cr_utils.copy(chunk_out.summary, outs.summary)
-    cr_utils.copy(chunk_out.filtered_matrices_h5, outs.filtered_matrices_h5)
-    cr_utils.copy(chunk_out.filtered_barcodes, outs.filtered_barcodes)
-    cr_utils.copytree(chunk_out.filtered_matrices_mex, outs.filtered_matrices_mex)
+def main(_args, _outs):
+    martian.throw('main is not supposed to run.')
 
-def main(args, outs):
+def join(args, outs, _chunk_defs, _chunk_outs):
     filtered_matrices = filter_barcodes(args, outs)
     matrix_attrs = cr_matrix.make_matrix_attrs_count(args.sample_id, args.gem_groups, cr_chem.get_description(args.chemistry_def))
     filtered_matrices.save_h5(outs.filtered_matrices_h5, extra_attrs=matrix_attrs)

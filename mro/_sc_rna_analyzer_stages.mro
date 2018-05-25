@@ -33,11 +33,15 @@ stage ANALYZER_PREFLIGHT(
     in  float tsne_theta,
     out bool  skip,
     src py    "stages/analyzer/analyzer_preflight",
+) using (
+    volatile = strict,
 )
 
 stage REANALYZER_PREFLIGHT(
     in  h5 filtered_matrices_h5,
     src py "stages/analyzer/reanalyzer_preflight",
+) using (
+    volatile = strict,
 )
 
 stage PREPROCESS_MATRIX(
@@ -53,6 +57,8 @@ stage PREPROCESS_MATRIX(
     out bool is_multi_genome,
     src py   "stages/analyzer/preprocess_matrix",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage RUN_MULTIGENOME_ANALYSIS(
@@ -65,6 +71,8 @@ stage RUN_MULTIGENOME_ANALYSIS(
     out json multi_genome_summary,
     src py   "stages/analyzer/run_multigenome_analysis",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage RUN_PCA(
@@ -79,6 +87,8 @@ stage RUN_PCA(
     out path pca_csv,
     src py   "stages/analyzer/run_pca",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage RUN_KMEANS(
@@ -95,6 +105,8 @@ stage RUN_KMEANS(
     src py   "stages/analyzer/run_kmeans",
 ) split (
     in  int  n_clusters,
+) using (
+    volatile = strict,
 )
 
 stage RUN_GRAPH_CLUSTERING(
@@ -120,6 +132,8 @@ stage RUN_GRAPH_CLUSTERING(
     in  int    total_rows,
     in  int    k_nearest,
     in  h5     use_bcs,
+) using (
+    volatile = strict,
 )
 
 stage MERGE_CLUSTERS(
@@ -132,6 +146,8 @@ stage MERGE_CLUSTERS(
     out path clusters_csv,
     src py   "stages/analyzer/merge_clusters",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage COMBINE_CLUSTERING(
@@ -144,6 +160,8 @@ stage COMBINE_CLUSTERING(
     out h5   clustering_h5,
     out path clustering_csv,
     src py   "stages/analyzer/combine_clustering",
+) using (
+    volatile = strict,
 )
 
 stage RUN_DIFFERENTIAL_EXPRESSION(
@@ -158,6 +176,8 @@ stage RUN_DIFFERENTIAL_EXPRESSION(
     src py     "stages/analyzer/run_differential_expression",
 ) split (
     in  string clustering_key,
+) using (
+    volatile = strict,
 )
 
 stage RUN_TSNE(
@@ -178,6 +198,8 @@ stage RUN_TSNE(
     src py    "stages/analyzer/run_tsne",
 ) split (
     in  int   tsne_dims,
+) using (
+    volatile = strict,
 )
 
 stage SUMMARIZE_ANALYSIS(
@@ -200,6 +222,8 @@ stage SUMMARIZE_ANALYSIS(
     out json summary,
     src py   "stages/analyzer/summarize_analysis",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage PARSE_PARAM_CSV(
@@ -222,6 +246,8 @@ stage PARSE_PARAM_CSV(
     out int   tsne_mom_switch_iter,
     out float tsne_theta,
     src py    "stages/analyzer/parse_csv",
+) using (
+    volatile = strict,
 )
 
 stage SUMMARIZE_REANALYSIS(
@@ -233,4 +259,6 @@ stage SUMMARIZE_REANALYSIS(
     out json   summary,
     src py     "stages/analyzer/summarize_reanalysis",
 ) split (
+) using (
+    volatile = strict,
 )

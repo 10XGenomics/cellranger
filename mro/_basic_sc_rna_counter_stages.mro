@@ -40,22 +40,8 @@ stage SUMMARIZE_READ_REPORTS(
     in  fastq    read1,
     in  fastq    read2,
     in  fastq    tags,
-)
-
-stage SUMMARIZE_ATTACH(
-    in  json summary,
-    in  csv  barcodes_detected,
-    out json summary,
-    out csv  barcodes_detected,
-    src py   "stages/counter/summarize_bam",
-)
-
-stage SUMMARIZE_MKDUP(
-    in  json summary,
-    in  csv  barcodes_detected,
-    out json summary,
-    out csv  barcodes_detected,
-    src py   "stages/counter/summarize_bam",
+) using (
+    volatile = strict,
 )
 
 stage ALIGN_READS(
@@ -107,6 +93,9 @@ stage ATTACH_BCS_AND_UMIS(
     in  int      gem_group,
     in  string   library_type,
     in  json     bam_comments_json,
+) using (
+    # No index file is generated for the bam.
+    volatile = strict,
 )
 
 stage BUCKET_BY_BC(
@@ -128,6 +117,9 @@ stage SORT_BY_BC(
 ) split (
     in  string prefix,
     in  bam[]  bucket,
+) using (
+    # No index file is generated for the bam.
+    volatile = strict,
 )
 
 stage MARK_DUPLICATES(
@@ -144,6 +136,8 @@ stage MARK_DUPLICATES(
     out bam   alignments,
 ) using (
     mem_gb = 6,
+    # No index file is generated for the bam.
+    volatile = strict,
 )
 
 stage REPORT_MOLECULES(
@@ -163,6 +157,8 @@ stage REPORT_MOLECULES(
 ) split (
     in  string chunk_start,
     in  string chunk_end,
+) using (
+    volatile = strict,
 )
 
 stage SORT_BY_POS(
@@ -174,6 +170,10 @@ stage SORT_BY_POS(
     src py      "stages/counter/sort_reads_by_pos",
 ) split (
     in  bam     chunk_input,
+) using (
+    volatile = strict,
+) retain (
+    index,
 )
 
 stage COUNT_GENES(
@@ -193,6 +193,8 @@ stage COUNT_GENES(
     src py     "stages/counter/count_genes",
 ) split (
     in  bam    chunk_input,
+) using (
+    volatile = strict,
 )
 
 stage FILTER_BARCODES(
@@ -213,6 +215,8 @@ stage FILTER_BARCODES(
     out path   filtered_matrices_mex,
     src py     "stages/counter/filter_barcodes",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage SUBSAMPLE_READS(
@@ -226,6 +230,8 @@ stage SUBSAMPLE_READS(
     in  int    chunk_start,
     in  int    chunk_len,
     in  map    subsample_info,
+) using (
+    volatile = strict,
 )
 
 stage SUMMARIZE_BASIC_REPORTS(
@@ -244,4 +250,6 @@ stage SUMMARIZE_BASIC_REPORTS(
     out json   summary,
     src py     "stages/counter/summarize_basic_reports",
 ) split (
+) using (
+    volatile = strict,
 )

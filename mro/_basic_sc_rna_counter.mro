@@ -122,13 +122,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         volatile = true,
     )
 
-    call SUMMARIZE_ATTACH(
-        summary           = ATTACH_BCS_AND_UMIS.summary,
-        barcodes_detected = ATTACH_BCS_AND_UMIS.barcodes_detected,
-    ) using (
-        volatile = true,
-    )
-
     call BUCKET_BY_BC(
         nbases         = 2,
         inputs         = ATTACH_BCS_AND_UMIS.output,
@@ -151,13 +144,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         volatile = true,
     )
 
-    call SUMMARIZE_MKDUP(
-        summary           = MARK_DUPLICATES.summary,
-        barcodes_detected = null,
-    ) using (
-        volatile = true,
-    )
-
     call SORT_BY_POS(
         inputs      = MARK_DUPLICATES.output,
         num_threads = 6,
@@ -172,14 +158,14 @@ pipeline _BASIC_SC_RNA_COUNTER(
         align             = SUMMARIZE_READ_REPORTS.align,
         chemistry_def     = self.chemistry_def,
         barcode_whitelist = self.barcode_whitelist,
-        barcodes_detected = SUMMARIZE_ATTACH.barcodes_detected,
+        barcodes_detected = ATTACH_BCS_AND_UMIS.barcodes_detected,
     )
 
     call FILTER_BARCODES(
         sample_id          = self.sample_id,
         matrices_h5        = COUNT_GENES.matrices_h5,
         raw_fastq_summary  = SUMMARIZE_READ_REPORTS.summary,
-        attach_bcs_summary = SUMMARIZE_ATTACH.summary,
+        attach_bcs_summary = ATTACH_BCS_AND_UMIS.summary,
         recovered_cells    = self.recovered_cells,
         force_cells        = self.force_cells,
         barcode_summary    = COUNT_GENES.barcode_summary,
@@ -196,8 +182,8 @@ pipeline _BASIC_SC_RNA_COUNTER(
         barcode_whitelist           = self.barcode_whitelist,
         gem_groups                  = SUMMARIZE_READ_REPORTS.gem_groups,
         extract_reads_summary       = SUMMARIZE_READ_REPORTS.summary,
-        attach_bcs_and_umis_summary = SUMMARIZE_ATTACH.summary,
-        mark_duplicates_summary     = SUMMARIZE_MKDUP.summary,
+        attach_bcs_and_umis_summary = ATTACH_BCS_AND_UMIS.summary,
+        mark_duplicates_summary     = MARK_DUPLICATES.summary,
         recovered_cells             = self.recovered_cells,
         force_cells                 = self.force_cells,
         filtered_barcodes           = FILTER_BARCODES.filtered_barcodes,
@@ -216,8 +202,8 @@ pipeline _BASIC_SC_RNA_COUNTER(
         barcode_whitelist            = self.barcode_whitelist,
         gem_groups                   = SUMMARIZE_READ_REPORTS.gem_groups,
         extract_reads_summary        = SUMMARIZE_READ_REPORTS.summary,
-        attach_bcs_and_umis_summary  = SUMMARIZE_ATTACH.summary,
-        mark_duplicates_summary      = SUMMARIZE_MKDUP.summary,
+        attach_bcs_and_umis_summary  = ATTACH_BCS_AND_UMIS.summary,
+        mark_duplicates_summary      = MARK_DUPLICATES.summary,
         count_genes_reporter_summary = COUNT_GENES.reporter_summary,
         filter_barcodes_summary      = FILTER_BARCODES.summary,
         subsample_molecules_summary  = SUBSAMPLE_READS.summary,
