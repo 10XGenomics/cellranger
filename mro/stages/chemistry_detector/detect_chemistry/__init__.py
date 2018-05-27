@@ -170,8 +170,8 @@ def prepare_transcriptome_indexes(reference_path, vdj_reference_path):
     kmer_idx_path = martian.make_path('kmers.idx')
 
     ## Use a larger step size as the reference grows.
-    ## This ensure the index size stays sane.  
-    ## Should get to a step of <10 for the whole genome, which 
+    ## This ensure the index size stays sane.
+    ## Should get to a step of <10 for the whole genome, which
     ## is still 3x overlap w/ 32-mers
     fa_size = os.path.getsize(os.path.realpath(out_fa_path))
     step = fa_size / 400000000
@@ -333,9 +333,15 @@ def main(args, outs):
             auto_chemistries[idx] = chemistry_name
 
         if len(set(auto_chemistries.itervalues())) > 1:
-            c = ', '.join(set(auto_chemistries.itervalues()))
+            c = ', '.join(map(str, set(auto_chemistries.itervalues())))
             s = '\n'.join("  Sample def %d: %s" % (idx, chem) for (idx, chem) in sorted(auto_chemistries.iteritems()))
-            martian.exit("Detected conflicting chemistry types (%s).\n Please run these data separately.\n%s" % (c, s))
+
+            any_failed = any(c is None for c in auto_chemistries.itervalues())
+
+            if not any_failed:
+                martian.exit("Detected conflicting chemistry types (%s). Please run these data separately. %s" % (c, s))
+            else:
+                martian.exit("Detected conflicting chemistry types (%s). Please run these data separately and/or specify the chemistry via the --chemistry argument. %s" % (c, s))
 
         else:
             chemistry_name = auto_chemistries[0]
@@ -388,7 +394,13 @@ def main(args, outs):
         if len(set(found_chemistries)) > 1:
             c = ', '.join(map(str, sorted(list(set(group_chem.itervalues())))))
             s = ', '.join("Sample def %d/%s: %s" % (i,g,v) for ((i,g),v) in sorted(group_chem.iteritems()))
-            martian.exit("Detected conflicting chemistry types (%s). Please run these data separately. %s" % (c, s))
+
+            any_failed = any(c is None for c in group_chem.itervalues())
+
+            if not any_failed:
+                martian.exit("Detected conflicting chemistry types (%s). Please run these data separately. %s" % (c, s))
+            else:
+                martian.exit("Detected conflicting chemistry types (%s). Please run these data separately and/or specify the chemistry via the --chemistry argument. %s" % (c, s))
 
         chemistry_name = found_chemistries[0]
 
