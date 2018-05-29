@@ -21,6 +21,7 @@ from cellranger.vdj.constants import (VDJ_5U_FEATURE_TYPES, VDJ_D_FEATURE_TYPES,
                                       VDJ_ANNOTATION_MISMATCH_PENALTY,
                                       VDJ_ANNOTATION_GAP_OPEN_PENALTY,
                                       VDJ_ANNOTATION_EXTEND_PENALTY,
+                                      VDJ_ANNOTATION_MIN_V_OVERLAP_FRAC,
                                       VDJ_PRIMER_ANNOTATION_MIN_FRACTION_MATCHED,
                                       VDJ_QUAL_OFFSET, VDJ_CLONOTYPE_TYPES,
                                       VDJ_GENE_PAIRS)
@@ -58,6 +59,38 @@ def filter_alignment(alignment_result, score_ratio, word_size,
         return False
 
     if cr_align.get_max_word_length(alignment) < word_size:
+        return False
+
+    return True
+
+def filter_v_alignment(alignment_result, score_ratio,
+                       match_score=VDJ_ANNOTATION_MATCH_SCORE,
+                       v_overlap_frac=VDJ_ANNOTATION_MIN_V_OVERLAP_FRAC):
+    """Returns True for a passing alignment and False otherwise.
+
+    Args:
+    - alignment_result (SSWAlignmentResult): alignment result to filter
+    - score_ratio: minimum (score / max_possible_score)
+    - match_score: match score used in the alignment
+    - v_overlap_frac: Minimum required V gene overlap (alignment length/V gene length)
+
+    Returns:
+        True if alignment passed filters
+    """
+    v_gene_length = len(alignment_result.reference.metadata['feature'].sequence)
+
+    alignment = alignment_result.alignment
+
+    # alignment is a PyAlignRes object. Ends are inclusive.
+    alignment_length = float(alignment.query_end - alignment.query_begin + 1)
+
+    max_score = alignment_length * match_score
+    if tk_stats.robust_divide(alignment.score, max_score) < score_ratio:
+        return False
+
+    ref_alignment_length = float(alignment.ref_end - alignment.ref_begin + 1)
+    min_alignment_length = v_overlap_frac * v_gene_length
+    if ref_alignment_length < min_alignment_length:
         return False
 
     return True
@@ -122,7 +155,10 @@ def setup_feature_aligners(reference_path, score_ratios, word_sizes, use_feature
         # lambda's variables are resolved when lambda is called.
         # Need to use default arguments, because the default arguments will be evaluated
         # when the lambda is created not when it's called.
-        feature_filter_params = lambda x, score=score, word=word, match=match: filter_alignment(x, score, word, match)
+        if region_types == VDJ_V_FEATURE_TYPES:
+            feature_filter_params = lambda x, score=score, match=match: filter_v_alignment(x, score, match)
+        else:
+            feature_filter_params = lambda x, score=score, word=word, match=match: filter_alignment(x, score, word, match)
 
         aligners.append(feature_aligner)
         filters.append(feature_filter_params)
