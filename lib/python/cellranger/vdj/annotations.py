@@ -562,12 +562,11 @@ class AnnotatedContig(object):
         return (chain, cdr_seq)
 
     def has_full_length_vj_hit(self):
-        has_full_len_v_hit = any([annotation.feature.region_type in VDJ_V_FEATURE_TYPES and \
-                                  annotation.annotation_match_start == 0 for annotation in self.annotations])
+        has_full_len_v_hit = any([annotation.feature.region_type in VDJ_V_FEATURE_TYPES for annotation in self.annotations])
 
-        # The -2 allows for slop on the 3' end of J in the face of alignment clipping
+        # The -3 allows for slop on the 3' end of J in the face of alignment clipping
         has_full_len_j_hit = any([annotation.feature.region_type in VDJ_J_FEATURE_TYPES  and
-                                  annotation.annotation_match_end >= annotation.annotation_length - 2 \
+                                  annotation.annotation_match_end >= annotation.annotation_length - 3 \
                                   for annotation in self.annotations])
         return has_full_len_v_hit and has_full_len_j_hit
 
@@ -898,17 +897,20 @@ class AnnotatedContig(object):
                     flags.append('FOUND_CDR3_UNGUIDED')
 
         if self.cdr3:
-            cdr3_frame = self.cdr3_start % 3 # frame wrt start of sequence
+            # cdr3_frame = self.cdr3_start % 3 # frame wrt start of sequence
 
-            if self.start_codon_pos is None and len(v_regions) == 0:
-                # We don't have a V or a start codon.
+            if self.start_codon_pos is None:
+                # We don't have a start codon.
                 # De novo search for the start codon in the CDR3 frame;
-                # Get the leftmost possible start codon match
-                for i in xrange(cdr3_frame, len(self.sequence), 3):
+                # Get the leftmost possible start codon match before a stop codon
+                for i in xrange(self.cdr3_start, 0, -3):
                     if self.codon(i) in START_CODONS:
                         self.start_codon_pos = i
-                        flags.append('NO_V_BUT_FOUND_START')
+                    if self.start_codon_pos and self.codon(i) in STOP_CODONS:
                         break
+
+                if self.start_codon_pos:
+                    flags.append('FOUND_DE_NOVO_V_START')
 
             if self.start_codon_pos is not None:
                 # If we have a start codon, try to find a stop codon in-frame
