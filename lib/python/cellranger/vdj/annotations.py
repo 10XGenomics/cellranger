@@ -15,6 +15,7 @@ from cellranger.vdj.constants import (VDJ_5U_FEATURE_TYPES, VDJ_D_FEATURE_TYPES,
                                       VDJ_C_FEATURE_TYPES, VDJ_ORDERED_REGIONS,
                                       START_CODONS, STOP_CODONS, CODON_TO_AA,
                                       VDJ_MAX_CDR3_LEN, VDJ_MIN_CDR3_LEN,
+                                      VDJ_CDR3_ALL_END_MOTIFS, VDJ_CDR3_COMMON_END_MOTIFS,
                                       VDJ_ANNOTATION_MIN_SCORE_RATIO,
                                       VDJ_ANNOTATION_MIN_WORD_SIZE,
                                       VDJ_ANNOTATION_MATCH_SCORE,
@@ -238,6 +239,28 @@ def collect_annotations(aligner, ref_seq, seq, filter_func):
     return annotations
 
 
+def find_cdr3_end_motif(j_amino_acids, allowed_end_motifs):
+    """Search for the CDR3 end motif in J amino acid sequence.
+
+    Args:
+    - j_amino_acids: the AA of the J region
+    - allowed_end_motifs: prioritized list of allowed end motifs. See VDJ_CDR3_ALL_END_MOTIFS
+        for the exhaustive list
+
+    Returns:
+    - end_motif_pos: Index of the end motif in j_amino_acids
+    """
+
+    for motif in allowed_end_motifs:
+        assert motif in VDJ_CDR3_ALL_END_MOTIFS
+        for idx in range(len(j_amino_acids) - len(motif) + 1):
+            valid_end = True
+            for i, aa in enumerate(motif):
+                valid_end = valid_end and (j_amino_acids[idx+i] == aa or aa == 'X')
+            if valid_end:
+                return idx
+    return None
+
 def search_cdr3_signature(seq, v_region, j_region, v_frame):
     """Search for the CDR3 signature in a sequence.
 
@@ -297,19 +320,17 @@ def search_cdr3_signature(seq, v_region, j_region, v_frame):
     j_amino_acids = [CODON_TO_AA[j_seq[i:(i+3)]] for i in range(j_frame, len(j_region.sequence) - 3, 3)]
 
     # Look for FG(X)G signature or WG(X)G signature
-    fgxg_pos = None
-    for idx in range(len(j_amino_acids) - 3):
-        if (j_amino_acids[idx] == 'F' or j_amino_acids[idx] == 'W') and \
-            j_amino_acids[idx + 1] == 'G' and j_amino_acids[idx + 3] == 'G':
-            # The CDR3 includes the first F of the signature
-            fgxg_pos = j_start + j_frame + idx * 3 + 3
-            break
+    end_motif_pos = None
+    end_motif_idx = find_cdr3_end_motif(j_amino_acids, VDJ_CDR3_ALL_END_MOTIFS)
+    if end_motif_idx is not None:
+        # The CDR3 includes the first AA of the signature
+        end_motif_pos = j_start + j_frame + end_motif_idx * 3 + 3
 
-    if not fgxg_pos:
+    if not end_motif_pos:
         flag = 'GUIDED_NO_FGXG'
 
-    if fgxg_pos and last_c_pos < fgxg_pos:
-        return ((last_c_pos, fgxg_pos), flag)
+    if end_motif_pos and last_c_pos < end_motif_pos:
+        return ((last_c_pos, end_motif_pos), flag)
 
     return (None, flag)
 
@@ -331,8 +352,12 @@ def search_cdr3_signature_no_vj(seq, v_region=None, j_region=None):
 
         for idx in range(min_cdr3_aas, len(amino_acids) - 3):
             # First try to find the end motif
-            if (amino_acids[idx] == 'F' or amino_acids[idx] == 'W') and \
-                amino_acids[idx + 1] == 'G' and amino_acids[idx + 3] == 'G':
+            for motif in VDJ_CDR3_COMMON_END_MOTIFS:
+                valid_end = True
+                for i, aa in enumerate(motif):
+                    valid_end = valid_end and (amino_acids[idx+i] == aa or aa == 'X')
+
+            if valid_end:
                 # The CDR3 includes the first F of the signature
                 fgxg_idx = idx
                 fgxg_pos = frame + fgxg_idx * 3
@@ -862,14 +887,15 @@ class AnnotatedContig(object):
             v_region = v_regions[0] if v_regions else None
             j_region = j_regions[0] if j_regions else None
 
-            res = search_cdr3_signature_no_vj(self.sequence, v_region, j_region)
-            if not res is None:
-                (cdr3_seq, cdr3_aas, cys_pos, fgxg_pos) = res
-                self.cdr3 = cdr3_aas
-                self.cdr3_seq = cdr3_seq
-                self.cdr3_start = cys_pos
-                self.cdr3_stop = fgxg_pos + 3 # End position is the start position of last amino acid + 3
-                flags.append('FOUND_CDR3_UNGUIDED')
+            if v_region is not None:
+                res = search_cdr3_signature_no_vj(self.sequence, v_region, j_region)
+                if not res is None:
+                    (cdr3_seq, cdr3_aas, cys_pos, fgxg_pos) = res
+                    self.cdr3 = cdr3_aas
+                    self.cdr3_seq = cdr3_seq
+                    self.cdr3_start = cys_pos
+                    self.cdr3_stop = fgxg_pos + 3 # End position is the start position of last amino acid + 3
+                    flags.append('FOUND_CDR3_UNGUIDED')
 
         if self.cdr3:
             cdr3_frame = self.cdr3_start % 3 # frame wrt start of sequence
