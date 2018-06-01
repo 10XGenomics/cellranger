@@ -30,7 +30,7 @@ def split(args):
                 'molecule_h5': sample_def[cr_constants.AGG_H5_FIELD],
                 '__mem_gb': mem_gb,
             })
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 6}}
 
 def main(args, outs):
     with cr_mol_counter.MoleculeCounter.open(args.molecule_h5, 'r') as in_mc:
