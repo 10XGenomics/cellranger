@@ -570,6 +570,10 @@ class AnnotatedContig(object):
                                   for annotation in self.annotations])
         return has_full_len_v_hit and has_full_len_j_hit
 
+    def spans_v_start(self):
+        return any([annotation.feature.region_type in VDJ_V_FEATURE_TYPES and \
+            annotation.annotation_match_start == 0 for annotation in self.annotations])
+
     def get_vj_quals(self):
         if self.quals is None:
             return None
