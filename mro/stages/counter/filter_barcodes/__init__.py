@@ -37,7 +37,7 @@ stage FILTER_BARCODES(
 """
 
 def split(args):
-    mem_gb = 2 * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
+    mem_gb = 2.25 * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
     mem_gb = max(mem_gb, cr_constants.MIN_MEM_GB)
 
     return {
