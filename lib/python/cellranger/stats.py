@@ -10,6 +10,41 @@ import tenkit.constants as tk_constants
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
 import collections
+import sklearn.mixture as sk_mix
+
+def to_col_vec(a):
+    """ Convert a 1-d array to a column vector """
+    return np.reshape(a, (len(a), 1))
+
+def create_gmm(weights, means, sd):
+    """ Create a 2-component GMM with tied variance and given initialization
+        This uses the sklearn 0.17.1 interface - it changes in 0.18.x """
+    gmm = sk_mix.GMM(n_components=2,
+                     covariance_type='tied',
+                     init_params='',
+                     params='wmc')
+    gmm.weights_ = np.array(weights)
+    gmm.means_ = np.reshape(means, (len(means), 1))
+    gmm._set_covars(np.reshape(sd, (1,1)))
+    return gmm
+
+def multistart_gmm(data, weights, means_list, sd):
+    """ Sweep over the given initial mean vectors
+        and return the result with the highest log-likelihood """
+    best_gmm = None
+    max_loglk = float('-inf')
+    for means in means_list:
+        gmm = create_gmm(weights=weights, means=means, sd=sd)
+        gmm.fit(data)
+
+        # sklearn 0.17 return type
+        loglk = np.sum(gmm.score_samples(data)[0])
+
+        if loglk > max_loglk:
+            best_gmm = gmm
+            max_loglk = loglk
+
+    return best_gmm
 
 # Inverse Simpson Index, or the effective diversity of power 2
 def effective_diversity(counts):

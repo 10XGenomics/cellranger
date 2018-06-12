@@ -4,44 +4,8 @@
 #
 import itertools
 import numpy as np
-import sklearn.mixture as sk_mix
 import tenkit.stats as tk_stats
-
-def create_gmm(weights, means, sd):
-    """ Create a 2-component GMM with tied variance and given initialization
-        This uses the sklearn 0.17.1 interface - it changes in 0.18.x """
-    gmm = sk_mix.GMM(n_components=2,
-                     covariance_type='tied',
-                     init_params='',
-                     params='wmc')
-    gmm.weights_ = np.array(weights)
-    gmm.means_ = np.reshape(means, (len(means), 1))
-    gmm._set_covars(np.reshape(sd, (1,1)))
-    return gmm
-
-def multistart_gmm(data, weights, means_list, sd):
-    """ Sweep over the given initial mean vectors
-        and return the result with the highest log-likelihood """
-    best_gmm = None
-    max_loglk = float('-inf')
-    for means in means_list:
-        gmm = create_gmm(weights=weights, means=means, sd=sd)
-        gmm.fit(data)
-
-        # sklearn 0.17 return type
-        loglk = np.sum(gmm.score_samples(data)[0])
-
-        if loglk > max_loglk:
-            best_gmm = gmm
-            max_loglk = loglk
-
-
-    return best_gmm
-
-def to_col_vec(a):
-    """ Convert a 1-d array to a column vector """
-    return np.reshape(a, (len(a), 1))
-
+import cellranger.stats as cr_stats
 
 def call_vdj_cells(umi_barcode_idx,
                    umi_read_pairs,
@@ -73,8 +37,8 @@ def call_vdj_cells(umi_barcode_idx,
     # Take UMIs with readpairs > 1
     # Col 0: Barcode idx; Col 1: Read pairs
     use_umis = umi_read_pairs > 1
-    umi_info = np.hstack((to_col_vec(umi_barcode_idx[use_umis]),
-                          to_col_vec(umi_read_pairs[use_umis])))
+    umi_info = np.hstack((cr_stats.to_col_vec(umi_barcode_idx[use_umis]),
+                          cr_stats.to_col_vec(umi_read_pairs[use_umis])))
 
     # Check if enough UMIs to call anything
     if umi_info.shape[0] < 1:
@@ -127,7 +91,7 @@ def call_vdj_cells(umi_barcode_idx,
     # Try various starting means
     RPU_NUM_TRIES = 10
     rpu_try_means = [[0, x] for x in np.linspace(0, np.max(log_rpu_trimmed), 1+RPU_NUM_TRIES)[1:]]
-    rpu_gmm = multistart_gmm(data=to_col_vec(log_rpu_trimmed),
+    rpu_gmm = cr_stats.multistart_gmm(data=cr_stats.to_col_vec(log_rpu_trimmed),
                              weights=[0.5, 0.5],
                              means_list=rpu_try_means,
                              sd=rpu_mix_init_sd)
@@ -135,7 +99,7 @@ def call_vdj_cells(umi_barcode_idx,
     if not rpu_gmm.converged_:
         print "Warning: EM did not converge for RPU!"
 
-    rpu_posterior = rpu_gmm.predict_proba(to_col_vec(log_rpu))
+    rpu_posterior = rpu_gmm.predict_proba(cr_stats.to_col_vec(log_rpu))
     high_rpu_component = np.argmax(rpu_gmm.means_)
     in_high_rpu_component = rpu_posterior[:,high_rpu_component] > 0.5
 
@@ -177,7 +141,7 @@ def call_vdj_cells(umi_barcode_idx,
     # Try various starting means
     UMI_NUM_TRIES = 10
     umi_try_means = [[0, x] for x in np.linspace(0, np.max(log_umi), 1+UMI_NUM_TRIES)[1:]]
-    umi_gmm = multistart_gmm(data=to_col_vec(log_umi),
+    umi_gmm = cr_stats.multistart_gmm(data=cr_stats.to_col_vec(log_umi),
                              weights=[0.5, 0.5],
                              means_list=umi_try_means,
                              sd=umi_mix_init_sd)
@@ -185,7 +149,7 @@ def call_vdj_cells(umi_barcode_idx,
     if not umi_gmm.converged_:
         print "Warning: EM did not converge for UMIs!"
 
-    umi_posterior = umi_gmm.predict_proba(to_col_vec(log_umi))
+    umi_posterior = umi_gmm.predict_proba(cr_stats.to_col_vec(log_umi))
     high_umi_component = np.argmax(umi_gmm.means_)
     in_high_umi_component = umi_posterior[:,high_umi_component] > 0.5
 

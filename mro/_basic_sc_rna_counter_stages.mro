@@ -135,8 +135,9 @@ stage MARK_DUPLICATES(
     out json  metrics,
     out bam   alignments,
 ) using (
-    mem_gb = 6,
+    mem_gb = 8,
     # No index file is generated for the bam.
+    # TODO figure out why CRISPR samples eg 73128 have large maxRSS
     volatile = strict,
 )
 
