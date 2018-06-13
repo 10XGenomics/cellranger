@@ -13,6 +13,7 @@ import cellranger.chemistry as cr_chem
 import cellranger.matrix as cr_matrix
 import cellranger.stats as cr_stats
 import cellranger.constants as cr_constants
+FILTER_BARCODES_MIN_MEM_GB = 4.0
 
 __MRO__ = """
 stage FILTER_BARCODES(
@@ -38,7 +39,7 @@ stage FILTER_BARCODES(
 
 def split(args):
     mem_gb = 2.25 * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
-    mem_gb = max(mem_gb, cr_constants.MIN_MEM_GB)
+    mem_gb = max(mem_gb, FILTER_BARCODES_MIN_MEM_GB)
 
     return {
         'chunks': [],

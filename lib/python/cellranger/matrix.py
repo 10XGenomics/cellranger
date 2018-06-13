@@ -9,6 +9,7 @@ import numpy as np
 import operator
 import os
 import pandas as pd
+pd.set_option("compute.use_numexpr", False)
 import shutil
 import tables
 import scipy.io as sp_io
