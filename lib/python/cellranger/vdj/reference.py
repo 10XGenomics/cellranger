@@ -74,6 +74,16 @@ def infer_ensembl_vdj_feature_type(feature, biotype):
 
     return None
 
+def standardize_ensembl_gene_name(gene_name):
+    if gene_name is None:
+        return gene_name
+
+    # capitalize
+    gene_name = gene_name.upper()
+    # Rename TCR-* to TR*
+    if gene_name.startswith(('TCRA-', 'TCRB-', 'TCRG-', 'TCRD-')):
+        gene_name = "TR" + gene_name[3] + gene_name[5:]
+    return gene_name
 
 def infer_ensembl_vdj_chain_type(gene_name):
     """ Infer e.g., TR or IG from the ensembl gene name """
@@ -223,7 +233,7 @@ def build_reference_fasta_from_ensembl(gtf_paths, transcripts_to_remove_path,
 
         chrom = regions[0].chrom
         strand = regions[0].strand
-        ens_gene_name = regions[0].attributes['gene_name']
+        ens_gene_name = standardize_ensembl_gene_name(regions[0].attributes['gene_name'])
         transcript_id = regions[0].attributes['transcript_id']
 
         if chrom not in genome_fasta:
