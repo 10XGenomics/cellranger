@@ -32,7 +32,7 @@ def split(args):
     # memory usage of just loading the full matrix
     matrix_dims = cr_matrix.GeneBCMatrices.load_dims_from_h5(args.matrix_h5)
     (genes_dim, bcs_dim, nonzero_entries) = matrix_dims.values()[0]
-    matrix_mem_gb = cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_dim(nonzero_entries)
+    matrix_mem_gb = cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_dim(bcs_dim, nonzero_entries)
 
     # TODO adjust based on num PCs, etc?
     irlb_mem_gb = cr_pca.get_irlb_mem_gb_from_matrix_dim(nonzero_entries)

@@ -319,6 +319,7 @@ BYTES_PER_STR_INT_DICT_ENTRY = 180 # Empirical testing w/ str:int dicts and pymp
 NUM_BARCODES_PER_MEM_GB = 175000
 NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK = 40000000
 NUM_MATRIX_ENTRIES_PER_MEM_GB = 50e6
+NUM_MATRIX_BARCODES_PER_MEM_GB = 5500000 # Empirical obs; list+dict of barcodes
 NUM_IRLB_MATRIX_ENTRIES_PER_MEM_GB = 16e6 # based on empirical testing
 IRLB_BASE_MEM_GB = 1
 MATRIX_MEM_GB_MULTIPLIER = 2 # TODO reduce this once we're confident about the actual memory bounds

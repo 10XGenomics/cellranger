@@ -188,21 +188,25 @@ class GeneBCMatrix:
         return (genes, bcs, entries)
 
     @staticmethod
-    def get_mem_gb_from_matrix_dim(nonzero_entries):
+    def get_mem_gb_from_matrix_dim(num_barcodes, nonzero_entries):
         ''' Estimate memory usage of loading a matrix. '''
-        matrix_mem_gb = round(np.ceil(1.0 * nonzero_entries / cr_constants.NUM_MATRIX_ENTRIES_PER_MEM_GB))
-        return cr_constants.MATRIX_MEM_GB_MULTIPLIER * matrix_mem_gb
+        matrix_mem_gb = float(nonzero_entries) / cr_constants.NUM_MATRIX_ENTRIES_PER_MEM_GB
+        # We store a list and a dict of the whitelist. Based on empirical obs.
+        matrix_mem_gb += float(num_barcodes) / cr_constants.NUM_MATRIX_BARCODES_PER_MEM_GB
+
+        return cr_constants.MATRIX_MEM_GB_MULTIPLIER * round(np.ceil(matrix_mem_gb))
 
     @staticmethod
     def get_mem_gb_from_matrix_h5(matrix_h5):
         matrix_dims = GeneBCMatrices.load_dims_from_h5(matrix_h5)
-        (genes_dim, bcs_dim, nonzero_entries) = matrix_dims.values()[0]
-        return GeneBCMatrix.get_mem_gb_from_matrix_dim(nonzero_entries)
+        nonzero_entries = sum(nz for g,b,nz in matrix_dims.values())
+        num_bcs = sum(b for g,b,nz in matrix_dims.values())
+        return GeneBCMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries)
 
     @staticmethod
     def get_mem_gb_from_group(group):
-        _, _, nonzero_entries = GeneBCMatrix.load_dims(group)
-        return GeneBCMatrix.get_mem_gb_from_matrix_dim(nonzero_entries)
+        _, num_bcs, nonzero_entries = GeneBCMatrix.load_dims(group)
+        return GeneBCMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries)
 
     @staticmethod
     def load_mtx(genome_dir):
