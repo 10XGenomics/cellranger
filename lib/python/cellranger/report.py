@@ -832,7 +832,7 @@ class Reporter:
         read = read1 if read1 is not None else read2
         gene_id = gene1 if gene1 is not None else gene2
 
-        if read is None or gene_id is None:
+        if read is None or gene_id is None or (umi is None and use_umis):
             return False, None, None, None
 
         genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
