@@ -122,10 +122,10 @@ def barcode_sort_key(read, squash_unbarcoded=False):
     (bc, gg) = split_barcode_seq(formatted_bc)
     return gg, bc, get_read_raw_umi(read)
 
-def barcode_sort_key_processed_umi(read):
+def barcode_sort_key_no_umi(read):
     formatted_bc = get_read_barcode(read)
     (bc, gg) = split_barcode_seq(formatted_bc)
-    return gg, bc, get_read_umi(read)
+    return gg, bc
 
 def pos_sort_key(read):
     return read.tid, read.pos

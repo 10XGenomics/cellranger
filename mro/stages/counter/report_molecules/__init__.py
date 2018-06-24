@@ -93,8 +93,8 @@ def main(args, outs):
 
     gg_metrics = collections.defaultdict(lambda: {cr_mol_counter.GG_CONF_MAPPED_FILTERED_BC_READS_METRIC: 0})
 
-    for (gem_group, barcode, umi), reads_iter in itertools.groupby(in_bam, key=cr_utils.barcode_sort_key_processed_umi):
-        if barcode is None or gem_group is None or umi is None:
+    for (gem_group, barcode), reads_iter in itertools.groupby(in_bam, key=cr_utils.barcode_sort_key_no_umi):
+        if barcode is None or gem_group is None:
             continue
         is_cell_barcode = cr_utils.format_barcode_seq(barcode, gem_group) in filtered_bcs
         molecules = collections.defaultdict(lambda: np.zeros(len(mol_data_columns), dtype=np.uint64))
@@ -104,8 +104,13 @@ def main(args, outs):
 
         read_positions = collections.defaultdict(set)
         for read in reads_iter:
+            umi = cr_utils.get_read_umi(read)
+
             # ignore read2 to avoid double-counting. the mapping + annotation should be equivalent.
-            if read.is_secondary or read.is_read2 or cr_utils.is_read_low_support_umi(read):
+            if read.is_secondary or \
+               read.is_read2 or \
+               cr_utils.is_read_low_support_umi(read) or \
+               umi is None:
                 continue
 
             raw_umi = cr_utils.get_read_raw_umi(read)
