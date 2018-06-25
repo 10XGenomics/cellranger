@@ -91,4 +91,6 @@ stage EXTRACT_READS(
     in  int      gem_group,
     in  bool     reads_interleaved,
     in  bool     barcode_rc,
+) using (
+    mem_gb = 3,
 )
