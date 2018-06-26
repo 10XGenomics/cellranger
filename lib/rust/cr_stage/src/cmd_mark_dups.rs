@@ -276,6 +276,7 @@ impl MartianStage for MarkDuplicatesStage {
             json!({
                 "chunk_start": ci.0,
                 "chunk_end": ci.1,
+                "__mem_gb": 12,
             })
         ).collect();
 
