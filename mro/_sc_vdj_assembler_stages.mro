@@ -15,6 +15,7 @@ filetype csv;
 filetype tsv;
 filetype html;
 filetype bed;
+filetype lz4;
 
 stage VDJ_PREFLIGHT(
     in  map[]  sample_def,
@@ -97,8 +98,8 @@ stage SUMMARIZE_VDJ_READ_REPORTS(
 
 stage FILTER_VDJ_READS(
     in  path    vdj_reference_path,
-    in  fastq[] read1s                   "Per-chunk fastqs",
-    in  fastq[] read2s                   "Per-chunk fastqs",
+    in  lz4[]   read1s                   "Per-chunk fastqs",
+    in  lz4[]   read2s                   "Per-chunk fastqs",
     in  json[]  chunk_barcodes           "Per-chunk barcodes",
     in  map     chemistry_def,
     in  map     sw_params                "Params for SW alignment (seed, min_sw_score)",
@@ -151,8 +152,8 @@ stage BUCKET_FASTQ_BY_BC(
 stage GROUP_FASTQ_BY_BC(
     in  map[]   buckets,
     in  map     chemistry_def,
-    out fastq[] read1s,
-    out fastq[] read2s,
+    out lz4[]   read1s,
+    out lz4[]   read2s,
     out int[]   chunk_gem_groups,
     out json[]  chunk_barcodes,
     src py      "stages/vdj/group_fastq_by_bc",

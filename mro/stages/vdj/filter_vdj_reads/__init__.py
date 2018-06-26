@@ -124,14 +124,12 @@ def process_bam_barcode(bam, pair_iter, bc, corrected_umis, reporter,
         umi = header.get_tag(cr_constants.RAW_UMI_TAG)
         corrected_umi = corrected_umis[umi]
 
-        # Count readpairs per UMI
-        if gene1 is not None:
-            gene_umi_counts[gene1][corrected_umi] += 1
-        if gene2 is not None:
-            gene_umi_counts[gene2][corrected_umi] += 1
-        if gene1 is None and gene2 is None:
-            # Allow unmapped UMIs
+        genes = list(set(filter(lambda x: x is not None, [gene1, gene2])))
+        if len(genes)==1: # Unique mapping
+            gene_umi_counts[genes[0]][corrected_umi] += 1
+        else: # Unmapped or ambiguously mapped read pairs go to "None" bucket 
             gene_umi_counts["None"][corrected_umi] += 1
+
         gene_umi_counts[cr_constants.MULTI_REFS_PREFIX][corrected_umi] += 1
 
         header.set_tag(cr_constants.PROCESSED_UMI_TAG, corrected_umi)
@@ -233,7 +231,7 @@ def main(args, outs):
 
 
 def write_umi_info(pickles, filename):
-    """" Write an H5 with (bc, chain, read_count) tuples """
+    """" Write an H5 with (bc, chain, umi, read_count) tuples """
     filters = tables.Filters(complevel = cr_constants.H5_COMPRESSION_LEVEL)
 
     with tables.open_file(filename, 'w', filters=filters) as h5:
@@ -255,12 +253,18 @@ def write_umi_info(pickles, filename):
                         if chain not in chain_to_int:
                             chain_to_int[chain] = len(chain_to_int)
 
+                        umis = umi_counts.keys()
+                        umi_idx = np.fromiter((vdj_umi_info.umi_to_int(umi) for umi in umis), 
+                            vdj_umi_info.get_dtype('umi_idx'), count=len(umis))
+                        reads = np.fromiter((umi_counts[umi] for umi in umis), 
+                            vdj_umi_info.get_dtype('reads'), count=len(umis))
+
                         umi_info['barcode_idx'].append(np.full(n_umis, bc_to_int[bc],
                                                                dtype=vdj_umi_info.get_dtype('barcode_idx')))
                         umi_info['chain_idx'].append(np.full(n_umis, chain_to_int[chain],
                                                              dtype=vdj_umi_info.get_dtype('chain_idx')))
-                        umi_info['reads'].append(np.fromiter(umi_counts.itervalues(),
-                                                             vdj_umi_info.get_dtype('reads'), count=n_umis))
+                        umi_info['reads'].append(reads)
+                        umi_info['umi_idx'].append(umi_idx)
 
         vdj_umi_info.set_ref_column(h5, 'barcodes', np.array(sorted(bc_to_int.keys(), key=bc_to_int.get)))
         vdj_umi_info.set_ref_column(h5, 'chains', np.array(sorted(chain_to_int.keys(), key=chain_to_int.get)))

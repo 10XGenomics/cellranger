@@ -11,6 +11,7 @@ import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.umi_info as vdj_umi_info
+import itertools
 
 __MRO__ = """
 stage FILTER_UMIS(
@@ -92,10 +93,6 @@ def split(args):
 
     return {'chunks': chunks}
 
-# Subsampling strategy:
-# 1. Compute N50 read pairs per UMI. Compute sampling rate based on this N50 and
-# the target reads/UMI.
-# 2. Pass the subsampling rate to the assembler.
 def main(args, outs):
     np.random.seed(0)
 
@@ -107,7 +104,20 @@ def main(args, outs):
     umi_info = vdj_umi_info.read_umi_info(args.umi_info, args.start_row, args.end_row)
 
     # Compute N50 read pairs per UMI for this gem group
-    rppu_n50 = tk_stats.NX(umi_info['reads'], 0.5)
+    umi_read_pairs = []
+    for bc_idx, data_iter in itertools.groupby(itertools.izip(umi_info['barcode_idx'],
+                                                              umi_info['umi_idx'],
+                                                              umi_info['reads']),
+                                              key=lambda x: x[0]):
+
+        bc_umi_read_pairs = {}
+        for _, umi, reads in data_iter:
+            bc_umi_read_pairs[umi] = bc_umi_read_pairs.get(umi, 0) + reads
+
+        for r in bc_umi_read_pairs.itervalues():
+            umi_read_pairs.append(r)
+
+    rppu_n50 = tk_stats.NX(umi_read_pairs, 0.5)
     if rppu_n50 is None:
         rppu_n50 = float('NaN')
 

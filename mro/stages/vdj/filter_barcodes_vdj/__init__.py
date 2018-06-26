@@ -69,8 +69,9 @@ def write_barcode_umi_summary(umi_info_filename, reporter, filename, threshold, 
         writer.write("\n")
 
         # Assume sorted by barcode
-        for bc_idx, umi_iter in itertools.groupby(itertools.izip(umi_info['barcode_idx'],
+        for bc_idx, data_iter in itertools.groupby(itertools.izip(umi_info['barcode_idx'],
                                                                  umi_info['chain_idx'],
+                                                                 umi_info['umi_idx'],
                                                                  umi_info['reads']),
                                                   key=lambda x: x[0]):
             bc = barcodes[bc_idx]
@@ -78,10 +79,10 @@ def write_barcode_umi_summary(umi_info_filename, reporter, filename, threshold, 
                 continue
 
             # Count UMIs
-            umis = list(umi_iter)
             chain_counts = defaultdict(int)
             good_chain_counts = defaultdict(int)
-            for bc_idx, chain_idx, reads in umis:
+            good_umis = set()
+            for bc_idx, chain_idx, umi, reads in data_iter:
                 chain = chains[chain_idx]
                 chain_counts[chain] += 1
                 chain_counts[cr_constants.MULTI_REFS_PREFIX] += 1
@@ -89,6 +90,7 @@ def write_barcode_umi_summary(umi_info_filename, reporter, filename, threshold, 
                 _, gem_group = cr_utils.split_barcode_seq(barcodes[bc_idx])
 
                 if reads >= threshold:
+                    good_umis.add(umi)
                     good_chain_counts[chain] += 1
                     good_chain_counts[cr_constants.MULTI_REFS_PREFIX] += 1
 
@@ -96,7 +98,7 @@ def write_barcode_umi_summary(umi_info_filename, reporter, filename, threshold, 
             flds = {}
             flds["bc"] = bc
 
-            num_good_umis = good_chain_counts[cr_constants.MULTI_REFS_PREFIX]
+            num_good_umis = len(good_umis)
             reporter._get_metric_attr('vdj_recombinome_total_umis_per_cell_distribution').add(num_good_umis)
             reporter._get_metric_attr('vdj_recombinome_total_umis_per_cell_median').add(num_good_umis)
 
@@ -130,16 +132,31 @@ def call_cell_barcodes(umi_info_path, gem_group):
                        ut = umi threshold """
 
     # Get umi info for this gem group only
-    bc_idx = vdj_umi_info.get_column(umi_info_path, 'barcode_idx')
     bc_str = vdj_umi_info.get_column(umi_info_path, 'barcodes')
     bc_gg = np.array([int(cr_utils.split_barcode_seq(bc)[1]) for bc in bc_str])
     bc_in_gg = bc_gg == gem_group
-    umi_in_gg = bc_in_gg[bc_idx]
 
-    umi_read_pairs = vdj_umi_info.get_column(umi_info_path, 'reads')
+    umi_info = vdj_umi_info.read_umi_info(umi_info_path)
+    umi_barcode_idx = []
+    umi_read_pairs = []
+    for bc_idx, data_iter in itertools.groupby(itertools.izip(umi_info['barcode_idx'],
+                                                              umi_info['umi_idx'],
+                                                              umi_info['reads']),
+                                              key=lambda x: x[0]):
+        if not bc_in_gg[bc_idx]:
+            continue
+
+        bc_umi_read_pairs = {}
+        for _, umi, reads in data_iter:
+            bc_umi_read_pairs[umi] = bc_umi_read_pairs.get(umi, 0) + reads
+
+        for r in bc_umi_read_pairs.itervalues():
+            umi_barcode_idx.append(bc_idx)
+            umi_read_pairs.append(r)
+
     rpu_threshold, umi_threshold, bc_support, confidence = vdj_stats.call_vdj_cells(
-        umi_barcode_idx=bc_idx[umi_in_gg],
-        umi_read_pairs=umi_read_pairs[umi_in_gg],
+        umi_barcode_idx=np.array(umi_barcode_idx, dtype=vdj_umi_info.get_dtype('barcode_idx')),
+        umi_read_pairs=np.array(umi_read_pairs, dtype=vdj_umi_info.get_dtype('reads')),
         barcodes=bc_str,
         rpu_mix_init_sd=RPU_MIX_INIT_SD,
         umi_mix_init_sd=UMI_MIX_INIT_SD,
