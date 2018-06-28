@@ -244,6 +244,7 @@ def write_umi_info(pickles, filename):
             bc_chain_umi_counts = cPickle.load(open(pickle))
 
             for bc, chain_umis in bc_chain_umi_counts.iteritems():
+                umi_to_int = {} # Mapping from UMI to int. Different mapping for each barcode
                 for chain, umi_counts in chain_umis.iteritems():
                     n_umis = len(umi_counts)
 
@@ -254,7 +255,11 @@ def write_umi_info(pickles, filename):
                             chain_to_int[chain] = len(chain_to_int)
 
                         umis = umi_counts.keys()
-                        umi_idx = np.fromiter((vdj_umi_info.umi_to_int(umi) for umi in umis), 
+                        for umi in umis:
+                            if umi not in umi_to_int:
+                                umi_to_int[umi] = len(umi_to_int)
+
+                        umi_idx = np.fromiter((umi_to_int[umi] for umi in umis),
                             vdj_umi_info.get_dtype('umi_idx'), count=len(umis))
                         reads = np.fromiter((umi_counts[umi] for umi in umis), 
                             vdj_umi_info.get_dtype('reads'), count=len(umis))

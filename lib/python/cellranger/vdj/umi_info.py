@@ -5,7 +5,6 @@
 
 import numpy as np
 import tables
-import cellranger.utils as cr_utils
 
 UMI_INFO_COLS = {
     'barcode_idx': np.uint32,
@@ -18,12 +17,6 @@ UMI_REF_COLS = {
     'barcodes': np.str_,
     'chains': np.str_,
 }
-
-def umi_to_int(umi):
-    bits = 32
-    result = cr_utils.compress_seq(umi, bits=bits)
-    assert not (result & (1L << (bits-1))) # This will fail if there is a 'N' nucleotide
-    return int(result)
 
 def get_num_rows(filename):
     with tables.open_file(filename, 'r') as h5:
