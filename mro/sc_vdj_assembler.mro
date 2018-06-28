@@ -1,9 +1,10 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+
+@include "chemistry_detector.mro"
 @include "_common_stages.mro"
 @include "_sc_vdj_assembler_stages.mro"
-@include "chemistry_detector.mro"
 
 pipeline SC_VDJ_ASSEMBLER(
     in  map[]     sample_def,

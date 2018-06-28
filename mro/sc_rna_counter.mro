@@ -1,10 +1,12 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
+
+@include "chemistry_detector.mro"
+@include "sc_rna_analyzer.mro"
+@include "_common_stages.mro"
 @include "_basic_sc_rna_counter.mro"
 @include "_sc_rna_counter_stages.mro"
-@include "sc_rna_analyzer.mro"
-@include "chemistry_detector.mro"
 
 pipeline SC_RNA_COUNTER(
     in  string   sample_id,

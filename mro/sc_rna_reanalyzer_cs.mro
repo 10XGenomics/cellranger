@@ -1,9 +1,11 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+
 @include "sc_rna_analyzer.mro"
 @include "_cloupe_stages.mro"
 @include "_sc_rna_aggregator_stages.mro"
+@include "_sc_rna_analyzer_stages.mro"
 
 pipeline SC_RNA_REANALYZER_CS(
     in  string analysis_id,
