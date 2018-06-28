@@ -95,7 +95,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  json     bam_comments_json,
 ) using (
     # No index file is generated for the bam.
-    mem_gb   = 2,
+    mem_gb = 2,
     volatile = strict,
 )
 
@@ -136,7 +136,7 @@ stage MARK_DUPLICATES(
     out json  metrics,
     out bam   alignments,
 ) using (
-    mem_gb   = 2,
+    mem_gb = 2,
     # No index file is generated for the bam.
     # TODO figure out why CRISPR samples eg 73128 have large maxRSS
     volatile = strict,
@@ -160,7 +160,7 @@ stage REPORT_MOLECULES(
     in  string chunk_start,
     in  string chunk_end,
 ) using (
-    mem_gb   = 2,
+    mem_gb = 2,
     volatile = strict,
 )
 
@@ -197,7 +197,7 @@ stage COUNT_GENES(
 ) split (
     in  bam    chunk_input,
 ) using (
-    mem_gb   = 2,
+    mem_gb = 2,
     volatile = strict,
 )
 
