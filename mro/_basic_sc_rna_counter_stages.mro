@@ -95,7 +95,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  json     bam_comments_json,
 ) using (
     # No index file is generated for the bam.
-    mem_gb = 3,
+    mem_gb = 4,
     volatile = strict,
 )
 
