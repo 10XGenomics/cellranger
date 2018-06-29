@@ -93,7 +93,6 @@ pipeline SC_VDJ_ASSEMBLER_CS(
             "seed": 20
         },
         min_kmer_count               = 2,
-        min_readpairs_per_umi        = 5,
         min_contig_len               = 250,
         min_qual                     = 2,
         score_factor                 = 0.6,

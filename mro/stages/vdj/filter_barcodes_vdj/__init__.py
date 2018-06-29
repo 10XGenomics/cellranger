@@ -22,7 +22,7 @@ stage FILTER_BARCODES_VDJ(
     in  int    recovered_cells,
     in  int    force_cells,
     in  h5     umi_info,
-    in  int    min_readpairs_per_umi  "Loose threshold used in assembly",
+    out map    min_readpairs_per_umi  "Loose threshold used in assembly",
     out json   cell_barcodes,
     out csv    barcode_support,
     out json   summary,
@@ -51,7 +51,7 @@ def split(args):
 def write_barcode_umi_summary(umi_info_filename, reporter, filename, threshold, cell_barcode_set):
     """ Write a summary of UMI readpair-counts per (barcode, chain) tuple.
         Args: filename - output filename
-              threshold (int) - min read pairs per UMI used in asm
+              threshold (map) - min read pairs per UMI used in asm for each gem group
               barcodes - set of barcode strings """
 
     # Load the umi info
@@ -89,7 +89,7 @@ def write_barcode_umi_summary(umi_info_filename, reporter, filename, threshold, 
 
                 _, gem_group = cr_utils.split_barcode_seq(barcodes[bc_idx])
 
-                if reads >= threshold:
+                if reads >= threshold[gem_group]:
                     good_umis.add(umi)
                     good_chain_counts[chain] += 1
                     good_chain_counts[cr_constants.MULTI_REFS_PREFIX] += 1
@@ -186,6 +186,7 @@ def main(args, outs):
     else:
         recovered_cells = cr_constants.DEFAULT_TOP_BARCODE_CUTOFF * len(all_gem_groups)
 
+    outs.min_readpairs_per_umi = {}
     for gem_group in all_gem_groups:
         if barcode_whitelist is None:
             break
@@ -204,7 +205,8 @@ def main(args, outs):
         gg_bc_support, gg_cell_bcs, rpu_threshold, umi_threshold, confidence = call_cell_barcodes(
             args.umi_info,
             int(gem_group))
-
+        outs.min_readpairs_per_umi[int(gem_group)] = max(int(np.floor(rpu_threshold / 2.0)), 1)
+        print "Min read pairs cutoff for gem group %d = %d" % (gem_group, outs.min_readpairs_per_umi[int(gem_group)])
         # Record the RPU and UMI thresholds
         reporter._get_metric_attr('vdj_filter_bcs_rpu_threshold',
                                   gem_group).set_value(rpu_threshold)
@@ -241,12 +243,13 @@ def main(args, outs):
     write_barcode_umi_summary(args.umi_info,
                               reporter,
                               outs.barcode_umi_summary,
-                              args.min_readpairs_per_umi,
+                              outs.min_readpairs_per_umi,
                               cell_barcodes)
 
     reporter.report_summary_json(outs.summary)
 
 def join(args, outs, chunk_defs, chunk_outs):
+    outs.min_readpairs_per_umi = chunk_outs[0].min_readpairs_per_umi
     cr_utils.copy(chunk_outs[0].cell_barcodes, outs.cell_barcodes)
     cr_utils.copy(chunk_outs[0].barcode_support, outs.barcode_support)
     cr_utils.copy(chunk_outs[0].summary, outs.summary)

@@ -115,8 +115,20 @@ impl UmiCounter {
             .collect()
     }
 
+    pub fn count_good_umis(&self, min_umi_reads: usize) -> usize {
+        self.counts.iter()
+            .filter(|&(umi, count)| *count >= min_umi_reads && *umi != 0)
+            .count()
+    }
+
     pub fn get(&self, umi: &UmiType) -> Option<usize> {
         self.counts.get(umi).cloned()
+    }
+
+    pub fn reset_counts(&mut self) {
+        for (_, val) in self.counts.iter_mut() {
+            *val = 0;
+        }
     }
 }
 

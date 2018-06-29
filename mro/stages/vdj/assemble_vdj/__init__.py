@@ -29,7 +29,7 @@ stage ASSEMBLE_VDJ(
     in  float     score_factor           "assign UMIs to sequences with score_factor * best_umi_path_score",
     in  float     qual_factor            "consider branches with qual_factor * best extension quality",
     in  float     min_sw_score           "min SW score for read-contig alignments",
-    in  int       min_readpairs_per_umi  "min readpairs/UMI (absolute count)",
+    in  map       min_readpairs_per_umi  "per-gem group min readpairs/UMI (absolute count)",
     in  float     rt_error               "RT error for base qual computation",
     in  bool      use_unmapped           "Use unmapped reads in input",
     out fasta     contig_fasta,
@@ -71,10 +71,11 @@ def run_assembly(fastq_pref, fasta_pref, args):
     if not cr_chem.has_umis(args.chemistry_def):
         martian.log_info('Assembly without UMIs is not fully supported.')
 
+    cutoff = args.min_readpairs_per_umi[str(args.gem_group)]
     if cr_chem.is_paired_end(args.chemistry_def):
-        cmd.append('--min-umi-reads=' + str(2 * args.min_readpairs_per_umi))
+        cmd.append('--min-umi-reads=' + str(2 * cutoff))
     else:
-        cmd.append('--min-umi-reads=' + str(args.min_readpairs_per_umi))
+        cmd.append('--min-umi-reads=' + str(cutoff))
         cmd.append('--single-end')
 
     if args.use_unmapped:

@@ -369,14 +369,23 @@ fn asm_bc<I: Iterator<Item=bam::Record>, T: Write>(mut bam_iter: I, barcode: &st
     // Only keep sequences with good UMIs - these will be assembled
     println!("Reads/UMI cutoff: {}", min_umi_reads);
     let good_umis = umi_counts.get_good_umis(min_umi_reads);
+
+    println!("Observed {} read pairs with {} distinct UMIs prior to subsampling", npairs, umi_counts.len());
+    let recalculate_umi_counts = (npairs as usize) > max_readpairs_per_bc;
+    if recalculate_umi_counts {
+        umi_counts.reset_counts();
+    }
     let mut assembled_reads = Vec::new();
     for read in reads.iter() {
         if good_umis.contains(&(read.umi)) && read.umi > 0 {
             assembled_reads.push(read);
         }
+        if recalculate_umi_counts {
+            umi_counts.count_umi(read.umi);
+        }
     }
 
-    println!("Barcode {}: Assembling {:?} reads, {:?} distinct UMIs", barcode, reads.len(), umi_counts.len());
+    println!("Barcode {}: Assembling {:?} reads, {:?} distinct UMIs", barcode, reads.len(), umi_counts.count_good_umis(1));
     println!("Good UMIs: {:?}", good_umis);
 
     // Report number of reads used

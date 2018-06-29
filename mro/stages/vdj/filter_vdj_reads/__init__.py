@@ -35,7 +35,6 @@ stage FILTER_VDJ_READS(
     in  json[]  chunk_barcodes           "Per-chunk barcodes",
     in  map     chemistry_def,
     in  map     sw_params                "Params for SW alignment (seed, min_sw_score)",
-    in  int     min_readpairs_per_umi,
     out pickle  chunked_reporter,
     out pickle  chunked_gene_umi_counts,
     out bam[]   barcode_chunked_bams,
@@ -106,7 +105,6 @@ def get_bc_grouped_pair_iter(bam, paired_end):
 def process_bam_barcode(bam, pair_iter, bc, corrected_umis, reporter,
                         gene_umi_counts_per_bc,
                         strand, out_bam,
-                        asm_min_readpairs_per_umi,
                         paired_end):
     """ Process all readpairs from pair_iter, all having the same bc """
 
@@ -152,16 +150,10 @@ def process_bam_barcode(bam, pair_iter, bc, corrected_umis, reporter,
     # Report read-pairs/umi
     for gene in reporter.vdj_genes:
         tot_readpairs = 0
-        asm_bad_readpairs = 0
 
         for reads_per_umi in gene_umi_counts[gene].itervalues():
             reporter._get_metric_attr('vdj_recombinome_readpairs_per_umi_distribution', gene).add(reads_per_umi)
-
-            if reads_per_umi < asm_min_readpairs_per_umi:
-                asm_bad_readpairs += reads_per_umi
             tot_readpairs += reads_per_umi
-
-        reporter._get_metric_attr('vdj_recombinome_low_support_reads_frac', gene).set_value(asm_bad_readpairs, tot_readpairs)
 
     gene_umi_counts_per_bc[bc] = gene_umi_counts
 
@@ -209,7 +201,6 @@ def main(args, outs):
         process_bam_barcode(bam1, pair_iter2, bc, corrected_umis,
                             reporter, gene_umi_counts_per_bc, strand,
                             out_bam,
-                            args.min_readpairs_per_umi,
                             paired_end)
 
         reads_per_bc.write('{}\t{}\n'.format(bc, nreads))
