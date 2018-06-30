@@ -171,7 +171,7 @@ Subsampling types and target depths
 '''
 
 # Fixed depth targets in addition to quantile-based targets
-SUBSAMPLE_READS_PER_CELL = [20e3, 50e3]
+SUBSAMPLE_READS_PER_CELL = [5e3, 20e3, 50e3]
 
 RAW_SUBSAMPLE_TYPE = 'raw_rpc'
 MAPPED_SUBSAMPLE_TYPE = 'conf_mapped_barcoded_filtered_bc_rpc'
