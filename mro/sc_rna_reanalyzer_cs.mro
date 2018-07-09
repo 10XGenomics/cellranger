@@ -1,7 +1,6 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
-
 @include "sc_rna_analyzer.mro"
 @include "_cloupe_stages.mro"
 @include "_sc_rna_aggregator_stages.mro"

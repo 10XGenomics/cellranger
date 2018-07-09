@@ -1,7 +1,6 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
-
 @include "chemistry_detector.mro"
 @include "sc_rna_analyzer.mro"
 @include "_common_stages.mro"
