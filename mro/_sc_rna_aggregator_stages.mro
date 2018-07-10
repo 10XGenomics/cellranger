@@ -63,6 +63,8 @@ stage DETECT_CELLS(
     in  int  gem_group,
     in  int  recovered_cells,
     in  int  force_cells,
+) using (
+    mem_gb = 4,
 )
 
 stage MERGE_MOLECULES(
