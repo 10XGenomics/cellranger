@@ -6,6 +6,7 @@ from collections import defaultdict
 import martian
 import json
 import os
+import subprocess
 import tenkit.fasta as tk_fasta
 import tenkit.log_subprocess as tk_proc
 import tenkit.qc as tk_qc
@@ -14,6 +15,7 @@ import tenkit.stats as tk_stats
 
 __MRO__ = """
 stage MAKE_QC_SUMMARY(
+    in  bool     run_qc,
     in  path     run_path,
     in  path     fastq_path,
     in  path     interop_path,
@@ -32,11 +34,11 @@ stage MAKE_QC_SUMMARY(
     out bool     completed,
     src py       "stages/make_fastqs/make_qc_summary",
 ) split using (
-    in  string project,
-    in  int    lane,
-    in  string subfolder,
-    in  string sample,
-    in  string input_files,
+    in  string   project,
+    in  int      lane,
+    in  string   subfolder,
+    in  string   sample,
+    in  string[] input_files,
 )
 """
 ANALYZE_RUN_PD_SUMMARY_CS_KEY_MAP = {
@@ -177,6 +179,10 @@ def shim_standard_qc_synonyms(output_dict, replace=False):
 def split(args):
     chunk_dict = defaultdict(list)
 
+    # TENKIT-88 If we don't want to run qc, just have a blank set of chunks
+    if not args.run_qc:
+        return {'chunks': []}
+
     # find projects inside run dir
     dirnames = next(os.walk(args.fastq_path))[1]
 
@@ -224,12 +230,20 @@ def split(args):
 
 
 def main(args, outs):
+    if not args.run_qc:
+        return
+
     out_base = os.path.dirname(outs.qc_summary)
     whitelist_path = tk_preflight.check_barcode_whitelist(args.barcode_whitelist)
     file_infos = [tk_fasta.IlmnFastqFile(path) for path in args.input_files]
 
     bc_file_type = args.file_read_types_map[args.bc_read_type]
     barcode_files = [f for f in file_infos if f.read == bc_file_type]
+
+    # Note: this is Martian 3 incompatible; revert back to summary_chunk if merging
+    # back into master (also applies to additional references to `qc_summary` in the main function)
+    #
+    # see https://github.com/10XDev/tenkit/commit/2c59c9a24b0e7cd81945544f62ffde7ab632ed42
     outs.qc_summary = {
         'barcode': [],
         'read1': [],
@@ -242,7 +256,12 @@ def main(args, outs):
                          str(args.bc_length)]
         if args.bc_read_type == "I2" and args.rc_i2_read:
             subproc_args.append("--rc")
-        tk_proc.call(subproc_args)
+        try:
+            tk_proc.check_call(subproc_args)
+        except subprocess.CalledProcessError, e:
+            martian.throw("Could not QC barcodes: return code %s" % e.returncode)
+
+        # needs to be summary_chunk in Martian 3
         outs.qc_summary['barcode'].append(output_json_path)
 
     r1_files = [f for f in file_infos if args.file_read_types_map['R1'] == f.read]
@@ -253,7 +272,12 @@ def main(args, outs):
         else:
             start_index = 0
         subproc_args = [ 'q30count', r1f.filename, output_json_path, '--read-start-index', str(start_index) ]
-        tk_proc.call(subproc_args)
+        try:
+            tk_proc.check_call(subproc_args)
+        except subprocess.CalledProcessError, e:
+            martian.throw("Could not count Q30 reads on R1: return code %s" % e.returncode)
+
+        # needs to be summary_chunk in Martian 3
         outs.qc_summary['read1'].append(output_json_path)
 
     r2_files = [f for f in file_infos if args.file_read_types_map['R2'] == f.read]
@@ -264,11 +288,22 @@ def main(args, outs):
         else:
             start_index = 0
         subproc_args = ['q30count', r2f.filename, output_json_path, '--read-start-index', str(start_index)]
-        tk_proc.call(subproc_args)
+        try:
+            tk_proc.check_call(subproc_args)
+        except subprocess.CalledProcessError, e:
+            martian.throw("Could not count Q30 reads on R2: return code %s" % e.returncode)
+
+        # needs to be summary_chunk in Martian 3
         outs.qc_summary['read2'].append(output_json_path)
 
 
 def join(args, outs, chunk_args, chunk_outs):
+    # if QC is not to be run, bail
+    if not args.run_qc:
+        outs.completed = True
+        outs.qc_summary = None
+        return
+
     outs.completed = False
     lane_sample_info = defaultdict(ReadQCStats)
     sample_info = defaultdict(ReadQCStats)
@@ -282,6 +317,7 @@ def join(args, outs, chunk_args, chunk_outs):
         for lane, chunks in sorted(lane_dict.items()):
             lane_sample_stats = lane_sample_info[(lane, sample)]
             for chunk_arg, chunk_out in chunks:
+                # need to reference summary_chunk in Martian 3
                 for barcode_file in chunk_out.qc_summary['barcode']:
                     with open(barcode_file, 'r') as infile:
                         stats_dict = json.load(infile)
@@ -302,6 +338,7 @@ def join(args, outs, chunk_args, chunk_outs):
                             stats_info.add_mean_quality_score(stats_dict['mean_base_qscore'], stats_dict['total_base_count'])
                             stats_info.update_sequence_counts(stats_dict['validated_sequence_counts'])
 
+                # need to reference summary_chunk in Martian 3
                 for r1_file in chunk_out.qc_summary['read1']:
                     with open(r1_file, 'r') as infile:
                         r1_stats_dict = json.load(infile)
@@ -314,6 +351,7 @@ def join(args, outs, chunk_args, chunk_outs):
                             stats_info.r1_q30_base_count += r1_stats_dict['q30_base_count']
                             stats_info.r1_total_base_count += r1_stats_dict['total_base_count']
 
+                # need to reference summary_chunk in Martian 3
                 for r2_file in chunk_out.qc_summary['read2']:
                     with open(r2_file, 'r') as infile:
                         r2_stats_dict = json.load(infile)

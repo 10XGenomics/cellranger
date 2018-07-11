@@ -22,10 +22,10 @@ stage MERGE_FASTQS_BY_LANE_SAMPLE(
     out string[] merged_file_paths,
     src py       "stages/make_fastqs/merge_fastqs_by_lane_sample",
 ) split using (
-    in string project,
-    in int    lane,
-    in string sample,
-    in string input_files,
+    in string   project,
+    in int      lane,
+    in string   sample,
+    in string[] input_files,
 )"""
 
 def split(args):

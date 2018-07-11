@@ -23,6 +23,7 @@ pipeline MAKE_FASTQS_CS(
     in  path   interop_output_path    "Override --interop-dir argument to bcl2fastq",
     in  bool   delete_undetermined    "Delete FASTQ files not matching a supplied sample index",
     in  bool   ignore_dual_index      "Ignore the second index of a dual-index flowcell",
+    in  bool   run_qc                 "Run 10x-specific barcode & UMI quality control",
     in  int    max_bcl2fastq_threads  "Maximum number of threads for bcl2fastq to use",
     in  string software_version       "Enclosing version of software calling this pipeline",
     out json   qc_summary             "Run QC metrics",
@@ -52,6 +53,7 @@ pipeline MAKE_FASTQS_CS(
         delete_undetermined   = self.delete_undetermined,
         ignore_dual_index     = self.ignore_dual_index,
         max_bcl2fastq_threads = self.max_bcl2fastq_threads,
+        run_qc                = self.run_qc,
         software_version      = self.software_version,
     )
 

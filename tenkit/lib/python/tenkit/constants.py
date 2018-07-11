@@ -15,35 +15,6 @@ NG_PER_BP = 1.1454e-12
 # Where the code sits
 CODE_PATH=os.path.dirname(os.path.abspath(__file__)) + '/'
 
-# The blacklist and segdups tracks are version specific, so we bundle them
-# in tenkit in the same way as barcodes.
-# The helper methods below let the pipeline query for a bundled blacklist file
-# for a given genome
-SV_DATA_LOCATION = CODE_PATH + "sv_data/"
-
-def find_sv_file(genome, file_name):
-
-    if genome is None or file_name is None:
-        return None
-
-    fn = os.path.join(SV_DATA_LOCATION, genome, file_name)
-    if os.path.exists(fn):
-        return fn
-    else:
-        return None
-
-def find_sv_blacklist(genome):
-    return find_sv_file(genome, "default_sv_blacklist.bed")
-
-def find_segdups(genome):
-    return find_sv_file(genome, "default_segdups.bedpe")
-
-
-
-
-
-# Where barcode whitelists live
-BARCODE_LOCATION = CODE_PATH + 'barcodes/'
 
 # Where barcode whitelists live
 ALARMS_LOCATION = CODE_PATH + 'alarms/'

@@ -5,11 +5,11 @@
 # Run BWA and sort
 #
 
+import os
 import tenkit.bam as tk_bam
 import tenkit.fasta as tk_fasta
 from exceptions import NotSupportedException
 import subprocess
-import logging
 import log_subprocess
 
 class Aligner(object):
@@ -108,11 +108,13 @@ def bwa_align_paired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hits=
         read_group_header = tk_bam.make_rg_header()
 
     if algorithm == 'MEM':
+        devnull = open(os.devnull, 'w')
         if type(read_fastq) == list:
             assert(len(read_fastq) == 2)
             ## This restricts to primary alignments only
             out_file = open(out_name, 'w')
-            ps = log_subprocess.Popen(['bwa', 'mem', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq[0], read_fastq[1]], stdout=subprocess.PIPE)
+            ps = log_subprocess.Popen(['bwa', 'mem', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq[0], read_fastq[1]],
+                                      stdout=subprocess.PIPE, stderr=devnull)
             #log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file) # restore once bug fixed
             errors_file = open(out_name + '_ERRORS', 'w')
             log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file, stderr=errors_file)
@@ -121,12 +123,14 @@ def bwa_align_paired(ref_fasta, read_fastq, out_name, algorithm='ALN', max_hits=
         else:
             ## This restricts to primary alignments only
             out_file = open(out_name, 'w')
-            ps = log_subprocess.Popen(['bwa', 'mem', '-p', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq], stdout=subprocess.PIPE)
+            ps = log_subprocess.Popen(['bwa', 'mem', '-p', '-t', str(num_threads), '-M',  '-R', read_group_header, ref_fasta, read_fastq],
+                                      stdout=subprocess.PIPE, stderr=devnull)
             #log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file) # restore once bug fixed
             errors_file = open(out_name + '_ERRORS', 'w')
             log_subprocess.check_call(['samtools', 'view', '-bSh', '-'], stdin=ps.stdout, stdout=out_file, stderr=errors_file)
             out_file.close()
             errors_file.close()
+        devnull.close()
 
     elif algorithm == 'ALN':
         # Temp file names

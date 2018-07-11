@@ -249,6 +249,18 @@ def find_input_fastq_files_bcl2fastq_demult(path, read_type, sample, lanes):
             files.extend(lane_files)
 
     files = sorted(files)
+
+    # TENKIT-91 fix
+    #
+    # glob is limited (e.g., you can't tell it to match a non-zero amount of
+    # characters that don't contain an underscore); so use the file name parser functionality
+    # to see if you really matched something
+    #
+    # For example, with the above expression, you would match "target" and "target_not_wanted"
+    # even if you only wanted "target".  One could limit the glob match to S0, but if you had a
+    # valid sample with a S\d+ suffix, that may interfere as well.
+    if sample != "*":
+        files = [f for f in files if os.path.basename(IlmnFastqFile(f).prefix) == sample]
     return files
 
 

@@ -10,4 +10,7 @@ try:
 except ImportError:  # pandas moved the computation library in 0.20.1
     pass
 from pandas import *
-computation.expressions.set_use_numexpr(False)
+try:
+    computation.expressions.set_use_numexpr(False)
+except:
+    pass

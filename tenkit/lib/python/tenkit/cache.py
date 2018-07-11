@@ -43,7 +43,7 @@ class FileHandleCache:
 
             # seek to previous position if its been opened before for reading
             if 'r' in mode and fn in self.have_opened:
-                fh = fh.seek(self.have_opened[fn])
+                fh.seek(self.have_opened[fn])
 
             # put it on the LRU
             self.open_files[fn] = fh

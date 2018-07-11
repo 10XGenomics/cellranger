@@ -288,7 +288,7 @@ class DiscreteDistribution(SummaryStatistic):
         self.upper = upper
         self.lower_obs = None
         self.upper_obs = None
-        self.hist = [0] * (upper - lower + 1)
+        self.hist = np.zeros(upper - lower + 1, dtype=int)
         self._prob = None
         self._ecdf = None
 
@@ -309,6 +309,10 @@ class DiscreteDistribution(SummaryStatistic):
         return
 
     def add(self, x):
+        # invalidate these summary variables
+        self._prob = None
+        self._ecdf = None
+
         self.check_range(x)
         self.hist[self._x_to_idx(x)] += 1
         self.count += 1
@@ -340,18 +344,22 @@ class DiscreteDistribution(SummaryStatistic):
         self._ecdf = np.cumsum( self._prob )
         return
 
-    # Precondition: must call init_prob() after last add() operation
     def prob(self, x):
         self.check_range(x)
+        if self._prob is None:
+            self.init_ecdf()
         return self._prob[self._x_to_idx(x)]
 
-    # Precondition: must call init_ecdf() after last add() operation
     def ecdf(self, x):
         self.check_range(x)
+        if self._ecdf is None:
+            self.init_ecdf()
         return self._ecdf[self._x_to_idx(x)]
 
-    # Precondition: must call init_ecdf() after last add() operation
     def quantile(self, q):
+        if self.count == 0:
+            return float('NaN')
+
         if q < 0.0 or q > 1.0:
             raise Exception('Quantile must be between [0,1]')
 
@@ -360,25 +368,27 @@ class DiscreteDistribution(SummaryStatistic):
         if q == 1.0:
             return self.max()
 
+        if self._ecdf is None:
+            self.init_ecdf()
+
         lwr = 0
         upr = len(self.hist) - 1
         while True:
             mid = (upr - lwr) / 2 + lwr
-            # print 'lwr: ', lwr, ' upr: ', upr, ' midpoint: ', mid, ' len(_ecdf): ', len(self._ecdf)
             if (q <= self._ecdf[mid] and q > self._ecdf[mid - 1]) or lwr == upr:
                 return self._idx_to_x(mid)
             if q > self._ecdf[mid]:
-                lwr = mid + 1
+                lwr = min(mid + 1, len(self.hist) - 1)
             else:
-                upr = mid - 1
+                upr = max(mid - 1, 0)
 
     def combine(self, b):
-        lwr = self.lower
-        upr = self.upper
-        if self.lower != b.lower and self.upper != b.upper:
-            lwr = min( self.lower, b.lower )
-            upr = max( self.upper, b.upper )
+        lwr = min( self.lower, b.lower )
+        upr = max( self.upper, b.upper )
         ret = DiscreteDistribution(lwr, upr)
+        ret.count = self.count + b.count
+        ret.lower_obs = min(self.min(), b.min())
+        ret.upper_obs = max(self.max(), b.max())
 
         for i in xrange(len(self.hist)):
             ret.hist[ ret._x_to_idx(self._idx_to_x(i)) ] += self.hist[i]

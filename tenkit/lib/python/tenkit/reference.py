@@ -21,6 +21,9 @@ def open_reference(reference_path):
 
     return new_fasta
 
+def get_metadata(reference_path):
+    return os.path.join(reference_path, "metadata.json")
+
 def get_fasta(reference_path):
     '''Convention for location of reference fasta in a reference path'''
     return os.path.join(reference_path, "fasta", "genome.fa")

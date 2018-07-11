@@ -595,7 +595,7 @@ def combine_vcfs(output_filename, input_vcf_filenames):
             args = 'cat ' + fn
             subprocess.check_call(args + " > " + tmp_filename, shell=True)
         else:
-            args = 'grep -v "^#" ' + fn
+            args = 'grep -a -v "^#" ' + fn
             ret = subprocess.call(args + " >> " + tmp_filename, shell=True)
             if ret == 2:
                 raise Exception("grep call failed: " + args)

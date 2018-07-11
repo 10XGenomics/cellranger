@@ -70,6 +70,7 @@ stage BCL2FASTQ_WITH_SAMPLESHEET(
 )
 
 stage MAKE_QC_SUMMARY(
+    in  bool   run_qc,
     in  path   run_path,
     in  path   fastq_path,
     in  path   interop_path,
@@ -90,10 +91,11 @@ stage MAKE_QC_SUMMARY(
     out bool   completed,
     src py     "stages/make_fastqs/make_qc_summary",
 ) split using (
-    in  string project,
-    in  int    lane,
-    in  string sample,
-    in  string input_files,
+    in  string   project,
+    in  int      lane,
+    in  string   sample,
+    in  string[] input_files,
+    in  string   subfolder,
 )
 
 stage MERGE_FASTQS_BY_LANE_SAMPLE(
@@ -106,9 +108,9 @@ stage MERGE_FASTQS_BY_LANE_SAMPLE(
     out string[] merged_file_paths,
     src py       "stages/make_fastqs/merge_fastqs_by_lane_sample",
 ) split using (
-    in  string   project,
-    in  int      lane,
-    in  string   sample_id,
-    in  string   output_snum,
-    in  string   input_files,
+    in  string     project,
+    in  int        lane,
+    in  string     sample_id,
+    in  string     output_snum,
+    in  string[]   input_files,
 )

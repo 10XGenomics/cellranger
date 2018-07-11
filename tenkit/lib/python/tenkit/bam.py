@@ -8,10 +8,12 @@ import os
 import pysam
 import log_subprocess
 import random
+import resource
 import logging
 import shutil
 import math
 import tenkit.bio_io as tk_io
+import tenkit.fadvise as tk_fadv
 import tenkit.seq as tk_seq
 import csv
 import striped_smith_waterman.ssw_wrap as ssw_wrap
@@ -56,6 +58,22 @@ def make_terminal_pg_header(version):
 def get_number_reads(bam_filename):
     return reduce(lambda x, y: x + y, [ eval('+'.join(l.rstrip('\n').split('\t')[2:]) ) for l in pysam.idxstats(bam_filename) ])
 
+def get_bam_header_as_dict(bam):
+    '''Get a BAM header as a dict.
+
+       Code that treats the AlignmentHeader as a dict works from pysam 0.9 to 0.13
+       but breaks in pysam 0.14.
+       Args:
+         bam (AlignmentFile): BAM to get header from
+       Returns:
+         dict '''
+    if getattr(bam.header, 'has_key', False):
+        # Pysam 0.9 to 0.13
+        return bam.header
+    else:
+        # Pysam >=0.14
+        return bam.header.to_dict()
+
 # NOTE!! pgs argument used to be called pg and take a single pg item
 # When resolving to tenkit:master, clients that inject PG tags must be updated to pass a list
 def create_bam_outfile(file_name, chrom_names, chrom_lengths, template=None, pgs=None, cos=None, rgs=None, replace_rg=False):
@@ -65,7 +83,7 @@ def create_bam_outfile(file_name, chrom_names, chrom_lengths, template=None, pgs
     rgs is a list of dicts specifiying an 'RG' entry. If replace_rg is True, the existing 'RG' entry is overwritten.
     """
     if template:
-        header = template.header
+        header = get_bam_header_as_dict(template)
         if pgs is not None:
             for pg in pgs:
                 if not header.has_key('PG'):
@@ -227,22 +245,71 @@ def sort_and_index(file_name, sorted_prefix=None):
     log_subprocess.check_call(['samtools','sort', '-o', sorted_name, file_name])
     pysam.index(sorted_name)
 
-def merge(out_file_name, input_file_names, threads = 1):
+def _merge_by_tag(output_bam, input_bams, tag, name=False, threads=1):
     # Note the original samtools merge call can
     # fail if the total length of the command line
-    # gets too long -- use the API version instead.
-    #args = ['samtools', 'merge', out_file_name]
-    #args.extend(input_file_names)
-    #log_subprocess.check_call(args)
+    # gets too long. Use the -b option and pass
+    # the input bam names as a file
+    fofn = output_bam + ".fofn"
+    if os.path.exists(fofn):
+        raise RuntimeError("{} already exists".format(fofn))
+    with open(fofn, "w") as fh:
+        fh.write("\n".join(input_bams))
 
+    args = ["samtools", "merge", "-c", "-p", "-s", "0"]
     if threads > 1:
-        args = ["-c", "-p", "-s", "0", "-@", str(threads)]
-    else:
-        args = []
+        # the -@ specifies additional threads
+        args.extend(["-@", str(threads-1)])
+    if name:
+        args.append("-n")
+    if tag is not None:
+        args.extend(["-t", str(tag)])
+    args.extend(["-b", fofn, output_bam])
 
-    args.append(str(out_file_name))
-    args.extend([str(x) for x in input_file_names])
-    pysam.merge(*args)
+    log_subprocess.check_call(args)
+    os.remove(fofn)
+
+def _link_or_copy(src, dst):
+    try:
+        os.link(src, dst)
+    except:
+        shutil.copy(src, dst)
+
+def merge_by_tag(output_bam, input_bams, tag, name=False, threads=1):
+    # merge the sorted bam chunks hierarchically to conserve open file handles
+    soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+    soft -= 100
+    assert soft > 1, "soft NOFILE ulimit is unworkably low"
+
+    # no merging need occur
+    if len(input_bams) == 1:
+        _link_or_copy(input_bams[0], output_bam)
+        return
+
+    tmp_dir = os.path.dirname(output_bam)
+    created_bams = set([])
+    while len(input_bams) > 1:
+        new_bams = []
+        for i in xrange(0, len(input_bams), soft):
+            chunk_bams = input_bams[i:i+soft]
+            if len(chunk_bams) > 1:
+                new_bam = os.path.join(tmp_dir, "{}-{}.bam".format(i, len(input_bams)))
+                _merge_by_tag(new_bam, chunk_bams, tag, name, threads)
+                new_bams.append(new_bam)
+                created_bams.add(new_bam)
+            else:
+                new_bams.append(input_bams[i])
+        input_bams = new_bams
+
+    shutil.move(input_bams[0], output_bam)
+
+    # cleanup remaining intermediate bams
+    created_bams.remove(input_bams[0])
+    for bam in created_bams:
+        os.remove(bam)
+
+def merge(out_file_name, input_file_names, threads=1):
+    merge_by_tag(out_file_name, input_file_names, None, False, threads)
 
 def bam_is_empty(fn):
     if os.path.getsize(fn) > 1000000:
@@ -361,18 +428,18 @@ def generate_tiling_windows(input_bam, locus_size, overlap=0):
 
     return loci
 
+import numpy as np
 import struct
+import zlib
 
-def get_bsize(f, subfield_start, extra_len):
-    (id1, id2, length) = struct.unpack("BBH", f.read(4))
+class BgzfParserException(Exception):
+    pass
 
+def get_bsize(b):
+    id1, id2, length, bsize = struct.unpack("BBHH", b[:6])
     if id1 == 66 and id2 == 67 and length == 2:
-        bsize = struct.unpack("H", f.read(2))
-        return bsize[0]
-    #elif f.tell() - subfield_start < extra_len:
-    #    get_bsize(f, subfield_start, extra_len)
-    else:
-        raise Exception("BSIZE field not found -- this a valid BAM file?")
+        return bsize
+    raise BgzfParserException("BSIZE field not found -- this a valid BAM file?")
 
 def parse_bgzf_header(f):
     cur_pos = f.tell()
@@ -390,13 +457,54 @@ def parse_bgzf_header(f):
     if header[0] != 31 or header[1] != 139:
         raise Exception("Not a valid gzip header")
 
-    xlen = header[7]
-    bsize = get_bsize(f, f.tell(), xlen)
+    bsize = get_bsize(f.read(6))
 
     next_pos = cur_pos + bsize + 1
     f.seek(next_pos)
     return next_pos
 
+def is_valid_bgzf_block(block):
+    if len(block) < 18:
+        return False
+    try:
+        header = struct.unpack("BBBBIBBH", block[:12])
+        if header[0] != 31 or header[1] != 139 or header[2] != 8 or header[3] != 4:
+            return False
+        bsize = get_bsize(block[12:])
+        if len(block) <= bsize:
+            raise RuntimeError("Encountered possibly truncated block!")
+        xlen = header[7]
+        cdata_end = bsize - xlen - 1  # -1 == -19 + (12 + 6)
+        wbits = zlib.MAX_WBITS | 16
+        data = zlib.decompress(block[:bsize+1], wbits)
+        crc = zlib.crc32(data) & 0xffffffff
+        # zlib.decompress _may_ check these, but this is cheap enough...
+        if (crc, len(data)) == struct.unpack("II", block[cdata_end:cdata_end+8]):
+            return True
+        return False
+    except BgzfParserException:
+        return False
+    except zlib.error:
+        return False
+
+def bgzf_noffsets(fname, num_chunks):
+    fsize = os.path.getsize(fname)
+    initial_offsets = np.linspace(0, fsize, num_chunks+1).round().astype(int)[:-1]
+    initial_offsets = sorted(set(initial_offsets))
+    num_bytes = 1 << 16
+    if len(initial_offsets) > 1:
+        num_bytes = min(num_bytes, np.diff(initial_offsets).max())
+    fp = open(fname, "r")
+    final_offsets = []
+    for offset in initial_offsets:
+        fp.seek(offset)
+        # read 2x max BAM blocksize, seek up to this value
+        data = fp.read(2 << 16)
+        for i in xrange(0, num_bytes):
+            if is_valid_bgzf_block(data[i:]):
+                final_offsets.append(offset + i)
+                break
+    return final_offsets
 
 def chunk_bam_records(input_bam, chunk_bound_key=None, chunk_size_gb=0.75,
     num_chunks=None, min_chunks=1, max_chunks=None):
@@ -416,13 +524,6 @@ def chunk_bam_records(input_bam, chunk_bound_key=None, chunk_size_gb=0.75,
         num_chunks = max(min_chunks, int(math.ceil(size_gb / chunk_size_gb)))
     if max_chunks is not None:
         num_chunks = min(num_chunks, max_chunks)
-
-    input_bam.reset()
-    first_chunk = input_bam.tell() >> 16
-
-    # Find BGZF block list
-    fp = file(input_bam.filename, "rb")
-    chunk_offsets = [ x for x in iter(lambda: parse_bgzf_header(fp), None) if x >= first_chunk ]
 
     def find_valid_virtual_offset(pos):
         ''' Scan through reads starting at given pos to find valid start site for iteration '''
@@ -469,15 +570,15 @@ def chunk_bam_records(input_bam, chunk_bound_key=None, chunk_size_gb=0.75,
         # Any reads will get processed by the preceding chunks
         return None
 
-    # The first read is always a valid start point
-    # For subsequent chunks we iterate until the chunk_boundary_test returns True
-    start_points = range(0, len(chunk_offsets), max(1, len(chunk_offsets)/num_chunks))
-    start_virtual_offsets = [find_valid_virtual_offset(chunk_offsets[x]) for x in start_points[1:]]
-    start_virtual_offsets = [x for x in start_virtual_offsets if x is not None]
+    input_bam.reset()
+    start_virtual_offsets = [input_bam.tell() & ~0xffff]
+    for x in bgzf_noffsets(input_bam.filename, num_chunks)[1:]:
+        y = find_valid_virtual_offset(x)
+        if y is not None:
+            start_virtual_offsets.append(y)
 
     # Remove duplicate start sites
-    start_virtual_offsets = sorted(list(set(start_virtual_offsets)))
-    start_virtual_offsets.insert(0, first_chunk  << 16)
+    start_virtual_offsets = sorted(set(start_virtual_offsets))
 
     end_virtual_offsets = start_virtual_offsets[1:]
     end_virtual_offsets.append(None)
@@ -488,27 +589,26 @@ def chunk_bam_records(input_bam, chunk_bound_key=None, chunk_size_gb=0.75,
 
 def read_bam_chunk(input_bam, chunk_def):
     ''' Iterate over the reads in input_bam contained in chunk_def.  chunk_def is a (start, end) pair
-        of virtual offsets into the BAM file '''
+        of virtual offsets into the BAM file.'''
 
-    start, end = chunk_def
+    chunk_start, chunk_end = chunk_def
 
     def convert_offset(s):
         if s == 'None':
             return None
         if isinstance(s, str) or isinstance(s, unicode):
             return int(s)
-
         return s
 
-    start = convert_offset(start)
-    end = convert_offset(end)
+    chunk_start = convert_offset(chunk_start)
+    chunk_end = convert_offset(chunk_end)
 
-    if start:
-        input_bam.seek(start)
+    if chunk_start:
+        input_bam.seek(chunk_start)
     else:
         input_bam.reset()
 
-    while end == None or input_bam.tell() < end:
+    while chunk_end == None or input_bam.tell() < chunk_end:
         yield input_bam.next()
 
 def get_allele_read_info(chrom, pos, ref, alt_alleles, min_mapq_counts, min_mapq_for_mean, min_mapq_for_bc, default_indel_qual, bam, reference_pyfasta, max_reads=1000, match = 1, mismatch = -4, gap_open = -6, gap_extend = -1):

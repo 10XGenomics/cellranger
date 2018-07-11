@@ -45,6 +45,21 @@ def make_index_array_cat(idx_dict, categorical, dtype=np.uint16):
     new_codes = trans_table[categorical.codes]
     return new_codes
 
+def _pandas_categorical_type():
+    """Find Pandas' CategoricalDtype.
+
+    In older pandas, this was pandas.core.common.CategoricalDtype.
+
+    In newer pandas, this moved to pandas.core.dtypes.dtypes.CategoricalDtype
+    with a forwarding alias for the constructor which still does not work
+    correctly for type comparisons.
+    """
+    try:
+        return p.core.dtypes.dtypes.CategoricalDtype
+    except AttributeError:
+        return p.core.common.CategoricalDtype
+
+_PANDAS_CATEGORICAL_TYPE = _pandas_categorical_type()
 
 def write_data_column(grp, column):
 
@@ -53,7 +68,7 @@ def write_data_column(grp, column):
     if column.name in grp.keys():
         del grp[column.name]
 
-    if type(column.dtype) == p.core.common.CategoricalDtype:
+    if type(column.dtype) == _PANDAS_CATEGORICAL_TYPE:
         # Pre-made pandas categorical
         uniq = column.cat.categories
         index_array = column.cat.codes
@@ -112,14 +127,20 @@ def write_data_column(grp, column):
 
     else:
         # Store as native numpy / h5py types
-        grp.create_dataset(column.name,
-                           shape=column.shape,
-                           maxshape=(None,),
-                           dtype=column.dtype,
-                           data=column,
-                           compression=COMPRESSION,
-                           shuffle=True,
-                           chunks=(CHUNK_SIZE,))
+        try:
+            grp.create_dataset(column.name,
+                               shape=column.shape,
+                               maxshape=(None,),
+                               dtype=column.dtype,
+                               data=column,
+                               compression=COMPRESSION,
+                               shuffle=True,
+                               chunks=(CHUNK_SIZE,))
+        except TypeError:
+            print column.name
+            print column.dtype
+            print type(column.dtype)
+            raise
 
 
 def widen_cat_column(old_ds, new_type):

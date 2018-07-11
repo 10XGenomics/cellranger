@@ -86,9 +86,8 @@ def check_runinfo_xml(folder_path):
     return runinfo
 
 
-def check_barcode_whitelist(whitelist_name):
+def check_barcode_whitelist(whitelist_path):
     hostname = socket.gethostname()
-    whitelist_path = os.path.join(tk_constants.BARCODE_LOCATION, "%s.txt" % whitelist_name)
     check_file("barcode whitelist", whitelist_path, hostname)
     return whitelist_path
 

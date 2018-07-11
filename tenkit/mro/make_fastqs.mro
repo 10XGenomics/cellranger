@@ -24,6 +24,7 @@ pipeline MAKE_FASTQS(
     in  bool   delete_undetermined,
     in  bool   ignore_dual_index,
     in  int    max_bcl2fastq_threads,
+    in  bool   run_qc,
     in  string software_version,
     out path   fastq_path,
     out path   interop_path,
@@ -82,6 +83,7 @@ pipeline MAKE_FASTQS(
     )
 
     call MAKE_QC_SUMMARY(
+        run_qc              = self.run_qc,
         run_path            = self.run_path,
         barcode_whitelist   = self.barcode_whitelist,
         bc_read_type        = self.bc_read_type,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Copyright (c) 2016 10x Genomics, Inc.  All rights reserved.
+# Copyright (c) 2018 10x Genomics, Inc.  All rights reserved.
 #
 # Run MAKE_FASTQS_CS with mrp.
 #
@@ -29,10 +29,10 @@ Usage:
     $TENX_PRODUCT $TENX_SUBCMD --run=PATH [options]
     $TENX_PRODUCT $TENX_SUBCMD -h | --help | --version
 
-Arguments:
-    run                     Path of Illumina BCL run folder.
+Required:
+    --run=PATH              Path of Illumina BCL run folder.
 
-Options:
+Optional:
 # Sample Sheet
     --id=NAME               Name of the folder created by mkfastq.  If not
                             supplied, will default to the name of the flowcell
@@ -51,6 +51,9 @@ Options:
     --ignore-dual-index     On a dual-indexed flowcell, ignore the second sample
                               index, if the second sample index was not used
                               for the 10x sample.
+    --qc                    Calculate both sequencing and 10x-specific metrics,
+                              including per-sample barcode matching rate.  Will
+                              not be performed unless this flag is specified.
     
 # bcl2fastq Pass-Through
     --lanes=NUMS            Comma-delimited series of lanes to demultiplex.
@@ -93,6 +96,7 @@ ignore_dual_index=0
 jobmode=local
 localcores=0
 pipestance_id=""
+run_qc=0
 
 ##########################################################
 # Trap command-line arguments to run the pipeline and pass 
@@ -151,7 +155,7 @@ case $arg in
         shift
         ;;
     # trap mrp arg flags
-    --uiport=*|--localmem=*|--mempercore=*|--maxjobs=*|--jobinterval=*)
+    --uiport=*|--localmem=*|--mempercore=*|--maxjobs=*|--jobinterval=*|--overrides=*)
         mrp_opts="$mrp_opts $arg"
         ;;
     --localcores=*)
@@ -164,7 +168,7 @@ case $arg in
         jobmode="${arg#*=}"
         ;;
     # trap mrp action_true flags
-    --noexit|--nopreflight)
+    --noexit|--nopreflight|--disable-ui)
         mrp_opts="$mrp_opts $arg"
         ;;
     # trap bcl2fastq args that we default
@@ -224,6 +228,9 @@ case $arg in
     --ignore-dual-index)
         ignore_dual_index=1
         ;;
+    --qc)
+        run_qc=1
+        ;;
     --output-dir=*)
         bcl2fastq_output_dir=$(abspath "${arg#*=}")
         bcl2fastq_output_dir="\"$bcl2fastq_output_dir\""
@@ -269,6 +276,22 @@ case $arg in
 esac
 shift
 done
+
+maxlocalcores=12
+#######################################################
+# If localcores is not overridden but num cores > 12,
+# set --localcores to 12 in order to avoid local
+# saturation on qc/merge steps.
+#######################################################
+if [[ $localcores -eq 0 ]]; then
+    numcpus=`grep -c ^processor /proc/cpuinfo`
+    if [ $? == 0 ]; then
+        if [[ $numcpus -gt $maxlocalcores ]]; then
+            mrp_opts="$mrp_opts --localcores=$maxlocalcores"
+            localcores=$maxlocalcores
+        fi
+    fi
+fi
 
 ###########################################################
 # implement_process_options
@@ -428,6 +451,13 @@ else
     ignore_dual_index_str="false"
 fi
 
+if [[ $run_qc -eq 1 ]]; then
+    run_qc_str="true"
+else
+    run_qc_str="false"
+fi
+
+
 threads_ar=($bcl2fastq2_r $bcl2fastq2_w $bcl2fastq2_d $bcl2fastq2_p)
 threads_max=0
 for threads in "${threads_ar[@]}"; do
@@ -515,6 +545,7 @@ call MAKE_FASTQS_CS(
     interop_output_path   = $bcl2fastq_interop_dir,
     delete_undetermined   = $delete_undetermined_str,
     ignore_dual_index     = $ignore_dual_index_str,
+    run_qc                = $run_qc_str,
     max_bcl2fastq_threads = $threads_max,
     software_version      = "$TENX_PRODUCT $TENX_VERSION",
 )
