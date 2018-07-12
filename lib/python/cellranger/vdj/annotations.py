@@ -13,7 +13,7 @@ import cellranger.align as cr_align
 from cellranger.vdj.constants import (VDJ_5U_FEATURE_TYPES, VDJ_D_FEATURE_TYPES,
                                       VDJ_V_FEATURE_TYPES, VDJ_J_FEATURE_TYPES,
                                       VDJ_C_FEATURE_TYPES, VDJ_ORDERED_REGIONS,
-                                      START_CODONS, STOP_CODONS, CODON_TO_AA,
+                                      START_CODONS, STOP_CODONS, CODON_TO_AA, AMBIGUOUS_AA_CODE,
                                       VDJ_MAX_CDR3_LEN, VDJ_MIN_CDR3_LEN,
                                       VDJ_CDR3_ALL_END_MOTIFS, VDJ_CDR3_COMMON_END_MOTIFS,
                                       VDJ_ANNOTATION_MIN_SCORE_RATIO,
@@ -36,6 +36,17 @@ from collections import defaultdict
 
 # Allow the start codon to shift up or down by this many codons
 START_CODON_SLOP = 1
+
+def codon_to_aa(codon):
+    """ Return amino acid corresponding to a codon
+
+    If the codon is not in the translation table, a default
+    AA is returned (see AMBIGUOUS_AA_CODE in vdj.constants)
+
+    """
+    assert len(codon)==3
+    assert all([c in 'NACGT' for c in codon])
+    return CODON_TO_AA.get(codon, AMBIGUOUS_AA_CODE)
 
 def filter_alignment(alignment_result, score_ratio, word_size,
                      match_score=VDJ_ANNOTATION_MATCH_SCORE):
@@ -288,7 +299,7 @@ def search_cdr3_signature(seq, v_region, j_region, v_frame):
     v_start = v_region.contig_match_start
 
     # Get the position of the last Cysteine within the V-Region
-    v_amino_acids = [CODON_TO_AA[v_seq[i:(i+3)]] for i in range(v_frame, len(v_seq) - 3, 3)]
+    v_amino_acids = [codon_to_aa(v_seq[i:(i+3)]) for i in range(v_frame, len(v_seq) - 2, 3)]
     if not 'C' in v_amino_acids:
         flag = 'GUIDED_NO_C_IN_V'
         return (pos, flag)
@@ -317,7 +328,7 @@ def search_cdr3_signature(seq, v_region, j_region, v_frame):
     j_frame = 3 - (j_start - v_start - v_frame) % 3
     if j_frame == 3:
         j_frame = 0
-    j_amino_acids = [CODON_TO_AA[j_seq[i:(i+3)]] for i in range(j_frame, len(j_region.sequence) - 3, 3)]
+    j_amino_acids = [codon_to_aa(j_seq[i:(i+3)]) for i in range(j_frame, len(j_region.sequence) - 2, 3)]
 
     # Look for FG(X)G signature or WG(X)G signature
     end_motif_pos = None
@@ -346,7 +357,7 @@ def search_cdr3_signature_no_vj(seq, v_region=None, j_region=None):
     min_cdr3_aas = VDJ_MIN_CDR3_LEN / 3
 
     for frame in range(3):
-        amino_acids = [CODON_TO_AA.get(seq[i:(i+3)],'') for i in range(frame, len(seq), 3)]
+        amino_acids = [codon_to_aa(seq[i:(i+3)]) for i in range(frame, len(seq) - 2, 3)]
 
         fgxg_idx = None
 
@@ -875,7 +886,7 @@ class AnnotatedContig(object):
                 self.cdr3_start = cdr_pos[0]
                 self.cdr3_stop = cdr_pos[1]
                 self.cdr3_seq = seq[cdr_pos[0]:cdr_pos[1]]
-                self.cdr3 = ''.join([CODON_TO_AA[self.cdr3_seq[i:(i+3)]] for i in xrange(0, len(self.cdr3_seq), 3)])
+                self.cdr3 = ''.join([codon_to_aa(self.cdr3_seq[i:(i+3)]) for i in xrange(0, len(self.cdr3_seq) - 2, 3)])
 
                 assert (cdr_pos[1] - cdr_pos[0]) % 3 == 0
             else:
@@ -948,7 +959,7 @@ class AnnotatedContig(object):
 
         # Translate the entire reading frame if possible
         if self.start_codon_pos is not None:
-            self.aa_sequence = ''.join([CODON_TO_AA[self.codon(i)] for i in xrange(self.start_codon_pos, len(self.sequence) - 2, 3)])
+            self.aa_sequence = ''.join([codon_to_aa(self.codon(i)) for i in xrange(self.start_codon_pos, len(self.sequence) - 2, 3)])
 
         self.cdr3_flag = '|'.join([f for f in flags if f is not None and len(f) > 0])
 

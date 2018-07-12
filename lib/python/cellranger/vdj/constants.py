@@ -89,6 +89,7 @@ VDJ_QUAL_OFFSET = 33
 
 START_CODONS = ['ATG']
 STOP_CODONS = ['TAG', 'TAA', 'TGA']
+AMBIGUOUS_AA_CODE = 'X'
 CODON_TO_AA = {
     'GGT':'G', 'GGC':'G', 'GGA':'G', 'GGG':'G',
     'TGG':'W',
