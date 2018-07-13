@@ -12,6 +12,8 @@ import tenkit.stats as tk_stats
 
 # Inverse Simpson Index, or the effective diversity of power 2
 def effective_diversity(counts):
+    if counts.size==0: # Empty
+        return 0
     numerator = np.sum(counts)**2
     denominator = np.sum(v**2 for v in counts)
     effective_diversity = tk_stats.robust_divide(float(numerator), float(denominator))
