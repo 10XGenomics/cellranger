@@ -392,13 +392,13 @@ METRIC_ALARMS = [
         'format': MULTI_READS_MAPPED_TO_RECOMBINOME_METRIC['format'],
         'error': {
             'title': 'Low Fraction of Reads Mapped to Any V(D)J Gene.',
-            'message': 'Ideal > 70%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance is likely to be affected.',
+            'message': 'Ideal > 60%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance is likely to be affected.',
             'test': '< 0.50',
         },
         'warn': {
             'title': 'Low Fraction of Reads Mapped to Any V(D)J Gene.',
-            'message': 'Ideal > 70%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
-            'test': '< 0.70',
+            'message': 'Ideal > 60%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3\' for V(D)J assembly). Application performance may be affected.',
+            'test': '< 0.60',
         },
     },
     # Note: alerts don't support programmatic prefixes, so we have to hardcode TRA/TRB here.
