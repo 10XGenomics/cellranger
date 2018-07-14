@@ -82,7 +82,7 @@ VDJ_METRICS = {
 
     'vdj_assembly_median_contig_length': (cr_report.MedianMetric, {'prefixes': ['vdj_genes']}),
 
-    'vdj_assembly_contig_pair_productive_full_len_bc_count': (cr_report.CountMetric, {'kwargs': {'always_active': True}, 'prefixes': ['vdj_gene_pairs']}),
+    'vdj_assembly_contig_pair_productive_full_len_bc_count': (cr_report.CountMetric, {'prefixes': ['vdj_gene_pairs']}),
     'vdj_assembly_contig_pair_productive_full_len_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_gene_pairs']}),
     'vdj_assembly_gt0prodcdr_contig_pair_productive_full_len_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_gene_pairs']}),
     'vdj_assembly_cdr_detected_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_genes']}),
@@ -101,7 +101,7 @@ VDJ_METRICS = {
     'vdj_clonotype_prop': (cr_report.TopNMetric, {'args': [vdj_constants.VDJ_MAX_OUTPUT_CLONOTYPES],
                                                   'prefixes': ['vdj_clonotype_types']}),
     'vdj_clonotype_diversity': (cr_report.EffectiveDiversityMetric, {'prefixes': ['canonical_vdj_gene_pairs', 'vdj_clonotype_types']}),
-    'vdj_paired_clonotype_diversity': (cr_report.EffectiveDiversityMetric, {'kwargs': {'always_active': True}, 'prefixes': ['canonical_vdj_gene_pairs', 'vdj_clonotype_types']}),
+    'vdj_paired_clonotype_diversity': (cr_report.EffectiveDiversityMetric, {'prefixes': ['canonical_vdj_gene_pairs', 'vdj_clonotype_types']}),
     'vdj_unassigned_clonotype_bc_frac': (cr_report.PercentMetric, {'prefixes': ['vdj_clonotype_types']}),
     'vdj_paired_clonotype_frac': (cr_report.PercentMetric, {'prefixes': ['canonical_vdj_gene_pairs', 'vdj_clonotype_types']}),
     'vdj_paired_clonotype_bc_frac': (cr_report.PercentMetric, {'prefixes': ['canonical_vdj_gene_pairs', 'vdj_clonotype_types']}),
