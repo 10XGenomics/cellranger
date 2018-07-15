@@ -3,7 +3,7 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 from collections import namedtuple
-import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
 import cellranger.webshim.constants.shared as shared
 import cellranger.vdj.utils as vdj_utils
 
@@ -14,7 +14,7 @@ VdjSampleProperties = namedtuple('VdjSampleProperties',
 
 def vdj_gene_pair_format(gene_pair_str):
     """ Format a gene pair prefix from VdjReporter for human-usage """
-    if gene_pair_str == cr_constants.MULTI_REFS_PREFIX:
+    if gene_pair_str == lib_constants.MULTI_REFS_PREFIX:
         return ''
     else:
         return '(%s)' % ', '.join(vdj_utils.get_genes_in_pair(gene_pair_str))

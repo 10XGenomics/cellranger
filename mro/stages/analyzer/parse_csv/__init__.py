@@ -3,7 +3,7 @@
 # Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 #
 
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import csv
 import os
 import martian
@@ -60,7 +60,7 @@ def main(args, outs):
             setattr(outs, param, None)
 
     if args.params_csv is not None:
-        cr_utils.copy(args.params_csv, outs.params_csv)
+        cr_io.copy(args.params_csv, outs.params_csv)
 
 def parse_parameters(filename):
     if filename is None:

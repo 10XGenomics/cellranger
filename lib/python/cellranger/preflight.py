@@ -8,7 +8,8 @@ import tenkit.log_subprocess as tk_subproc
 import tenkit.preflight as tk_preflight
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
-import cellranger.feature_ref as cr_feature_ref
+from cellranger.feature_ref import FeatureDefException
+import cellranger.rna.feature_ref as rna_feature_ref
 
 class PreflightException(Exception):
     def __init__(self, msg):
@@ -89,13 +90,18 @@ def check_chemistry(name, custom_def, allowed_chems):
     if name == cr_chem.CUSTOM_CHEMISTRY_NAME:
         check(cr_chem.check_chemistry_def(custom_def))
 
-def check_feature_ref(filename):
-    if not os.path.isfile(filename):
-        raise PreflightException("Could not find the feature definition file %s" % filename)
+def check_feature_ref(transcriptome_ref_path, feature_ref_path):
+    if not os.path.isfile(feature_ref_path):
+        raise PreflightException("Could not find the feature definition file %s" % feature_ref_path)
 
     try:
-        cr_feature_ref.parse_feature_def_file(filename)
-    except cr_feature_ref.FeatureDefException as e:
+        feature_ref = rna_feature_ref.from_transcriptome_and_csv(
+            transcriptome_ref_path,
+            feature_ref_path)
+
+        rna_feature_ref.FeatureExtractor(feature_ref)
+
+    except FeatureDefException as e:
         raise PreflightException(str(e))
 
 def check_environment():

@@ -14,7 +14,7 @@ import tenkit.bam as tk_bam
 import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_safe_json
 import cellranger.chemistry as cr_chem
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage ASSEMBLE_VDJ(
@@ -129,13 +129,13 @@ def main(args, outs):
 
     out_pref = os.path.splitext(os.path.basename(args.chunked_bam))[0]
     out_pref = martian.make_path(out_pref)
-    cr_utils.move(out_pref + '.fasta', outs.contig_fasta)
-    cr_utils.move(out_pref + '.fastq', outs.contig_fastq)
-    cr_utils.move(out_pref + '_summary.tsv', outs.summary_tsv)
-    cr_utils.move(out_pref + '_umi_summary.tsv', outs.umi_summary_tsv)
-    cr_utils.move(out_pref + '_sorted.bam', outs.contig_bam)
-    cr_utils.move(out_pref + '_sorted.bam.bai', outs.contig_bam_bai)
-    cr_utils.move(out_pref + '_metrics_summary.json', outs.metrics_summary_json)
+    cr_io.move(out_pref + '.fasta', outs.contig_fasta)
+    cr_io.move(out_pref + '.fastq', outs.contig_fastq)
+    cr_io.move(out_pref + '_summary.tsv', outs.summary_tsv)
+    cr_io.move(out_pref + '_umi_summary.tsv', outs.umi_summary_tsv)
+    cr_io.move(out_pref + '_sorted.bam', outs.contig_bam)
+    cr_io.move(out_pref + '_sorted.bam.bai', outs.contig_bam_bai)
+    cr_io.move(out_pref + '_metrics_summary.json', outs.metrics_summary_json)
 
 
 def join(args, outs, chunk_defs, chunk_outs):
@@ -175,18 +175,18 @@ def join(args, outs, chunk_defs, chunk_outs):
         summary_tsvs.append(chunk_out.summary_tsv)
         umi_summary_tsvs.append(chunk_out.umi_summary_tsv)
 
-    cr_utils.concatenate_files(outs.contig_fasta, contigs)
+    cr_io.concatenate_files(outs.contig_fasta, contigs)
 
     if os.path.getsize(outs.contig_fasta) > 0:
         tk_subproc.check_call('samtools faidx %s' % outs.contig_fasta, shell=True)
         outs.contig_fasta_fai = outs.contig_fasta + '.fai'
 
-    cr_utils.concatenate_files(outs.contig_fastq, contig_fastqs)
+    cr_io.concatenate_files(outs.contig_fastq, contig_fastqs)
 
     if len(summary_tsvs) > 0:
-        cr_utils.concatenate_headered_files(outs.summary_tsv, summary_tsvs)
+        cr_io.concatenate_headered_files(outs.summary_tsv, summary_tsvs)
     if len(umi_summary_tsvs) > 0:
-        cr_utils.concatenate_headered_files(outs.umi_summary_tsv, umi_summary_tsvs)
+        cr_io.concatenate_headered_files(outs.umi_summary_tsv, umi_summary_tsvs)
 
     if contig_bams:
         # Merge every N BAMs. Trying to merge them all at once
@@ -205,7 +205,7 @@ def join(args, outs, chunk_defs, chunk_outs):
             # Delete any temporary bams that have been merged
             for in_bam in to_merge:
                 if os.path.basename(in_bam).startswith('merged-'):
-                    cr_utils.remove(in_bam)
+                    cr_io.remove(in_bam)
 
             # Pop the input bams and push the merged bam
             contig_bams = contig_bams[len(to_merge):] + [tmp_bam]
@@ -213,10 +213,10 @@ def join(args, outs, chunk_defs, chunk_outs):
         if os.path.basename(contig_bams[0]).startswith('merged-'):
             # We merged at least two chunks together.
             # Rename it to the output bam.
-            cr_utils.move(contig_bams[0], outs.contig_bam)
+            cr_io.move(contig_bams[0], outs.contig_bam)
         else:
             # There was only a single chunk, so copy it from the input
-            cr_utils.copy(contig_bams[0], outs.contig_bam)
+            cr_io.copy(contig_bams[0], outs.contig_bam)
 
         tk_bam.index(outs.contig_bam)
 
@@ -224,7 +224,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.contig_bam_bai = outs.contig_bam + '.bai'
 
     # Merge the assembler summary jsons
-    merged_summary = cr_utils.merge_jsons_single_level([out.metrics_summary_json for out in chunk_outs])
+    merged_summary = cr_io.merge_jsons_single_level([out.metrics_summary_json for out in chunk_outs])
 
     with open(outs.metrics_summary_json, 'w') as f:
         json.dump(tk_safe_json.json_sanitize(merged_summary), f, indent=4, sort_keys=True)

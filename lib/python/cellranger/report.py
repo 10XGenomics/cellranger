@@ -16,9 +16,12 @@ import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
 import cellranger.reference as cr_reference
+import cellranger.rna.library as rna_library
 import cellranger.stats as cr_stats
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 # Metrics
 class Metric:
@@ -357,7 +360,7 @@ class BinnedMetric(EmbeddedMetric):
 METRICS = {
     # Raw fastq metrics
     'total_reads':               (CountMetric, {}),
-    'total_reads_per_gem_group': (CountMetric, {'prefixes': ['gem_groups']}),
+    'total_read_pairs_per_library': (CountMetric, {'prefixes': ['library_indices']}),
     'total_read_pairs':          (CountMetric, {}),
     'read_bases_with_q30_frac':  (PercentMetric, {}),
     'read_N_bases_frac':         (PercentMetric, {}),
@@ -424,8 +427,8 @@ METRICS = {
     'top_raw_barcodes':            (SubsampledTopNMetric, {'args': [cr_constants.TOP_N, cr_constants.TOP_RAW_SEQUENCE_SAMPLE_RATE]}),
     'effective_barcode_diversity': (EffectiveDiversityMetric, {'prefixes': ['references', 'read_types']}),
 
-    'transcriptome_conf_mapped_barcoded_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['references']}),
-    'transcriptome_conf_mapped_deduped_barcoded_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['references']}),
+    'transcriptome_conf_mapped_barcoded_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['library_types', 'references']}),
+    'transcriptome_conf_mapped_deduped_barcoded_reads': (DictionaryMetric, {'kwargs': {'report_type': 'barcodes', 'always_active': True}, 'prefixes': ['library_types', 'references']}),
 
     ## Subsampled metrics
     'subsampled_duplication_frac': (PercentMetric, {'kwargs': {'always_active': True}, 'prefixes': ['references', 'subsample_types', 'subsample_depths']}),
@@ -444,7 +447,7 @@ class RawFastqMetricsCache:
         self.primer_or_homopolymer_reads = 0.0
         self.homopolymer_reads = collections.defaultdict(float) # nucleotide -> count
         self.primer_reads = collections.defaultdict(float) # primer_name -> count
-        self.total_reads_per_gem_group = collections.defaultdict(float) # gem_group -> count
+        self.total_read_pairs_per_library = collections.defaultdict(float) # library_index -> count
         self.total_bases = collections.defaultdict(float) # seq_type -> count
         self.called_bases = collections.defaultdict(float) # seq_type -> count
         self.q30_bases = collections.defaultdict(float) # seq_type -> count
@@ -456,8 +459,8 @@ class RawFastqMetricsCache:
         get_metric('total_reads').set_value(self.total_reads)
         get_metric('total_read_pairs').set_value(self.total_read_pairs)
 
-        for gem_group, count in self.total_reads_per_gem_group.iteritems():
-            get_metric('total_reads_per_gem_group', gem_group).set_value(count)
+        for library_idx, count in self.total_read_pairs_per_library.iteritems():
+            get_metric('total_read_pairs_per_library', library_idx).set_value(count)
 
         for seq_type in self.seq_types:
             total_bases = self.total_bases[seq_type]
@@ -485,7 +488,9 @@ class Reporter:
                  umi_min_qual_threshold=0,
                  subsample_types=None,
                  subsample_depths=None,
-                 genomes=None):
+                 genomes=None,
+                 library_types=None,
+                 num_libraries=None):
         self.chroms = chroms
         self.umi_length = umi_length
         self.high_conf_mapq = high_conf_mapq
@@ -494,6 +499,11 @@ class Reporter:
         self.barcode_summary = barcode_summary
         self.barcode_dist = barcode_dist
         self.gem_groups = gem_groups
+        if num_libraries is  None:
+            self.library_indices = None
+        else:
+            self.library_indices = list(range(num_libraries))
+
         self.gene_index = gene_index
         self.umi_min_qual_threshold = umi_min_qual_threshold
         random.seed(0)
@@ -511,17 +521,22 @@ class Reporter:
 
         if reference_path is not None:
             self.genomes = cr_utils.get_reference_genomes(reference_path)
-            self.references = self.genomes + [cr_constants.MULTI_REFS_PREFIX]
+            self.references = self.genomes + [lib_constants.MULTI_REFS_PREFIX]
             self.has_multiple_genomes = len(self.genomes) > 1
         elif genomes is not None:
             self.genomes = genomes
-            self.references = self.genomes + [cr_constants.MULTI_REFS_PREFIX]
+            self.references = self.genomes + [lib_constants.MULTI_REFS_PREFIX]
             self.has_multiple_genomes = len(self.genomes) > 1
         else:
             self.genomes = []
             self.references = []
             self.has_multiple_genomes = False
 
+        if library_types:
+            self.library_types = map(rna_library.get_library_type_metric_prefix,
+                                     library_types)
+        else:
+            self.library_types = []
 
         self.subsample_types = subsample_types
         self.subsample_depths = subsample_depths
@@ -625,7 +640,8 @@ class Reporter:
         cache.q30_bases[seq_type] += num_bases_q30
         cache.n_bases[seq_type] += num_bases_n
 
-    def raw_fastq_cb(self, read1, read2, bc_read, si_read, umi_read, gem_group, skip_metrics=False):
+    def raw_fastq_cb(self, read1, read2, bc_read, si_read, umi_read, library_idx,
+                     skip_metrics=False):
         cache = self.raw_fastq_cache
         get_metric = self._get_metric_attr
 
@@ -639,7 +655,7 @@ class Reporter:
         cache.total_reads += 1
         cache.total_read_pairs += 1
 
-        cache.total_reads_per_gem_group[gem_group] += 1
+        cache.total_read_pairs_per_library[library_idx] += 1
         self._set_seq_qual_metrics(seq, qual, 'read', cache)
 
         if skip_metrics:
@@ -763,7 +779,7 @@ class Reporter:
 
         genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
         self._set_dupe_metrics(read, dupe_type, genome)
-        self._set_dupe_metrics(read, dupe_type, cr_constants.MULTI_REFS_PREFIX)
+        self._set_dupe_metrics(read, dupe_type, lib_constants.MULTI_REFS_PREFIX)
 
     def mark_dupes_group_cb(self, gene_id, umis, dupe_type):
         total_counts = sum(umis.values())
@@ -773,7 +789,7 @@ class Reporter:
         else:
             umi_hamming_distance = cr_utils.get_kmers_hamming_distance(umis.keys())
 
-        for reference in [cr_utils.get_genome_from_str(gene_id, self.genomes), cr_constants.MULTI_REFS_PREFIX]:
+        for reference in [cr_utils.get_genome_from_str(gene_id, self.genomes), lib_constants.MULTI_REFS_PREFIX]:
             if total_counts > 0:
                 reads_per_dupe_group_histogram = self._get_metric_attr(
                     'reads_per_dupe_group_histogram', reference, dupe_type)
@@ -804,7 +820,7 @@ class Reporter:
 
     def _get_gene_bc_umi(self, read):
         ''' If a read is worthy of being counted by COUNT_GENES, return the relevant info. Otherwise return None. '''
-        if read.is_unmapped or read.is_secondary or read.mapq < self.high_conf_mapq:
+        if read.is_secondary:
             return None
         gene_ids = cr_utils.get_read_gene_ids(read)
         if gene_ids is None or len(gene_ids) != 1:
@@ -815,7 +831,15 @@ class Reporter:
         umi = cr_utils.get_read_umi(read) # could be None
         return gene_ids[0], bc, umi
 
-    def count_genes_bam_cb(self, reads, use_umis=True):
+    def count_genes_bam_cb(self, reads, library_prefixes, use_umis=True):
+        """Generate a UMI count (or don't)
+        Args:
+          reads (list of pyam.AlignedSegment): Records for a single qname
+          library_prefixes (list of str): List of metric library prefixes, one per library in the BAM
+          use_umis (bool): Use UMIs to count
+        Returns:
+          A tuple as per the code below
+        """
         assert self.high_conf_mapq
 
         read1, read2, gene1, gene2, bc, umi = None, None, None, None, None, None
@@ -839,10 +863,18 @@ class Reporter:
 
         genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
 
+        library_idx = cr_utils.get_read_library_index(read)
+        library_prefix = library_prefixes[library_idx]
+
+        usable = cr_utils.is_read_dupe_candidate(read, self.high_conf_mapq)
+
         # Initialize this barcode
-        for reference in [genome] + ([cr_constants.MULTI_REFS_PREFIX] if self.has_multiple_genomes else []):
-            conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads', reference)
-            conf_mapped_barcode_reads.add(bc)
+        if usable:
+            for reference in [genome] + ([lib_constants.MULTI_REFS_PREFIX] if self.has_multiple_genomes else []):
+                    conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads',
+                                                                      library_prefix,
+                                                                      reference)
+                    conf_mapped_barcode_reads.add(bc)
 
         # Count this read
         if use_umis:
@@ -850,27 +882,14 @@ class Reporter:
         else:
             conf_mapped_deduped = not read.is_duplicate
 
-        for reference in self.references:
-            conf_mapped_deduped_frac = self._get_metric_attr('reads_frac', reference,
-                    cr_constants.TRANSCRIPTOME_REGION, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
-            conf_mapped_deduped_frac.add(1, filter=conf_mapped_deduped and reference in [genome, cr_constants.MULTI_REFS_PREFIX])
-
         if conf_mapped_deduped:
-            for reference in [genome, cr_constants.MULTI_REFS_PREFIX]:
-                conf_mapped_deduped_effective_barcode_diversity = self._get_metric_attr('effective_barcode_diversity',
-                        reference, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
-                conf_mapped_deduped_effective_barcode_diversity.add(bc)
-
+            for reference in [genome, lib_constants.MULTI_REFS_PREFIX]:
                 # Only report barcode_reads for multi_* if there are multiple genomes
-                if reference != cr_constants.MULTI_REFS_PREFIX or self.has_multiple_genomes:
+                if reference != lib_constants.MULTI_REFS_PREFIX or self.has_multiple_genomes:
                     conf_mapped_deduped_barcode_reads = self._get_metric_attr(
-                        'transcriptome_conf_mapped_deduped_barcoded_reads', reference)
+                        'transcriptome_conf_mapped_deduped_barcoded_reads',
+                        library_prefix, reference)
                     conf_mapped_deduped_barcode_reads.add(bc)
-
-                if umi is not None:
-                    conf_mapped_deduped_effective_umi_diversity = self._get_metric_attr(
-                        'effective_umi_diversity', reference, cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
-                    conf_mapped_deduped_effective_umi_diversity.add(umi)
 
             return True, genome, gene_id, bc
 
@@ -880,7 +899,7 @@ class Reporter:
         genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
 
         if insert_size is not None:
-            for reference in [genome, cr_constants.MULTI_REFS_PREFIX]:
+            for reference in [genome, lib_constants.MULTI_REFS_PREFIX]:
                 median_insert_size = self._get_metric_attr('median_insert_size', reference)
                 insert_size_histogram = self._get_metric_attr('insert_size_histogram', reference)
                 median_insert_size.add(insert_size)
@@ -888,57 +907,6 @@ class Reporter:
 
                 iqr_insert_size = self._get_metric_attr('iqr_insert_size', reference)
                 iqr_insert_size.add(insert_size)
-
-    def subsampled_duplication_frac_cb(self, subsampled_raw_matrices, mol_counter,
-                                       subsampled_rate, subsampled_type, subsampled_depth,
-                                       mapped_reads):
-        """
-        Calculates the subsampled duplication rate for a subsampled raw matrix.
-        NOTE: This assumes the sampled depth is identical to the targeted depth.
-              It will be inaccurate at low molecule counts.
-
-        Args:
-            subsampled_raw_matrices (GeneBCMatrices): subsampled GeneBCMatrices object (must be raw matrix)
-            mol_counter (MoleculeCounter): molecule counter object for the subsampled matrix
-            subsampled_rate (float): rate of subsampling used
-            subsampled_type (str): type of subsampling performed
-            subsampled_depth (int): target reads per cell for subsampled matrix
-            mapped_reads (int): total mapped reads after subsampling
-
-        """
-
-        for reference in self.references:
-            subsampled_duplication_frac = self._get_metric_attr('subsampled_duplication_frac', reference, subsampled_type, subsampled_depth)
-
-            if reference == cr_constants.MULTI_REFS_PREFIX:
-                total_molecules = subsampled_raw_matrices.get_reads_per_bc().sum()
-            else:
-                total_molecules = subsampled_raw_matrices.matrices[reference].m.sum()
-
-            subsampled_duplication_frac.set_value(numerator=mapped_reads - total_molecules,
-                                                  denominator=mapped_reads)
-
-    def summarize_subsampled_matrices_cb(self, filtered_mats, subsample_type, subsample_depth):
-        """
-        Computes simple summary metrics such as median genes detected and UMI counts on subsampled filtered matrices
-
-        Args:
-            filtered_mats (GeneBCMatrices): subsampled and filtered GeneBCMatrices
-            subsample_type (string): subsampling type
-            subsample_depth (int): target depth per cell for subsampling
-
-        """
-        for genome in self.genomes:
-            if filtered_mats is not None:
-                matrix = filtered_mats.matrices[genome]
-                genes_detected = np.median(matrix._sum(matrix.m >= cr_constants.MIN_READS_PER_GENE, axis=0))
-                median_counts = np.median(matrix._sum(matrix.m, axis=0))
-
-            subsampled_filtered_bc_median_unique_genes_detected = self._get_metric_attr('subsampled_filtered_bcs_median_unique_genes_detected', genome, subsample_type, subsample_depth)
-            subsampled_filtered_bc_median_unique_genes_detected.set_value(genes_detected)
-
-            subsampled_filtered_bcs_median_counts = self._get_metric_attr('subsampled_filtered_bcs_median_counts', genome, subsample_type, subsample_depth)
-            subsampled_filtered_bcs_median_counts.set_value(median_counts)
 
     def store_pipeline_metadata(self, version):
         if self.metadata is None:
@@ -1036,7 +1004,7 @@ class Reporter:
             counts = np.array([metric_data.get(bc, 0) for bc in bc_sequences], dtype=np.uint32)
             bc_table_cols[metric_name] = counts
 
-        cr_utils.write_h5(filename, bc_table_cols)
+        cr_io.write_h5(filename, bc_table_cols)
 
     def save(self, filename):
         with open(filename, 'wb') as f:

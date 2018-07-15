@@ -20,10 +20,11 @@ import tenkit.bam as tk_bam
 import tenkit.fasta as tk_fasta
 import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
-from cellranger.constants import PROCESSED_UMI_TAG, PROCESSED_BARCODE_TAG, MIN_MEM_GB
+from cellranger.constants import PROCESSED_UMI_TAG, PROCESSED_BARCODE_TAG
+from cellranger.h5_constants import MIN_MEM_GB
 import cellranger.fastq as cr_fastq
 import cellranger.report as cr_report
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.annotations as vdj_annot
 from cellranger.vdj.constants import VDJ_V_FEATURE_TYPES, VDJ_J_FEATURE_TYPES, VDJ_ANNOTATION_MIN_SCORE_RATIO
 import cellranger.vdj.report as vdj_report
@@ -86,7 +87,7 @@ MERGE_BAMS_EVERY = 10
 
 def rm_files(filenames):
     for filename in filenames:
-        cr_utils.remove(filename, allow_nonexisting=True)
+        cr_io.remove(filename, allow_nonexisting=True)
 
 def split(args):
     seed(1)
@@ -266,7 +267,7 @@ def main(args, outs):
             wrong_cdr_metric = reporter._get_metric_attr('vdj_clonotype_consensus_wrong_cdr_contig_frac', args.metric_prefix)
 
             tmp_dir = martian.make_path(consensus_id + '_outs')
-            cr_utils.mkdir(tmp_dir, allow_existing=True)
+            cr_io.mkdir(tmp_dir, allow_existing=True)
 
             res = get_consensus_seq(consensus_id, sel_contig_ids, best_contig.contig_name, tmp_dir, args)
             (best_seq, best_quals, consensus_seq, contig_to_cons_bam, contig_fastq, contig_fasta) = res
@@ -394,7 +395,7 @@ def main(args, outs):
 
                 # Move out of tmp dir
                 rec_bam = martian.make_path(consensus_id + '_reference.bam')
-                cr_utils.move(os.path.join(tmp_dir, consensus_id + '_contigs.bam'), rec_bam)
+                cr_io.move(os.path.join(tmp_dir, consensus_id + '_contigs.bam'), rec_bam)
                 outs.chunked_concat_ref_bams.append(rec_bam)
 
             if os.path.isdir(tmp_dir):
@@ -560,7 +561,7 @@ def get_consensus_seq(clonotype_name, sel_contigs, best_contig, out_dir, args):
 
     # Move the BAM of the contigs aligned against the consensus out of the outs
     # (Will overwrite this bam which was already used as input to assembly).
-    cr_utils.move(os.path.join(out_dir, clonotype_name + '_contigs.bam'), out_bam_name)
+    cr_io.move(os.path.join(out_dir, clonotype_name + '_contigs.bam'), out_bam_name)
 
     return (best_contig_seq, best_contig_quals, out_seq, out_bam_name, out_fastq_name, out_fasta_name)
 
@@ -732,7 +733,7 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     if consensus_contigs:
         all_fastqs = [chunk_out.consensus_fastq for chunk_out in chunk_outs]
-        cr_utils.concatenate_files(outs.consensus_fastq, all_fastqs)
+        cr_io.concatenate_files(outs.consensus_fastq, all_fastqs)
 
         all_fastas = [chunk_out.consensus_fasta for chunk_out in chunk_outs]
         concatenate_and_index_fastas(outs.consensus_fasta, all_fastas)
@@ -772,7 +773,7 @@ def join(args, outs, chunk_defs, chunk_outs):
 
 
 def concatenate_and_index_fastas(out_fasta, fastas):
-    cr_utils.concatenate_files(out_fasta, fastas)
+    cr_io.concatenate_files(out_fasta, fastas)
     tk_subproc.check_call(['samtools', 'faidx', out_fasta], cwd=os.getcwd())
 
 def concatenate_bams(out_bam, bams):
@@ -785,4 +786,4 @@ def concatenate_sort_and_index_bams(out_bam, bams):
     vdj_utils.concatenate_and_fix_bams(tmp_bam, bams, drop_tags=[PROCESSED_UMI_TAG])
     # Wrap filenames in str() to prevent pysam crash on unicode input
     tk_bam.sort_and_index(str(tmp_bam), str(out_bam.replace('.bam', '')))
-    cr_utils.remove(tmp_bam, allow_nonexisting=True)
+    cr_io.remove(tmp_bam, allow_nonexisting=True)

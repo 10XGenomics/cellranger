@@ -26,7 +26,7 @@ from cellranger.vdj.constants import (VDJ_5U_FEATURE_TYPES, VDJ_D_FEATURE_TYPES,
                                       VDJ_PRIMER_ANNOTATION_MIN_FRACTION_MATCHED,
                                       VDJ_QUAL_OFFSET, VDJ_CLONOTYPE_TYPES,
                                       VDJ_GENE_PAIRS)
-from cellranger.constants import MULTI_REFS_PREFIX
+from cellranger.library_constants import MULTI_REFS_PREFIX
 import cellranger.vdj.reference as vdj_reference
 import cellranger.vdj.utils as vdj_utils
 import tenkit.safe_json as tk_safe_json

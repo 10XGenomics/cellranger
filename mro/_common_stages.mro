@@ -47,6 +47,7 @@ stage SETUP_CHUNKS(
     out map[]    chunks,
     out map      chemistry_def,
     out string   barcode_whitelist,
+    out map[]    library_info,
     src py       "stages/common/setup_chunks",
 )
 
@@ -71,8 +72,10 @@ stage EXTRACT_READS(
     in  int      r1_length,
     in  int      r2_length,
     in  bool     skip_metrics,
+    in  path     reference_path,
     in  csv      feature_reference,
     in  bool     augment_fastq,
+    in  map[]    library_info,
     out pickle   chunked_reporter,
     out json     summary,
     out json     barcode_counts,
@@ -82,13 +85,13 @@ stage EXTRACT_READS(
     out fastq[]  tags,
     out int[]    gem_groups,
     out string[] library_types,
+    out string[] library_ids,
     out string[] read_groups,
     out map      align,
     out string[] bam_comments,
     src py       "stages/common/extract_reads",
 ) split (
     in  map      read_chunks,
-    in  int      gem_group,
     in  bool     reads_interleaved,
     in  bool     barcode_rc,
 ) using (

@@ -6,6 +6,7 @@ import martian
 import math
 import os
 
+import cellranger.analysis.constants as analysis_constants
 import cellranger.constants as cr_constants
 import cellranger.matrix as cr_matrix
 
@@ -44,22 +45,22 @@ def main(args, outs):
         return
 
     if not (args.filtered_matrices_h5 and os.path.exists(args.filtered_matrices_h5)):
-        martian.exit("Filtered matrices do not exist: %s" % args.filtered_matrices_h5)
+        martian.exit("Filtered matrix does not exist: %s" % args.filtered_matrices_h5)
 
-    flt_genome_dims = cr_matrix.GeneBCMatrices.load_dims_from_h5(args.filtered_matrices_h5)
-    flt_genomes = flt_genome_dims.keys()
+    flt_matrix_dims = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_matrices_h5)
+    flt_genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices_h5)
 
-    # check for empty matrices
-    total_entries = sum([entries for (genes, bcs, entries) in flt_genome_dims.values()])
-    if total_entries == 0:
-        martian.log_info("Gene-barcode matrices are empty - skipping analysis.")
+    # check for empty matrix
+    nonzero_entries = flt_matrix_dims[2]
+    if nonzero_entries == 0:
+        martian.log_info("Gene-barcode matrix is empty - skipping analysis.")
         outs.skip = True
         return
 
     if args.raw_matrices_h5:
         if not os.path.exists(args.raw_matrices_h5):
-            martian.exit("Raw matrices do not exist: %s" % args.raw_matrices_h5)
-        raw_genomes = cr_matrix.GeneBCMatrices.load_genomes_from_h5(args.raw_matrices_h5)
+            martian.exit("Raw matrix does not exist: %s" % args.raw_matrices_h5)
+        raw_genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.raw_matrices_h5)
         if sorted(flt_genomes) != sorted(raw_genomes):
             martian.exit("Raw matrix genomes (%s) do not match filtered matrix genomes (%s)" % (raw_genomes, flt_genomes))
 
@@ -68,14 +69,14 @@ def main(args, outs):
     else:
         martian.log_info("Matrix has one genome - single-genome analysis will be performed")
 
-        total_genes, total_bcs, _ = flt_genome_dims.values()[0]
+        total_genes, total_bcs, _ = flt_matrix_dims
 
         # if we're using the defaults and the matrix doesn't have enough data, skip analysis
-        if args.max_clusters is None and total_bcs < cr_constants.MAX_N_CLUSTERS_DEFAULT:
+        if args.max_clusters is None and total_bcs < analysis_constants.MAX_N_CLUSTERS_DEFAULT:
             martian.log_info("Gene-barcode matrix is tiny (num_cells = %d) - skipping analysis." % total_bcs)
             outs.skip = True
             return
-        if args.num_principal_comps is None and total_genes < cr_constants.PCA_N_COMPONENTS_DEFAULT:
+        if args.num_principal_comps is None and total_genes < analysis_constants.PCA_N_COMPONENTS_DEFAULT:
             martian.log_info("Gene-barcode matrix is tiny (num_genes = %d) - skipping analysis." % total_genes)
             outs.skip = True
             return
@@ -105,18 +106,18 @@ def main(args, outs):
         # get parameters or their defaults
         pca_bcs = option(args.num_pca_bcs, analysis_bcs)
         pca_genes = option(args.num_pca_genes, analysis_genes)
-        pca_comps = option(args.num_principal_comps, cr_constants.PCA_N_COMPONENTS_DEFAULT)
-        max_clusters = option(args.max_clusters, cr_constants.MAX_N_CLUSTERS_DEFAULT)
-        graphclust_neighbors = option(args.graphclust_neighbors, cr_constants.GRAPHCLUST_NEIGHBORS_DEFAULT)
-        neighbor_a = option(args.neighbor_a, cr_constants.GRAPHCLUST_NEIGHBOR_A_DEFAULT)
-        neighbor_b = option(args.neighbor_b, cr_constants.GRAPHCLUST_NEIGHBOR_B_DEFAULT)
+        pca_comps = option(args.num_principal_comps, analysis_constants.PCA_N_COMPONENTS_DEFAULT)
+        max_clusters = option(args.max_clusters, analysis_constants.MAX_N_CLUSTERS_DEFAULT)
+        graphclust_neighbors = option(args.graphclust_neighbors, analysis_constants.GRAPHCLUST_NEIGHBORS_DEFAULT)
+        neighbor_a = option(args.neighbor_a, analysis_constants.GRAPHCLUST_NEIGHBOR_A_DEFAULT)
+        neighbor_b = option(args.neighbor_b, analysis_constants.GRAPHCLUST_NEIGHBOR_B_DEFAULT)
         tsne_pcs = option(args.tsne_input_pcs, pca_comps)
-        tsne_max_iter = option(args.tsne_max_iter, cr_constants.TSNE_MAX_ITER)
-        tsne_mom_switch_iter = option(args.tsne_mom_switch_iter, cr_constants.TSNE_MOM_SWITCH_ITER)
-        tsne_stop_lying_iter = option(args.tsne_stop_lying_iter, cr_constants.TSNE_STOP_LYING_ITER)
-        tsne_theta = option(args.tsne_theta, cr_constants.TSNE_THETA)
-        tsne_max_dims = option(args.tsne_max_dims, cr_constants.TSNE_N_COMPONENTS)
-        tsne_perplexity = option(args.tsne_perplexity, cr_constants.TSNE_DEFAULT_PERPLEXITY)
+        tsne_max_iter = option(args.tsne_max_iter, analysis_constants.TSNE_MAX_ITER)
+        tsne_mom_switch_iter = option(args.tsne_mom_switch_iter, analysis_constants.TSNE_MOM_SWITCH_ITER)
+        tsne_stop_lying_iter = option(args.tsne_stop_lying_iter, analysis_constants.TSNE_STOP_LYING_ITER)
+        tsne_theta = option(args.tsne_theta, analysis_constants.TSNE_THETA)
+        tsne_max_dims = option(args.tsne_max_dims, analysis_constants.TSNE_N_COMPONENTS)
+        tsne_perplexity = option(args.tsne_perplexity, analysis_constants.TSNE_DEFAULT_PERPLEXITY)
 
         # check constraints
         if not (total_bcs >= analysis_bcs >= pca_bcs >= max_clusters >= 2):
@@ -135,7 +136,7 @@ def main(args, outs):
             martian.exit("Parameters must satisfy tsne_max_iter >= tsne_mom_switch_iter >= 1 and tsne_max_iter >= tsne_stop_lying_iter >= 1.")
         if not (0 <= tsne_theta <= 1):
             martian.exit("Parameter tsne_theta must lie between 0 and 1.")
-        if not (tsne_max_dims in [2,3]):
+        if not (tsne_max_dims in [2, 3]):
             martian.exit("Parameter tsne_max_dims must be 2 or 3.")
         if not (1 <= tsne_perplexity <= 500):
             martian.exit("Parameter tsne_perplexity must lie between 1 and 500.")
@@ -149,7 +150,7 @@ def main(args, outs):
             martian.exit("Parameter neighbor_b cannot be less than zero.")
 
         if not os.access(args.filtered_matrices_h5, os.R_OK):
-            martian.exit("Filtered matrices file is not readable, please check file permissions: %s" % args.filtered_matrices_h5)
+            martian.exit("Filtered matrix file is not readable, please check file permissions: %s" % args.filtered_matrices_h5)
 
         outs.skip = False
 

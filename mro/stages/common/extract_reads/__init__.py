@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
+from collections import defaultdict
 import itertools
 import json
 import martian
@@ -12,7 +13,8 @@ import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
-from cellranger.feature_ref import FeatureReference
+import cellranger.rna.feature_ref as rna_feature_ref
+import cellranger.rna.library as rna_library
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 from cellranger.fastq import BarcodeCounter, FastqReader, FastqFeatureReader, \
@@ -32,8 +34,10 @@ stage EXTRACT_READS(
     in  int      r1_length,
     in  int      r2_length,
     in  bool     skip_metrics,
+    in  path     reference_path,
     in  csv      feature_reference,
     in  bool     augment_fastq,
+    in  map[]    library_info,
     out pickle   chunked_reporter,
     out json     summary,
     out json     barcode_counts,
@@ -47,8 +51,6 @@ stage EXTRACT_READS(
     src py       "stages/common/extract_reads",
 ) split using (
     in  map      read_chunks,
-    in  int      gem_group,
-    in  string   library_type,
     in  bool     reads_interleaved,
     in  bool     barcode_rc,
 )
@@ -64,6 +66,8 @@ def split(args):
     chunks = []
     for chunk in args.chunks:
         chunk['__mem_gb'] = chunk_mem_gb
+        # FIXME: should be 1; CELLRANGER-1394
+        chunk['__threads'] = 2
 
         if args.initial_reads is None:
             chunk['initial_reads'] = None
@@ -77,7 +81,8 @@ def split(args):
     return {'chunks': chunks, 'join': join}
 
 def join(args, outs, chunk_defs, chunk_outs):
-    outs.reads, outs.read2s, outs.tags, outs.gem_groups, outs.library_types, outs.read_groups = [], [], [], [], [], []
+    outs.reads, outs.read2s, outs.tags = [], [], []
+    outs.gem_groups, outs.library_types, outs.library_ids, outs.read_groups = [], [], [], []
 
     for chunk_out in chunk_outs:
         outs.reads += [read for read in chunk_out.reads]
@@ -85,17 +90,20 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.tags += [tags for tags in chunk_out.tags]
         outs.gem_groups += [gem_group for gem_group in chunk_out.gem_groups]
         outs.library_types += [lt for lt in chunk_out.library_types]
+        outs.library_ids += [li for li in chunk_out.library_ids]
         outs.read_groups += [read_group for read_group in chunk_out.read_groups]
 
     # Ensure consistency of BAM comments
     assert all(chunk_out.bam_comments == chunk_outs[0].bam_comments for chunk_out in chunk_outs)
     outs.bam_comments = chunk_outs[0].bam_comments
 
-    # Write barcode counts
-    bc_counter = BarcodeCounter(args.barcode_whitelist, outs.barcode_counts, gem_groups=outs.gem_groups)
-    for chunk_def, chunk_out in itertools.izip(chunk_defs, chunk_outs):
-        bc_counter.merge(chunk_def.gem_group, chunk_out.barcode_counts)
-    bc_counter.close()
+    # Write barcode counts (merged by library_type)
+    bc_counters = BarcodeCounter.merge_by([co.barcode_counts for co in chunk_outs],
+                                          [cd.library_type for cd in chunk_defs],
+                                          args.barcode_whitelist,
+                                          outs.gem_groups)
+    with open(outs.barcode_counts, 'w') as f:
+        tk_safe_json.dump_numpy(bc_counters, f)
 
     # Write feature counts
     feature_counts = None
@@ -113,24 +121,49 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     outs.align = cr_utils.select_alignment_params(args.align)
 
+    # Group reporters by library type
     outs.chunked_reporter = None
-    reporter = cr_report.merge_reporters([chunk_out.chunked_reporter for chunk_out in chunk_outs])
+    reporter_groups = defaultdict(list)
+    for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):
+        chunk_lib_types = set(lt for lt in chunk_out.library_types)
+        assert len(chunk_lib_types) == 1
+        lib_type = list(chunk_lib_types)[0]
+        reporter_groups[lib_type].append(chunk_out.chunked_reporter)
 
-    reporter.store_chemistry_metadata(args.chemistry_def)
+    # Merge reporters and prefix JSON keys by library type
+    summary = {}
+    for lib_type, reporters in reporter_groups.iteritems():
+        j = cr_report.merge_reporters(reporters).to_json()
 
-    reporter.report_summary_json(outs.summary)
+        prefix = rna_library.get_library_type_metric_prefix(lib_type)
+        j_prefixed = dict((prefix + k, v) for k, v in j.iteritems())
+
+        summary.update(j_prefixed)
+
+    # Use a temporary reporter to generate the metadata (w/o a prefix)
+    tmp_reporter = cr_report.Reporter()
+    tmp_reporter.store_chemistry_metadata(args.chemistry_def)
+    summary.update(tmp_reporter.to_json())
+
+    # Write summary JSON
+    with open(outs.summary, 'w') as f:
+        tk_safe_json.dump_numpy(summary, f, pretty=True)
 
 def main(args, outs):
     random.seed(0)
 
     paired_end = cr_chem.is_paired_end(args.chemistry_def)
 
-    # Load the feature reference if given
-    if args.feature_reference and args.library_type:
-        feature_ref = FeatureReference(args.feature_reference, args.library_type)
+    # Build the feature reference
+    if args.reference_path:
+        feature_ref = rna_feature_ref.from_transcriptome_and_csv(args.reference_path,
+                                                                 args.feature_reference)
     else:
-        # No feature ref given
-        feature_ref = None
+        feature_ref = rna_feature_ref.FeatureReference.empty()
+
+    # Setup feature barcode extraction
+    feature_extractor = rna_feature_ref.FeatureExtractor(feature_ref,
+                                                         use_feature_types=[args.library_type])
 
     # Use the chemistry to get the locations of various sequences
     rna_read_def = cr_chem.get_rna_read_def(args.chemistry_def)
@@ -151,10 +184,10 @@ def main(args, outs):
     trim_defs = get_bamtofastq_defs(read_defs, read_tags)
     outs.bam_comments = sorted(set(trim_defs.itervalues()))
 
-    gem_groups = [chunk['gem_group'] for chunk in args.chunks]
+    num_libraries = len(args.library_info)
     reporter = cr_report.Reporter(umi_length=cr_chem.get_umi_length(args.chemistry_def),
                                   primers=cr_utils.get_primers_from_dicts(args.primers),
-                                  gem_groups=gem_groups)
+                                  num_libraries=num_libraries)
 
     # Determine if barcode sequences need to be reverse complemented.
     bc_check_rc = FastqReader(args.read_chunks, bc_read_def, args.reads_interleaved, None, None)
@@ -199,14 +232,13 @@ def main(args, outs):
         umi_reads = FastqReader(None, None, False, r1_length, r2_length)
 
     # Record feature counts:
-    if feature_ref is not None:
-        feature_counts = np.zeros(feature_ref.num_total_features, dtype=int)
-    else:
-        feature_counts = np.zeros(0, dtype=int)
+    feature_counts = np.zeros(feature_ref.get_num_features(), dtype=int)
 
-    # If this library type has no features, make the reader a NOOP
-    if feature_ref is not None and len(feature_ref.feature_defs) > 0:
-        feature_reads = FastqFeatureReader(args.read_chunks, feature_ref, args.reads_interleaved, r1_length, r2_length)
+    # If this library type has no feature barcodes, make the reader a NOOP
+    if feature_extractor.has_features_to_extract():
+        feature_reads = FastqFeatureReader(args.read_chunks, feature_extractor,
+                                           args.reads_interleaved,
+                                           r1_length, r2_length)
     else:
         feature_reads = FastqReader(None, None, None, r1_length, r2_length)
 
@@ -256,7 +288,9 @@ def main(args, outs):
             bc_counter.count(*bc_read)
 
         # Calculate metrics on raw sequences
-        reporter.raw_fastq_cb(rna_read, rna_read2, bc_read, si_read, umi_read, args.gem_group, skip_metrics=args.skip_metrics)
+        lib_idx = [i for i,x in enumerate(args.library_info) if x['library_id'] == args.library_id][0]
+        reporter.raw_fastq_cb(rna_read, rna_read2, bc_read, si_read, umi_read, lib_idx,
+                              skip_metrics=args.skip_metrics)
 
         # Construct new fastq headers
         fastq_header1 = AugmentedFastqHeader(rna_read[0])
@@ -354,8 +388,12 @@ def main(args, outs):
         else:
             outs.tags = tag_writer.get_out_paths(len(outs.tags))
 
-        outs.gem_groups = [args.gem_group] * len(outs.reads)
-        outs.library_types = [args.library_type] * len(outs.reads)
+        libraries = args.library_info
+        library = [li for li in libraries if li['library_id'] == args.library_id][0]
+
+        outs.gem_groups = [library['gem_group']] * len(outs.reads)
+        outs.library_types = [library['library_type']] * len(outs.reads)
+        outs.library_ids = [library['library_id']] * len(outs.reads)
         outs.read_groups = [args.read_group] * len(outs.reads)
     else:
         outs.reads = []
@@ -363,6 +401,7 @@ def main(args, outs):
         outs.tags = []
         outs.gem_groups = []
         outs.library_types = []
+        outs.library_ids = []
         outs.read_groups = []
 
     assert len(outs.gem_groups) == len(outs.reads)

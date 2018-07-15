@@ -93,6 +93,8 @@ pipeline SC_RNA_COUNTER_CS(
             "SC5P-R1",
         ],
         feature_reference            = null,
+        num_reads_to_check_barcode   = null,
+        barcode_compatibility_cutoff = null,
     )
 
     call CLOUPE_PREPROCESS(

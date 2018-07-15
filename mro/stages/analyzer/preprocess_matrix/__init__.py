@@ -3,9 +3,10 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
-import cellranger.utils as cr_utils
+import cellranger.stats as cr_stats
+import cellranger.io as cr_io
 import numpy as np
 
 __MRO__ = """
@@ -25,13 +26,47 @@ stage PREPROCESS_MATRIX(
 )
 """
 
+def preprocess_matrix(matrix, num_bcs=None, use_bcs=None, use_genes=None,
+                      exclude_genes=None, force_cells=None):
+        if force_cells is not None:
+            bc_counts = matrix.get_counts_per_bc()
+            bc_indices, _, _ = cr_stats.filter_cellular_barcodes_fixed_cutoff(bc_counts, force_cells)
+            matrix = matrix.select_barcodes(bc_indices)
+
+        elif use_bcs is not None:
+            bc_seqs = cr_io.load_csv_rownames(use_bcs)
+            bc_indices = matrix.bcs_to_ints(bc_seqs)
+            matrix = matrix.select_barcodes(bc_indices)
+
+        elif num_bcs is not None and num_bcs < matrix.bcs_dim:
+            bc_indices = np.sort(np.random.choice(np.arange(matrix.bcs_dim), size=num_bcs, replace=False))
+            matrix = matrix.select_barcodes(bc_indices)
+
+        include_indices = list(range(matrix.features_dim))
+        if use_genes is not None:
+            include_ids = cr_io.load_csv_rownames(use_genes)
+            include_indices = matrix.feature_ids_to_ints(include_ids)
+
+        exclude_indices = []
+        if exclude_genes is not None:
+            exclude_ids = cr_io.load_csv_rownames(exclude_genes)
+            exclude_indices = matrix.feature_ids_to_ints(exclude_ids)
+
+        gene_indices = np.array(sorted(list(set(include_indices) - set(exclude_indices))), dtype=int)
+
+        matrix = matrix.select_features(gene_indices)
+
+        matrix, _, _ = matrix.select_nonzero_axes()
+        return matrix
+
+
 def split(args):
     if args.skip:
-        return {'chunks': [{'__mem_gb': cr_constants.MIN_MEM_GB}]}
+        return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
 
-    matrix_mem_gb = cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
+    matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
     chunks = [{
-        '__mem_gb': max(matrix_mem_gb, cr_constants.MIN_MEM_GB),
+        '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB),
     }]
     return {'chunks': chunks}
 
@@ -43,32 +78,29 @@ def main(args, outs):
         np.random.seed(args.random_seed)
 
     # detect barnyard
-    genomes = cr_matrix.GeneBCMatrices.load_genomes_from_h5(args.matrix_h5)
+    genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.matrix_h5)
     if len(genomes) > 1:
         outs.is_multi_genome = True
-        cr_utils.copy(args.matrix_h5, outs.preprocessed_matrix_h5)
-        return
     else:
         outs.is_multi_genome = False
 
-    genome = genomes[0]
-    matrix = cr_matrix.GeneBCMatrices.load_h5(args.matrix_h5).get_matrix(genome)
-    matrix = cr_matrix.GeneBCMatrix.preprocess_matrix(matrix,
-                                                      num_bcs=args.num_bcs,
-                                                      use_bcs=args.use_bcs,
-                                                      use_genes=args.use_genes,
-                                                      exclude_genes=args.exclude_genes,
-                                                      force_cells=args.force_cells)
+    matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
+    matrix = preprocess_matrix(matrix,
+                               num_bcs=args.num_bcs,
+                               use_bcs=args.use_bcs,
+                               use_genes=args.use_genes,
+                               exclude_genes=args.exclude_genes,
+                               force_cells=args.force_cells)
 
-    gbm = cr_matrix.GeneBCMatrices()
-    gbm.matrices[genome] = matrix
+    # Preserve original matrix attributes
     matrix_attrs = cr_matrix.get_matrix_attrs(args.matrix_h5)
-    gbm.save_h5(outs.preprocessed_matrix_h5, extra_attrs=matrix_attrs)
+
+    matrix.save_h5_file(outs.preprocessed_matrix_h5, extra_attrs=matrix_attrs)
 
 def join(args, outs, chunk_defs, chunk_outs):
     if args.skip:
         return
 
     chunk_out = chunk_outs[0]
-    cr_utils.copy(chunk_out.preprocessed_matrix_h5, outs.preprocessed_matrix_h5)
+    cr_io.copy(chunk_out.preprocessed_matrix_h5, outs.preprocessed_matrix_h5)
     outs.is_multi_genome = chunk_out.is_multi_genome

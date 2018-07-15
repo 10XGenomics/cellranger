@@ -43,17 +43,35 @@ enum InsertType {
     PairedEnd,
 }
 
+/// All data associated with a qname (single-end read or read pair)
 pub struct ReadData {
+    /// Data for each Read1 BAM record
     pub r1_data:        Vec<RecordData>,
+    /// Data for each Read2 BAM record
     pub r2_data:        Vec<RecordData>,
+    /// Cell barcode and UMI data
     pub bc_umi_data:    BarcodeUmiData,
+    /// Feature barcode data
     pub feature_data:   Option<FeatureData>,
+    /// Data for each pair of BAM records
     pub pair_data:      Vec<PairAnnotationData>,
 }
 
+/// All data associated with a single BAM record
 pub struct RecordData {
     pub rec:    Record,
     pub anno:   AnnotationData,
+}
+
+/// Get the metric prefix for a given library type.
+/// Some are hardcoded for historical reasons.
+pub fn get_library_type_metric_prefix(lib_type: &str) -> String {
+    match lib_type {
+        "Gene Expression" => "".to_owned(),
+        "CRISPR Guide Capture" => "CRISPR_".to_owned(),
+        "Antibody Capture" => "ANTIBODY_".to_owned(),
+        _ => format!("{}_", lib_type),
+    }
 }
 
 /// Get the gene(s) that an alignment or pair of alignments aligned to.
@@ -563,8 +581,9 @@ impl<'a> Reporter<'a> {
             &Some(ref bc_data) => {
                 let mut good_bc = false;
                 let mut corrected_bc = false;
-                if bc_data.corrected_seq.is_some() {
+                if bc_data.processed_seq.is_some() {
                     good_bc = true;
+                    // If original bc not on whitelist, it was corrected
                     if !bc_data.on_whitelist {
                         corrected_bc = true;
                     }
@@ -600,7 +619,7 @@ impl<'a> Reporter<'a> {
 
     pub fn update_mapping_metrics(&mut self, read_data: &ReadData) {
         let corrected_bc_seq = match &read_data.bc_umi_data.barcode_data {
-            &Some(ref bc_data) => match &bc_data.corrected_seq {
+            &Some(ref bc_data) => match &bc_data.processed_seq {
                 &Some(ref seq) => Some(seq),
                 &None => None,
             },
@@ -710,7 +729,7 @@ impl<'a> Reporter<'a> {
                     bc_metrics.top_raw_bcs.add(&bc_data.raw_seq);
                 }
 
-                match &bc_data.corrected_seq {
+                match &bc_data.processed_seq {
                     &Some(ref seq) => bc_metrics.top_processed_bcs.add(&seq),
                     &None => {},
                 }

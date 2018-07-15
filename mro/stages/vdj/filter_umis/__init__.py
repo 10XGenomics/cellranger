@@ -6,7 +6,8 @@
 
 import numpy as np
 import tenkit.stats as tk_stats
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
+import cellranger.library_constants as lib_constants
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 import cellranger.vdj.report as vdj_report
@@ -56,7 +57,7 @@ def split(args):
         if prev_gem_group is not None and gem_group != prev_gem_group:
             # Write complete chunk
             end_row = row
-            mem_gb = max(cr_constants.MIN_MEM_GB,
+            mem_gb = max(h5_constants.MIN_MEM_GB,
                          2*int(np.ceil(vdj_umi_info.get_mem_gb(args.umi_info,
                                                                start_row=start_row,
                                                                end_row=end_row))))
@@ -75,7 +76,7 @@ def split(args):
 
     # Write final chunk
     end_row = vdj_umi_info.get_num_rows(args.umi_info)
-    mem_gb = max(cr_constants.MIN_MEM_GB,
+    mem_gb = max(h5_constants.MIN_MEM_GB,
                  2*int(np.ceil(vdj_umi_info.get_mem_gb(args.umi_info,
                                                        start_row=start_row,
                                                        end_row=end_row))))
@@ -140,7 +141,7 @@ def main(args, outs):
         reporter._get_metric_attr('vdj_recombinome_low_support_reads_frac', chain).set_value(bad_count, total_count)
 
     reporter._get_metric_attr('vdj_recombinome_readpairs_per_umi_n50',
-                              cr_constants.MULTI_REFS_PREFIX, args.gem_group).set_value(rppu_n50)
+                              lib_constants.MULTI_REFS_PREFIX, args.gem_group).set_value(rppu_n50)
 
     reporter.save(outs.chunked_reporter)
 

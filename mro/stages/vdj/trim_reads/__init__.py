@@ -11,10 +11,11 @@ import sys
 import martian
 import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.chemistry as cr_chem
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.report as vdj_report
 
 __MRO__ = """
@@ -98,7 +99,7 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout)
         single_read = cr_chem.get_rna_read_def(chemistry_def).read_type
         assert single_read in ('R1', 'R2')
 
-    out_r1_file = cr_utils.open_maybe_gzip(out_read1s, 'w')
+    out_r1_file = cr_io.open_maybe_gzip(out_read1s, 'w')
 
     # Note: The complexity of forcing cutadapt to output a compressed file
     #       means we'll have to give up on that for now.
@@ -109,7 +110,7 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout)
 
     out_r2_file = None
     if paired_end:
-        out_r2_file = cr_utils.open_maybe_gzip(out_read2s, 'w')
+        out_r2_file = cr_io.open_maybe_gzip(out_read2s, 'w')
         cmd.extend(['-p', '/proc/%d/fd/%d' % (os.getpid(), out_r2_file.fileno())])
 
     primers = {anno['name']:anno['seq'] for anno in args.primers}
@@ -140,12 +141,12 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout)
                 cmd.extend([flag, '%s=%s' % (name, primers[name])])
 
 
-    read1_file = cr_utils.open_maybe_gzip(args.read1s_chunk)
+    read1_file = cr_io.open_maybe_gzip(args.read1s_chunk)
     cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read1_file.fileno())])
 
     read2_file = None
     if paired_end:
-        read2_file = cr_utils.open_maybe_gzip(args.read2s_chunk)
+        read2_file = cr_io.open_maybe_gzip(args.read2s_chunk)
         cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read2_file.fileno())])
 
     print cmd
@@ -186,8 +187,8 @@ def main(args, outs):
     paired_end = cr_chem.is_paired_end(args.chemistry_def)
 
     # Write compressed files
-    outs.read1s += cr_constants.LZ4_SUFFIX
-    outs.read2s += cr_constants.LZ4_SUFFIX
+    outs.read1s += h5_constants.LZ4_SUFFIX
+    outs.read2s += h5_constants.LZ4_SUFFIX
 
     cutadapt_out = os.path.join(os.path.dirname(outs.chunked_reporter), 'cutadapt_stdout')
     with open(cutadapt_out, 'w') as cut_stdout:
@@ -219,7 +220,7 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     reporters = [chunk_out.chunked_reporter for chunk_out in chunk_outs]
     if all([reporter is None for reporter in reporters]):
-        cr_utils.write_empty_json(outs.summary)
+        cr_io.write_empty_json(outs.summary)
     else:
         final_report = cr_report.merge_reporters(reporters)
         final_report.report_summary_json(outs.summary)

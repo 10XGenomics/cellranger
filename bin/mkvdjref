@@ -6,7 +6,7 @@ import docopt
 import os
 import sys
 
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.reference as cr_vdj_ref
 
 VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
@@ -63,8 +63,8 @@ def main():
         if args["--seqs"]:
             sys.exit("--fasta and --genes cannot be specified if --seqs is specified. These are mutually exclusive modes of operation.")
 
-        input_fasta_file = cr_utils.get_input_path(args["--fasta"])
-        input_genes_files = cr_utils.get_input_paths(args["--genes"])
+        input_fasta_file = cr_io.get_input_path(args["--fasta"])
+        input_genes_files = cr_io.get_input_paths(args["--genes"])
         mode = "genome"
 
     elif args["--seqs"]:
@@ -72,7 +72,7 @@ def main():
         if args["--fasta"] or args["--genes"]:
             sys.exit("--fasta and --genes cannot be specified if --seqs is specified. These are mutually exclusive modes of operation.")
 
-        input_seqs_file = cr_utils.get_input_path(args["--seqs"])
+        input_seqs_file = cr_io.get_input_path(args["--seqs"])
         mode = 'direct'
 
     else:
@@ -87,7 +87,7 @@ def main():
     if rm_tx_arg:
         if mode == 'direct':
             sys.exit("The --rm-transcripts option cannot be used with --seqs")
-        rm_transcripts = cr_utils.get_input_path(rm_tx_arg)
+        rm_transcripts = cr_io.get_input_path(rm_tx_arg)
     else:
         rm_transcripts = None
 

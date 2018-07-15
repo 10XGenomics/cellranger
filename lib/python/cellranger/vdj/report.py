@@ -12,6 +12,7 @@ import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 import cellranger.vdj.annotations as vdj_annot
 import cellranger.vdj.constants as vdj_constants
+import cellranger.library_constants as lib_constants
 import cellranger.vdj.reference as vdj_reference
 import cellranger.vdj.utils as vdj_utils
 
@@ -163,11 +164,11 @@ class VdjReporter(cr_report.Reporter):
     def __init__(self, **kwargs):
         kwargs.update({'metrics_dict': VDJ_METRICS})
 
-        self.vdj_genes = [cr_constants.MULTI_REFS_PREFIX] + vdj_constants.VDJ_GENES
-        self.canonical_vdj_genes = [cr_constants.MULTI_REFS_PREFIX] + vdj_constants.CANONICAL_VDJ_GENES
+        self.vdj_genes = [lib_constants.MULTI_REFS_PREFIX] + vdj_constants.VDJ_GENES
+        self.canonical_vdj_genes = [lib_constants.MULTI_REFS_PREFIX] + vdj_constants.CANONICAL_VDJ_GENES
         self.canonical_vdj_genes_nomulti = vdj_constants.CANONICAL_VDJ_GENES
-        self.vdj_gene_pairs = [cr_constants.MULTI_REFS_PREFIX] + vdj_constants.VDJ_GENE_PAIRS
-        self.canonical_vdj_gene_pairs = [cr_constants.MULTI_REFS_PREFIX] + vdj_constants.CANONICAL_VDJ_GENE_PAIRS
+        self.vdj_gene_pairs = [lib_constants.MULTI_REFS_PREFIX] + vdj_constants.VDJ_GENE_PAIRS
+        self.canonical_vdj_gene_pairs = [lib_constants.MULTI_REFS_PREFIX] + vdj_constants.CANONICAL_VDJ_GENE_PAIRS
         self.canonical_vdj_gene_pairs_nomulti = vdj_constants.CANONICAL_VDJ_GENE_PAIRS
         self.vdj_clonotype_types = vdj_constants.VDJ_CLONOTYPE_TYPES
 
@@ -231,8 +232,8 @@ class VdjReporter(cr_report.Reporter):
         else:
             read2_chain = None
 
-        for chain in vdj_constants.VDJ_GENES + [cr_constants.MULTI_REFS_PREFIX]:
-            if chain == cr_constants.MULTI_REFS_PREFIX:
+        for chain in vdj_constants.VDJ_GENES + [lib_constants.MULTI_REFS_PREFIX]:
+            if chain == lib_constants.MULTI_REFS_PREFIX:
                 read1_this_chain = True
                 read2_this_chain = True
             else:
@@ -295,7 +296,7 @@ class VdjReporter(cr_report.Reporter):
                     # ...get all umis for that contig
                     umis = [u for u in row.umi_list.split(',') if u in good_umis]
                     chain_umis[chain].extend(umis)
-                    chain_umis[cr_constants.MULTI_REFS_PREFIX].extend(umis)
+                    chain_umis[lib_constants.MULTI_REFS_PREFIX].extend(umis)
 
         numis_by_chain = {c: len(set(chain_umis.get(c, []))) for c in self.vdj_genes}
 
@@ -382,7 +383,7 @@ class VdjReporter(cr_report.Reporter):
             # Gene-specific per-contig metrics
             _, _, assembly_gene, _ = vdj_utils.parse_contig_name(contig_name)
             for gene in self.vdj_genes:
-                is_gene = gene == contig_gene or gene == cr_constants.MULTI_REFS_PREFIX
+                is_gene = gene == contig_gene or gene == lib_constants.MULTI_REFS_PREFIX
 
                 # Contig length
                 if is_gene:
@@ -401,7 +402,7 @@ class VdjReporter(cr_report.Reporter):
                 full_len_contig_frac = self._get_metric_attr('vdj_assembly_full_len_contig_frac', gene)
                 full_len_contig_frac.add(1, filter=is_gene and is_full_len_contig)
 
-                if is_gene and gene != cr_constants.MULTI_REFS_PREFIX:
+                if is_gene and gene != lib_constants.MULTI_REFS_PREFIX:
                     if is_full_len_contig:
                         full_len_genes.add(gene)
                         if annotation.productive:
@@ -416,7 +417,7 @@ class VdjReporter(cr_report.Reporter):
                         q40_genes.add(gene)
 
         for gene in self.vdj_genes:
-            if gene == cr_constants.MULTI_REFS_PREFIX:
+            if gene == lib_constants.MULTI_REFS_PREFIX:
                 bc_gene_count = sum(contig_type_counts.get(g, 0) for g in self.vdj_genes)
                 gene_is_full_len = len(full_len_genes) > 0
                 gene_is_highQ = len(q40_genes) > 0
@@ -441,7 +442,7 @@ class VdjReporter(cr_report.Reporter):
             highQ_frac = self._get_metric_attr('vdj_assembly_contig_full_len_q40_bc_frac', gene)
             highQ_frac.add(1, filter=gene_is_highQ)
 
-            if gene != cr_constants.MULTI_REFS_PREFIX:
+            if gene != lib_constants.MULTI_REFS_PREFIX:
                 metric = self._get_metric_attr('vdj_assembly_cdr_detected_bc_frac', gene)
                 metric.add(1, filter=len(gene_cdrs[gene]) > 0)
 
@@ -470,33 +471,33 @@ class VdjReporter(cr_report.Reporter):
         for gene_pair in self.vdj_gene_pairs:
             if all(contig_type_counts.get(gene, 0) > 0 for gene in vdj_utils.get_genes_in_pair(gene_pair)):
                 pairs_detected.add(gene_pair)
-            if gene_pair != cr_constants.MULTI_REFS_PREFIX and \
+            if gene_pair != lib_constants.MULTI_REFS_PREFIX and \
                all((gene in full_len_genes) for gene in vdj_utils.get_genes_in_pair(gene_pair)):
                 full_len_pairs.add(gene_pair)
-            if gene_pair != cr_constants.MULTI_REFS_PREFIX and \
+            if gene_pair != lib_constants.MULTI_REFS_PREFIX and \
                all((productive_contigs[gene] > 0) for gene in vdj_utils.get_genes_in_pair(gene_pair)):
                 productive_pairs.add(gene_pair)
-            if gene_pair != cr_constants.MULTI_REFS_PREFIX and \
+            if gene_pair != lib_constants.MULTI_REFS_PREFIX and \
                all(gene in q40_genes for gene in vdj_utils.get_genes_in_pair(gene_pair)):
                 q40_pairs.add(gene_pair)
 
         for gene_pair in self.vdj_gene_pairs:
             pair_detected_bc_frac = self._get_metric_attr('vdj_assembly_contig_pair_detected_bc_frac', gene_pair)
-            pair_detected_bc_frac.add(1, filter=gene_pair in pairs_detected or (gene_pair == cr_constants.MULTI_REFS_PREFIX and len(pairs_detected) > 0))
+            pair_detected_bc_frac.add(1, filter=gene_pair in pairs_detected or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(pairs_detected) > 0))
 
             pair_full_len_bc_frac = self._get_metric_attr('vdj_assembly_contig_pair_full_len_bc_frac', gene_pair)
-            pair_full_len_bc_frac.add(1, filter=gene_pair in full_len_pairs or (gene_pair == cr_constants.MULTI_REFS_PREFIX and len(full_len_pairs) > 0))
+            pair_full_len_bc_frac.add(1, filter=gene_pair in full_len_pairs or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(full_len_pairs) > 0))
 
-            if gene_pair != cr_constants.MULTI_REFS_PREFIX:
+            if gene_pair != lib_constants.MULTI_REFS_PREFIX:
                 efficiency = self._get_metric_attr('vdj_assembly_pairing_efficiency', gene_pair)
                 any_detected = any(gene in full_len_genes for gene in vdj_utils.get_genes_in_pair(gene_pair))
                 # Fraction of cells with pair over cells with any gene of the pair
                 efficiency.add(int(any_detected), filter=gene_pair in full_len_pairs)
 
             pair_full_len_q40_bc_frac = self._get_metric_attr('vdj_assembly_contig_pair_full_len_q40_bc_frac', gene_pair)
-            pair_full_len_q40_bc_frac.add(1, filter=gene_pair in q40_pairs or (gene_pair == cr_constants.MULTI_REFS_PREFIX and len(q40_pairs) > 0))
+            pair_full_len_q40_bc_frac.add(1, filter=gene_pair in q40_pairs or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(q40_pairs) > 0))
 
-            prod_pair = gene_pair in productive_pairs or (gene_pair == cr_constants.MULTI_REFS_PREFIX and len(productive_pairs) > 0)
+            prod_pair = gene_pair in productive_pairs or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(productive_pairs) > 0)
             if prod_pair:
                 prod_pair_full_len_bc_count = self._get_metric_attr('vdj_assembly_contig_pair_productive_full_len_bc_count', gene_pair)
                 prod_pair_full_len_bc_count.add(1)

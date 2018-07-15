@@ -3,7 +3,7 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 from collections import namedtuple
-import cellranger.constants as cr_constants
+import cellranger.analysis.constants as analysis_constants
 import cellranger.webshim.constants.shared as shared
 
 # These define information about the sample required to generate a web summary
@@ -33,17 +33,17 @@ SATURATION_LINE = 0.9
 
 GEM_CALL_LABELS = [
     {
-        'key': cr_constants.GEM_CLASS_GENOME0,
+        'key': analysis_constants.GEM_CLASS_GENOME0,
         'label': 'genome0',
         'color': 'rgb(88,165,50)',
     },
     {
-        'key': cr_constants.GEM_CLASS_GENOME1,
+        'key': analysis_constants.GEM_CLASS_GENOME1,
         'label': 'genome1',
         'color': 'rgb(0,161,223)',
     },
     {
-        'key': cr_constants.GEM_CLASS_MULTIPLET,
+        'key': analysis_constants.GEM_CLASS_MULTIPLET,
         'label': 'Multiplet',
         'color': 'rgb(212,212,212)',
     },

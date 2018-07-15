@@ -6,7 +6,7 @@ import martian
 import os
 
 import cellranger.matrix as cr_matrix
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage REANALYZER_PREFLIGHT(
@@ -21,7 +21,7 @@ def main(args, outs):
     if not os.access(args.filtered_matrices_h5, os.R_OK):
         martian.exit("Filtered matrices file is not readable, please check file permissions: %s" % args.filtered_matrices_h5)
 
-    h5_filetype = cr_utils.get_h5_filetype(args.filtered_matrices_h5)
+    h5_filetype = cr_io.get_h5_filetype(args.filtered_matrices_h5)
     if h5_filetype and h5_filetype != cr_matrix.MATRIX_H5_FILETYPE:
         martian.exit("Input is a %s file, but a matrix file is required" % h5_filetype)
 

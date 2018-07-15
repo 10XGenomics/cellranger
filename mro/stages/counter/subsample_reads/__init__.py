@@ -2,112 +2,148 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
-import itertools
+import cPickle
+import json
 import numpy as np
-import martian
-import os
-import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
-import cellranger.matrix as cr_matrix
+import cellranger.library_constants as lib_constants
 from cellranger.molecule_counter import MoleculeCounter
-import cellranger.report as cr_report
+import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
+import tenkit.safe_json as tk_safe_json
+import tenkit.stats as tk_stats
 
 __MRO__ = """
 stage SUBSAMPLE_READS(
     in  h5     molecule_info,
     in  csv    filtered_barcodes,
-    out map[]  subsampled_matrices,
-    out pickle chunked_reporter,
     out json   summary,
     src py     "stages/counter/subsample_reads",
 ) split using (
     in  int    chunk_start,
     in  int    chunk_len,
-    in  map    subsample_info,
+    in  map[]  subsample_info,
+    out pickle metrics,
 )
 """
 
-# Limit memory usage in the split function
-SPLIT_MEM_GB = 5
+def get_cell_associated_barcodes(genomes, filtered_barcodes_csv):
+    """ Get cell-associated barcodes by genome.
+    Args:
+      genomes (list of str): Genome names.
+      filtered_barcodes_csv (str): Path to CSV file.
+    Returns:
+      dict of (str, set): Map genome to list of cell-assoc barcodes. Empty-string key is for all genomes."""
+    cell_bcs = {}
+    for genome in genomes:
+        # Get all cell-assoc barcodes (ignoring genome) for the "" (blank) genome string
+        cell_bcs[genome] = cr_utils.get_cell_associated_barcode_set(filtered_barcodes_csv,
+                                                                    genome)
+    # All cell-associated barcodes
+    cell_bcs[''] = reduce(lambda x,y: x | y, cell_bcs.itervalues(), set())
+    return cell_bcs
 
 def split(args):
-    # Get the cell count
-    filtered_bcs_per_genome = cr_utils.load_barcode_csv(args.filtered_barcodes)
-    filtered_bcs = set()
-    for _, bcs in filtered_bcs_per_genome.iteritems():
-        filtered_bcs |= set(bcs)
-    n_cells = len(filtered_bcs)
-
-    if n_cells == 0:
-        return {'chunks': [{'chunk_start': 0, 'chunk_len': 0, 'subsample_info': {}}]}
-
     # Get required info from the mol info
-    with MoleculeCounter.open(args.molecule_info, 'r') as mol_counter:
-        n_molecule_info_entries = mol_counter.nrows()
-        barcode_whitelist = mol_counter.get_barcode_whitelist()
-        gem_groups = mol_counter.get_gem_groups()
+    mc = MoleculeCounter.open(args.molecule_info, 'r')
 
-        raw_reads = mol_counter.get_total_raw_reads()
-        raw_rpc = tk_stats.robust_divide(raw_reads, n_cells)
-        mapped_reads = mol_counter.get_total_conf_mapped_filtered_bc_reads()
+    genomes = sorted(set(f.tags.get('genome', '') for f in mc.feature_reference.feature_defs))
+    cell_bcs_by_genome = get_cell_associated_barcodes(genomes, args.filtered_barcodes)
 
-    mapped_read_frac = tk_stats.robust_divide(mapped_reads, raw_reads)
+    # TODO FIXME: Need to allow for per-library cellcounts
+    #   In addition to distinct gem groups, we need
+    #   per-library counts because some feature types might only have a subset of the GEX cell-assoc barcodes.
+    n_cells_per_lib = np.array([len(cell_bcs_by_genome[''])] * len(mc.library_info))
+
+    if n_cells_per_lib.sum() == 0:
+        return {'chunks': []}
+
+    library_info = mc.library_info
+
+    raw_count_per_lib = np.array(mc.get_raw_read_pairs_per_library())
+    raw_rppc_per_lib = raw_count_per_lib.astype(float) / n_cells_per_lib
+    usable_count_per_lib = np.array(mc.get_usable_read_pairs_per_library())
 
     subsamplings = list() # track subsample info definitions
 
-    # Calculate extra deciles to add in based on raw reads
-    if raw_reads > 0:
-        subsampling_deciles = [round(decile * raw_rpc) for decile in np.arange(0.1, 1.1, 0.1)]
-    else:
-        subsampling_deciles = []
+    library_types = sorted(set(lib['library_type'] for lib in library_info))
+    for library_type in library_types:
+        # All libraries w/ this type
+        lib_indexes = np.array([i for i,lib in enumerate(library_info) if lib['library_type'] == library_type])
 
-    # All target depths - make integers and uniqify
-    target_rpcs = sorted(list(set(map(int, cr_constants.SUBSAMPLE_READS_PER_CELL + subsampling_deciles))))
+        # For plotting, we want a series of target depths that exist for all
+        #   libraries w/ the same library type. When there's a single library
+        #   per type (the common case), this is trivial - split it into deciles.
+        #   But if there are multiple libraries with different depths, (e.g.,
+        #   because gem-group-aggregation was used to increase cell numbers),
+        #   we need to find depths that are achievable for all libraries.
+        #   For now, let the lowest-depth library for a given type dictate this.
+        min_raw_rppc = np.min(raw_rppc_per_lib[lib_indexes])
 
-    for subsample_type, rpc_multiplier in [(cr_constants.RAW_SUBSAMPLE_TYPE, mapped_read_frac),
-                                           (cr_constants.MAPPED_SUBSAMPLE_TYPE, 1.0)]:
-        # Generate subsampling definitions
-        for target_rpc in target_rpcs:
-            target_mapped_reads = int(float(target_rpc) * float(n_cells) * rpc_multiplier)
+        # Use deciles of the raw read pairs per cell.
+        deciles = np.arange(0.1, 1.1, 0.1)
+        plot_targets = map(round, min_raw_rppc * deciles)
 
-            subsample_rate = tk_stats.robust_divide(target_mapped_reads, mapped_reads)
+        # TODO: separate this work (internal + non)
+        raw_targets = cr_constants.SUBSAMPLE_READS_PER_CELL + \
+                      plot_targets
 
-            if subsample_rate > 1.0:
-                continue
+        # TODO: separate this work (internal + non)
+        usable_targets = cr_constants.SUBSAMPLE_READS_PER_CELL + \
+                         plot_targets
 
-            subsamplings.append({'subsample_type': subsample_type,
-                                 'target_rpc': target_rpc,
-                                 'subsample_rate': subsample_rate,
-                                 'all_target_rpc': target_rpcs,
-            })
+        for targets, depth_type in \
+            ((raw_targets, cr_constants.RAW_SUBSAMPLE_TYPE), \
+             ((usable_targets, cr_constants.MAPPED_SUBSAMPLE_TYPE)),):
+            targets = sorted(list(set(map(int, targets))))
+            for target_rppc in targets:
+                if depth_type == cr_constants.RAW_SUBSAMPLE_TYPE:
+                    # Infer the usable depth required to achieve this raw depth
+                    usable_read_fracs = usable_count_per_lib.astype(float) / raw_count_per_lib
+                    target_usable_counts = target_rppc * n_cells_per_lib * usable_read_fracs
+                else:
+                    target_usable_counts = target_rppc * n_cells_per_lib
 
-    # Each chunk needs to store the entire gene-bc matrix and a piece of the mol info h5
-    matrix_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(barcode_whitelist,
-                                                                       gem_groups)
-    chunk_len = cr_constants.NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK
-    chunk_mem_gb = matrix_mem_gb + MoleculeCounter.estimate_mem_gb(chunk_len)
-    join_mem_gb = matrix_mem_gb
+                # Zero out libraries of the other types
+                rates = np.zeros(len(library_info), dtype=float)
+                rates[lib_indexes] = target_usable_counts[lib_indexes].astype(float) \
+                                     / usable_count_per_lib[lib_indexes]
+
+                enough_data = np.any((rates > 0) & (rates <= 1))
+                if not enough_data:
+                    rates = np.zeros(len(rates))
+
+                subsamplings.append({
+                    'library_type': library_type,
+                    'subsample_type': depth_type,
+                    'target_read_pairs_per_cell': int(target_rppc),
+                    'library_subsample_rates': list(map(float, rates)),
+                })
+
+    # Each chunk needs to store a piece of the mol info h5
+    tgt_chunk_len = cr_constants.NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK
 
     # Split the molecule info h5 into equi-RAM chunks
     chunks = []
-    for subsample_info in subsamplings:
-        for chunk_start in xrange(0, n_molecule_info_entries, chunk_len):
-            chunks.append({
-                'chunk_start': str(chunk_start),
-                'chunk_len': str(min(n_molecule_info_entries-chunk_start, chunk_len)),
-                'subsample_info': subsample_info,
-                '__mem_gb': chunk_mem_gb,
-            })
+    for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
+        chunks.append({
+            'chunk_start': chunk_start,
+            'chunk_len': chunk_len,
+            'subsample_info': subsamplings,
+            '__mem_gb': MoleculeCounter.estimate_mem_gb(chunk_len),
+        })
     join = {
-        '__mem_gb': join_mem_gb,
+        '__mem_gb': 4,
     }
 
+    mc.close()
+
+    # TODO: is this really necessary w/ martian 3
     if len(chunks) == 0:
         chunks.append({
             'chunk_start': str(0),
             'chunk_len': str(0),
-            'subsample_info': {},
+            'subsample_info': [],
         })
 
     return {'chunks': chunks, 'join': join}
@@ -115,114 +151,158 @@ def split(args):
 def main(args, outs):
     np.random.seed(0)
 
-    subsample_rate = args.subsample_info.get('subsample_rate')
-    if subsample_rate is None:
-        return
+    mc = MoleculeCounter.open(args.molecule_info, 'r')
 
-    mol_counter = MoleculeCounter.open(args.molecule_info, 'r',
-                                       start=int(args.chunk_start),
-                                       length=int(args.chunk_len))
+    # Get cell-associated barcodes
+    genomes = sorted(set(f.tags.get('genome', '') for f in mc.feature_reference.feature_defs))
+    cell_bcs_by_genome = get_cell_associated_barcodes(genomes, args.filtered_barcodes)
 
-    # Subsample the matrices
-    subsample_result = {}
-    subsampled_raw_mats = cr_matrix.GeneBCMatrices.build_from_mol_counter(mol_counter,
-                                                                          subsample_rate=subsample_rate,
-                                                                          subsample_result=subsample_result)
+    # Load chunk of relevant data from the mol_info
+    chunk = slice(int(args.chunk_start), int(args.chunk_start) + int(args.chunk_len))
+    mol_library_idx = mc.get_column_lazy('library_idx')[chunk]
+    mol_read_pairs = mc.get_column_lazy('count')[chunk]
+    mol_gem_group = mc.get_column_lazy('gem_group')[chunk]
+    mol_barcode_idx = mc.get_column_lazy('barcode_idx')[chunk]
+    mol_feature_idx = mc.get_column_lazy('feature_idx')[chunk]
 
-    # Filter the subsampled matrices
-    filtered_bcs_per_genome = cr_utils.load_barcode_csv(args.filtered_barcodes)
-    subsampled_filt_mats = subsampled_raw_mats.filter_barcodes(filtered_bcs_per_genome)
-
-    # Calculations for subsampled duplication rate
-    reporter = cr_report.Reporter(genomes = map(str, mol_counter.get_ref_column('genome_ids')),
-                                  subsample_types = cr_constants.ALL_SUBSAMPLE_TYPES,
-                                  subsample_depths = args.subsample_info['all_target_rpc'])
-
-    reporter.subsampled_duplication_frac_cb(subsampled_raw_mats,
-                                            mol_counter,
-                                            args.subsample_info['subsample_rate'],
-                                            args.subsample_info['subsample_type'],
-                                            args.subsample_info['target_rpc'],
-                                            subsample_result['mapped_reads'],
-    )
-
-    mol_counter.close()
-
-    reporter.save(outs.chunked_reporter)
-
-    outs.subsampled_matrices = {}
-    outs.subsampled_matrices['raw_matrices'] = martian.make_path('raw_matrices.h5')
-    outs.subsampled_matrices['filtered_matrices'] = martian.make_path('filtered_matrices.h5')
-
-    subsampled_raw_mats.save_h5(outs.subsampled_matrices['raw_matrices'])
-    subsampled_filt_mats.save_h5(outs.subsampled_matrices['filtered_matrices'])
+    barcodes = mc.get_ref_column('barcodes')
 
 
-def join(args, outs, chunk_defs, chunk_outs):
-    # Summarize genes and UMI counts
-    chunks = zip(chunk_defs, chunk_outs)
+    # Give each cell-associated barcode an integer index
+    cell_bcs = sorted(list(cell_bcs_by_genome['']))
+    cell_bc_to_int = {bc: i for i, bc in enumerate(cell_bcs)}
 
-    # Check for an empty chunk
-    if len(chunks) == 0 or chunk_defs[0].subsample_info.get('subsample_type') is None or chunk_defs[0].subsample_info.get('subsample_rate') is None:
-        outs.summary = None
-        return
 
-    chunk_key = lambda chunk: (chunk[0].subsample_info['subsample_type'],
-                               chunk[0].subsample_info['target_rpc'],
-                               chunk[0].subsample_info['subsample_rate'])
+    # Give each genome an integer index
+    genome_to_int = {g: i for i, g in enumerate(genomes)}
+    feature_int_to_genome_int = np.array([genome_to_int[f.tags.get('genome', '')] for f in mc.feature_reference.feature_defs], dtype=int)
+    mol_genome_idx = feature_int_to_genome_int[mol_feature_idx]
 
-    # Merge reporter objects from main
-    reporter_file_names = [chunk_out.chunked_reporter for chunk_out in chunk_outs if os.path.isfile(chunk_out.chunked_reporter)]
-    merged_reporter = cr_report.merge_reporters(reporter_file_names)
 
-    outs.subsampled_matrices = []
+    # Run each subsampling task on this chunk of data
+    n_tasks = len(args.subsample_info)
+    n_genomes = len(genomes)
+    n_cells = len(cell_bcs)
 
-    # Aggregate the molecule info chunks that belong together
-    for chunk_group, (subsample_key, chunk_iter) in enumerate(itertools.groupby(sorted(chunks, key=chunk_key), chunk_key)):
-        subsample_type, target_rpc, subsample_rate = subsample_key
+    umis_per_bc = np.zeros((n_tasks, n_genomes, n_cells))
+    features_det_per_bc = np.zeros((n_tasks, n_genomes, n_cells))
+    read_pairs_per_task = np.zeros((n_tasks, n_genomes))
+    umis_per_task = np.zeros((n_tasks, n_genomes))
 
-        if subsample_type is None or subsample_rate is None:
+    for task_idx, task in enumerate(args.subsample_info):
+        # Per-library subsampling rates
+        rates_per_library = np.array(task['library_subsample_rates'], dtype=float)
+
+        if np.count_nonzero(rates_per_library) == 0:
             continue
 
-        # Aggregate information over chunks with same key
-        chunk_raw_h5s = []
-        chunk_filtered_h5s = []
-        all_subsample_types = cr_constants.ALL_SUBSAMPLE_TYPES
-        all_target_rpc = None
+        mol_rate = rates_per_library[mol_library_idx]
 
-        for chunk_def, chunk_out in chunk_iter:
-            # List of target rpcs should be identical among all chunks
-            assert all_target_rpc is None or all_target_rpc == chunk_def.subsample_info['all_target_rpc']
-            all_target_rpc = chunk_def.subsample_info['all_target_rpc']
+        # Subsampled read pairs per molecule
+        new_read_pairs = np.random.binomial(mol_read_pairs, mol_rate)
 
-            chunk_raw_h5s.append(chunk_out.subsampled_matrices['raw_matrices'])
-            chunk_filtered_h5s.append(chunk_out.subsampled_matrices['filtered_matrices'])
+        # Compute tallies for each barcode
+        group_keys = (mol_gem_group, mol_barcode_idx)
+        group_values = (mol_feature_idx, mol_genome_idx, new_read_pairs)
+        for (gg, bc_idx), (feature_idx, genome_idx, read_pairs) in \
+            cr_utils.numpy_groupby(group_values, group_keys):
 
-        raw_matrices = cr_matrix.merge_matrices(chunk_raw_h5s)
-        filtered_matrices = cr_matrix.merge_matrices(chunk_filtered_h5s)
+            barcode = cr_utils.format_barcode_seq(barcodes[bc_idx], gg)
 
-        # Compute metrics on subsampled matrices
-        merged_reporter.summarize_subsampled_matrices_cb(filtered_matrices, subsample_type, target_rpc)
+            cell_idx = cell_bc_to_int.get(barcode)
 
-        # Write the merged matrices
-        outs.subsampled_matrices.append({
-            'subsample_type': subsample_type,
-            'target_rpc': target_rpc,
-            'subsample_rate': subsample_rate,
-            'all_subsample_types': all_subsample_types,
-            'all_target_rpc': all_target_rpc,
-            'raw_matrices': martian.make_path('%s_%s_%s_raw_matrices.h5' % (subsample_type,
-                                                                            target_rpc,
-                                                                            chunk_group)),
-            'filtered_matrices': martian.make_path('%s_%s_%s_filtered_matrices.h5' % (subsample_type,
-                                                                                      target_rpc,
-                                                                                      chunk_group)),
-            })
+            for this_genome_idx in xrange(len(genomes)):
+                umis = np.flatnonzero((read_pairs > 0) & (genome_idx == this_genome_idx))
 
-        assert not os.path.exists(outs.subsampled_matrices[-1]['raw_matrices'])
-        assert not os.path.exists(outs.subsampled_matrices[-1]['filtered_matrices'])
+                # Tally UMIs and median features detected
+                if barcode in cell_bcs_by_genome[genomes[this_genome_idx]]:
+                    # This is a cell-associated barcode for this genome
+                    umis_per_bc[task_idx, this_genome_idx, cell_idx] = len(umis)
+                    features_det_per_bc[task_idx, this_genome_idx, cell_idx] = np.count_nonzero(np.bincount(feature_idx[umis]))
 
-        raw_matrices.save_h5(outs.subsampled_matrices[-1]['raw_matrices'])
-        filtered_matrices.save_h5(outs.subsampled_matrices[-1]['filtered_matrices'])
+                # Tally numbers for duplicate fraction
+                read_pairs_per_task[task_idx, this_genome_idx] += np.sum(read_pairs)
+                umis_per_task[task_idx, this_genome_idx] += len(umis)
 
-    merged_reporter.report_summary_json(filename=outs.summary)
+    with open(outs.metrics, 'w') as f:
+        data = {
+            'umis_per_bc': umis_per_bc,
+            'features_det_per_bc': features_det_per_bc,
+            'read_pairs': read_pairs_per_task,
+            'umis': umis_per_task,
+        }
+        cPickle.dump(data, f, protocol = cPickle.HIGHEST_PROTOCOL)
+
+
+def make_metric_name(name, library_type, genome, ss_type, ss_depth):
+    lt_prefix = rna_library.get_library_type_metric_prefix(library_type)
+    return '%s%s_%s_%s_%s' % (lt_prefix, genome, ss_type, ss_depth, name)
+
+def compute_dup_frac(read_pairs, umis):
+    return tk_stats.robust_divide(read_pairs - umis, read_pairs) if read_pairs > 0 else 0.0
+
+def join(args, outs, chunk_defs, chunk_outs):
+    # Merge tallies
+    data = None
+    for chunk in chunk_outs:
+        with open(chunk.metrics) as f:
+            chunk_data = cPickle.load(f)
+        if data is None:
+            data = chunk_data
+        else:
+            for k,v in data.iteritems():
+                data[k] += chunk_data[k]
+
+    # Compute metrics for each subsampling rate
+    summary = {}
+
+    with MoleculeCounter.open(args.molecule_info, 'r') as mc:
+        genomes = sorted(set(f.tags.get('genome', '') for f in mc.feature_reference.feature_defs))
+    cell_bcs_by_genome = get_cell_associated_barcodes(genomes, args.filtered_barcodes)
+
+    # Give each cell-associated barcode an integer index
+    cell_bcs = sorted(list(cell_bcs_by_genome['']))
+    cell_bc_to_int = {bc: i for i, bc in enumerate(cell_bcs)}
+
+    subsample_info = chunk_defs[0].subsample_info
+
+    for i, task in enumerate(subsample_info):
+        lib_type = task['library_type']
+        ss_type = task['subsample_type']
+        ss_depth = task['target_read_pairs_per_cell']
+
+        if rna_library.has_genomes(lib_type):
+            genome_ints = list(range(data['umis_per_bc'].shape[1]))
+        else:
+            genome_ints = [0]
+
+        # Per-genome metrics
+        for g in genome_ints:
+            genome = genomes[g]
+
+            # Only compute on cell-associated barcodes for this genome.
+            # This only matters when there are multiple genomes present.
+            cell_inds = np.array(sorted(cell_bc_to_int[bc] for bc in cell_bcs_by_genome[genome]))
+
+            median_umis_per_cell = np.median(data['umis_per_bc'][i,g,cell_inds])
+            summary[make_metric_name('subsampled_filtered_bcs_median_counts',
+                                     lib_type, genome, ss_type, ss_depth)] = median_umis_per_cell
+
+            median_features_per_cell = np.median(data['features_det_per_bc'][i,g,cell_inds])
+            summary[make_metric_name('subsampled_filtered_bcs_median_unique_genes_detected',
+                                     lib_type, genome, ss_type, ss_depth)] = median_features_per_cell
+
+            dup_frac = compute_dup_frac(data['read_pairs'][i,g],  data['umis'][i,g])
+            summary[make_metric_name('subsampled_duplication_frac',
+                                     lib_type, genome, ss_type, ss_depth)] = dup_frac
+
+        # Whole-dataset duplication frac
+        all_read_pairs = np.sum(data['read_pairs'][i,:])
+        all_umis = np.sum(data['umis'][i,:])
+        dup_frac = compute_dup_frac(all_read_pairs, all_umis)
+        summary[make_metric_name('subsampled_duplication_frac',
+                                 lib_type, lib_constants.MULTI_REFS_PREFIX, ss_type, ss_depth)] = dup_frac
+
+
+    with open(outs.summary, 'w') as f:
+        json.dump(tk_safe_json.json_sanitize(summary), f, indent=4, sort_keys=True)

@@ -15,7 +15,9 @@ import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 def get_bamtofastq_defs(read_defs, destination_tags):
     """ Determine which portions of reads need to be retained.
@@ -98,10 +100,35 @@ class BarcodeCounter:
             end = gem_group*len(barcode_counts)
             self.barcode_counts[start:end] += np.array(barcode_counts, dtype=np.uint32)
 
+    def to_json(self):
+        if self.barcode_seqs:
+            return list(self.barcode_counts)
+        else:
+            return []
+
     def close(self):
         if self.barcode_seqs:
             with open(self.out_counts, 'w') as f:
-                tk_safe_json.dump_numpy(list(self.barcode_counts), f)
+                tk_safe_json.dump_numpy(self.to_json(), f)
+
+    @staticmethod
+    def merge_by(counter_files, keys, barcode_whitelist, gem_groups):
+        """ Merge BarcodeCounters by a key.
+        Args:
+          counter_files (list of str): Filenames of BarcodeCounter outputs
+          keys (list of str): Keys to group by
+          barcode_whitelist (list of str): Same as BarcodeCounter constructor
+          gem_groups (list of int): Same as BarcodeCounter constructor
+        Returns:
+          dict of str:dict: Keys are the group keys and dicts are serialized BarcodeCounters
+        """
+        distinct_keys = sorted(list(set(keys)))
+        groups = {}
+        for key in distinct_keys:
+            groups[key] = BarcodeCounter(barcode_whitelist, None, gem_groups)
+        for key, filename, gg in zip(keys, counter_files, gem_groups):
+            groups[key].merge(gg, filename)
+        return {key: group.to_json() for key, group in groups.iteritems()}
 
 def extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, r1_length=None, r2_length=None):
     """ Args: read_tuple: (name, read, qual)
@@ -138,8 +165,19 @@ def get_read_generator_fastq(fastq_open_file, read_def, reads_interleaved, r1_le
     for read_tuple in read_iter:
         yield extract_read_maybe_paired(read_tuple, read_def, reads_interleaved, r1_length, r2_length)
 
-def get_feature_generator_fastq(files, feature_ref, interleaved, read_types, r1_length=None, r2_length=None):
-    ''' Yields a FeatureMatchResult each read pair '''
+def get_feature_generator_fastq(files, extractor, interleaved, read_types, r1_length=None, r2_length=None):
+    '''Extract feature barcodes from FASTQs.
+
+    Args:
+       files (list of File): FASTQ file handles for R1, R2
+       extractor (FeatureExtractor): Extracts feature barcodes
+       interleaved (bool): Are R1,R2 interleaved in a single file
+       read_types (list of str): List of read types (e.g. R1,R2) we need to inspect
+       r1_length (int): Length to hard-trim R1 to
+       r2_length (int): Length to hard-trim R2 to
+    Returns:
+       FeatureMatchResult: Yields the feature extraction result for a read pair
+'''
     assert len(files) == 2
     assert 'R1' in read_types or 'R2' in read_types
 
@@ -159,20 +197,20 @@ def get_feature_generator_fastq(files, feature_ref, interleaved, read_types, r1_
         pair_iter = itertools.izip_longest(r1_iter, r2_iter)
 
     if read_types == ['R1']:
-        match_func = lambda x: feature_ref.extract_single_end(x[0][1][0:r1_hard_end], # seq
-                                                              x[0][2][0:r1_hard_end], # qual
-                                                              'R1')
+        match_func = lambda x: extractor.extract_single_end(x[0][1][0:r1_hard_end], # seq
+                                                            x[0][2][0:r1_hard_end], # qual
+                                                            'R1')
 
     elif read_types == ['R2']:
-        match_func = lambda x: feature_ref.extract_single_end(x[1][1][0:r2_hard_end], # seq
-                                                              x[1][2][0:r2_hard_end], # qual
-                                                              'R2')
+        match_func = lambda x: extractor.extract_single_end(x[1][1][0:r2_hard_end], # seq
+                                                            x[1][2][0:r2_hard_end], # qual
+                                                            'R2')
 
     elif read_types == ['R1', 'R2']:
-        match_func = lambda x: feature_ref.extract_paired_end(x[0][1][0:r1_hard_end], # seq
-                                                              x[0][2][0:r1_hard_end], # qual
-                                                              x[1][1][0:r2_hard_end], # seq
-                                                              x[1][2][0:r2_hard_end]) # qual
+        match_func = lambda x: extractor.extract_paired_end(x[0][1][0:r1_hard_end], # seq
+                                                            x[0][2][0:r1_hard_end], # qual
+                                                            x[1][1][0:r2_hard_end], # seq
+                                                            x[1][2][0:r2_hard_end]) # qual
 
     return itertools.imap(match_func, pair_iter)
 
@@ -184,15 +222,17 @@ def get_fastq_from_read_type(fastq_dict, read_def, reads_interleaved):
     else:
         return fastq_dict.get(read_def.read_type)
 
-def get_fastqs_from_feature_ref(fastq_dict, feature_ref, reads_interleaved, read_types):
-    ''' Use a FeatureRef to determine which FASTQ files to open '''
+def get_fastqs_from_feature_ref(fastq_dict, reads_interleaved, read_types):
+    ''' Determine which FASTQ files to open for a FeatureExtractor'''
     assert 'R1' in read_types or 'R2' in read_types
 
     fastq1 = fastq_dict.get('R1') if 'R1' in read_types else None
 
     if reads_interleaved:
+        # All reads come from the first FASTQ ("R1")
         fastq2 = fastq_dict.get('R1') if 'R2' in read_types else None
     else:
+        # Read2 comes from the second FASTQ ("R2")
         fastq2 = fastq_dict.get('R2') if 'R2' in read_types else None
 
     return (fastq1, fastq2)
@@ -215,7 +255,7 @@ class FastqReader:
                                                    read_def,
                                                    reads_interleaved)
             if in_filename:
-                self.in_fastq = cr_utils.open_maybe_gzip(in_filename, 'r')
+                self.in_fastq = cr_io.open_maybe_gzip(in_filename, 'r')
 
                 self.in_iter = get_read_generator_fastq(self.in_fastq,
                                                         read_def=read_def,
@@ -231,35 +271,33 @@ class FastqFeatureReader:
     ''' Use a FeatureReference to extract specified feature barcodes from input fastqs
         For example, extract antibody barcodes from R2. '''
 
-    def __init__(self, in_filenames, feature_ref, reads_interleaved, r1_length, r2_length):
+    def __init__(self, in_filenames, extractor, reads_interleaved, r1_length, r2_length):
         """ Args:
-              in_filenames - Map of paths to fastq files
-              feature_ref - FeatureReference object
+              in_filenames (dict of str -> str): Map of paths to fastq files
+              feature_ref (FeatureExtractor): for extracting feature barcodes
         """
 
         self.in_fastqs = None
         self.in_iter = iter([])
-        self.feature_ref = feature_ref
 
         # Relevant read types
-        read_types = feature_ref.get_read_types()
+        read_types = extractor.get_read_types()
 
         if in_filenames:
             in_filenames = get_fastqs_from_feature_ref(in_filenames,
-                                                       feature_ref,
                                                        reads_interleaved,
                                                        read_types)
             if in_filenames != (None, None):
                 if reads_interleaved:
                     filename = in_filenames[0] if in_filenames[0] else in_filenames[1]
-                    self.in_fastqs = (cr_utils.open_maybe_gzip(filename, 'r') if filename[0] else None,
+                    self.in_fastqs = (cr_io.open_maybe_gzip(filename, 'r') if filename[0] else None,
                                       None)
                 else:
-                    self.in_fastqs = (cr_utils.open_maybe_gzip(in_filenames[0], 'r') if in_filenames[0] else None,
-                                      cr_utils.open_maybe_gzip(in_filenames[1], 'r') if in_filenames[1] else None)
+                    self.in_fastqs = (cr_io.open_maybe_gzip(in_filenames[0], 'r') if in_filenames[0] else None,
+                                      cr_io.open_maybe_gzip(in_filenames[1], 'r') if in_filenames[1] else None)
 
                 self.in_iter = get_feature_generator_fastq(files=self.in_fastqs,
-                                                           feature_ref=feature_ref,
+                                                           extractor=extractor,
                                                            interleaved=reads_interleaved,
                                                            read_types=read_types,
                                                            r1_length=r1_length,
@@ -280,7 +318,7 @@ class ChunkedWriter:
         self.file_paths = []
         self.curr_file = None
 
-        cr_utils.mkdir(base_path, allow_existing=True)
+        cr_io.mkdir(base_path, allow_existing=True)
 
     def write(self, data):
         if self.reads_per_file >= self.max_reads_per_file or self.curr_file is None:
@@ -319,9 +357,9 @@ class ChunkedFastqWriter(ChunkedWriter):
         if compression is None:
             self.suffix = ''
         elif compression == 'gzip':
-            self.suffix = cr_constants.GZIP_SUFFIX
+            self.suffix = h5_constants.GZIP_SUFFIX
         elif compression == 'lz4':
-            self.suffix = cr_constants.LZ4_SUFFIX
+            self.suffix = h5_constants.LZ4_SUFFIX
         else:
             raise ValueError('Unknown compression type: %s' % compression)
         self.compression = compression
@@ -330,7 +368,7 @@ class ChunkedFastqWriter(ChunkedWriter):
         return '%d.fastq%s' % (self.index, self.suffix or '')
 
     def open_file(self, filename):
-        return cr_utils.open_maybe_gzip(filename, 'w')
+        return cr_io.open_maybe_gzip(filename, 'w')
 
     def write_data(self, data):
         tk_fasta.write_read_fastq(self.curr_file, *data)

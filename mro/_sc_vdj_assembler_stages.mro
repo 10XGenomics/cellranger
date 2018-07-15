@@ -42,24 +42,25 @@ stage VDJ_PREFLIGHT_LOCAL(
 )
 
 stage CORRECT_BARCODES(
-    in  fastq[] read1s,
-    in  fastq[] read2s,
-    in  int[]   gem_groups,
-    in  json    barcode_counts,
-    in  float   barcode_confidence_threshold,
-    in  string  barcode_whitelist,
-    in  int     initial_reads,
-    in  map     chemistry_def,
-    out tsv[]   corrected_bcs,
-    out json    corrected_barcode_counts,
-    out pickle  chunked_reporter,
-    out json    summary,
-    out h5      barcode_summary,
-    src py      "stages/vdj/correct_barcodes",
+    in  fastq[]  read1s,
+    in  fastq[]  read2s,
+    in  int[]    gem_groups,
+    in  json     barcode_counts,
+    in  float    barcode_confidence_threshold,
+    in  string   barcode_whitelist,
+    in  int      initial_reads,
+    in  map      chemistry_def,
+    in  string[] library_types,
+    out tsv[]    corrected_bcs,
+    out json     corrected_barcode_counts,
+    out pickle   chunked_reporter,
+    out json     summary,
+    out h5       barcode_summary,
+    src py       "stages/vdj/correct_barcodes",
 ) split (
-    in  fastq   read1_chunk,
-    in  fastq   read2_chunk,
-    in  int     gem_group,
+    in  fastq    read1_chunk,
+    in  fastq    read2_chunk,
+    in  int      gem_group,
 )
 
 stage SUMMARIZE_VDJ_READ_REPORTS(
@@ -140,6 +141,7 @@ stage BUCKET_FASTQ_BY_BC(
     in  json    reads_summary,
     in  int     readpairs_per_chunk,
     in  map     chemistry_def,
+    in  map[]   library_info,
     out map[]   buckets,
     src py      "stages/vdj/bucket_fastq_by_bc",
 ) split (

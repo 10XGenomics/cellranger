@@ -2,85 +2,88 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
-from collections import namedtuple, defaultdict
+from collections import defaultdict, OrderedDict, namedtuple
+import cPickle
+import h5py
 import itertools
+import json
 import math
 import multiprocessing
 import numpy as np
-import tables
+from cellranger.feature_ref import FeatureReference
+import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
+import cellranger.io as cr_io
 
 MOLECULE_H5_FILETYPE = 'molecule'
 
 FILE_VERSION_KEY = 'file_version'
-CURR_FILE_VERSION = 2
+CURR_FILE_VERSION = 3
 
+# Group whose attributes store various metadata
 METRICS_GROUP_NAME = 'metrics'
-METRICS_GROUP_PATH = '/metrics'
 
-MOLECULE_INFO_COLUMNS = {
-    'barcode'                    : np.uint64,   # Up to 31-mers
-    'gem_group'                  : np.uint16,   # Up to 65k (256 is not enough for mega-scale datasets)
-    'umi'                        : np.uint32,   # Up to 15-mers
-    'gene'                       : np.uint32,   # Up to 4e9 genes; set to 1+max_genes if not conf
-    'genome'                     : np.uint8,    # Up to 255 genomes
-    'reads'                      : np.uint32,   # Up to 4e9 reads/mol
-    'nonconf_mapped_reads'       : np.uint32,   # Up to 4e9 reads/mol
-    'unmapped_reads'             : np.uint32,   # Up to 4e9 reads/mol
-    'umi_corrected_reads'        : np.uint32,   # Reads where UMI sequence was corrected
-    'barcode_corrected_reads'    : np.uint32,   # Reads where BC sequence was corrected
-    'conf_mapped_uniq_read_pos'  : np.uint32,   # Confidently mapped reads where aligned position is unique
-}
+# Group that tracks which barcodes passed filters (usually means they are
+# cell-associated)
+BARCODE_INFO_GROUP_NAME = 'barcode_info'
 
-MOLECULE_REF_COLUMNS = ['genome_ids', 'gene_ids', 'gene_names']
+MOLECULE_INFO_COLUMNS = OrderedDict([
+    ('gem_group'                  , np.uint16),   # Up to 65k
+    ('barcode_idx'                , np.uint64),
+    ('feature_idx'                , np.uint32),   # Up to 4e9 features
+    ('library_idx'                , np.uint16),   # Up to 65k
+    ('umi'                        , np.uint32),   # Up to 16-mers
+    ('count'                      , np.uint32),   # Up to 4e9 readpairs/mol
+])
 
-# NOTE - key columns should be sorted in this order (i.e. gem group column is most significant, etc.)
-MOLECULE_KEY_COLUMNS = ['gem_group', 'barcode', 'genome', 'gene', 'umi']
+MOLECULE_REF_COLUMNS = ['barcodes', 'library_info']
 
 # Preserve contiguity of these when chunking a MoleculeCounter
-CHUNK_COLUMNS = ['barcode', 'gem_group']
-
-Molecule = namedtuple('Molecule',
-                      ['barcode', # Barcode string, e.g. ACGT-1
-                      'genome',  # String genome name, e.g. GRCh38
-                      'gene_id', # String genome id, e.g., ENSG..
-                      'reads',   # Num confidently mapped reads
-                       ]
-)
+CHUNK_COLUMNS = ['gem_group', 'barcode_idx']
 
 # Common top-level metrics
 CHEMISTRY_DESC_METRIC = 'chemistry_description'
 BC_LENGTH_METRIC = 'chemistry_barcode_read_length'
 BC_WHITELIST_METRIC = 'chemistry_barcode_whitelist'
 GEM_GROUPS_METRIC = 'gem_groups'
+LIBRARIES_METRIC = 'libraries'
 IS_AGGREGATED_METRIC = 'is_aggregated'
 
-# Per-gem-group metrics
-GG_TOTAL_READS_METRIC = 'total_reads'
-GG_DOWNSAMPLED_READS_METRIC = 'downsampled_reads'
-GG_CONF_MAPPED_FILTERED_BC_READS_METRIC = 'conf_mapped_filtered_bc_reads'
+# Per-library metrics
+TOTAL_READS_METRIC = 'raw_read_pairs'
+DOWNSAMPLED_READS_METRIC = 'downsampled_reads'
+USABLE_READS_METRIC = 'usable_read_pairs'
 GG_RECOVERED_CELLS_METRIC = 'recovered_cells'
 GG_FORCE_CELLS_METRIC = 'force_cells'
+
+HDF5_COMPRESSION = 'gzip'
+# Number of elements per HDF5 chunk;
+#   here, 1 MiB/(32 bytes per element)
+HDF5_CHUNK_SIZE = 32768
+
+# Per-barcode metadata. Sparse (not every barcode is listed)
+BarcodeInfo = namedtuple('BarcodeInfo', [
+    'pass_filter',         # Array-ized list of (barcode_idx, library_idx, genome_idx)
+                           # tuples where presence indicates passing filter.
+                           # This is a binary 3-d sparse matrix in COO format.
+    'genomes',             # Genome strings for genome 0..j
+])
+
+BARCODE_INFO_DTYPES =  {
+    'pass_filter': 'uint64',
+    'genomes': 'str',
+}
+
 
 class MoleculeCounter:
     """ Streams a list of tuples w/named elements to or from an h5 file """
     def __init__(self):
         self.file_version = None
         self.h5 = None
-        self.columns = {}
-        self.ref_columns = {}
-
-    @staticmethod
-    def get_umi_bits():
-        return np.dtype(MOLECULE_INFO_COLUMNS['umi']).itemsize * 8
-
-    @staticmethod
-    def get_barcode_bits():
-        return np.dtype(MOLECULE_INFO_COLUMNS['barcode']).itemsize * 8
-
-    def get_barcode_length(self):
-        return self.get_metric(BC_LENGTH_METRIC)
+        self.columns = OrderedDict()
+        self.ref_columns = OrderedDict()
+        self.library_info = None
 
     def get_barcode_whitelist(self):
         return self.get_metric(BC_WHITELIST_METRIC)
@@ -89,19 +92,15 @@ class MoleculeCounter:
         return self.get_metric(CHEMISTRY_DESC_METRIC)
 
     def get_gem_groups(self):
-        return self.get_metric(GEM_GROUPS_METRIC).keys()
+        return map(int, self.get_metric(GEM_GROUPS_METRIC).keys())
 
     def is_aggregated(self):
         ret = self.get_metric(IS_AGGREGATED_METRIC)
         return ret if ret is not None else False
 
     @staticmethod
-    def get_key_columns():
-        return MOLECULE_KEY_COLUMNS
-
-    @staticmethod
-    def get_data_columns():
-        return set(MOLECULE_INFO_COLUMNS.keys()) - set(MOLECULE_KEY_COLUMNS)
+    def get_column_dtype(k):
+        return np.dtype(MOLECULE_INFO_COLUMNS[k])
 
     @staticmethod
     def get_record_bytes():
@@ -111,71 +110,234 @@ class MoleculeCounter:
     def estimate_mem_gb(chunk_len, scale=1.0):
         """ Estimate memory usage of this object given a number of records. """
         mol_entries_per_gb = int(1e9 / MoleculeCounter.get_record_bytes())
-        return max(cr_constants.MIN_MEM_GB, round(math.ceil(scale * chunk_len / mol_entries_per_gb)))
+        return max(h5_constants.MIN_MEM_GB, round(math.ceil(scale * chunk_len / mol_entries_per_gb)))
 
     @staticmethod
-    def open(filename, mode, start=None, length=None):
+    def build_barcode_info(filtered_barcodes_by_genome, library_info, barcodes):
+        """Generate numpy arrays for per-barcode info
+        Args:
+          filtered_barcodes_by_genome (dict of str:list(str)): Keys are genomes, values are lists of filtered barcode strings.
+          library_info (list of dict): Per-library metadata.
+          barcodes (list of str): All barcode sequences (e.g. ['ACGT', ...]
+        Returns:
+          BarcodeInfo object
+        """
+        # Replace a genome string with its lexicographical rank
+        genome_to_idx = {g:i for i, g in \
+                         enumerate(sorted(filtered_barcodes_by_genome.keys()))}
+
+        libraries_for_gem_group = defaultdict(list)
+        for lib_idx, lib in enumerate(library_info):
+            libraries_for_gem_group[lib['gem_group']].append(lib_idx)
+
+        # Map a barcode sequence to its index into the MoleculeCounter
+        #  'barcodes' array
+        bc_seq_to_idx = {bc:i for i, bc in enumerate(barcodes)}
+
+        # Populate the "pass filter" array of tuples
+        pf_tuples = []
+        for genome, bcs in filtered_barcodes_by_genome.iteritems():
+            genome_idx = genome_to_idx[genome]
+            for bc_str in bcs:
+                seq, gg = cr_utils.split_barcode_seq(bc_str)
+                barcode_idx = bc_seq_to_idx[seq]
+
+                # FIXME: Assumes no per-library filtering, just per-gem-group
+                library_inds = libraries_for_gem_group[gg]
+                for library_idx in library_inds:
+                    pf_tuples.append((barcode_idx, library_idx, genome_idx))
+
+        pass_filter = np.array(pf_tuples, dtype=BARCODE_INFO_DTYPES['pass_filter'])
+        assert pass_filter.shape[0] == len(pf_tuples)
+        assert pass_filter.shape[1] == 3
+
+        # Sort by barcode index
+        pass_filter = pass_filter[np.argsort(pass_filter[:,0]), :]
+
+        return BarcodeInfo(
+            pass_filter,
+            genomes=sorted(filtered_barcodes_by_genome.keys()),
+        )
+
+    @staticmethod
+    def get_filtered_barcodes(barcode_info, library_info, barcodes,
+                              genome_idx=None, library_type=None):
+        """Get a list of filtered barcode strings e.g. ['ACGT-1',...]
+        Args:
+          barcode_info (BarcodeInfo): Barcode info object.
+          library_info (list of dict): Library info.
+          barcodes (np.array): Barcode sequences.
+          genome_idx (int): Restrict passing definition to this genome. None for no restriction.
+          library_type (str): Restrict passing definition to this library type. None for no restriction.
+        Returns:
+          list of str
+        """
+
+        # Without restrictions, assumes passing filter in a single library or genome is sufficient
+        # for a barcode to be passing filter overall.
+
+        pass_filter = barcode_info.pass_filter
+
+        pf_barcode_idx = pass_filter[:,0]
+        pf_library_idx = pass_filter[:,1]
+        pf_genome_idx = pass_filter[:,2]
+
+        mask = np.ones(pass_filter.shape[0], dtype=bool)
+        if genome_idx is not None:
+            mask &= pf_genome_idx == genome_idx
+
+        if library_type is not None:
+            library_inds = np.array([i for i,lib in enumerate(library_info) if lib['library_type'] == library_type],
+                                    dtype=MOLECULE_INFO_COLUMNS['library_idx'])
+            mask &= np.isin(pf_library_idx, library_inds)
+        inds = np.flatnonzero(mask)
+
+        lib_to_gg = np.array([lib['gem_group'] for lib in library_info], dtype='uint64')
+
+        pf_gem_group = lib_to_gg[pf_library_idx[inds]]
+
+        # Take unique, sorted barcodes (sorted by (gem_group, barcode_idx))
+        gg_bcs = np.unique(np.column_stack((pf_gem_group, pf_barcode_idx[inds])), axis=0)
+
+        # Create barcode strings
+        return [cr_utils.format_barcode_seq(barcodes[gg_bcs[i, 1]],
+                                            gg_bcs[i, 0]) for i in xrange(gg_bcs.shape[0])]
+
+    @staticmethod
+    def save_barcode_info(bc_info, group):
+        """Save barcode info to HDF5.
+        Args:
+          barcode_info (BarcodeInfo): Data.
+          group (h5py.Group): Output group.
+        """
+        group.create_dataset('pass_filter', data=bc_info.pass_filter,
+                             maxshape=(None, bc_info.pass_filter.shape[1]),
+                             compression=HDF5_COMPRESSION)
+        cr_io.create_hdf5_string_dataset(group, 'genomes', bc_info.genomes,
+                                         compression=HDF5_COMPRESSION)
+
+    @staticmethod
+    def load_barcode_info(group):
+        """Load barcode info from an HDF5 group.
+        Args:
+          group (h5py.Group): Input group.
+        Returns:
+          BarcodeInfo object
+        """
+        return BarcodeInfo(
+            pass_filter=group['pass_filter'][:],
+            genomes=cr_io.read_hdf5_string_dataset(group['genomes']),
+        )
+
+    def get_barcode_info(self):
+        return MoleculeCounter.load_barcode_info(self.h5[BARCODE_INFO_GROUP_NAME])
+
+    @staticmethod
+    def open(filename, mode, feature_ref=None, barcodes=None, library_info=None,
+             barcode_info=None):
+        """Open a molecule info object.
+
+        Args:
+          filename (str): Filename to open or create
+          mode (str): 'r' for reading, 'w' for writing.
+          feature_ref (FeatureReference): Required when mode is 'w'.
+          barcodes (list of str): All possible barcode sequences. Required when mode is 'w'.
+          library_info (list of dict): Library metadata. Required when mode is 'w'.
+          barcode_info (BarcodeInfo): Per-barcode metadata.
+        Returns:
+          MoleculeInfo: A new object
+        """
         assert mode == 'r' or mode == 'w'
 
         mc = MoleculeCounter()
 
         if mode == 'w':
-            assert start is None
-            assert length is None
-            filters = tables.Filters(complevel = cr_constants.H5_COMPRESSION_LEVEL)
-            mc.h5 = tables.open_file(filename, mode = 'w', title = '10X', filters = filters)
-            mc.h5.set_node_attr('/', FILE_VERSION_KEY, CURR_FILE_VERSION)
-            mc.h5.set_node_attr('/', cr_constants.H5_FILETYPE_KEY, MOLECULE_H5_FILETYPE)
-            mc.h5.create_group('/', METRICS_GROUP_NAME)
+            if feature_ref is None:
+                raise ValueError('Feature reference must be specified when opening a molecule info object for writing')
+            if barcodes is None:
+                raise ValueError('Barcodes must be specified when opening a molecule info object for writing')
+            if library_info is None:
+                raise ValueError('Library info must be specified when opening a molecule info object for writing')
+            if barcode_info is None:
+                raise ValueError('Barcode info must be specified when opening a molecule info object for writing')
 
+            mc.h5 = h5py.File(filename, 'w')
+            cr_io.set_hdf5_attr(mc.h5, FILE_VERSION_KEY, CURR_FILE_VERSION)
+            cr_io.set_hdf5_attr(mc.h5, h5_constants.H5_FILETYPE_KEY, MOLECULE_H5_FILETYPE)
+            cr_io.set_hdf5_attr(mc.h5, FILE_VERSION_KEY, CURR_FILE_VERSION)
+
+            mc.h5.create_group(METRICS_GROUP_NAME)
+
+            # Write feature reference
+            fref_group = mc.h5.create_group(h5_constants.H5_FEATURE_REF_ATTR)
+            feature_ref.to_hdf5(fref_group)
+
+            # Write barcodes
+            # NOTE: Assumes all barcodes are the same length.
+            mc.h5.create_dataset('barcodes', data=np.fromiter(barcodes, np.string_(barcodes[0]).dtype, count=len(barcodes)), compression=HDF5_COMPRESSION)
+
+            # Write library info
+            lib_info_json = json.dumps(library_info, indent=4, sort_keys=True)
+            cr_io.create_hdf5_string_dataset(mc.h5, 'library_info', [lib_info_json])
+
+            # Write barcode info
+            g = mc.h5.create_group(BARCODE_INFO_GROUP_NAME)
+            MoleculeCounter.save_barcode_info(barcode_info, g)
+
+            # Create empty per-molecule datasets
             for name, col_type in MOLECULE_INFO_COLUMNS.iteritems():
-                atom = tables.Atom.from_dtype(np.dtype(col_type))
-                # Create an (array, element_buffer) tuple
-                # where element_buffer is a len=1 numpy array
-                # designed to avoid excess allocations
-                mc.columns[name] = (mc.h5.create_earray(mc.h5.root, name, atom, (0,)),
-                                      np.array([0], dtype=np.dtype(col_type)))
+                mc.columns[name] = mc.h5.create_dataset(name, (0,),
+                                                        maxshape=(None,),
+                                                        dtype=col_type,
+                                                        compression=HDF5_COMPRESSION,
+                                                        chunks=(HDF5_CHUNK_SIZE,))
 
         elif mode == 'r':
-            mc.h5 = tables.open_file(filename, mode = 'r')
+            mc.h5 = h5py.File(filename, 'r')
+
             try:
-                mc.file_version = mc.h5.get_node_attr('/', FILE_VERSION_KEY)
+                mc.file_version = mc.h5.attrs[FILE_VERSION_KEY]
             except AttributeError:
                 mc.file_version = 1 # V1 doesn't have version field
 
-            for node in mc.h5.walk_nodes('/', 'Array'):
-                if node.name in MOLECULE_INFO_COLUMNS:
-                    if start is None:
-                        assert length is None
-                        mc.columns[node.name] = (node, None)
-                    else:
-                        assert length is not None
-                        mc.columns[node.name] = (node[start:(start+length)], None)
-                elif node.name in MOLECULE_REF_COLUMNS:
-                    mc.ref_columns[node.name] = node
+            if mc.file_version < CURR_FILE_VERSION:
+                raise ValueError('The molecule info HDF5 file (format version %d) was produced by an older version of Cell Ranger. Reading these files is unsupported.' % mc.file_version)
+            if mc.file_version > CURR_FILE_VERSION:
+                raise ValueError('The molecule info HDF5 file (format version %d) was produced by an newer version of Cell Ranger. Reading these files is unsupported.' % mc.file_version)
+
+            for key in mc.h5.keys():
+                if key in MOLECULE_INFO_COLUMNS:
+                    mc.columns[key] = mc.h5[key]
+                elif key in MOLECULE_REF_COLUMNS:
+                    mc.ref_columns[key] = mc.h5[key]
+                elif key == h5_constants.H5_FEATURE_REF_ATTR:
+                    mc.feature_reference = FeatureReference.from_hdf5(mc.h5[key])
+                elif key == METRICS_GROUP_NAME \
+                     or key == BARCODE_INFO_GROUP_NAME:
+                    pass
                 else:
-                    raise AttributeError("Illegal column: %s" % node.name)
+                    raise AttributeError("Unrecognized dataset key: %s" % key)
+
+            # Load library info
+            mc.library_info = json.loads(cr_io.read_hdf5_string_dataset(mc.h5['library_info'])[0])
 
         return mc
 
     def nrows(self):
-        col = self.get_column_lazy(MoleculeCounter.get_key_columns()[0])
-        if isinstance(col, np.ndarray):
-            # handle case where MoleculeCounter is loaded in chunks, so data is not lazy-loaded
-            return col.shape[0]
-        else:
-            return col.nrows
+        return self.get_column_lazy(MOLECULE_INFO_COLUMNS.keys()[0]).shape[0]
 
     def get_chunk_key(self, idx):
         return tuple(self.get_column_lazy(col)[idx] for col in CHUNK_COLUMNS)
 
     def set_metric(self, key, value):
-        self.h5.set_node_attr(METRICS_GROUP_PATH, key, value)
+        """Set a metric. Serialize to Pickle."""
+        self.h5[METRICS_GROUP_NAME].attrs[key] = cPickle.dumps(value)
 
     def get_metric(self, key):
+        """Get a metric."""
         try:
-            value = self.h5.get_node_attr(METRICS_GROUP_PATH, key)
-        except AttributeError:
+            value = cPickle.loads(self.h5[METRICS_GROUP_NAME].attrs[key])
+        except KeyError:
             value = None
         return value
 
@@ -184,30 +346,20 @@ class MoleculeCounter:
             self.set_metric(k, v)
 
     def get_all_metrics(self):
-        # this is the only way to iterate over attribues in pytables :(
-        # NOTE: this may be slow, as there are potentially thousands of metrics
-        group = self.h5.get_node(METRICS_GROUP_PATH)
-        attrset = group._v_attrs
-        metrics = {k: attrset[k] for k in attrset._f_list()}
-        return metrics
+        return {k:cPickle.loads(v) for k,v in self.h5[METRICS_GROUP_NAME].attrs.iteritems()}
 
-    def add(self, **kwargs):
-        """ Add a tuple spread out across the column arrays """
-        for key, value in kwargs.iteritems():
-            array, element_buf = self.columns[key]
-            element_buf[0] = value
-            array.append(element_buf)
-
-    def add_many(self, col_name, values):
-        """ Append an array of values to a column """
-        array, _ = self.columns[col_name]
-        array.append(values)
+    def append_column(self, name, values):
+        """Append an array of values to a column."""
+        ds = self.columns[name]
+        start = len(ds)
+        end = start + len(values)
+        ds.resize((end,))
+        ds[start:end] = values
 
     def get_column_lazy(self, col_name):
         """ Retrieve column. Depending on how the file was opened,
         this may only be a file view instead of a full array. """
-        array, _ = self.columns[col_name]
-        return array
+        return self.columns[col_name]
 
     def get_column_chunked(self, col_name, chunk_size):
         data = self.get_column_lazy(col_name)
@@ -215,9 +367,8 @@ class MoleculeCounter:
             yield data[i:(i+chunk_size)]
 
     def get_column(self, col_name):
-        """ Retrieve an entire column of data. """
-        array = self.get_column_lazy(col_name)
-        return array[:]
+        """Load an entire column of data into memory"""
+        return self.get_column_lazy(col_name)[:]
 
     def set_ref_column(self, col_name, values):
         assert col_name in MOLECULE_REF_COLUMNS
@@ -226,6 +377,27 @@ class MoleculeCounter:
     def get_ref_column(self, col_name):
         array = self.ref_columns[col_name]
         return array[:]
+
+    def get_feature_ref(self):
+        return FeatureReference.from_hdf5(self.h5[h5_constants.H5_FEATURE_REF_ATTR])
+
+    def get_barcodes(self):
+        return self.h5['barcodes'][:]
+
+    def get_num_filtered_barcodes_for_library(self, library_idx):
+        """Count the number of barcodes passing filter for a library.
+        Args:
+          library_idx (int): Index of library to count.
+        Returns:
+          int: Number of filtered barcodes for this library.
+        """
+        pass_filter = self.h5[BARCODE_INFO_GROUP_NAME]['pass_filter'][:]
+        this_lib = np.flatnonzero(pass_filter[:,1] == library_idx)
+        barcode_inds = pass_filter[this_lib, 0]
+        return len(np.unique(barcode_inds))
+
+    def get_library_info(self):
+        return json.loads(self.h5['library_info'][0])
 
     def __enter__(self):
         return self
@@ -240,45 +412,85 @@ class MoleculeCounter:
         self.h5.close()
 
     @staticmethod
-    def concatenate(out_filename, in_filenames, metrics=None):
-        # Append each column from each input h5 to the output h5
-        out_mc = MoleculeCounter.open(out_filename, mode='w')
-        ref_set = False
-        for in_filename in in_filenames:
-            in_mc = MoleculeCounter.open(in_filename, mode='r')
-            # if no metrics specified, copy them from the first file
-            if metrics is None:
-                metrics = in_mc.get_all_metrics()
-            for name, array_tuple in in_mc.columns.iteritems():
-                h5_array, _ = array_tuple
-                out_mc.add_many(name, h5_array[:])
-            if not ref_set: # only set once
-                for name, h5_array in in_mc.ref_columns.iteritems():
-                    out_mc.set_ref_column(name, h5_array[:])
-                ref_set = True
-            in_mc.close()
-        out_mc.set_all_metrics(metrics)
-        out_mc.save()
+    def merge_barcode_infos(bc_infos):
+        """Merge a BarcodeInfo into another BarcodeInfo.
+        Args:
+          src_bc_infos (list of BarcodeInfo): Input BarcodeInfos.
+        Returns:
+          BarcodeInfo"""
+        assert len(bc_infos) > 0
+        genomes = bc_infos[0].genomes
+
+        # Total number of barcodes with any information
+        pfs = []
+        for bc_info in bc_infos:
+            assert bc_info.pass_filter.shape[1] == 3
+            assert bc_info.genomes == genomes
+            pfs.append(bc_info.pass_filter)
+        new_pf = np.unique(np.concatenate(pfs, axis=0), axis=0)
+        return BarcodeInfo(
+            pass_filter=new_pf,
+            genomes=genomes,
+        )
+
+
+
+
+
+
+
+
+
+
+
 
     @staticmethod
-    def concatenate_sort(out_filename, in_filenames, sort_cols, metrics=None):
-        in_mcs = [MoleculeCounter.open(f, 'r') for f in in_filenames]
-        out_mc = MoleculeCounter.open(out_filename, mode='w')
-        if metrics is None:
-            metrics = in_mcs[0].get_all_metrics()
+    def concatenate(out_filename, in_filenames, metrics=None):
+        """Concatenate MoleculeCounter HDF5 files
+        Args:
+          out_filename (str): Output HDF5 filename
+          in_filenames (list of str): Input HDF5 filenames
+          metrics (dict): Metrics to write
+        """
+        # Load reference info from first file
+        first_mc = MoleculeCounter.open(in_filenames[0], 'r')
+        feature_ref = first_mc.get_feature_ref()
+        barcodes = first_mc.get_barcodes()
+        library_info = first_mc.get_library_info()
+
+        feature_ids = [f.id for f in feature_ref.feature_defs]
+
+        print 'Merging barcode info'
+        bc_infos = []
+        for filename in in_filenames:
+            with MoleculeCounter.open(filename, 'r') as mc:
+                bc_infos.append(mc.get_barcode_info())
+        merged_bc_info = MoleculeCounter.merge_barcode_infos(bc_infos)
+
+        print 'Concatenating molecule info files'
+        out_mc = MoleculeCounter.open(out_filename, mode='w',
+                                      feature_ref=feature_ref,
+                                      barcodes=barcodes,
+                                      library_info=library_info,
+                                      barcode_info=merged_bc_info)
+
+        for filename in in_filenames:
+            with MoleculeCounter.open(filename, mode='r') as in_mc:
+                # Assert that these data are compatible
+                assert in_mc.get_library_info() == library_info
+                assert np.array_equal(in_mc.get_barcodes(), barcodes)
+                fref = in_mc.get_feature_ref()
+                assert [f.id for f in fref.feature_defs] == feature_ids
+
+                # if no metrics specified, copy them from the first file
+                if metrics is None:
+                    metrics = in_mc.get_all_metrics()
+
+                # Concatenate per-molecule datasets
+                for name, ds in in_mc.columns.iteritems():
+                    out_mc.append_column(name, ds[:])
+
         out_mc.set_all_metrics(metrics)
-        for col, array in in_mcs[0].ref_columns.iteritems():
-            out_mc.set_ref_column(col, array[:])
-        sort_array = []
-        # reverse sort columns so they get sorted in the right order
-        for col in reversed(sort_cols):
-            sort_array.append(np.concatenate([mc.get_column(col) for mc in in_mcs]))
-        sort_index = np.lexsort(sort_array)
-        for col in MOLECULE_INFO_COLUMNS:
-            col_sorted = np.concatenate([mc.get_column(col) for mc in in_mcs])[sort_index]
-            out_mc.add_many(col, col_sorted)
-        for mc in in_mcs:
-            mc.close()
         out_mc.save()
 
     def find_last_occurrence_of_chunk_key(self, from_row):
@@ -352,29 +564,19 @@ class MoleculeCounter:
             chunk_start = 1 + chunk_end
 
     @staticmethod
-    def compress_barcode_seq(x):
-        return cr_utils.compress_seq(x, MoleculeCounter.get_barcode_bits())
+    def compress_barcode_index(x):
+        return MOLECULE_INFO_COLUMNS['barcode_idx'](x)
 
     @staticmethod
     def compress_gem_group(x):
         return MOLECULE_INFO_COLUMNS['gem_group'](x)
 
     @staticmethod
-    def compress_umi_seq(x):
-        return cr_utils.compress_seq(x, MoleculeCounter.get_umi_bits())
-
-    def get_cdna_mol_counts_per_gene(self, gene_index, remove_none_gene=True):
-        mol_genes = self.get_column('gene')
-
-        num_genes = len(gene_index.get_genes())
-        gene_counts = np.bincount(mol_genes, minlength=num_genes + 1)
-        if remove_none_gene:
-            gene_counts = gene_counts[:num_genes]
-
-        return gene_counts
+    def compress_umi_seq(x, umi_bits):
+        return cr_utils.compress_seq(x, umi_bits)
 
     @staticmethod
-    def get_metrics_from_summary(summary, gem_groups, total_recovered_cells=None, total_force_cells=None):
+    def get_metrics_from_summary(summary, libraries, total_recovered_cells=None, total_force_cells=None):
         """ Extract relevant metrics from a summary dict."""
         mol_metrics = {}
 
@@ -386,76 +588,97 @@ class MoleculeCounter:
         for m in chemistry_metrics:
             mol_metrics[m] = summary[m]
 
-        gem_group_metrics = {}
+        # Per-library values
+        lib_metrics = {}
+        for lib_idx, lib in enumerate(libraries):
+            lib_type_prefix = rna_library.get_library_type_metric_prefix(lib['library_type'])
+            summary_name = '%s%s_total_read_pairs_per_library' % (lib_type_prefix, lib_idx)
+            lib_metrics[str(lib_idx)] = {
+                TOTAL_READS_METRIC: summary[summary_name],
+            }
+
+        # Per-gem-group values
+        gg_metrics = {}
+        gem_groups = sorted([lib['gem_group'] for lib in libraries])
         for gg in gem_groups:
-            total_read_metric = 'total_reads' if len(gem_groups) == 1 else '%s_total_reads_per_gem_group' % gg
+            # Distribute the toplevel expected and forced cells parameters
+            #   evenly among the gem groups.
             recovered_cells = total_recovered_cells / len(gem_groups) if total_recovered_cells is not None else None
             force_cells = total_force_cells / len(gem_groups) if total_force_cells is not None else None
-            gem_group_metrics[gg] = {
-                GG_TOTAL_READS_METRIC: summary[total_read_metric],
+            gg_metrics[str(gg)] = {
                 GG_RECOVERED_CELLS_METRIC: recovered_cells,
                 GG_FORCE_CELLS_METRIC: force_cells,
             }
 
-        mol_metrics[GEM_GROUPS_METRIC] = gem_group_metrics
+        mol_metrics[LIBRARIES_METRIC] = lib_metrics
+        mol_metrics[GEM_GROUPS_METRIC] = gg_metrics
         return mol_metrics
 
     @staticmethod
     def naive_concatenate_metrics(mol_h5_list):
         combined_metrics = None
+        gg_metrics = {}
+        lib_metrics = {}
         for mol_h5 in mol_h5_list:
             with MoleculeCounter.open(mol_h5, mode='r') as counter:
                 single_metrics = counter.get_all_metrics()
                 if combined_metrics is None:
                     combined_metrics = single_metrics
+                    gg_metrics = counter.get_metric(GEM_GROUPS_METRIC)
+                    lib_metrics = counter.get_metric(LIBRARIES_METRIC)
                 else:
                     # concatenate new gem groups to the metrics. if it collides with an existing
                     # gem group, the old one will be overwritten.
                     new_gg_metrics = counter.get_metric(GEM_GROUPS_METRIC)
-                    combined_metrics[GEM_GROUPS_METRIC].update(new_gg_metrics)
+                    new_lib_metrics = counter.get_metric(LIBRARIES_METRIC)
+                    gg_metrics.update(new_gg_metrics)
+                    lib_metrics.update(new_lib_metrics)
 
+        combined_metrics[GEM_GROUPS_METRIC] = gg_metrics
+        combined_metrics[LIBRARIES_METRIC] = lib_metrics
         return combined_metrics
 
     def get_molecule_iter(self, barcode_length, subsample_rate=1.0):
-        """ Return an iterator on Molecule tuples """
-        assert subsample_rate >= 0 and subsample_rate <= 1.0
+        raise NotImplementedError
+        # """ Return an iterator on Molecule tuples """
+        # assert subsample_rate >= 0 and subsample_rate <= 1.0
 
-        # Store the previous compressed barcode so we don't have to decompress every single row
-        prev_compressed_bc = None
-        prev_gem_group = None
-        prev_bc = None
+        # # Store the previous compressed barcode so we don't have to decompress every single row
+        # prev_compressed_bc = None
+        # prev_gem_group = None
+        # prev_bc = None
 
-        # Load the molecule data
-        mol_barcodes = self.get_column('barcode')
-        mol_gem_groups = self.get_column('gem_group')
-        mol_genome_ints = self.get_column('genome')
-        mol_gene_ints = self.get_column('gene')
-        mol_reads = self.get_column('reads')
+        # # Load the molecule data
+        # mol_barcodes = self.get_column('barcode')
+        # mol_gem_groups = self.get_column('gem_group')
+        # mol_genome_ints = self.get_column('genome')
+        # mol_gene_ints = self.get_column('gene')
+        # mol_reads = self.get_column('reads')
 
-        gene_ids = self.get_ref_column('gene_ids')
-        genome_ids = self.get_ref_column('genome_ids')
+        # gene_ids = self.get_ref_column('gene_ids')
+        # genome_ids = self.get_ref_column('genome_ids')
 
-        if subsample_rate < 1.0:
-            mol_reads = np.random.binomial(mol_reads, subsample_rate)
+        # if subsample_rate < 1.0:
+        #     mol_reads = np.random.binomial(mol_reads, subsample_rate)
 
-        for compressed_bc, gem_group, genome_int, gene_int, reads in itertools.izip(mol_barcodes,
-                                                                                    mol_gem_groups,
-                                                                                    mol_genome_ints,
-                                                                                    mol_gene_ints,
-                                                                                    mol_reads):
-                if reads == 0:
-                    continue
+        # for compressed_bc, gem_group, genome_int, gene_int, reads in itertools.izip(mol_barcodes,
+        #                                                                             mol_gem_groups,
+        #                                                                             mol_genome_ints,
+        #                                                                             mol_gene_ints,
+        #                                                                             mol_reads):
+        #         if reads == 0:
+        #             continue
 
-                # Decompress the cell barcode if necessary
-                if compressed_bc == prev_compressed_bc and gem_group == prev_gem_group:
-                    bc = prev_bc
-                else:
-                    bc = cr_utils.format_barcode_seq(self.decompress_barcode_seq(compressed_bc, barcode_length=barcode_length),
-                                                     gem_group)
-                yield Molecule(barcode=bc,
-                               genome=genome_ids[genome_int],
-                               gene_id=gene_ids[gene_int],
-                               reads=reads)
+        #         # Decompress the cell barcode if necessary
+        #         if compressed_bc == prev_compressed_bc and gem_group == prev_gem_group:
+        #             bc = prev_bc
+        #         else:
+        #             bc = cr_utils.format_barcode_seq(self.decompress_barcode_seq(compressed_bc, barcode_length=barcode_length),
+        #                                              gem_group)
+        #         yield Molecule(barcode=bc,
+        #                        genome=genome_ids[genome_int],
+        #                        gene_id=gene_ids[gene_int],
+        #                        reads=reads)
 
     @staticmethod
     def get_compressed_bc_iter(barcodes):
@@ -470,28 +693,39 @@ class MoleculeCounter:
             compressed_gg = MoleculeCounter.compress_gem_group(gem_group)
             yield compressed_bc, compressed_gg
 
-    def get_total_raw_reads(self):
-        """ Sum 'total_reads' across all gem groups """
-        raw_reads = 0
-        for _, gg_metrics in self.get_metric(GEM_GROUPS_METRIC).iteritems():
-            raw_reads += gg_metrics.get(GG_TOTAL_READS_METRIC, 0)
-        return raw_reads
+    def get_raw_read_pairs_per_library(self):
+        """ Get raw read pairs per library.
+        Returns:
+          list of int: Order is by library index
+        """
+        return [self.get_metric(LIBRARIES_METRIC)[str(li)][TOTAL_READS_METRIC] for li,_ in enumerate(self.library_info)]
 
-    def get_total_conf_mapped_filtered_bc_reads(self):
-        conf_reads = 0
-        for _, gg_metrics in self.get_metric(GEM_GROUPS_METRIC).iteritems():
-            conf_reads += gg_metrics.get(GG_CONF_MAPPED_FILTERED_BC_READS_METRIC, 0)
-        return conf_reads
+    def get_usable_read_pairs_per_library(self):
+        """ Get usable read pairs per library.
+        Returns:
+          list of int: Order is by library index
+        """
+        return [self.get_metric(LIBRARIES_METRIC)[str(li)][USABLE_READS_METRIC] for li,_ in enumerate(self.library_info)]
 
     @staticmethod
-    def sum_gem_group_metric(mol_h5_list, metric_name):
-        """ Combine a gemgroup-level integer metric across multiple h5 files """
+    def _sum_metric(mol_h5_list, metric_name, metric_type):
+        """ Combine a library- or gemgroup- level integer metric across multiple h5 files """
+        assert metric_type is LIBRARIES_METRIC or \
+            metric_type is GEM_GROUPS_METRIC
         combined = defaultdict(int)
         for mol_h5 in mol_h5_list:
             with MoleculeCounter.open(mol_h5, mode='r') as counter:
-                for gg, metrics in counter.get_metric(GEM_GROUPS_METRIC).iteritems():
-                    combined[gg] += metrics[metric_name]
+                for key, metrics in counter.get_metric(metric_type).iteritems():
+                    combined[key] += metrics[metric_name]
         return combined
+
+    @staticmethod
+    def sum_library_metric(mol_h5_list, metric_name):
+        return MoleculeCounter._sum_metric(mol_h5_list, metric_name, LIBRARIES_METRIC)
+
+    @staticmethod
+    def sum_gem_group_metric(mol_h5_list, metric_name):
+        return MoleculeCounter._sum_metric(mol_h5_list, metric_name, GEM_GROUPS_METRIC)
 
     @staticmethod
     def get_total_conf_mapped_reads_in_cells_chunk(filename, filtered_bcs_set, start, length, queue):

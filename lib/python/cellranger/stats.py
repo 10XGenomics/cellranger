@@ -53,6 +53,43 @@ def effective_diversity(counts):
     effective_diversity = tk_stats.robust_divide(float(numerator), float(denominator))
     return effective_diversity
 
+def compute_percentile_from_distribution(counter, percentile):
+    """ Takes a Counter object (or value:frequency dict) and computes a single percentile.
+    Uses Type 7 interpolation from:
+      Hyndman, R.J.; Fan, Y. (1996). "Sample Quantiles in Statistical Packages".
+    """
+    assert 0 <= percentile <= 100
+
+    n = np.sum(counter.values())
+    h = (n - 1) * (percentile / 100.0)
+    lower_value = None
+
+    cum_sum = 0
+    for value, freq in sorted(counter.items()):
+        cum_sum += freq
+        if cum_sum > np.floor(h) and lower_value is None:
+            lower_value = value
+        if cum_sum > np.ceil(h):
+            return lower_value + (h - np.floor(h)) * (value - lower_value)
+
+# Test for compute_percentile_from_distribution()
+# def test_percentile(x, p):
+#    c = Counter()
+#    for xi in x:
+#        c[xi] += 1
+#    my_res = np.array([compute_percentile_from_distribution(c, p_i) for p_i in p], dtype=float)
+#    numpy_res = np.percentile(x, p)
+#    print np.sum(np.abs(numpy_res - my_res))
+
+def compute_iqr_from_distribution(counter):
+    p25 = compute_percentile_from_distribution(counter, 25)
+    p75 = compute_percentile_from_distribution(counter, 75)
+    return p75 - p25
+
+def compute_median_from_distribution(counter):
+    return compute_percentile_from_distribution(counter, 50)
+
+
 def correct_bc_error(bc_confidence_threshold, seq, qual, wl_dist):
     '''Attempt to correct an incorrect BC sequence by computing
     the probability that a Hamming distance=1 BC generated
@@ -85,7 +122,7 @@ def correct_bc_error(bc_confidence_threshold, seq, qual, wl_dist):
             if p_bc is not None:
                 # probability of the base error
                 edit_qv = min(33.0, float(qvs[pos]))
-                p_edit = 10.0**(-edit_qv/10.0)
+                p_edit = 10.0**(-edit_qv / 10.0)
                 wl_cand.append(test_str)
                 likelihoods.append(p_bc * p_edit)
 
@@ -99,44 +136,6 @@ def correct_bc_error(bc_confidence_threshold, seq, qual, wl_dist):
             return wl_cand[np.argmax(posterior)]
 
     return None
-
-def compute_percentile_from_distribution(counter, percentile):
-    """ Takes a Counter object (or value:frequency dict) and computes a single percentile.
-    Uses Type 7 interpolation from:
-      Hyndman, R.J.; Fan, Y. (1996). "Sample Quantiles in Statistical Packages".
-    """
-    assert 0 <= percentile <= 100
-
-    n = np.sum(counter.values())
-    h = (n-1)*(percentile/100.0)
-    lower_value = None
-
-    cum_sum = 0
-    for value, freq in sorted(counter.items()):
-        cum_sum += freq
-        if cum_sum > np.floor(h) and lower_value is None:
-            lower_value = value
-        if cum_sum > np.ceil(h):
-            return lower_value + (h-np.floor(h)) * (value-lower_value)
-
-# Test for compute_percentile_from_distribution()
-#def test_percentile(x, p):
-#    c = Counter()
-#    for xi in x:
-#        c[xi] += 1
-#    my_res = np.array([compute_percentile_from_distribution(c, p_i) for p_i in p], dtype=float)
-#    numpy_res = np.percentile(x, p)
-#    print np.sum(np.abs(numpy_res - my_res))
-
-def compute_iqr_from_distribution(counter):
-    p25 = compute_percentile_from_distribution(counter, 25)
-    p75 = compute_percentile_from_distribution(counter, 75)
-    return p75 - p25
-
-def compute_median_from_distribution(counter):
-    return compute_percentile_from_distribution(counter, 50)
-
-# barcode filtering methods
 
 def determine_max_filtered_bcs(total_diversity, recovered_cells):
     """ Determine the max # of cellular barcodes to consider """
@@ -152,13 +151,6 @@ def init_barcode_filter_result():
         'filtered_bcs_cv': 0,
     }
 
-def find_within_ordmag(x, baseline_idx):
-    x_ascending = np.sort(x)
-    baseline = x_ascending[-baseline_idx]
-    cutoff = max(1, round(0.1*baseline))
-    # Return the index corresponding to the cutoff in descending order
-    return len(x) - np.searchsorted(x_ascending, cutoff)
-
 def summarize_bootstrapped_top_n(top_n_boot):
     top_n_bcs_mean = np.mean(top_n_boot)
     top_n_bcs_sd = np.std(top_n_boot)
@@ -170,6 +162,13 @@ def summarize_bootstrapped_top_n(top_n_boot):
     result['filtered_bcs_ub'] = round(scipy.stats.norm.ppf(0.975, top_n_bcs_mean, top_n_bcs_sd))
     result['filtered_bcs'] = int(round(top_n_bcs_mean))
     return result
+
+def find_within_ordmag(x, baseline_idx):
+    x_ascending = np.sort(x)
+    baseline = x_ascending[-baseline_idx]
+    cutoff = max(1, round(0.1 * baseline))
+    # Return the index corresponding to the cutoff in descending order
+    return len(x) - np.searchsorted(x_ascending, cutoff)
 
 def filter_cellular_barcodes_ordmag(bc_counts, recovered_cells, total_diversity):
     """ Simply take all barcodes that are within an order of magnitude of a top barcode
@@ -187,7 +186,7 @@ def filter_cellular_barcodes_ordmag(bc_counts, recovered_cells, total_diversity)
         msg = "WARNING: All barcodes do not have enough reads for ordmag, allowing no bcs through"
         return [], metrics, msg
 
-    baseline_bc_idx = int(round(float(recovered_cells) * (1-cr_constants.ORDMAG_RECOVERED_CELLS_QUANTILE)))
+    baseline_bc_idx = int(round(float(recovered_cells) * (1 - cr_constants.ORDMAG_RECOVERED_CELLS_QUANTILE)))
     baseline_bc_idx = min(baseline_bc_idx, len(nonzero_bc_counts) - 1)
     assert baseline_bc_idx < max_filtered_bcs
 
@@ -290,5 +289,3 @@ def correct_umi(seq, counts):
 
         a[pos] = existing
     return corrected_seq
-
-

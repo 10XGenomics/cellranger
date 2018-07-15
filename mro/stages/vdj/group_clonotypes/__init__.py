@@ -6,8 +6,8 @@
 
 import os
 import cPickle
-import cellranger.constants as cr_constants
-import cellranger.utils as cr_utils
+import cellranger.h5_constants as h5_constants
+import cellranger.io as cr_io
 import cellranger.vdj.annotations as vdj_annot
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
@@ -32,7 +32,7 @@ stage GROUP_CLONOTYPES(
 """
 
 def split(args):
-    mem_gb = max(cr_constants.MIN_MEM_GB,
+    mem_gb = max(h5_constants.MIN_MEM_GB,
                  vdj_utils.get_mem_gb_from_annotations_json(args.annotations))
     return {
         'chunks': [{'__mem_gb': mem_gb}],
@@ -145,6 +145,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         src = getattr(chunk_outs[0], out_name)
         dest = getattr(outs, out_name)
         if os.path.isfile(src):
-            cr_utils.copy(src, dest)
+            cr_io.copy(src, dest)
         else:
             setattr(outs, out_name, None)

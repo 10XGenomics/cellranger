@@ -9,6 +9,7 @@ use std::cmp;
 use std::collections::{HashSet, BTreeMap};
 use utils;
 
+use features::{FEATURE_IDS_TAG, FeatureData};
 use reference::{TranscriptIndex, Gene};
 
 // These only exist in BAM land; just use bytes.
@@ -32,6 +33,10 @@ bitflags! {
         const LOW_SUPPORT_UMI = 2u32;
         // Mates mapped to incompatible sets of genes
         const GENE_DISCORDANT = 4u32;
+        // This read is representative for a molecule and can be treated as a UMI count.
+        const UMI_COUNT = 8u32;
+        // Confidently assigned feature barcode
+        const CONF_FEATURE = 16u32;
     }
 }
 
@@ -131,8 +136,7 @@ impl AnnotationData {
     /// Add tags to a BAM record.
     /// Set is_conf_mapped to true if the qname is confidently mapped to
     /// the transcriptome.
-    pub fn attach_tags(&mut self, record: &mut Record, is_conf_mapped: bool,
-                       is_gene_discordant: bool, pair_anno: Option<&PairAnnotationData>) {
+    pub fn attach_tags(&mut self, record: &mut Record, pair_anno: Option<&PairAnnotationData>) {
         if let Some(tag) = self.make_tx_tag() {
             record.push_aux(TRANSCRIPT_TAG, &Aux::String(tag.as_bytes()));
         }
@@ -142,6 +146,9 @@ impl AnnotationData {
             if let Some((tag_gx, tag_gn)) = pair.make_gx_gn_tags() {
                 record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
                 record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+
+                // Record the gene IDs as the feature IDs
+                record.push_aux(FEATURE_IDS_TAG, &Aux::String(tag_gx.as_bytes()));
             }
 
             if self.genes != pair.genes {
@@ -158,6 +165,8 @@ impl AnnotationData {
             if let Some((tag_gx, tag_gn)) = self.make_gx_gn_tags() {
                 record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
                 record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+
+                record.push_aux(FEATURE_IDS_TAG, &Aux::String(tag_gx.as_bytes()));
             }
         }
 
@@ -169,18 +178,6 @@ impl AnnotationData {
         }
         if let Some(tag) = self.make_an_tag() {
             record.push_aux(ANTISENSE_TAG, &Aux::String(tag.as_bytes()));
-        }
-
-        // Note: only attach these flags to primary alignment
-        if !record.is_secondary() {
-            let mut flags: ExtraFlags = Default::default();
-            if is_conf_mapped {
-                flags |= CONF_MAPPED;
-            }
-            if is_gene_discordant {
-                flags |= GENE_DISCORDANT;
-            }
-            record.push_aux(EXTRA_FLAGS_TAG, &Aux::Integer(flags.bits() as i32));
         }
     }
 }
@@ -754,6 +751,37 @@ impl TranscriptAnnotator {
         return &self.params
     }
 }
+
+/// Compute the Extra Flags BAM tag and add to a BAM record
+pub fn add_extra_flags(record: &mut Record,
+                       is_qname_conf_mapped: bool,
+                       is_qname_gene_discordant: bool,
+                       feature_data: &Option<FeatureData>) {
+    // Note: only attach these flags to primary alignment
+    if !record.is_secondary() {
+        let mut flags: ExtraFlags = Default::default();
+
+        if is_qname_conf_mapped {
+            flags |= CONF_MAPPED;
+            flags |= CONF_FEATURE;
+        }
+
+        if is_qname_gene_discordant {
+            flags |= GENE_DISCORDANT;
+        }
+
+        if let &Some(ref feature_data) = feature_data {
+            if let Some(ref id_string) = feature_data.ids {
+                if !id_string.chars().any(|c| c == ';') {
+                    flags |= CONF_FEATURE;
+                }
+            }
+        }
+
+        record.push_aux(EXTRA_FLAGS_TAG, &Aux::Integer(flags.bits() as i32));
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

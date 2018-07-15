@@ -7,11 +7,12 @@ import numpy as np
 import sys
 import cellranger.analysis.clustering as cr_clustering
 import cellranger.analysis.graphclust as cr_graphclust
-import cellranger.analysis.io as cr_io
+import cellranger.analysis.io as analysis_io
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
+import cellranger.analysis.constants as analysis_constants
 from cellranger.logperf import LogPerf
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage RUN_GRAPH_CLUSTERING(
@@ -25,7 +26,6 @@ stage RUN_GRAPH_CLUSTERING(
     in  int    balltree_leaf_size,
     in  string similarity_type     "Type of similarity to use (nn or snn)",
     in  bool   skip,
-    in  bool   is_multi_genome,
     out h5     chunked_neighbors,
     out h5     clusters_h5,
     out path   clusters_csv,
@@ -61,8 +61,8 @@ SIMILARITY_TYPES = [NN_SIMILARITY, SNN_SIMILARITY]
 def split(args):
     np.random.seed(0)
 
-    if args.skip or args.is_multi_genome:
-        return {'chunks': [{'__mem_gb': cr_constants.MIN_MEM_GB}]}
+    if args.skip:
+        return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
 
     if args.similarity_type not in SIMILARITY_TYPES:
         martian.exit("Unsupported similarity type: %s. Must be one of: %s" % (args.similarity_type, ','.join(SIMILARITY_TYPES)))
@@ -94,9 +94,9 @@ def split(args):
         cr_graphclust.save_neighbor_index(balltree, neighbor_index)
 
     # Compute the actual number of nearest neighbors we'll use
-    given_num_neighbors = args.num_neighbors if args.num_neighbors is not None else cr_constants.GRAPHCLUST_NEIGHBORS_DEFAULT
-    given_neighbor_a = args.neighbor_a if args.neighbor_a is not None else cr_constants.GRAPHCLUST_NEIGHBOR_A_DEFAULT
-    given_neighbor_b = args.neighbor_b if args.neighbor_b is not None else cr_constants.GRAPHCLUST_NEIGHBOR_B_DEFAULT
+    given_num_neighbors = args.num_neighbors if args.num_neighbors is not None else analysis_constants.GRAPHCLUST_NEIGHBORS_DEFAULT
+    given_neighbor_a = args.neighbor_a if args.neighbor_a is not None else analysis_constants.GRAPHCLUST_NEIGHBOR_A_DEFAULT
+    given_neighbor_b = args.neighbor_b if args.neighbor_b is not None else analysis_constants.GRAPHCLUST_NEIGHBOR_B_DEFAULT
 
     # Take max of {num_neighbors, a + b*log10(n)}
     use_neighbors = int(max(given_num_neighbors, np.round(given_neighbor_a + given_neighbor_b * np.log10(len(use_bcs)))))
@@ -129,9 +129,9 @@ def split(args):
         join_threads = 4 # Overallocate
     else:
         # Scale memory with size of nearest-neighbor adjacency matrix
-        join_mem_gb = max(cr_constants.MIN_MEM_GB, int(np.ceil((num_neighbors * len(use_bcs)) / NN_ENTRIES_PER_MEM_GB)))
+        join_mem_gb = max(h5_constants.MIN_MEM_GB, int(np.ceil((num_neighbors * len(use_bcs)) / NN_ENTRIES_PER_MEM_GB)))
         # HACK: use more threads for bigger mem requests to avoid mem oversubscription on clusters that don't enforce it
-        join_threads = cr_utils.get_thread_request_from_mem_gb(join_mem_gb)
+        join_threads = cr_io.get_thread_request_from_mem_gb(join_mem_gb)
 
     return {
         'chunks': chunks,
@@ -144,7 +144,7 @@ def split(args):
 def main(args, outs):
     np.random.seed(0)
 
-    if args.skip or args.is_multi_genome:
+    if args.skip:
         return
 
     with LogPerf('submatrix_load'):
@@ -158,7 +158,7 @@ def main(args, outs):
         cr_graphclust.write_nearest_neighbors(nn_matrix, outs.chunked_neighbors)
 
 def join(args, outs, chunk_defs, chunk_outs):
-    if args.skip or args.is_multi_genome:
+    if args.skip:
         return
     # Merge the neighbor matrices
     with LogPerf('merge_nn'):
@@ -207,7 +207,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     labels = cr_clustering.relabel_by_size(labels)
 
     # Save cluster results
-    with cr_io.open_h5_for_writing(outs.clusters_h5) as f:
+    with analysis_io.open_h5_for_writing(outs.clusters_h5) as f:
         cr_graphclust.save_graphclust_h5(f, labels)
 
     clustering_key = cr_clustering.format_clustering_key(cr_clustering.CLUSTER_TYPE_GRAPHCLUST, 0)

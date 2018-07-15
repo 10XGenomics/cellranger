@@ -7,7 +7,7 @@ import os
 import sys
 
 from cellranger.matrix import GeneBCMatrices
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
 
@@ -35,15 +35,15 @@ Options:
 
 def main():
     args = docopt.docopt(__doc__, version=VERSION)
-    output_csv = cr_utils.get_output_path(args['<output_csv>'])
+    output_csv = cr_io.get_output_path(args['<output_csv>'])
     input_path = args['<input_path>']
     genome = args['--genome']
 
     if input_path.endswith(".h5"):
-        input_path = cr_utils.get_input_path(input_path)
+        input_path = cr_io.get_input_path(input_path)
         gbm = GeneBCMatrices.load_h5(input_path)
     else:
-        input_path = cr_utils.get_input_path(input_path, is_dir=True)
+        input_path = cr_io.get_input_path(input_path, is_dir=True)
         gbm = GeneBCMatrices.load_mtx(input_path)
 
     genomes = gbm.get_genomes()

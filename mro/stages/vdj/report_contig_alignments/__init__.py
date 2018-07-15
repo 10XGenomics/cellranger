@@ -10,6 +10,7 @@ import tenkit.bam as tk_bam
 import cellranger.chemistry as cr_chem
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
 
@@ -96,7 +97,7 @@ def normalize_metric(reporter, metric_name, denominator):
 
 def join(args, outs, chunk_defs, chunk_outs):
     if all(chunk_out.chunked_reporter is None for chunk_out in chunk_outs):
-        cr_utils.write_empty_json(outs.summary)
+        cr_io.write_empty_json(outs.summary)
         return
 
     # Merge reporters and save

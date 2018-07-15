@@ -5,6 +5,7 @@
 import martian
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
 from cellranger.webshim.constants.gex import CountSampleProperties
@@ -68,7 +69,7 @@ def main(args, outs):
 def join(args, outs, chunk_defs, chunk_outs):
     chunk_out = chunk_outs[0]
 
-    cr_utils.copy(chunk_out.web_summary, outs.web_summary)
-    cr_utils.copy(chunk_out.alerts, outs.alerts)
-    cr_utils.copy(chunk_out.metrics_summary_json, outs.metrics_summary_json)
-    cr_utils.copy(chunk_out.metrics_summary_csv, outs.metrics_summary_csv)
+    cr_io.copy(chunk_out.web_summary, outs.web_summary)
+    cr_io.copy(chunk_out.alerts, outs.alerts)
+    cr_io.copy(chunk_out.metrics_summary_json, outs.metrics_summary_json)
+    cr_io.copy(chunk_out.metrics_summary_csv, outs.metrics_summary_csv)

@@ -3,10 +3,11 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
-import cellranger.analysis.io as cr_io
-import cellranger.constants as cr_constants
-import cellranger.utils as cr_utils
+import cellranger.analysis.io as analysis_io
+import cellranger.h5_constants as h5_constants
+import cellranger.io as cr_io
 
+import h5py as h5
 import os
 import tables
 
@@ -36,7 +37,7 @@ stage SUMMARIZE_ANALYSIS(
 
 def split(args):
     chunks = [{
-        '__mem_gb': cr_constants.MIN_MEM_GB
+        '__mem_gb': h5_constants.MIN_MEM_GB
     }]
     return {'chunks': chunks}
 
@@ -45,23 +46,24 @@ def main(args, outs):
         return
 
     if args.is_multi_genome:
-        cr_utils.copytree(args.multi_genome_json, outs.analysis)
-        cr_utils.copytree(args.multi_genome_csv, outs.analysis_csv)
-        return
+        cr_io.copytree(args.multi_genome_json, outs.analysis)
+        cr_io.copytree(args.multi_genome_csv, outs.analysis_csv)
 
-    analysis_h5 = cr_io.h5_path(outs.analysis)
-    cr_utils.makedirs(os.path.dirname(analysis_h5), allow_existing=True)
+    analysis_h5 = analysis_io.h5_path(outs.analysis)
+    cr_io.makedirs(os.path.dirname(analysis_h5), allow_existing=True)
 
-    with tables.open_file(args.matrix_h5, 'r') as matrix,\
-         tables.open_file(args.pca_h5, 'r') as pca,\
+    # Pytables doesn't support variable len strings, so use h5py first
+    with h5.File(args.matrix_h5, 'r') as matrix,\
+         h5.File(analysis_h5, 'w') as out:
+        # TODO: copy the first group; fixme when we have a key
+        name = matrix.keys()[0]
+        matrix.copy(matrix[name], out, name='matrix')
+
+    with tables.open_file(args.pca_h5, 'r') as pca,\
          tables.open_file(args.clustering_h5, 'r') as clustering,\
          tables.open_file(args.diffexp_h5, 'r') as diffexp,\
          tables.open_file(args.tsne_h5, 'r') as tsne,\
-         tables.open_file(analysis_h5, 'w') as out:
-
-         # NOTE - genome name is replaced with 'matrix'
-         mat_groups = [m for m in matrix.root]
-         matrix.copy_node(mat_groups[0], out.root, recursive=True, newname='matrix')
+         tables.open_file(analysis_h5, 'a') as out:
 
          pca.copy_children(pca.root, out.root, recursive=True)
          clustering.copy_children(clustering.root, out.root, recursive=True)
@@ -69,16 +71,16 @@ def main(args, outs):
          tsne.copy_children(tsne.root, out.root, recursive=True)
 
     pca_dir = os.path.join(outs.analysis_csv, 'pca')
-    cr_utils.copytree(args.pca_csv, pca_dir)
+    cr_io.copytree(args.pca_csv, pca_dir)
 
     clustering_dir = os.path.join(outs.analysis_csv, 'clustering')
-    cr_utils.copytree(args.clustering_csv, clustering_dir)
+    cr_io.copytree(args.clustering_csv, clustering_dir)
 
     diffexp_dir = os.path.join(outs.analysis_csv, 'diffexp')
-    cr_utils.copytree(args.diffexp_csv, diffexp_dir)
+    cr_io.copytree(args.diffexp_csv, diffexp_dir)
 
     tsne_dir = os.path.join(outs.analysis_csv, 'tsne')
-    cr_utils.copytree(args.tsne_csv, tsne_dir)
+    cr_io.copytree(args.tsne_csv, tsne_dir)
 
 def join(args, outs, chunk_defs, chunk_outs):
     if args.skip:
@@ -88,10 +90,10 @@ def join(args, outs, chunk_defs, chunk_outs):
         return
 
     chunk_out = chunk_outs[0]
-    cr_utils.copytree(chunk_out.analysis, outs.analysis)
-    cr_utils.copytree(chunk_out.analysis_csv, outs.analysis_csv)
+    cr_io.copytree(chunk_out.analysis, outs.analysis)
+    cr_io.copytree(chunk_out.analysis_csv, outs.analysis_csv)
 
     if args.is_multi_genome:
-        cr_utils.copy(args.multi_genome_summary, outs.summary)
+        cr_io.copy(args.multi_genome_summary, outs.summary)
     else:
         outs.summary = None

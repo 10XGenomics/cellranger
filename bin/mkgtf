@@ -6,7 +6,7 @@ import collections
 import docopt
 import os
 import sys
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.reference as cr_reference
 
 VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
@@ -36,8 +36,8 @@ Options:
 
 def main():
     args = docopt.docopt(__doc__, version=VERSION)
-    input_genes_file = cr_utils.get_input_path(args['<input_gtf>'])
-    output_genes_file = cr_utils.get_output_path(args['<output_gtf>'])
+    input_genes_file = cr_io.get_input_path(args['<input_gtf>'])
+    output_genes_file = cr_io.get_output_path(args['<output_gtf>'])
     attributes_str = args['--attribute']
 
     attributes = collections.defaultdict(set)

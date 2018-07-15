@@ -12,6 +12,7 @@ import tenkit.seq as tk_seq
 import cellranger.constants as cr_constants
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.constants as vdj_constants
 
 VdjAnnotationFeature = collections.namedtuple('VdjAnnotationFeature', [
@@ -146,7 +147,7 @@ def build_reference_fasta_from_ensembl(gtf_paths, transcripts_to_remove_path,
     print 'Copying genome reference sequence...'
     os.makedirs(os.path.dirname(get_vdj_reference_fasta(reference_path)))
     tmp_genome_fa_path = os.path.join(reference_path, 'genome.fasta')
-    cr_utils.copy(genome_fasta_path, tmp_genome_fa_path)
+    cr_io.copy(genome_fasta_path, tmp_genome_fa_path)
     print '...done.\n'
 
     print 'Indexing genome reference sequence...'
@@ -158,7 +159,7 @@ def build_reference_fasta_from_ensembl(gtf_paths, transcripts_to_remove_path,
     print '...done.\n'
 
     print 'Computing hash of genome FASTA file...'
-    fasta_hash = cr_utils.compute_hash_of_file(tmp_genome_fa_path)
+    fasta_hash = cr_io.compute_hash_of_file(tmp_genome_fa_path)
     print '...done.\n'
 
     for gtf in gtf_paths:
@@ -211,7 +212,7 @@ def build_reference_fasta_from_ensembl(gtf_paths, transcripts_to_remove_path,
     print 'Computing hash of genes GTF files...'
     digest = hashlib.sha1()
     # concatenate all the hashes into a string and then hash that string
-    digest.update(reduce(lambda x,y: x+y, [cr_utils.compute_hash_of_file(gtf) for gtf in gtf_paths]))
+    digest.update(reduce(lambda x,y: x+y, [cr_io.compute_hash_of_file(gtf) for gtf in gtf_paths]))
     gtf_hash = digest.hexdigest()
     print '...done.\n'
 
@@ -408,7 +409,7 @@ def build_reference_fasta_from_fasta(fasta_path, reference_path,
     print '...done.\n'
 
     print 'Computing hash of input FASTA file...'
-    fasta_hash = cr_utils.compute_hash_of_file(fasta_path)
+    fasta_hash = cr_io.compute_hash_of_file(fasta_path)
     print '...done.\n'
 
     print 'Writing metadata JSON file into reference folder...'

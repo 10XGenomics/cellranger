@@ -7,9 +7,9 @@ import collections
 import numpy as np
 import scipy.spatial.distance as sp_dist
 import sklearn.cluster as sk_cluster
-import cellranger.analysis.io as cr_io
+import cellranger.analysis.io as analysis_io
 import cellranger.analysis.clustering as cr_clustering
-import cellranger.constants as cr_constants
+import cellranger.analysis.constants as analysis_constants
 
 
 KMEANS = collections.namedtuple('KMEANS', ['clusters', 'cluster_score'])
@@ -54,14 +54,14 @@ def compute_db_index(matrix, kmeans):
 
     return db_score
 
-def run_kmeans(transformed_pca_matrix, n_clusters, random_state=None):
+def run_kmeans(transformed_matrix, n_clusters, random_state=None):
     if random_state is None:
-        random_state=cr_constants.RANDOM_STATE
+        random_state=analysis_constants.RANDOM_STATE
 
     kmeans = sk_cluster.KMeans(n_clusters=n_clusters, random_state=random_state)
-    clusters = kmeans.fit_predict(transformed_pca_matrix) + 1
+    clusters = kmeans.fit_predict(transformed_matrix) + 1
 
-    cluster_score = compute_db_index(transformed_pca_matrix, kmeans)
+    cluster_score = compute_db_index(transformed_matrix, kmeans)
 
     clusters = cr_clustering.relabel_by_size(clusters)
 
@@ -77,11 +77,11 @@ def run_kmeans(transformed_pca_matrix, n_clusters, random_state=None):
 def save_kmeans_h5(f, n_clusters, kmeans):
     clustering_key = cr_clustering.format_clustering_key(cr_clustering.CLUSTER_TYPE_KMEANS, n_clusters)
 
-    group = f.create_group(f.root, cr_constants.ANALYSIS_H5_CLUSTERING_GROUP)
-    cr_io.save_h5(f, group, clustering_key, kmeans)
+    group = f.create_group(f.root, analysis_constants.ANALYSIS_H5_CLUSTERING_GROUP)
+    analysis_io.save_h5(f, group, clustering_key, kmeans)
 
     cr_clustering.create_legacy_kmeans_nodes(f,
-                                             cr_constants.ANALYSIS_H5_CLUSTERING_GROUP,
-                                             cr_constants.ANALYSIS_H5_KMEANS_GROUP,
+                                             analysis_constants.ANALYSIS_H5_CLUSTERING_GROUP,
+                                             analysis_constants.ANALYSIS_H5_KMEANS_GROUP,
                                              cr_clustering.CLUSTERING,
                                              clustering_key)

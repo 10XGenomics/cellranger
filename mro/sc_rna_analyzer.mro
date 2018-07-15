@@ -84,26 +84,24 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call RUN_PCA(
-        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
-        random_seed     = self.random_seed,
-        num_bcs         = self.num_pca_bcs,
-        num_genes       = self.num_pca_genes,
-        num_pcs         = self.num_principal_comps,
-        skip            = ANALYZER_PREFLIGHT.skip,
+        matrix_h5   = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        random_seed = self.random_seed,
+        num_bcs     = self.num_pca_bcs,
+        num_genes   = self.num_pca_genes,
+        num_pcs     = self.num_principal_comps,
+        skip        = ANALYZER_PREFLIGHT.skip,
     ) using (
         volatile = true,
     )
 
     call RUN_KMEANS(
-        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5          = RUN_PCA.pca_h5,
-        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
-        random_seed     = self.random_seed,
-        max_clusters    = self.max_clusters,
-        skip            = ANALYZER_PREFLIGHT.skip,
-        num_bcs         = null,
-        num_pcs         = null,
+        matrix_h5    = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5       = RUN_PCA.pca_h5,
+        random_seed  = self.random_seed,
+        max_clusters = self.max_clusters,
+        skip         = ANALYZER_PREFLIGHT.skip,
+        num_bcs      = null,
+        num_pcs      = null,
     ) using (
         volatile = true,
     )
@@ -119,39 +117,35 @@ pipeline SC_RNA_ANALYZER(
         similarity_type    = "nn",
         balltree_leaf_size = null,
         skip               = ANALYZER_PREFLIGHT.skip,
-        is_multi_genome    = PREPROCESS_MATRIX.is_multi_genome,
     ) using (
         volatile = true,
     )
 
     call MERGE_CLUSTERS(
-        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5          = RUN_PCA.pca_h5,
-        clusters_h5     = RUN_GRAPH_CLUSTERING.clusters_h5,
-        skip            = ANALYZER_PREFLIGHT.skip,
-        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+        matrix_h5   = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5      = RUN_PCA.pca_h5,
+        clusters_h5 = RUN_GRAPH_CLUSTERING.clusters_h5,
+        skip        = ANALYZER_PREFLIGHT.skip,
     ) using (
         volatile = true,
     )
 
     call COMBINE_CLUSTERING(
-        kmeans_h5       = RUN_KMEANS.kmeans_h5,
-        kmeans_csv      = RUN_KMEANS.kmeans_csv,
-        graphclust_h5   = MERGE_CLUSTERS.clusters_h5,
-        graphclust_csv  = MERGE_CLUSTERS.clusters_csv,
-        skip            = ANALYZER_PREFLIGHT.skip,
-        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
+        kmeans_h5      = RUN_KMEANS.kmeans_h5,
+        kmeans_csv     = RUN_KMEANS.kmeans_csv,
+        graphclust_h5  = MERGE_CLUSTERS.clusters_h5,
+        graphclust_csv = MERGE_CLUSTERS.clusters_csv,
+        skip           = ANALYZER_PREFLIGHT.skip,
     ) using (
         volatile = true,
     )
 
     call RUN_DIFFERENTIAL_EXPRESSION(
-        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        clustering_h5   = COMBINE_CLUSTERING.clustering_h5,
-        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
-        random_seed     = self.random_seed,
-        max_clusters    = self.max_clusters,
-        skip            = ANALYZER_PREFLIGHT.skip,
+        matrix_h5     = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        clustering_h5 = COMBINE_CLUSTERING.clustering_h5,
+        random_seed   = self.random_seed,
+        max_clusters  = self.max_clusters,
+        skip          = ANALYZER_PREFLIGHT.skip,
     ) using (
         volatile = true,
     )
@@ -159,7 +153,6 @@ pipeline SC_RNA_ANALYZER(
     call RUN_TSNE(
         matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         pca_h5          = RUN_PCA.pca_h5,
-        is_multi_genome = PREPROCESS_MATRIX.is_multi_genome,
         random_seed     = self.random_seed,
         perplexity      = self.tsne_perplexity,
         input_pcs       = self.tsne_input_pcs,

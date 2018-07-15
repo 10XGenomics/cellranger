@@ -12,6 +12,7 @@ import tenkit.fasta as tk_fasta
 import cellranger.constants as cr_constants
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = '''
 stage ALIGN_READS(
@@ -27,7 +28,8 @@ stage ALIGN_READS(
 ) split using (
     in  fastq    read_chunk,
     in  fastq    read2_chunk,
-    in  string[] read_group,
+    in  string   read_group,
+    in  string   library_type,
 )
 '''
 
@@ -82,6 +84,9 @@ def create_unaligned_bam(args, outs):
     for packed_rg in args.read_groups:
         header_buf.write(re.sub('\\\\t', '\t', tk_bam.make_rg_header(packed_rg)) + '\n')
 
+    # Get read group ID for this chunk of reads
+    read_group = args.read_group
+
     # pysam doesn't support reading SAM from a StringIO object
     with open('tmphdr', 'w') as f:
         f.write(header_buf.getvalue())
@@ -89,8 +94,8 @@ def create_unaligned_bam(args, outs):
 
     outbam = pysam.AlignmentFile(outs.genome_output, 'wb', template=samfile)
 
-    fastq_file1 = cr_utils.open_maybe_gzip(args.read_chunk)
-    fastq_file2 = cr_utils.open_maybe_gzip(args.read2_chunk) if args.read2_chunk else None
+    fastq_file1 = cr_io.open_maybe_gzip(args.read_chunk)
+    fastq_file2 = cr_io.open_maybe_gzip(args.read2_chunk) if args.read2_chunk else None
     read1s = tk_fasta.read_generator_fastq(fastq_file1)
     read2s = tk_fasta.read_generator_fastq(fastq_file2) if fastq_file2 else []
 
@@ -101,12 +106,14 @@ def create_unaligned_bam(args, outs):
         name, seq, qual = read1
         record.query_name, record.query_sequence = name.split(' ')[0], seq
         record.query_qualities = tk_fasta.get_qvs(qual)
+        record.set_tag('RG', read_group, 'Z')
         outbam.write(record)
 
         if read2:
             name, seq, qual = read2
             record.query_name, record.query_sequence = name.split(' ')[0], seq
             record.query_qualities = tk_fasta.get_qvs(qual)
+            record.set_tag('RG', read_group, 'Z')
             outbam.write(record)
 
     samfile.close()

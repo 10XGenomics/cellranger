@@ -6,11 +6,12 @@ import collections
 import numpy as np
 import os
 import sys
-import cellranger.analysis.io as cr_io
-import cellranger.utils as cr_utils
+import cellranger.analysis.io as analysis_io
+import cellranger.io as cr_io
 
 CLUSTER_TYPE_KMEANS = 'kmeans'
 CLUSTER_TYPE_GRAPHCLUST = 'graphclust'
+CLUSTER_TYPE_KMEDOIDS = 'kmedoids'
 
 CLUSTERING = collections.namedtuple('CLUSTERING', ['clusters', 'num_clusters', 'cluster_score', 'clustering_type', 'global_sort_key', 'description'])
 
@@ -22,6 +23,8 @@ def format_clustering_key(cluster_type, cluster_param):
     """ Generate a machine-readable string that describes a particular clustering """
     if cluster_type == CLUSTER_TYPE_KMEANS:
         return '%s_%d_clusters' % (CLUSTER_TYPE_KMEANS, cluster_param)
+    elif cluster_type == CLUSTER_TYPE_KMEDOIDS:
+        return '%s_%d_clusters' % (CLUSTER_TYPE_KMEDOIDS, cluster_param)
     elif cluster_type == CLUSTER_TYPE_GRAPHCLUST:
         return CLUSTER_TYPE_GRAPHCLUST
     else:
@@ -34,6 +37,9 @@ def parse_clustering_key(clustering_key):
     elif clustering_key.startswith(CLUSTER_TYPE_KMEANS):
         _, n_clusters, _ = clustering_key.split('_')
         return (CLUSTER_TYPE_KMEANS, int(n_clusters))
+    elif clustering_key.startswith(CLUSTER_TYPE_KMEDOIDS):
+        _, n_clusters, _ = clustering_key.split('_')
+        return (CLUSTER_TYPE_KMEDOIDS, int(n_clusters))
     else:
         raise ValueError('Unsupported clustering type for clustering key: %s' % clustering_key)
 
@@ -44,6 +50,8 @@ def humanify_clustering_key(clustering_key):
         return 'Graph-based'
     elif cluster_type == CLUSTER_TYPE_KMEANS:
         return 'K-means (K=%d)' % cluster_param
+    elif cluster_type == CLUSTER_TYPE_KMEDOIDS:
+        return 'K-medoids (K=%d)' % cluster_param
     else:
         raise ValueError('Unsupported clustering type %s for clustering key: %s' % (cluster_type, clustering_key))
 
@@ -55,12 +63,12 @@ def relabel_by_size(labels):
 
 def save_clustering_csv(base_dir, clustering_key, labels, barcodes):
     out_dir = os.path.join(base_dir, clustering_key)
-    cr_utils.makedirs(out_dir, allow_existing=True)
+    cr_io.makedirs(out_dir, allow_existing=True)
 
     clusters_fn = os.path.join(out_dir, 'clusters.csv')
 
     header = ['Barcode', 'Cluster']
-    cr_io.save_matrix_csv(clusters_fn, labels, header, barcodes)
+    analysis_io.save_matrix_csv(clusters_fn, labels, header, barcodes)
 
 def create_legacy_kmeans_nodes(f, new_group_name, legacy_group_name, namedtuple, clustering_key):
     """ Soft-link a legacy-structured (CR 1.2) kmeans subgroup (dest) to a new-style (CR 1.3) subgroup (src).

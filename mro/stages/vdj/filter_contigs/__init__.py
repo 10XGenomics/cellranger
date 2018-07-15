@@ -7,8 +7,10 @@
 import itertools
 import os
 import tenkit.fasta as tk_fasta
-import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.annotations as vdj_annot
 import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.report as vdj_report
@@ -32,7 +34,7 @@ stage FILTER_CONTIGS(
 EXTRA_CONTIG_MIN_UMI_RATIO = 0.2
 
 def split(args):
-    mem_gb = max(cr_constants.MIN_MEM_GB,
+    mem_gb = max(h5_constants.MIN_MEM_GB,
                  vdj_utils.get_mem_gb_from_annotations_json(args.contig_annotations))
     return {
         'chunks': [{'__mem_gb': mem_gb}],
@@ -84,7 +86,7 @@ def main(args, outs):
 
             if chain in vdj_constants.VDJ_GENES:
                 reporter._get_metric_attr('vdj_high_conf_prod_contig_frac', chain).add(1, filter=contig.high_confidence)
-            reporter._get_metric_attr('vdj_high_conf_prod_contig_frac', cr_constants.MULTI_REFS_PREFIX).add(1, filter=contig.high_confidence)
+            reporter._get_metric_attr('vdj_high_conf_prod_contig_frac', lib_constants.MULTI_REFS_PREFIX).add(1, filter=contig.high_confidence)
 
     # Write augmented contig annotations
     with open(outs.contig_annotations, 'w') as f:
@@ -118,6 +120,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         src = getattr(chunk_outs[0], out_name)
         dest = getattr(outs, out_name)
         if os.path.isfile(src):
-            cr_utils.copy(src, dest)
+            cr_io.copy(src, dest)
         else:
             setattr(outs, out_name, None)

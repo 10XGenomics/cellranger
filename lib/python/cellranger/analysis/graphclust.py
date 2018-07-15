@@ -15,9 +15,9 @@ import subprocess
 import tables
 import time
 import tenkit.log_subprocess as tk_subproc
-import cellranger.analysis.io as cr_io
+import cellranger.analysis.io as analysis_io
 import cellranger.analysis.clustering as cr_clustering
-import cellranger.constants as cr_constants
+import cellranger.analysis.constants as analysis_constants
 from cellranger.logperf import LogPerf
 
 GRAPHCLUST = collections.namedtuple('GRAPHCLUST', ['clusters'])
@@ -99,7 +99,7 @@ def run_louvain_weighted_clustering(bin_filename, weight_filename, louvain_out):
 
 def pipe_unweighted_edgelist_to_convert(matrix, bin_filename):
     """ Pipe an unweighted edgelist (COO sparse matrix) to Louvain's convert utility """
-    devnull = open(os.devnull, 'w')
+
     proc = tk_subproc.Popen([LOUVAIN_CONVERT_BINPATH,
                            '-i', '-',
                            '-o', bin_filename,
@@ -205,8 +205,8 @@ def save_graphclust_h5(f, labels):
                                                  global_sort_key=float('-inf'), # always first
                                                  description=cr_clustering.humanify_clustering_key(clustering_key))
 
-    group = f.create_group(f.root, cr_constants.ANALYSIS_H5_CLUSTERING_GROUP)
-    cr_io.save_h5(f, group, clustering_key, clustering)
+    group = f.create_group(f.root, analysis_constants.ANALYSIS_H5_CLUSTERING_GROUP)
+    analysis_io.save_h5(f, group, clustering_key, clustering)
 
 def save_ndarray_h5(data, path, dataset_name):
     """ Save a numpy array to an hdf5 file """
@@ -220,10 +220,10 @@ def load_ndarray_h5(path, dataset_name):
 
 def load_graphclust_from_h5(filename):
     with tables.open_file(filename, 'r') as f:
-        group = f.root._v_groups[cr_constants.ANALYSIS_H5_CLUSTERING_GROUP]
+        group = f.root._v_groups[analysis_constants.ANALYSIS_H5_CLUSTERING_GROUP]
 
         # Take the first entry
-        for key, clustering in cr_io.load_h5_iter(group, cr_clustering.CLUSTERING):
+        for key, clustering in analysis_io.load_h5_iter(group, cr_clustering.CLUSTERING):
             clustering_type, _ = cr_clustering.parse_clustering_key(key)
             if clustering_type == cr_clustering.CLUSTER_TYPE_GRAPHCLUST:
                 return clustering

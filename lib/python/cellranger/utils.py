@@ -5,19 +5,12 @@
 import collections
 import csv
 import h5py
-import hashlib
 import itertools
 import json
 import numpy as np
 import os
-import pandas as pd
-import errno
 import random
 import re
-import shutil
-import subprocess
-import sys
-import tables
 import tenkit.bam as tk_bam
 import tenkit.fasta as tk_fasta
 import tenkit.log_subprocess as tk_subproc
@@ -25,6 +18,9 @@ import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
 import tenkit.constants as tk_constants
 import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
+import cellranger.library_constants as lib_constants
+import cellranger.io as cr_io
 
 def get_version():
     # NOTE: this makes assumptions about the directory structure
@@ -36,36 +32,6 @@ def get_version():
     else:
         output = tk_subproc.check_output(['git', 'describe', '--tags', '--always', '--dirty'], cwd=script_dir)
     return output.strip()
-
-def fixpath(path):
-    return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
-
-def get_input_path(oldpath, is_dir=False):
-    path = fixpath(oldpath)
-    if not os.path.exists(path):
-        sys.exit("Input file does not exist: %s" % path)
-    if is_dir:
-        if not os.path.isdir(path):
-            sys.exit("Please provide a directory, not a file: %s" % path)
-    else:
-        if not os.path.isfile(path):
-            sys.exit("Please provide a file, not a directory: %s" % path)
-    return path
-
-def get_input_paths(oldpaths):
-    paths = []
-    for oldpath in oldpaths:
-        paths.append(get_input_path(oldpath))
-    return paths
-
-def get_output_path(oldpath):
-    path = fixpath(oldpath)
-    dirname = os.path.dirname(path)
-    if not os.path.exists(dirname):
-        sys.exit("Output directory does not exist: %s" % dirname)
-    if not os.path.isdir(dirname):
-        sys.exit("Please provide a directory, not a file: %s" % dirname)
-    return path
 
 def _load_reference_metadata_file(reference_path):
     reference_metadata_file = os.path.join(reference_path, cr_constants.REFERENCE_METADATA_FILE)
@@ -120,7 +86,8 @@ def barcode_sort_key(read, squash_unbarcoded=False):
     if squash_unbarcoded and formatted_bc is None:
         return None
     (bc, gg) = split_barcode_seq(formatted_bc)
-    return gg, bc, get_read_raw_umi(read)
+    library_idx = get_read_library_index(read)
+    return gg, bc, library_idx, get_read_raw_umi(read)
 
 def barcode_sort_key_no_umi(read):
     formatted_bc = get_read_barcode(read)
@@ -226,7 +193,7 @@ def remove_genome_from_str(s, genomes):
     for genome in genomes:
         if s.startswith(genome):
             # Strip genome and subsequent underscore
-            return s[(1+len(genome)):]
+            return s[(1 + len(genome)):]
 
     raise Exception('%s does not have valid associated genome' % s)
 
@@ -262,8 +229,11 @@ def get_read_umi(read):
 def get_read_raw_umi(read):
     return _get_read_tag(read, cr_constants.RAW_UMI_TAG)
 
+def get_read_library_index(read):
+    return _get_read_tag(read, cr_constants.LIBRARY_INDEX_TAG)
+
 def get_read_gene_ids(read):
-    s =_get_read_tag(read, cr_constants.GENE_IDS_TAG)
+    s =_get_read_tag(read, cr_constants.FEATURE_IDS_TAG)
     if s is None:
         return None
 
@@ -455,13 +425,19 @@ def is_read_low_support_umi(read):
 def is_read_umi_count(read):
     return (get_read_extra_flags(read) & cr_constants.EXTRA_FLAGS_UMI_COUNT) > 0
 
+def is_read_conf_mapped_to_feature(read):
+    return (get_read_extra_flags(read) & cr_constants.EXTRA_FLAGS_CONF_MAPPED_FEATURE) > 0
+
+
 def is_read_dupe_candidate(read, high_conf_mapq, use_corrected_umi=True):
     if use_corrected_umi:
         umi = get_read_umi(read)
     else:
         umi = get_read_raw_umi(read)
 
-    return not read.is_secondary and umi and get_read_barcode(read) and \
+    return not read.is_secondary and \
+        (umi is not None) and \
+        (get_read_barcode(read) is not None) and \
         not is_read_low_support_umi(read) and \
         is_read_conf_mapped_to_transcriptome(read, high_conf_mapq)
 
@@ -473,6 +449,7 @@ def is_read_conf_mapped_to_transcriptome(read, high_conf_mapq):
     else:
         gene_ids = get_read_gene_ids(read)
         return gene_ids is not None and len(gene_ids) == 1
+
 
 def is_read_conf_mapped_to_transcriptome_barcoded(read, high_conf_mapq):
     return is_read_conf_mapped_to_transcriptome(read, high_conf_mapq) and \
@@ -507,7 +484,7 @@ def get_kmers_hamming_distance(kmers):
     return min_hamming_distance
 
 def load_barcode_tsv(filename):
-    barcodes = [x.strip() for x in open_maybe_gzip(filename, 'r') if not ('#' in x)]
+    barcodes = [x.strip() for x in cr_io.open_maybe_gzip(filename, 'r') if not ('#' in x)]
     if len(barcodes) != len(set(barcodes)):
         raise Exception('Duplicates found in barcode whitelist: %s' % filename)
     return barcodes
@@ -549,34 +526,12 @@ def get_num_barcodes_from_barcode_summary(barcode_summary):
         with h5py.File(barcode_summary) as f:
             return f[cr_constants.H5_BC_SEQUENCE_COL].size
 
-def write_h5(filename, data):
-    with h5py.File(filename, 'w') as f:
-        for key, value in data.iteritems():
-            f[key] = value
-
-def concatenate_h5(input_files, output_file):
-    with tables.open_file(output_file, mode = 'w') as fout:
-        dsets = {}
-        # init datasets using the first input
-        if len(input_files) > 0:
-            with tables.open_file(input_files[0], mode = 'r') as fin:
-                for node in fin.walk_nodes('/', 'Array'):
-                    atom = tables.Atom.from_dtype(np.dtype(node.dtype))
-                    dsets[node.name] = fout.create_earray('/', node.name, atom, (0,))
-        # copy the data
-        for input_file in input_files:
-            with tables.open_file(input_file, mode = 'r') as fin:
-                for (name, earray) in dsets.iteritems():
-                    earray.append(fin.get_node('/', name)[:])
-
 def compress_seq(s, bits=64):
-    """ Pack a DNA sequence (no Ns!) into a 2-bit format, in a 64-bit uint """
-    """ Most significant bit is set if there was an error """
+    """Pack a DNA sequence (no Ns!) into a 2-bit format, into a python int."""
     assert len(s) <= (bits/2 - 1)
     result = 0
     for nuc in s:
-        if not nuc in tk_seq.NUCS_INVERSE:
-            return 1L << (bits - 1)
+        assert nuc in tk_seq.NUCS_INVERSE
         result = result << 2
         result = result | tk_seq.NUCS_INVERSE[nuc]
     return result
@@ -647,16 +602,16 @@ def get_thread_request_from_mem_gb(mem_gb):
 def get_mem_gb_request_from_genome_fasta(reference_path):
     in_fasta_fn = get_reference_genome_fasta(reference_path)
     genome_size_gb = float(os.path.getsize(in_fasta_fn)) / 1e9
-    return np.ceil(max(cr_constants.MIN_MEM_GB, cr_constants.BAM_CHUNK_SIZE_GB + max(1, 2*int(genome_size_gb))))
+    return np.ceil(max(h5_constants.MIN_MEM_GB, cr_constants.BAM_CHUNK_SIZE_GB + max(1, 2*int(genome_size_gb))))
 
 def get_mem_gb_request_from_barcode_whitelist(barcode_whitelist_fn, gem_groups=None, use_min=True, double=False):
     barcode_whitelist = load_barcode_whitelist(barcode_whitelist_fn)
 
     if use_min:
         if barcode_whitelist is None:
-            min_mem_gb = cr_constants.MIN_MEM_GB_NOWHITELIST
+            min_mem_gb = h5_constants.MIN_MEM_GB_NOWHITELIST
         else:
-            min_mem_gb = cr_constants.MIN_MEM_GB
+            min_mem_gb = h5_constants.MIN_MEM_GB
     else:
         min_mem_gb = 0
 
@@ -697,8 +652,8 @@ def get_metric_from_json(filename, key):
         d = json.load(f)
     return d[key]
 
-def format_barcode_summary_h5_key(genome, region, read_type):
-    return '%s_%s_%s_reads' % (genome, region, read_type)
+def format_barcode_summary_h5_key(library_prefix, genome, region, read_type):
+    return '%s_%s_%s_%s_reads' % (library_prefix, genome, region, read_type)
 
 def downsample(rate):
     if rate is None or rate == 1.0:
@@ -748,191 +703,11 @@ def is_barcode_on_whitelist(seq, whitelist):
     else:
         return seq in whitelist
 
-class SubprocessStream(object):
-    """ Wrap a subprocess that we stream from or stream to """
-    def __init__(self, *args, **kwargs):
-        mode = kwargs.pop('mode', 'r')
-        if mode == 'r':
-            kwargs['stdout'] = subprocess.PIPE
-        elif mode == 'w':
-            kwargs['stdin'] = subprocess.PIPE
-        else:
-            raise ValueError('mode %s unsupported' % self.mode)
-
-        kwargs['preexec_fn'] = os.setsid
-        print args[0]
-        sys.stdout.flush()
-        self.proc = tk_subproc.Popen(*args, **kwargs)
-
-        if mode == 'r':
-            self.pipe = self.proc.stdout
-        elif mode == 'w':
-            self.pipe = self.proc.stdin
-        self._read = mode == 'r'
-    def __enter__(self):
-        return self
-    def __iter__(self):
-        return self
-    def next(self):
-        return self.pipe.next()
-    def fileno(self):
-        return self.pipe.fileno()
-    def write(self, x):
-        self.pipe.write(x)
-    def close(self):
-        self.pipe.close()
-        if self._read:
-            # Just in case the job is stuck waiting for its pipe to get flushed,
-            # kill it, since there's nothing listening on the other end of the pipe.
-            try:
-                self.proc.kill()
-            except:
-                pass
-        self.proc.wait()
-    def __exit__(self, tp, val, tb):
-        self.close()
-
-def open_maybe_gzip(filename, mode='r'):
-    compressor = None
-
-    if filename.endswith(cr_constants.GZIP_SUFFIX):
-        compressor = 'gzip'
-    elif filename.endswith(cr_constants.LZ4_SUFFIX):
-        compressor = 'lz4'
-    else:
-        return open(filename, mode)
-
-    assert compressor is not None
-
-    if mode == 'r':
-        return SubprocessStream([compressor, '-c', '-d', filename], mode='r')
-    elif mode == 'w':
-        f = open(filename, 'w')
-        return SubprocessStream([compressor, '-c'], stdout=f, mode='w')
-    else:
-        raise ValueError("Unsupported mode for compression: %s" % mode)
-
 def get_comp(seq):
     return str(seq).translate(tk_seq.DNA_CONVERT_TABLE)
 
 def get_rev(seq):
     return str(seq)[::-1]
-
-def run_command_safely(cmd, args):
-    p = tk_subproc.Popen([cmd] + args, stderr=subprocess.PIPE)
-    _, stderr_data = p.communicate()
-    if p.returncode != 0:
-        raise Exception("%s returned error code %d: %s" % (p, p.returncode, stderr_data))
-
-class CRCalledProcessError(Exception):
-    def __init__(self, msg):
-        self.msg = msg
-    def __str__(self):
-        return self.msg
-
-def check_completed_process(p, cmd):
-    """ p   (Popen object): Subprocess
-        cmd (str):          Command that was run
-    """
-    if p.returncode is None:
-        raise CRCalledProcessError("Process did not finish: %s ." % cmd)
-    elif p.returncode != 0:
-        raise CRCalledProcessError("Process returned error code %d: %s ." % (p.returncode, cmd))
-
-def mkdir(dst, allow_existing=False):
-    """ Create a directory. Optionally succeed if already exists.
-        Useful because transient NFS server issues may induce double creation attempts. """
-    if allow_existing:
-        try:
-            os.mkdir(dst)
-        except OSError as e:
-            if e.errno == errno.EEXIST and os.path.isdir(dst):
-                pass
-            else:
-                raise
-    else:
-        os.mkdir(dst)
-
-def makedirs(dst, allow_existing=False):
-    """ Create a directory recursively. Optionally succeed if already exists.
-        Useful because transient NFS server issues may induce double creation attempts. """
-    if allow_existing:
-        try:
-            os.makedirs(dst)
-        except OSError as e:
-            if e.errno == errno.EEXIST and os.path.isdir(dst):
-                pass
-            else:
-                raise
-    else:
-        os.makedirs(dst)
-
-def remove(f, allow_nonexisting=False):
-    """ Delete a file. Allow to optionally succeed if file doesn't exist.
-        Useful because transient NFS server issues may induce double deletion attempts. """
-    if allow_nonexisting:
-        try:
-            os.remove(f)
-        except OSError as e:
-            if e.errno == errno.ENOENT:
-                pass
-            else:
-                raise
-    else:
-        os.remove(f)
-
-def copy(src, dst):
-    """ Safely copy a file. Not platform-independent """
-    run_command_safely('cp', [src, dst])
-
-def move(src, dst):
-    """ Safely move a file. Not platform-independent """
-    run_command_safely('mv', [src, dst])
-
-def copytree(src, dst, allow_existing=False):
-    """ Safely recursively copy a directory. Not platform-independent """
-    makedirs(dst, allow_existing=allow_existing)
-
-    for name in os.listdir(src):
-        srcname = os.path.join(src, name)
-        dstname = os.path.join(dst, name)
-
-        if os.path.isdir(srcname):
-            copytree(srcname, dstname)
-        else:
-            copy(srcname, dstname)
-
-def concatenate_files(out_path, in_paths, mode=''):
-    with open(out_path, 'w' + mode) as out_file:
-        for in_path in in_paths:
-            with open(in_path, 'r' + mode) as in_file:
-                shutil.copyfileobj(in_file, out_file)
-
-def concatenate_headered_files(out_path, in_paths, mode=''):
-    """ Concatenate files, taking the first line of the first file
-        and skipping the first line for subsequent files.
-        Asserts that all header lines are equal. """
-    with open(out_path, 'w' + mode) as out_file:
-        if len(in_paths) > 0:
-            # Write first file
-            with open(in_paths[0], 'r' + mode) as in_file:
-                header = in_file.readline()
-                out_file.write(header)
-                shutil.copyfileobj(in_file, out_file)
-
-        # Write remaining files
-        for in_path in in_paths[1:]:
-            with open(in_path, 'r' + mode) as in_file:
-                this_header = in_file.readline()
-                assert this_header == header
-                shutil.copyfileobj(in_file, out_file)
-
-def compute_hash_of_file(filename, block_size_bytes=2**20):
-    digest = hashlib.sha1()
-    with open(filename, 'rb') as f:
-        for chunk in iter(lambda: f.read(block_size_bytes), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 def flip_strand(strand):
     if strand == '+':
@@ -952,7 +727,7 @@ def get_seqs(l):
             new_seqs.append(old_seq + base)
     return new_seqs
 
-def load_barcode_dist(filename, barcode_whitelist, gem_group, proportions=True):
+def load_barcode_dist(filename, barcode_whitelist, gem_group, library_type, proportions=True):
     """ Load barcode count distribution from a json file """
     # Input barcode whitelist must be an ordered type;
     # safeguard against it going out of sync with the distribution file
@@ -962,7 +737,7 @@ def load_barcode_dist(filename, barcode_whitelist, gem_group, proportions=True):
         return None
 
     with open(filename, 'r') as f:
-        values = json.load(f)
+        values = json.load(f)[library_type]
 
     start = (gem_group-1)*len(barcode_whitelist)
     end = gem_group*len(barcode_whitelist)
@@ -1156,10 +931,6 @@ def kwargs_to_command_line_options(reserved_arguments=set(), sep=" ", long_prefi
 
     return ' '.join(arguments)
 
-def write_empty_json(filename):
-    with open(filename, 'w') as f:
-        json.dump({}, f)
-
 def flatten_list(x):
     """ Flatten a hierarchy of lists """
     result = []
@@ -1183,56 +954,18 @@ def load_barcode_csv(barcode_csv):
             bcs_per_genome[genome].append(barcode)
     return bcs_per_genome
 
-def load_csv_rownames(csv_file):
-    rownames = np.atleast_1d(pd.read_csv(csv_file, usecols=[0]).values.squeeze())
-    return rownames
-
-def get_h5_filetype(filename):
-    with tables.open_file(filename, mode = 'r') as f:
-        try:
-            filetype = f.get_node_attr('/', cr_constants.H5_FILETYPE_KEY)
-        except AttributeError:
-            filetype = None # older files lack this key
-    return filetype
-
-def save_array_h5(filename, name, arr):
-    """ Save an array to the root of an h5 file """
-    with tables.open_file(filename, 'w') as f:
-        f.create_carray(f.root, name, obj=arr)
-
-def load_array_h5(filename, name):
-    """ Load an array from the root of an h5 file """
-    with tables.open_file(filename, 'r') as f:
-        return getattr(f.root, name).read()
-
-def merge_jsons_single_level(filenames):
-    """ Merge a list of toplevel-dict json files.
-        Union dicts at the first level.
-        Raise exception when duplicate keys encountered.
-        Returns the merged dict.
-    """
-
-    merged = {}
-    for filename in filenames:
-        with open(filename) as f:
-            d = json.load(f)
-
-            for key, value in d.iteritems():
-                if key not in merged:
-                    merged[key] = value
-                    continue
-
-                # Handle pre-existing keys
-                if merged[key] == value:
-                    pass
-                elif type(value) == dict and type(merged[key]) == dict:
-                    merged[key].update(value)
-                else:
-                    raise ValueError("No merge strategy for key %s, value of type %s, from %s into %s" % (str(key),
-                                                                                                          str(type(value)),
-                                                                                                          str(value),
-                                                                                                          str(merged[key])))
-    return merged
+def get_cell_associated_barcode_set(barcode_csv_filename, genome=None):
+    """Get set of cell-associated barcode strings
+    Args:
+      genome (str): Only get cell-assoc barcodes for this genome. If None, disregard genome.
+    Returns:
+      set of str: Cell-associated barcode strings (seq and gem-group)."""
+    cell_bcs_per_genome = load_barcode_csv(barcode_csv_filename)
+    cell_bcs = set()
+    for g, bcs in cell_bcs_per_genome.iteritems():
+        if genome is None or g == genome:
+            cell_bcs |= set(bcs)
+    return cell_bcs
 
 """ Filter a list of sample defs by a list of desired library types.
     If list=None, don't filter. """
@@ -1243,10 +976,10 @@ def filter_sample_def(sample_def, library_type_list):
     filtered_sample_def = []
 
     for this_sample_map in sample_def:
-        this_library_type = this_sample_map.get('library_type', cr_constants.DEFAULT_LIBRARY_TYPE)
+        this_library_type = this_sample_map.get('library_type', lib_constants.DEFAULT_LIBRARY_TYPE)
 
         if this_library_type is None:
-            this_library_type = cr_constants.DEFAULT_LIBRARY_TYPE
+            this_library_type = lib_constants.DEFAULT_LIBRARY_TYPE
 
         if this_library_type in library_type_list:
             filtered_sample_def.append(this_sample_map)

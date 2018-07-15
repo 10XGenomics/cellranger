@@ -16,6 +16,7 @@ import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.utils as vdj_utils
 
 __MRO__ = """
@@ -27,6 +28,7 @@ stage BUCKET_FASTQ_BY_BC(
     in  json    reads_summary,
     in  int     readpairs_per_chunk,
     in  map     chemistry_def,
+    in  map[]   library_info,
     out map[]   buckets,
     src py      "stages/vdj/bucket_fastq_by_bc",
 ) split using (
@@ -57,7 +59,11 @@ def split(args):
     with open(args.reads_summary) as f:
         reads_summary = json.load(f)
         for gg in args.gem_groups:
-            readpairs = reads_summary['%d_total_reads_per_gem_group' % gg]
+            # Get the libraries w/ this GEM group (should only be one)
+            gg_library_ids = [lib['library_id'] for lib in args.library_info if lib['gem_group'] == gg]
+            assert len(gg_library_ids) == 1
+
+            readpairs = reads_summary['%s_total_read_pairs_per_library' % gg_library_ids[0]]
             chunks_per_gem_group[str(gg)] = max(2,
                                                 int(math.ceil(float(readpairs) / \
                                                               args.readpairs_per_chunk)))
@@ -100,18 +106,18 @@ def main(args, outs):
     paired_end = args.read2s_chunk is not None
 
     # Lazy load R1
-    r1_file = cr_utils.open_maybe_gzip(args.read1s_chunk)
+    r1_file = cr_io.open_maybe_gzip(args.read1s_chunk)
     read1s = tk_fasta.read_generator_fastq(r1_file)
 
     # Lazy load R2
     if paired_end:
-        r2_file = cr_utils.open_maybe_gzip(args.read2s_chunk)
+        r2_file = cr_io.open_maybe_gzip(args.read2s_chunk)
         read2s = tk_fasta.read_generator_fastq(r2_file)
     else:
         read2s = []
 
     # Lazy load corrected BCs
-    bc_file = cr_utils.open_maybe_gzip(args.bcs)
+    bc_file = cr_io.open_maybe_gzip(args.bcs)
     bcs = (line.strip() for line in bc_file)
 
     buckets = {}
@@ -162,7 +168,7 @@ def main(args, outs):
             continue
 
         filename = bucket_filenames[bucket_name]
-        with cr_utils.open_maybe_gzip(filename, 'w') as f:
+        with cr_io.open_maybe_gzip(filename, 'w') as f:
             for read in bucket:
                 tk_fasta.write_read_fastq(f, *read)
 

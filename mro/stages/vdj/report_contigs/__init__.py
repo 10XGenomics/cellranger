@@ -7,8 +7,9 @@ import json
 import os
 import pandas as pd
 import tenkit.stats as tk_stats
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.annotations as vdj_annotations
 import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.report as vdj_report
@@ -47,7 +48,7 @@ def split(args):
     print 'requested %d' % mem_gb
     return {
         'chunks': [{
-            '__mem_gb': max(cr_constants.MIN_MEM_GB, mem_gb),
+            '__mem_gb': max(h5_constants.MIN_MEM_GB, mem_gb),
         }]
     }
 
@@ -157,4 +158,4 @@ def main(args, outs):
 
 def join(args, outs, chunk_defs, chunk_outs):
     outs.chain_type = chunk_outs[0].chain_type
-    cr_utils.copy(chunk_outs[0].summary, outs.summary)
+    cr_io.copy(chunk_outs[0].summary, outs.summary)

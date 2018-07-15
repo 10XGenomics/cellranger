@@ -6,7 +6,7 @@ import csv
 import numpy as np
 import os
 import tables
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 
 # Version for HDF5 format
 VERSION_KEY = 'version'
@@ -91,5 +91,5 @@ def combine_h5_files(in_files, out_file, groups):
         fin.close()
 
 def open_h5_for_writing(filename):
-    filters = tables.Filters(complevel = cr_constants.H5_COMPRESSION_LEVEL)
+    filters = tables.Filters(complevel = h5_constants.H5_COMPRESSION_LEVEL)
     return tables.open_file(filename, 'w', filters = filters)

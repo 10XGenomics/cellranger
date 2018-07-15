@@ -104,6 +104,7 @@ pipeline _SC_FEATURE_COUNTER(
         r1_length                    = self.r1_length,
         r2_length                    = self.r2_length,
         feature_reference            = self.feature_reference,
+        library_info                 = SETUP_CHUNKS.library_info,
     )
 
     return (

@@ -18,7 +18,8 @@ import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import tenkit.bam as tk_bam
 import cellranger.constants as cr_constants
-import cellranger.utils as cr_utils
+import cellranger.h5_constants as h5_constants
+import cellranger.io as cr_io
 
 class GtfParser:
     GTF_ERROR_TXT = 'Please fix your GTF and start again.'
@@ -194,7 +195,7 @@ class ReferenceBuilder(GtfParser):
         print "...done\n"
 
         print "Computing hash of genome FASTA file..."
-        fasta_hash = cr_utils.compute_hash_of_file(new_genome_fasta)
+        fasta_hash = cr_io.compute_hash_of_file(new_genome_fasta)
         print "...done\n"
 
         print "Writing genes GTF file into reference folder..."
@@ -204,7 +205,7 @@ class ReferenceBuilder(GtfParser):
         print "...done\n"
 
         print "Computing hash of genes GTF file..."
-        gtf_hash = cr_utils.compute_hash_of_file(new_gene_gtf)
+        gtf_hash = cr_io.compute_hash_of_file(new_gene_gtf)
         print "...done\n"
 
         print "Writing genes index file into reference folder (may take over 10 minutes for a 3Gb genome)..."
@@ -266,7 +267,7 @@ class ReferenceBuilder(GtfParser):
                                 line = '>' + genome_prefix + '_' + line[1:]
                             f.write(line + '\n')
         else:
-            cr_utils.copy(self.in_fasta_fns[0], out_fasta_fn)
+            cr_io.copy(self.in_fasta_fns[0], out_fasta_fn)
 
     def write_genome_gtf(self, out_gtf_fn):
         with open(out_gtf_fn, 'wb') as f:
@@ -542,12 +543,12 @@ class STAR:
             args.extend(read_group_tags)
 
         args.append('--readFilesIn')
-        if read1_fastq_fn.endswith(cr_constants.GZIP_SUFFIX):
+        if read1_fastq_fn.endswith(h5_constants.GZIP_SUFFIX):
             args.append('<(gzip -c -d \'%s\')' % read1_fastq_fn)
             if read2_fastq_fn:
                 args.append('<(gzip -c -d \'%s\')' % read2_fastq_fn)
 
-        elif read1_fastq_fn.endswith(cr_constants.LZ4_SUFFIX):
+        elif read1_fastq_fn.endswith(h5_constants.LZ4_SUFFIX):
             args.append('<(lz4 -c -d \'%s\')' % read1_fastq_fn)
             if read2_fastq_fn:
                 args.append('<(lz4 -c -d \'%s\')' % read2_fastq_fn)
@@ -615,14 +616,14 @@ class STAR:
             try:
                 # Ensure that STAR process terminated so we can get a returncode
                 star.communicate()
-                cr_utils.check_completed_process(star, args[0])
+                cr_io.check_completed_process(star, args[0])
 
                 # check samtools status
-                cr_utils.check_completed_process(view, ' '.join(view_cmd))
+                cr_io.check_completed_process(view, ' '.join(view_cmd))
 
-            except cr_utils.CRCalledProcessError as e:
+            except cr_io.CRCalledProcessError as e:
                 # Give the user the path to STAR's log
-                raise cr_utils.CRCalledProcessError(e.msg + ' Check STAR logs for errors: %s .' % star_log)
+                raise cr_io.CRCalledProcessError(e.msg + ' Check STAR logs for errors: %s .' % star_log)
 
             # check for empty BAM
             if tk_bam.bam_is_empty(out_genome_bam_fn):

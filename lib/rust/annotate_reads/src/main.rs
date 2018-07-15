@@ -31,7 +31,7 @@ use std::path::Path;
 use std::fs::File;
 use std::io::{BufReader};
 use std::str;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap, BTreeMap};
 
 use docopt::Docopt;
 
@@ -53,8 +53,8 @@ use utils::CellrangerFastqHeader;
 
 const USAGE: &'static str = "
 Usage:
-  annotate_reads main <in-bam> <in-tags> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> [--fiveprime] [--bam-comments=F] [--feature-ref=F]
-  annotate_reads join <in-metrics-list> <out-json> <out-bc-csv>
+  annotate_reads main <in-bam> <in-tags> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> <library-id> <library-info> [--fiveprime] [--bam-comments=F] [--feature-ref=F]
+  annotate_reads join <in-chunked-metrics> <out-json> <out-bc-csv>
   annotate_reads (-h | --help)
 
 Options:
@@ -84,6 +84,8 @@ struct Args {
     arg_strandedness:       Option<String>,
     arg_feature_dist:       Option<String>,
     arg_library_type:       Option<String>,
+    arg_library_id:         Option<String>,
+    arg_library_info:       Option<String>,
 
     // main flags
     flag_fiveprime:         bool,
@@ -91,9 +93,18 @@ struct Args {
     flag_feature_ref:       Option<String>,
 
     // join args
-    arg_in_metrics_list:    Option<String>,
+    arg_in_chunked_metrics: Option<String>,
     arg_out_json:           Option<String>,
     arg_out_bc_csv:         Option<String>,
+}
+
+const LIBRARY_INDEX_TAG: &'static str = "li";
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct LibraryInfo {
+    library_id: String,
+    library_type: String,
+    gem_group: u64,
 }
 
 fn main() {
@@ -118,13 +129,28 @@ fn annotate_reads_main(args: Args) {
         junction_trim_bases:        0,
         region_min_overlap:         0.5,
     };
-    let annotator = TranscriptAnnotator::new(&reference_path, &args.arg_gene_index.unwrap(), params);
+    let annotator = TranscriptAnnotator::new(&reference_path, &args.arg_gene_index.clone().unwrap(), params);
+
 
     println!("Loading whitelist");
     let gem_group = &args.arg_gem_group.unwrap();
-    let bc_umi_checker = barcodes::BarcodeUmiChecker::new(&args.arg_bc_counts.unwrap(), &args.arg_bc_whitelist.unwrap(), gem_group);
 
-    let feature_checker = match (&args.flag_feature_ref, &args.arg_feature_dist,
+    // Attempt to translate barcodes only if the library type specifies that we should
+    let translate_barcodes = match &args.arg_library_type {
+        &Some(ref library_type) =>
+            !features::LIBRARY_TYPES_WITHOUT_FEATURES.contains(&library_type.as_str()),
+        _ => false,
+    };
+
+    let bc_umi_checker = barcodes::BarcodeUmiChecker::new(&args.arg_bc_counts.unwrap(),
+                                                          &args.arg_bc_whitelist.unwrap(),
+                                                          gem_group,
+                                                          translate_barcodes,
+                                                          &args.arg_library_type.as_ref().unwrap());
+
+
+    let feature_checker = match (&args.flag_feature_ref,
+                                 &args.arg_feature_dist,
                                  &args.arg_library_type) {
         (&Some(ref fref_path), &Some(ref fdist_path), &Some(ref library_type)) => {
             if features::library_type_requires_feature_ref(library_type) {
@@ -132,11 +158,17 @@ fn annotate_reads_main(args: Args) {
 
                 let fref_file = File::open(fref_path)
                     .expect("Failed to open feature definition file");
+
+                let gene_index_file = File::open(&args.arg_gene_index.unwrap())
+                    .expect("Failed to open gene index file");
+
                 let fdist_file = File::open(fdist_path)
                     .expect("Failed to open feature barcode count file");
 
-                Some(features::FeatureChecker::new(fref_file, fdist_file, library_type))
+                Some(features::FeatureChecker::new(fref_file, gene_index_file,
+                                                   fdist_file, library_type))
             } else {
+                // TODO: Not true anymore
                 // Gene Expression library type; don't need feature ref
                 None
             }
@@ -153,7 +185,7 @@ fn annotate_reads_main(args: Args) {
     pg_rec.push_tag(b"ID", &"annotate_reads");
     out_header.push_record(&pg_rec);
 
-    // Append CO tags
+    // Append CO header lines
     match &args.flag_bam_comments {
         &Some(ref path_str) => {
             let file = File::open(&path_str).expect("Failed to open BAM comments JSON file");
@@ -165,6 +197,19 @@ fn annotate_reads_main(args: Args) {
             }
         },
         &None => {}
+    }
+
+    // Load library info
+    let library_json_file = File::open(args.arg_library_info.unwrap())
+        .expect("Failed to open library info JSON");
+    let library_info: Vec<LibraryInfo> = serde_json::from_reader(library_json_file)
+        .expect("Failed to read library info JSON from file");
+
+    // Append CO header lines describing the libraries
+    for lib_info in &library_info {
+        let lib_str = serde_json::to_string(lib_info)
+            .expect(&format!("Failed to serialize library_info to JSON: {:?}", lib_info));
+        out_header.push_comment(format!("library_info:{}", lib_str).as_bytes());
     }
 
     let mut out_bam = bam::Writer::from_path(Path::new(&args.arg_out_bam.unwrap()), &out_header).unwrap();
@@ -185,12 +230,16 @@ fn annotate_reads_main(args: Args) {
     let tags_file = utils::open_maybe_compressed(args.arg_in_tags.unwrap());
     let tags_iter = bio::io::fastq::Reader::new(BufReader::new(tags_file)).records();
 
+    let library_id = args.arg_library_id.unwrap();
+    let library_index = library_info.iter().position(|lib| lib.library_id == library_id)
+        .expect(&format!("Could not find library id {} in library info JSON", library_id));
+
     for ((_qname, genome_alignments), tags_rec) in qname_iter.zip(tags_iter) {
         num_alignments += genome_alignments.len();
         process_qname(tags_rec.unwrap().id(),
                       genome_alignments, &mut reporter,
                       &annotator, &bc_umi_checker, &feature_checker,
-                      &mut out_bam, &gem_group);
+                      &mut out_bam, &gem_group, library_index);
     }
 
     println!("Writing metrics");
@@ -204,13 +253,40 @@ fn annotate_reads_main(args: Args) {
 
 fn annotate_reads_join(args: Args) {
     println!("Merging metrics");
-    let chunked_metrics = utils::load_txt(&args.arg_in_metrics_list.unwrap());
-    let mut merged_metrics = Metrics::new();
-    for metrics in chunked_metrics {
-        merged_metrics.merge(&Metrics::read_binary(&metrics));
+
+    let chunked_metrics = utils::read_json(&args.arg_in_chunked_metrics.unwrap());
+
+    // Group metrics files by library type
+    let mut metric_groups: HashMap<String, Vec<String>> = HashMap::new();
+    for chunk in chunked_metrics.as_array().unwrap() {
+        let filename = chunk.get("metrics").unwrap().as_str().unwrap();
+        let library_type = chunk.get("library_type").unwrap().as_str().unwrap();
+        let filenames = metric_groups.entry(library_type.to_owned()).or_insert(vec![]);
+        filenames.push(filename.to_owned());
     }
-    merged_metrics.write_json_summary(&args.arg_out_json.unwrap());
-    merged_metrics.write_barcodes_csv(&args.arg_out_bc_csv.unwrap());
+
+    // Merge metrics by library type
+    let mut summary = BTreeMap::new();
+    for (lib_type, filenames) in &metric_groups {
+        let mut merged_metrics = Metrics::new();
+
+        for filename in filenames {
+            merged_metrics.merge(&Metrics::read_binary(&filename));
+        }
+
+        // Prefix the metrics keys
+        for (k, v) in merged_metrics.report() {
+            let prefix = report::get_library_type_metric_prefix(lib_type);
+            summary.insert(format!("{}{}", &prefix, k), v);
+        }
+    }
+
+    let writer = File::create(&args.arg_out_json.unwrap()).unwrap();
+    serde_json::to_writer_pretty(writer, &summary).expect("Failed to write JSON");
+
+    //merged_metrics.write_barcodes_csv(&args.arg_out_bc_csv.unwrap());
+
+
 }
 
 /// Use transcriptome alignments to promote a single genome alignment
@@ -276,12 +352,14 @@ fn rescue_alignments(r1_data: &mut Vec<RecordData>, mut maybe_r2_data: Option<&m
 }
 
 fn process_qname(tag_string: &str,
-                 genome_alignments: Vec<Record>, reporter: &mut Reporter,
+                 genome_alignments: Vec<Record>,
+                 reporter: &mut Reporter,
                  annotator: &TranscriptAnnotator,
                  bc_umi_checker: &BarcodeUmiChecker,
                  feature_checker: &Option<FeatureChecker>,
                  out_bam: &mut bam::Writer,
-                 gem_group: &u8) {
+                 gem_group: &u8,
+                 library_index: usize) {
     let fastq_header = CellrangerFastqHeader::new(tag_string);
 
     let bc_umi_data = bc_umi_checker.process_barcodes_and_umis(&fastq_header.tags);
@@ -332,7 +410,7 @@ fn process_qname(tag_string: &str,
     let is_conf_mapped = read_data.is_conf_mapped_to_transcriptome();
     let is_gene_discordant = read_data.is_gene_discordant();
 
-    // Interleave pairs of aligned records
+    // Interleave pairs of aligned records (R1,R2; R1,R2; ...)
     for i in 0 .. read_data.r1_data.len() {
         {
             let pair_data = match read_data.is_paired_end() {
@@ -342,13 +420,15 @@ fn process_qname(tag_string: &str,
 
             let ref mut r1 = read_data.r1_data[i];
             process_record(&stripped_qname, r1, pair_data,
-                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped, is_gene_discordant, gem_group);
+                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped,
+                           is_gene_discordant, gem_group, library_index);
             out_bam.write(&r1.rec).unwrap();
         }
         if read_data.is_paired_end() {
             let ref mut r2 = read_data.r2_data[i];
             process_record(&stripped_qname, r2, Some(&read_data.pair_data[i]),
-                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped, is_gene_discordant, gem_group);
+                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped,
+                           is_gene_discordant, gem_group, library_index);
             out_bam.write(&r2.rec).unwrap();
         }
     }
@@ -356,8 +436,9 @@ fn process_qname(tag_string: &str,
     reporter.update_metrics(&read_data);
 }
 
-/// Process a record.
+/// Attach BAM tags to a single record.
 /// is_conf_mapped: the qname is confidently mapped to the transcriptome
+/// is_gene_discordant: the qname is gene-discordant
 fn process_record(qname: &[u8],
                   record_data: &mut RecordData,
                   pair_anno: Option<&PairAnnotationData>,
@@ -365,20 +446,31 @@ fn process_record(qname: &[u8],
                   feature_data: &Option<FeatureData>,
                   is_conf_mapped: bool,
                   is_gene_discordant: bool,
-                  gem_group: &u8) {
+                  gem_group: &u8,
+                  library_index: usize) {
     // Strip auxiliary tags from the qname
     record_data.rec.set_qname(qname);
 
     // Attach annotation tags
-    record_data.anno.attach_tags(&mut record_data.rec, is_conf_mapped, is_gene_discordant,
-                                 pair_anno);
+    record_data.anno.attach_tags(&mut record_data.rec, pair_anno);
 
-    // Attach BC and UMI
+    // Attach extra flags
+    if !record_data.rec.is_secondary() {
+        transcriptome::add_extra_flags(&mut record_data.rec,
+                                       is_conf_mapped,
+                                       is_gene_discordant,
+                                       feature_data);
+    }
+
+    // Attach library id
+    record_data.rec.push_aux(&LIBRARY_INDEX_TAG.as_bytes(),
+                             &rust_htslib::bam::record::Aux::Integer(library_index as i32));
+
+    // Attach cell barcode and UMI
     bc_umi_data.attach_tags(&mut record_data.rec, gem_group);
 
     // Attach feature tags
     if let &Some(ref feature_data) = feature_data {
-        println!("here");
         feature_data.attach_tags(&mut record_data.rec);
     }
 }
@@ -412,11 +504,13 @@ mod tests {
             arg_gem_group:          Some(1),
             arg_out_metadata:       Some(format!("{}/metadata.json", out_dir.to_str().unwrap()).into()),
             arg_strandedness:       Some("+".into()),
-            arg_in_metrics_list:    None,
+            arg_in_chunked_metrics: None,
             arg_out_json:           None,
             arg_out_bc_csv:         None,
             arg_feature_dist:       None,
-            arg_library_type:       None,
+            arg_library_type:       Some("Gene Expression".to_owned()),
+            arg_library_id:         Some("0".to_owned()),
+            arg_library_info:       Some("test/library_info.json".to_owned()),
             flag_fiveprime:         false,
             flag_bam_comments:      None,
             flag_feature_ref:       None,
@@ -437,11 +531,13 @@ mod tests {
             arg_gem_group:          None,
             arg_out_metadata:       None,
             arg_strandedness:       None,
-            arg_in_metrics_list:    Some(format!("test/{}/{}/chunked_metrics.txt", reference, sample).into()),
+            arg_in_chunked_metrics: Some(format!("test/{}/{}/chunked_metrics.json", reference, sample).into()),
             arg_out_json:           Some(format!("{}/summary.json", out_dir.to_str().unwrap()).into()),
             arg_out_bc_csv:         Some(format!("{}/barcodes_detected.csv", out_dir.to_str().unwrap()).into()),
             arg_feature_dist:       None,
-            arg_library_type:       None,
+            arg_library_type:       Some("Gene Expression".to_owned()),
+            arg_library_id:         Some("0".to_owned()),
+            arg_library_info:       Some("test/library_info.json".to_owned()),
             flag_fiveprime:         false,
             flag_bam_comments:      None,
             flag_feature_ref:       None,

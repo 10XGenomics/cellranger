@@ -4,6 +4,7 @@
 #
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage SUMMARIZE_BASIC_REPORTS(
@@ -47,4 +48,4 @@ def main(args, outs):
 def join(args, outs, chunk_defs, chunk_outs):
     chunk_out = chunk_outs[0]
 
-    cr_utils.copy(chunk_out.summary, outs.summary)
+    cr_io.copy(chunk_out.summary, outs.summary)

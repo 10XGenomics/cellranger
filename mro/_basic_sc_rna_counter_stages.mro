@@ -16,6 +16,7 @@ stage SUMMARIZE_READ_REPORTS(
     in  json     feature_counts,
     in  int[]    gem_groups,
     in  string[] library_types,
+    in  string[] library_ids,
     in  string[] read_groups,
     in  map      align,
     in  string[] bam_comments,
@@ -29,6 +30,7 @@ stage SUMMARIZE_READ_REPORTS(
     out json     feature_counts,
     out int[]    gem_groups,
     out string[] library_types,
+    out string[] library_ids,
     out string[] read_groups,
     out map      align,
     out string[] bam_comments,
@@ -57,7 +59,8 @@ stage ALIGN_READS(
 ) split (
     in  fastq    read_chunk,
     in  fastq    read2_chunk,
-    in  string[] read_group,
+    in  string   read_group,
+    in  string   library_type,
 )
 
 stage ATTACH_BCS_AND_UMIS(
@@ -67,6 +70,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  csv      feature_reference,
     in  int[]    gem_groups,
     in  string[] library_types,
+    in  string[] library_ids,
     in  map      chemistry_def,
     in  map      annotation_params,
     in  string   barcode_whitelist,
@@ -78,13 +82,13 @@ stage ATTACH_BCS_AND_UMIS(
     in  bool     rescue_multimappers,
     in  bool     correct_barcodes,
     in  bool     skip_metrics,
+    in  map[]    library_info,
     out bam[]    output,
     out int[]    num_alignments,
     out bincode  chunked_reporter,
     out json     summary,
     out csv      barcodes_detected,
     out path     gene_index_tab,
-    out path     metric_chunk_list,
     out json     chunk_metadata,
     src py       "stages/counter/attach_bcs_and_umis",
 ) split (
@@ -92,6 +96,8 @@ stage ATTACH_BCS_AND_UMIS(
     in  fastq    tags,
     in  int      gem_group,
     in  string   library_type,
+    in  string   library_id,
+    in  json     library_info_json,
     in  json     bam_comments_json,
 ) using (
     # No index file is generated for the bam.
@@ -127,6 +133,7 @@ stage MARK_DUPLICATES(
     in  bam   input,
     in  path  reference_path,
     in  bool  filter_umis,
+    in  map[] library_info,
     out bam[] output,
     out json  summary,
     src comp  "cr_stage martian mark_duplicates",
@@ -143,13 +150,13 @@ stage MARK_DUPLICATES(
 stage REPORT_MOLECULES(
     in  bam[]  inputs,
     in  path   reference_path,
+    in  csv    feature_reference,
     in  map    align,
     in  string barcode_whitelist,
     in  json   extract_reads_summary,
     in  json   attach_bcs_and_umis_summary,
     in  json   mark_duplicates_summary,
     in  csv    filtered_barcodes,
-    in  int[]  gem_groups,
     in  int    recovered_cells,
     in  int    force_cells,
     out h5     output,
@@ -181,6 +188,7 @@ stage COUNT_GENES(
     in  string sample_id,
     in  bam[]  inputs,
     in  path   reference_path,
+    in  csv    feature_reference,
     in  map    chemistry_def,
     in  string barcode_whitelist,
     in  csv    barcodes_detected,
@@ -218,20 +226,20 @@ stage FILTER_BARCODES(
     src py     "stages/counter/filter_barcodes",
 ) split (
 ) using (
+    mem_gb = 8,
     volatile = strict,
 )
 
 stage SUBSAMPLE_READS(
     in  h5     molecule_info,
     in  csv    filtered_barcodes,
-    out map[]  subsampled_matrices,
-    out pickle chunked_reporter,
     out json   summary,
     src py     "stages/counter/subsample_reads",
 ) split (
     in  int    chunk_start,
     in  int    chunk_len,
-    in  map    subsample_info,
+    in  map[]  subsample_info,
+    out pickle metrics,
 ) using (
     volatile = strict,
 )
@@ -254,4 +262,19 @@ stage SUMMARIZE_BASIC_REPORTS(
 ) split (
 ) using (
     volatile = strict,
+)
+
+stage CHECK_BARCODES_COMPATIBILITY(
+    in  map[]    chunks,
+    in  string   barcode_whitelist,
+    in  int      num_reads_to_check_barcode,
+    in  float    barcode_compatibility_cutoff,
+    out bool     barcode_compatible,
+    out map      barcode_compatibility_info,
+    src py       "stages/counter/check_barcodes_compatibility",
+) split (
+    in  map      read_chunks,
+    in  map      chemistry,
+    in  bool     reads_interleaved,
+    out string[] sampled_barcodes,
 )

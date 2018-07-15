@@ -5,7 +5,7 @@
 
 # This stage only exists to force earlier VDR of prior stages.
 
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage SUMMARIZE_TRIM_REPORTS(
@@ -16,4 +16,4 @@ stage SUMMARIZE_TRIM_REPORTS(
 """
 
 def main(args, outs):
-    cr_utils.copy(args.trim_reads_summary, outs.summary)
+    cr_io.copy(args.trim_reads_summary, outs.summary)

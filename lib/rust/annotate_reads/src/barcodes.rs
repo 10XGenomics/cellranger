@@ -3,9 +3,11 @@
 //
 
 use std::collections::{HashMap, HashSet};
+use std::io::{BufReader, BufRead};
 use std::iter::FromIterator;
 use std::string::String;
 use std::cmp;
+use std::path::{Path, PathBuf};
 use std::str;
 use std::f64;
 
@@ -43,7 +45,7 @@ pub struct SampleIndexData {
 pub struct BarcodeData {
     pub raw_seq:        String,
     pub qual:           Vec<u8>,
-    pub corrected_seq:  Option<String>,
+    pub processed_seq:  Option<String>,
     pub on_whitelist:   bool,
     pub low_min_qual:   bool,
     pub has_n:          bool,
@@ -103,9 +105,18 @@ fn low_min_qual(qual: &[u8], min_qv: u8) -> bool {
     return false
 }
 
-fn load_barcode_dist(bc_counts_json: &str, bc_whitelist_txt: &str, gem_group: &u8, proportions: bool) -> HashMap<String, f64> {
+fn load_barcode_dist(bc_counts_json: &str,
+                     bc_whitelist_txt: &str,
+                     gem_group: &u8,
+                     proportions: bool,
+                     library_type: &str) -> HashMap<String, f64> {
     // TODO untangle this mess and handle errors
-    let bc_counts: Vec<f64> = utils::read_json(bc_counts_json).as_array().unwrap().to_vec().iter().map(|elt| elt.as_f64().unwrap()).collect();
+    let bc_counts: Vec<f64> = utils::read_json(bc_counts_json)
+        .get(library_type)
+        .expect(&format!("Failed to find library type {} in barcode counts JSON", library_type))
+        .as_array()
+        .expect("Failed to load barcode counts JSON data as array")
+        .to_vec().iter().map(|elt| elt.as_f64().unwrap()).collect();
     let bc_whitelist: Vec<String> = utils::load_txt_maybe_gz(bc_whitelist_txt);
     let start_idx = (gem_group - 1) as usize * bc_whitelist.len();
     let end_idx = *gem_group as usize * bc_whitelist.len();
@@ -128,6 +139,42 @@ fn load_barcode_whitelist(bc_whitelist_txt: &str) -> HashSet<String> {
     return HashSet::from_iter(bc_whitelist.into_iter())
 }
 
+/// Given a barcode whitelist path, return the expected
+/// path of its translation file (e.g., xyz/abc.txt => xyz/translation/abc.txt)
+fn get_translation_path<P: AsRef<Path>>(whitelist_path: P) -> PathBuf {
+    whitelist_path.as_ref().parent().unwrap_or(Path::new(&"."))
+        .join("translation")
+        .join(whitelist_path.as_ref().file_name().unwrap())
+}
+
+fn load_barcode_translation<P: AsRef<Path>>(whitelist_path: P,
+                                            whitelist: &HashSet<String>) ->
+    Option<HashMap<String, String>> {
+        let path = get_translation_path(whitelist_path);
+        match path.exists() {
+            false => None,
+            true => {
+                let reader = BufReader::new(utils::open_maybe_compressed(path));
+                let mut translation = HashMap::new();
+
+                for maybe_line in reader.lines() {
+                    let line = maybe_line.ok().expect("Failed to read line");
+                    let mut row = line.split('\t');
+                    let src = row.next().expect("Expected first column containing source barcode");
+                    let dest = row.next().expect("Expected second column containing destination barcode");
+                    if !whitelist.contains(src) {
+                        panic!("Barcode translation contains sequence not on whitelist: {}", src);
+                    }
+                    if !whitelist.contains(dest) {
+                        panic!("Barcode translation contains sequence not on whitelist: {}", dest)
+                    }
+                    translation.insert(src.to_owned(), dest.to_owned());
+                }
+                Some(translation)
+            },
+        }
+}
+
 pub struct BarcodeUmiData {
     pub sample_index_data: Option<SampleIndexData>,
     pub barcode_data:      Option<BarcodeData>,
@@ -137,22 +184,34 @@ pub struct BarcodeUmiData {
 pub struct BarcodeUmiChecker {
     // NOTE: barcode_whitelist is redundant if barcode_dist is defined, but we should try not to couple them
     barcode_whitelist: HashSet<String>,
+    barcode_translation: Option<HashMap<String, String>>,
     barcode_dist: HashMap<String, f64>,
     barcodes_checkable: bool,
 }
 
 impl BarcodeUmiChecker {
-    pub fn new(bc_counts_json: &str, bc_whitelist_txt: &str, gem_group: &u8) -> BarcodeUmiChecker {
+    pub fn new(bc_counts_json: &str,
+               bc_whitelist_txt: &str,
+               gem_group: &u8,
+               translate: bool,
+               library_type: &str) -> BarcodeUmiChecker {
         let mut barcodes_checkable = false;
         let mut barcode_whitelist = HashSet::new();
+        let mut barcode_translation = None;
         let mut barcode_dist = HashMap::new();
         if bc_whitelist_txt != "null" {
             barcodes_checkable = true;
             barcode_whitelist = load_barcode_whitelist(bc_whitelist_txt);
-            barcode_dist = load_barcode_dist(bc_counts_json, bc_whitelist_txt, &gem_group, true);
+            if translate {
+                barcode_translation = load_barcode_translation(bc_whitelist_txt,
+                                                               &barcode_whitelist);
+            }
+            barcode_dist = load_barcode_dist(bc_counts_json, bc_whitelist_txt,
+                                             &gem_group, true, library_type);
         }
         return BarcodeUmiChecker {
             barcode_whitelist: barcode_whitelist,
+            barcode_translation: barcode_translation,
             barcode_dist: barcode_dist,
             barcodes_checkable: barcodes_checkable,
         }
@@ -227,10 +286,20 @@ impl BarcodeUmiChecker {
             self.correct_bc_error(seq, qual)
         };
 
+        // Translate barcode if a translation is specified
+        let processed_seq = match self.barcode_translation {
+            // No translation map; don't translate
+            None => corrected_seq,
+            // There is a translation map; attempt translation if bc on whitelist
+            Some(ref tmap) =>
+                corrected_seq.map(|corr_seq| tmap.get(&corr_seq)
+                                  .expect(&format!("Whitelisted barcode not in translation map: {}.", &corr_seq))).cloned(),
+        };
+
         return BarcodeData {
             raw_seq:        raw_seq_str,
             qual:           qual.to_owned(),
-            corrected_seq:  corrected_seq,
+            processed_seq:  processed_seq,
             on_whitelist:   on_whitelist,
             low_min_qual:   low_min_qual,
             has_n:          has_n,
@@ -317,7 +386,7 @@ impl BarcodeUmiData {
                             &Aux::String(bc_data.raw_seq.as_bytes()));
             record.push_aux(&RAW_BC_QUAL_TAG.as_bytes(),
                             &Aux::String(&bc_data.qual));
-            if let Some(ref corrected_seq) = bc_data.corrected_seq {
+            if let Some(ref corrected_seq) = bc_data.processed_seq {
                 let processed_bc = utils::get_processed_bc(&corrected_seq, gem_group);
                 record.push_aux(&PROC_BC_SEQ_TAG.as_bytes(),
                                 &Aux::String(processed_bc.as_bytes()));

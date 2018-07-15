@@ -14,11 +14,13 @@ import numpy as np
 import sys
 import tenkit.safe_json as tk_safe_json
 import cellranger.analysis.clustering as cr_clustering
-import cellranger.analysis.singlegenome as cr_sg_analysis
-import cellranger.analysis.multigenome as cr_mg_analysis
+from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+from cellranger.analysis.multigenome import MultiGenomeAnalysis
 import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
 import cellranger.reference as cr_reference
 import cellranger.report as cr_report
+import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.report as vdj_report
@@ -48,7 +50,7 @@ def format_name(display_name, prefix, prefixes, prefix_format_func=None):
         prefix = prefix_format_func(prefix)
 
     # Default multi -> '' if no format func given
-    if prefix_format_func is None and prefix == cr_constants.MULTI_REFS_PREFIX:
+    if prefix_format_func is None and prefix == lib_constants.MULTI_REFS_PREFIX:
         prefix = ''
 
     if len(prefixes) > 1 or '%s' in display_name:
@@ -67,7 +69,7 @@ def format_description(description, prefix, prefixes, prefix_format_func=None):
         prefix = prefix_format_func(prefix)
 
     # Default multi -> '' if no format func given
-    if prefix_format_func is None and prefix == cr_constants.MULTI_REFS_PREFIX:
+    if prefix_format_func is None and prefix == lib_constants.MULTI_REFS_PREFIX:
         prefix = ''
 
     if '%s' in description:
@@ -291,11 +293,13 @@ def plot_barcode_rank(chart, sample_properties, sample_data):
 
     # UMI counts per BC across all genomes present
     if len(sample_properties['genomes']) > 1:
-        genome = cr_constants.MULTI_REFS_PREFIX
+        genome = lib_constants.MULTI_REFS_PREFIX
     else:
         genome = sample_properties['genomes'][0]
 
-    key = cr_utils.format_barcode_summary_h5_key(genome,
+    gex_prefix = rna_library.get_library_type_metric_prefix(lib_constants.GENE_EXPRESSION_LIBRARY_TYPE)
+    key = cr_utils.format_barcode_summary_h5_key(gex_prefix,
+                                                 genome,
                                                  cr_constants.TRANSCRIPTOME_REGION,
                                                  cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
 
@@ -408,9 +412,10 @@ def plot_histogram_metric(chart, sample_properties, sample_data, **kwargs):
     return chart
 
 
+
 def plot_barnyard_barcode_counts(chart, sample_properties, sample_data):
-    analysis = sample_data.analysis
-    if not isinstance(analysis, cr_mg_analysis.MultiGenomeAnalysis):
+    analysis = sample_data.get_analysis(MultiGenomeAnalysis)
+    if analysis is None:
         return None
 
     chart['data'] = []
@@ -449,31 +454,32 @@ def plot_barnyard_barcode_counts(chart, sample_properties, sample_data):
 
     return chart
 
-def plot_preprocess(analysis, sample_properties):
-    if analysis is None:
+def plot_preprocess(analyses, sample_properties):
+    if analyses is None or len(analyses) == 0:
         return None
-    if isinstance(analysis, cr_sg_analysis.SingleGenomeAnalysis) and analysis.is_zero_matrix():
+
+    sg_analyses = [an for an in analyses if isinstance(an, SingleGenomeAnalysis)]
+    sg_analysis = sg_analyses[0] if len(sg_analyses) > 0 else None
+    if sg_analysis is None or sg_analysis.is_zero_matrix():
         return None
-    if isinstance(analysis, cr_mg_analysis.MultiGenomeAnalysis):
-        return analysis
 
     # Limit the number of K-means clusterings displayed to limit the HTML filesize
     new_clusterings = {}
-    for key, clu in analysis.clusterings.iteritems():
+    for key, clu in sg_analysis.clusterings.iteritems():
         if not (clu.clustering_type == cr_clustering.CLUSTER_TYPE_KMEANS and \
                 clu.num_clusters > ws_gex_constants.MAX_WEBSHIM_KMEANS_K):
             new_clusterings[key] = clu
-    analysis.clusterings = new_clusterings
+    sg_analysis.clusterings = new_clusterings
 
-    return analysis
+    return analyses
 
 def load_sample_data(sample_properties, sample_data_paths):
     return SampleData(sample_properties, sample_data_paths, plot_preprocess)
 
 def plot_tsne(chart, sample_properties, sample_data):
     """ Plot cells in t-SNE space, colored by clustering label """
-    analysis = sample_data.analysis
-    if not analysis or len(sample_properties['genomes']) > 1 or not isinstance(analysis, cr_sg_analysis.SingleGenomeAnalysis):
+    analysis = sample_data.get_analysis(SingleGenomeAnalysis)
+    if analysis is None:
         return None
 
     args = [analysis.get_tsne().transformed_tsne_matrix,
@@ -570,11 +576,11 @@ def plot_dimensions_color(chart, transformed_matrix, values, description, vmin, 
 
 def plot_tsne_totalcounts(chart, sample_properties, sample_data):
     """ Plot cells colored by total counts """
-    analysis = sample_data.analysis
-    if not analysis or len(sample_properties['genomes']) > 1:
+    analysis = sample_data.get_analysis(SingleGenomeAnalysis)
+    if not analysis:
         return None
 
-    reads_per_bc = analysis.matrix.get_reads_per_bc()
+    reads_per_bc = analysis.matrix.get_counts_per_bc()
     vmin, vmax = np.percentile(reads_per_bc, ws_gex_constants.TSNE_TOTALCOUNTS_PRCT_CLIP)
 
     return plot_dimensions_color(chart, analysis.get_tsne().transformed_tsne_matrix,
@@ -610,7 +616,7 @@ def _plot_differential_expression(chart, analysis, clustering=None, diff_expr=No
         top_gene_indices = keep_indices[log2fcs[keep_indices].argsort()[::-1]][:n_genes]
 
         for j in top_gene_indices:
-            top_genes.add(analysis.matrix.int_to_gene_id(j))
+            top_genes.add(analysis.matrix.int_to_feature_id(j))
 
         cols.append({'type': 'number',
                      'label': 'L2FC',
@@ -621,8 +627,8 @@ def _plot_differential_expression(chart, analysis, clustering=None, diff_expr=No
 
     rows = []
     for gene_id in top_genes:
-        i = analysis.matrix.gene_id_to_int(gene_id)
-        gene_name = analysis.matrix.gene_id_to_name(gene_id)
+        i = analysis.matrix.feature_id_to_int(gene_id)
+        gene_name = analysis.matrix.feature_id_to_name(gene_id)
 
         row = [gene_id, gene_name]
         for j in xrange(n_clusters):
@@ -652,13 +658,11 @@ def _plot_differential_expression(chart, analysis, clustering=None, diff_expr=No
     return chart
 
 def plot_differential_expression(chart, sample_properties, sample_data):
-    return clustering_plot_func(chart, sample_properties, sample_data, _plot_differential_expression, [sample_data.analysis])
+    sg_analysis = sample_data.get_analysis(SingleGenomeAnalysis)
+    return clustering_plot_func(chart, sample_properties, sample_data, _plot_differential_expression, [sg_analysis])
 
 def clustering_plot_func(chart, sample_properties, sample_data, plot_func, args=[], kwargs={}):
-    if len(sample_properties['genomes']) > 1:
-        return None
-
-    analysis = sample_data.analysis
+    analysis = sample_data.get_analysis(SingleGenomeAnalysis)
     if analysis is None:
         return None
 
@@ -673,9 +677,14 @@ def clustering_plot_func(chart, sample_properties, sample_data, plot_func, args=
             new_charts.append(new_chart)
     return new_charts
 
-def make_chart_filters(sample_properties, analysis):
-    if analysis is None or len(sample_properties['genomes']) > 1 or not isinstance(analysis, cr_sg_analysis.SingleGenomeAnalysis):
+def make_chart_filters(sample_properties, analyses):
+    if analyses is None:
         return {}
+    sg_analyses = [an for an in analyses if isinstance(an, SingleGenomeAnalysis)]
+    if len(sg_analyses) == 0 or analyses[0] is None:
+        return {}
+    assert len(sg_analyses) == 1
+    analysis = sg_analyses[0]
 
     filter_values = map(lambda x: x.description, cr_clustering.sort_clusterings(analysis.clusterings.values()))
 
@@ -778,7 +787,7 @@ def plot_subsampled_scatterplot_metric(chart, sample_properties, sample_data, **
 def build_charts(sample_properties, chart_dicts, sample_data, module=None):
     modules = [module, globals()] if module else [globals()]
 
-    filters = make_chart_filters(sample_properties, sample_data.analysis)
+    filters = make_chart_filters(sample_properties, sample_data.analyses)
 
     charts = []
     for chart_dict in chart_dicts:
@@ -816,7 +825,7 @@ def filter_vdj_prefixes(all_prefixes, sample_properties):
         # (i.e., contains some values prefixed by the selected chain type)
         if values is not None and \
            any(v.startswith(chain_filter) for v in values):
-            result[key] = [v for v in values if v.startswith(chain_filter) or v == cr_constants.MULTI_REFS_PREFIX]
+            result[key] = [v for v in values if v.startswith(chain_filter) or v == lib_constants.MULTI_REFS_PREFIX]
         else:
             result[key] = values
     return result

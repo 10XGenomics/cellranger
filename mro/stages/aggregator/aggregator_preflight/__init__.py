@@ -7,7 +7,7 @@ import os
 
 import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mol_counter
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage AGGREGATOR_PREFLIGHT(
@@ -48,7 +48,7 @@ def main(args, outs):
         if not os.access(mol_h5, os.R_OK):
             martian.exit("Input molecule file is not readable, please check file permissions: %s" % mol_h5)
 
-        h5_filetype = cr_utils.get_h5_filetype(mol_h5)
+        h5_filetype = cr_io.get_h5_filetype(mol_h5)
         if h5_filetype and h5_filetype != cr_mol_counter.MOLECULE_H5_FILETYPE:
             martian.exit("Input is a %s file, but a molecule file is required" % h5_filetype)
 
@@ -79,6 +79,9 @@ def main(args, outs):
             elif global_gtf_hash != mol_gtf_hash:
                 martian.exit("Molecules were produced using different annotation GTFs (%s, %s)" % (global_gtf_hash, mol_gtf_hash))
 
+            # TODO: Check feature refs
+
+
             mol_whitelist = counter.get_metric('chemistry_barcode_whitelist')
             chemistry = counter.get_metric('chemistry_name')
             if global_whitelist is None:
@@ -96,7 +99,7 @@ def main(args, outs):
             if counter.nrows() == 0:
                 martian.exit("Cannot aggregate file because it contains no data: %s.\n Please remove this file from the aggregation and try again." % mol_h5)
 
-            for (gg, metrics) in counter.get_metric(cr_mol_counter.GEM_GROUPS_METRIC).iteritems():
-                gg_total_reads = metrics[cr_mol_counter.GG_TOTAL_READS_METRIC]
-                if gg_total_reads == 0:
-                    martian.exit("Gem group %d has zero reads in file: %s\n Please re-run `cellranger count` without including this gem group." % (gg, mol_h5))
+            for (lib_key, metrics) in counter.get_metric(cr_mol_counter.LIBRARIES_METRIC).iteritems():
+                lib_total_reads = metrics[cr_mol_counter.TOTAL_READS_METRIC]
+                if lib_total_reads == 0:
+                    martian.exit("Library %d has zero reads in file: %s\n Please re-run `cellranger count` without including this gem group." % (lib_key, mol_h5))

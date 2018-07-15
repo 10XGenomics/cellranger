@@ -5,6 +5,7 @@
 import martian
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.vdj.constants as vdj_constants
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
@@ -82,23 +83,23 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     # Copy barcode summary h5
     if args.barcode_summary:
-        cr_utils.copy(args.barcode_summary, outs.barcode_summary)
+        cr_io.copy(args.barcode_summary, outs.barcode_summary)
 
     # Copy cell barcodes
     if args.cell_barcodes:
-        cr_utils.copy(args.cell_barcodes, outs.cell_barcodes)
+        cr_io.copy(args.cell_barcodes, outs.cell_barcodes)
 
     # Copy barcode support
     if args.barcode_support:
-        cr_utils.copy(args.barcode_support, outs.barcode_support)
+        cr_io.copy(args.barcode_support, outs.barcode_support)
 
     # Copy barcode umi summary
     if args.barcode_umi_summary:
-        cr_utils.copy(args.barcode_umi_summary, outs.barcode_umi_summary)
+        cr_io.copy(args.barcode_umi_summary, outs.barcode_umi_summary)
 
     # Copy umi info
     if args.umi_info:
-        cr_utils.copy(args.umi_info, outs.umi_info)
+        cr_io.copy(args.umi_info, outs.umi_info)
 
     sample_data_paths = cr_webshim_data.SampleDataPaths(
         summary_path=outs.metrics_summary_json,

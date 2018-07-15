@@ -8,6 +8,7 @@
 import itertools
 import cellranger.chemistry as cr_chem
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage SUMMARIZE_READ_REPORTS(
@@ -16,6 +17,7 @@ stage SUMMARIZE_READ_REPORTS(
     in  json     feature_counts,
     in  int[]    gem_groups,
     in  string[] library_types,
+    in  string[] library_ids,
     in  string[] read_groups,
     in  map      align,
     in  string[] bam_comments,
@@ -30,6 +32,7 @@ stage SUMMARIZE_READ_REPORTS(
     out h5       barcode_summary,
     out int[]    gem_groups,
     out string[] library_types,
+    out string[] library_ids,
     out string[] read_groups,
     out map      align,
     out string[] bam_comments,
@@ -68,25 +71,26 @@ def main(args, outs):
         out_path, _ = cr_utils.splitexts(outs.read1s)
         _, in_ext = cr_utils.splitexts(args.read1)
         outs.read1s = out_path + in_ext
-        cr_utils.copy(args.read1, outs.read1s)
+        cr_io.copy(args.read1, outs.read1s)
     if args.read2 is not None:
         out_path, _ = cr_utils.splitexts(outs.read2s)
         _, in_ext = cr_utils.splitexts(args.read2)
         outs.read2s = out_path + in_ext
-        cr_utils.copy(args.read2, outs.read2s)
+        cr_io.copy(args.read2, outs.read2s)
     if args.tags is not None:
         out_path, _ = cr_utils.splitexts(outs.tags)
         _, in_ext = cr_utils.splitexts(args.tags)
         outs.tags = out_path + in_ext
-        cr_utils.copy(args.tags, outs.tags)
+        cr_io.copy(args.tags, outs.tags)
 
 def join(args, outs, chunk_defs, chunk_outs):
-    cr_utils.copy(args.extract_reads_summary, outs.summary)
-    cr_utils.copy(args.barcode_counts, outs.barcode_counts)
-    cr_utils.copy(args.feature_counts, outs.feature_counts)
+    cr_io.copy(args.extract_reads_summary, outs.summary)
+    cr_io.copy(args.barcode_counts, outs.barcode_counts)
+    cr_io.copy(args.feature_counts, outs.feature_counts)
 
     outs.gem_groups = args.gem_groups
     outs.library_types = args.library_types
+    outs.library_ids = args.library_ids
     outs.read_groups = args.read_groups
     outs.align = args.align
     outs.bam_comments = args.bam_comments

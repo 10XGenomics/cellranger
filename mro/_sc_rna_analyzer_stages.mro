@@ -77,7 +77,6 @@ stage RUN_MULTIGENOME_ANALYSIS(
 
 stage RUN_PCA(
     in  h5   matrix_h5,
-    in  bool is_multi_genome,
     in  bool skip,
     in  int  random_seed,
     in  int  num_bcs,
@@ -94,7 +93,6 @@ stage RUN_PCA(
 stage RUN_KMEANS(
     in  h5   matrix_h5,
     in  h5   pca_h5,
-    in  bool is_multi_genome,
     in  bool skip,
     in  int  random_seed,
     in  int  max_clusters,
@@ -120,7 +118,6 @@ stage RUN_GRAPH_CLUSTERING(
     in  int    balltree_leaf_size,
     in  string similarity_type     "Type of similarity to use (nn or snn)",
     in  bool   skip,
-    in  bool   is_multi_genome,
     out h5     chunked_neighbors,
     out h5     clusters_h5,
     out path   clusters_csv,
@@ -141,7 +138,6 @@ stage MERGE_CLUSTERS(
     in  h5   pca_h5,
     in  h5   clusters_h5,
     in  bool skip,
-    in  bool is_multi_genome,
     out h5   clusters_h5,
     out path clusters_csv,
     src py   "stages/analyzer/merge_clusters",
@@ -152,7 +148,6 @@ stage MERGE_CLUSTERS(
 
 stage COMBINE_CLUSTERING(
     in  bool skip,
-    in  bool is_multi_genome,
     in  h5   kmeans_h5,
     in  path kmeans_csv,
     in  h5   graphclust_h5,
@@ -167,7 +162,6 @@ stage COMBINE_CLUSTERING(
 stage RUN_DIFFERENTIAL_EXPRESSION(
     in  h5     matrix_h5,
     in  h5     clustering_h5,
-    in  bool   is_multi_genome,
     in  bool   skip,
     in  int    random_seed,
     in  int    max_clusters,
@@ -183,7 +177,6 @@ stage RUN_DIFFERENTIAL_EXPRESSION(
 stage RUN_TSNE(
     in  h5    matrix_h5,
     in  h5    pca_h5,
-    in  bool  is_multi_genome,
     in  bool  skip,
     in  int   random_seed,
     in  int   perplexity,

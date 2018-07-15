@@ -2,14 +2,17 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
+from collections import defaultdict
 import itertools
 import json
 import martian
 import os
 import sys
 import tenkit.log_subprocess as tk_subproc
+import tenkit.safe_json as tk_safe_json
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
 
@@ -21,6 +24,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  csv      feature_reference,
     in  int[]    gem_groups,
     in  string[] library_types,
+    in  string[] library_ids,
     in  map      chemistry_def,
     in  map      annotation_params,
     in  string   barcode_whitelist,
@@ -33,20 +37,23 @@ stage ATTACH_BCS_AND_UMIS(
     in  bool     correct_barcodes,
     in  bool     skip_metrics,
     in  bool     paired_end,
+    in  map[]    library_info,
     out bam[]    output,
     out int[]    num_alignments,
     out bincode  chunked_reporter,
     out json     summary,
     out csv      barcodes_detected,
     out path     gene_index_tab,
-    out path     metric_chunk_list,
+    out json     chunk_metrics,
     out json     chunk_metadata,
+    out json     library_info,
     src py       "stages/counter/attach_bcs_and_umis",
 ) split using (
     in  bam      chunk_genome_input,
     in  bam      chunk_trimmed_input,
     in  int      gem_group,
     in  string   library_type,
+    in  string   library_id,
     in  json     bam_comments_json,
 )
 '''
@@ -60,14 +67,21 @@ def split(args):
     chunk_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist)
     join_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
 
+    # Write library info to a file
+    libraries_fn = martian.make_path('libraries.json')
+    with open(libraries_fn, 'w') as f:
+        json.dump(tk_safe_json.json_sanitize(args.library_info), f, indent=4, sort_keys=True)
+
     chunks = []
-    for chunk_genome_input, tags, gem_group, library_type in itertools.izip_longest(
-            args.genome_inputs, args.tags, args.gem_groups, args.library_types):
+    for chunk_genome_input, tags, gem_group, library_type, library_id, in itertools.izip_longest(
+            args.genome_inputs, args.tags, args.gem_groups, args.library_types, args.library_ids):
         chunks.append({
             'chunk_genome_input': chunk_genome_input,
             'tags': tags,
             'gem_group': gem_group,
             'library_type': library_type,
+            'library_id': library_id,
+            'library_info_json': libraries_fn,
             'bam_comments_json': bam_comment_fn,
             '__mem_gb': chunk_mem_gb,
         })
@@ -100,7 +114,9 @@ def main(args, outs):
         outs.chunk_metadata,
         cr_chem.get_strandedness(args.chemistry_def),
         args.feature_counts,
-        args.library_type or cr_constants.DEFAULT_LIBRARY_TYPE,
+        args.library_type or lib_constants.DEFAULT_LIBRARY_TYPE,
+        args.library_id,
+        args.library_info_json,
         '--bam-comments', args.bam_comments_json,
     ]
 
@@ -109,7 +125,7 @@ def main(args, outs):
     if args.feature_reference is not None:
         cmd.extend(['--feature-ref', args.feature_reference])
 
-    print >> sys.stderr, 'Running', ' '.join(cmd)
+    print >> sys.stderr, 'Running', ' '.join(map(lambda x: "'%s'" % x, cmd))
     tk_subproc.check_call(cmd, cwd=os.getcwd())
     with open(outs.chunk_metadata) as f:
         metadata = json.load(f)
@@ -120,12 +136,19 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.chunked_reporter = None
     outs.coerce_strings()
 
-    with open(outs.metric_chunk_list, 'w') as f:
-        for chunk_out in chunk_outs:
-            f.write(chunk_out.chunked_reporter + '\n')
+    # Write chunk info to a temporary file for the rust code to consume
+    chunk_metrics = []
+    for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):
+        chunk_metrics.append({
+            'metrics': chunk_out.chunked_reporter,
+            'library_type': chunk_def.library_type,
+        })
+    with open('chunk_metrics.json', 'w') as f:
+        json.dump(chunk_metrics, f)
+
     cmd = [
         'annotate_reads', 'join',
-        outs.metric_chunk_list,
+        'chunk_metrics.json',
         outs.summary,
         outs.barcodes_detected,
     ]
@@ -134,9 +157,18 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.num_alignments = [chunk_out.num_alignments for chunk_out in chunk_outs]
 
 def convert_pickle_to_rust_index(pickle_path, out_path):
-    # TODO: we could possibly avoid this by using serde-pickle
+    # NOTE: we could possibly avoid this by using serde-pickle
+    # NOTE2: Nope, can't deserialize custom classes apparently.
     gene_index = cr_reference.GeneIndex.load_pickle(pickle_path)
     with open(out_path, 'w') as writer:
         writer.write('\t'.join(["transcript_id", "gene_id", "gene_name", "transcript_length"]))
+
+        # NOTE: It is critical that these genes be in the same order that they are used in
+        # FeatureReference construction (i.e., gene_index.genes)
+        gene2transcripts = defaultdict(list)
         for (transcript_id, transcript) in gene_index.transcripts.iteritems():
-            writer.write('\n' + '\t'.join([transcript_id, transcript.gene.id, transcript.gene.name, str(transcript.length)]))
+            gene2transcripts[transcript.gene.id].append((transcript_id, transcript))
+
+        for gene in gene_index.genes:
+            for (transcript_id, transcript) in gene2transcripts[gene.id]:
+                writer.write('\n' + '\t'.join([transcript_id, transcript.gene.id, transcript.gene.name, str(transcript.length)]))

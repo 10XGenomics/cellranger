@@ -1,7 +1,7 @@
 use csv;
 use rust_htslib::bam;
 use serde_json;
-use std::collections::{HashMap};
+use std::collections::{HashMap, HashSet};
 use std::cmp;
 use std::io::{BufReader, Read};
 use std::str;
@@ -9,15 +9,15 @@ use std::string::String;
 
 use utils;
 
-const RAW_FEATURE_BARCODE_TAG: &'static str   = "fr";
-const PROC_FEATURE_BARCODE_TAG: &'static str  = "fb";
-const FEATURE_BARCODE_QUAL_TAG: &'static str  = "fq";
-const FEATURE_IDS_TAG: &'static str           = "fx";
+pub const RAW_FEATURE_BARCODE_TAG: &'static [u8]   = b"fr";
+pub const PROC_FEATURE_BARCODE_TAG: &'static [u8]  = b"fb";
+pub const FEATURE_BARCODE_QUAL_TAG: &'static [u8]  = b"fq";
+pub const FEATURE_IDS_TAG: &'static [u8]           = b"fx";
 
 const FEATURE_CONF_THRESHOLD: f64 = 0.975;
 const FEATURE_MAX_QV: u8 = 33; // cap observed QVs at this value
 
-const LIBRARY_TYPES_WITHOUT_FEATURES: &'static [&'static str] = &["Gene Expression"];
+pub const LIBRARY_TYPES_WITHOUT_FEATURES: &'static [&'static str] = &["Gene Expression"];
 
 #[derive(Debug)]
 /// Processes raw feature barcode data
@@ -28,8 +28,9 @@ pub struct FeatureChecker {
 }
 
 impl FeatureChecker {
-    pub fn new<R: Read>(fref_file: R, fdist_file: R, library_type: &str) -> FeatureChecker {
-        let fref = FeatureReference::new(fref_file);
+    pub fn new<R: Read>(fref_file: R, gene_index_file: R,
+                        fdist_file: R, library_type: &str) -> FeatureChecker {
+        let fref = FeatureReference::new(fref_file, gene_index_file);
         let fdist = load_feature_dist(fdist_file, &fref);
 
         let ftype_idx = fref.feature_types.iter().position(|x| x == library_type)
@@ -44,11 +45,13 @@ impl FeatureChecker {
 
     /// Extract and potentially correct the feature barcode
     pub fn process_feature_data(&self, tags: &HashMap<String, String>) -> Option<FeatureData> {
-        let raw_seq = tags.get(RAW_FEATURE_BARCODE_TAG.into()).map(|x| x.as_bytes());
-        let qual = tags.get(FEATURE_BARCODE_QUAL_TAG.into()).map(|x| x.as_bytes());
+        let raw_seq = tags.get(str::from_utf8(RAW_FEATURE_BARCODE_TAG).unwrap())
+            .map(|x| x.as_bytes());
+        let qual = tags.get(str::from_utf8(FEATURE_BARCODE_QUAL_TAG).unwrap())
+                            .map(|x| x.as_bytes());
 
         // Try to correct the raw sequence if there is no processed sequence
-        let corrected_seq = tags.get(PROC_FEATURE_BARCODE_TAG.into())
+        let corrected_seq = tags.get(str::from_utf8(PROC_FEATURE_BARCODE_TAG).unwrap())
             .map(|x| x.as_bytes().to_owned())
             .or(
                 match (raw_seq.as_ref(), qual.as_ref()) {
@@ -61,7 +64,7 @@ impl FeatureChecker {
             );
 
         // Take the given feature(s), or try to find the feature for the corrected sequence
-        let ids = tags.get(FEATURE_IDS_TAG.into())
+        let ids = tags.get(str::from_utf8(FEATURE_IDS_TAG).unwrap())
             .or(corrected_seq.as_ref()
                 .and_then(|seq| self.feature_reference.get_feature_by_barcode(self.feat_type_idx, seq)
                           .map(|feat| &feat.id)));
@@ -90,22 +93,31 @@ pub struct FeatureData {
 impl FeatureData {
     /// Attach feature-related BAM tags to a BAM record.
     pub fn attach_tags(&self, record: &mut bam::Record) {
-        record.push_aux(&RAW_FEATURE_BARCODE_TAG.as_bytes(),
+        record.push_aux(&RAW_FEATURE_BARCODE_TAG,
                         &bam::record::Aux::String(&self.raw_seq));
 
         if let Some(ref seq) = self.corrected_seq {
-            record.push_aux(&PROC_FEATURE_BARCODE_TAG.as_bytes(),
+            record.push_aux(&PROC_FEATURE_BARCODE_TAG,
                             &bam::record::Aux::String(seq));
         }
 
-        record.push_aux(&FEATURE_BARCODE_QUAL_TAG.as_bytes(),
+        record.push_aux(&FEATURE_BARCODE_QUAL_TAG,
                         &bam::record::Aux::String(&self.qual));
 
         if let Some(ref feature_ids) = self.ids {
-            record.push_aux(&FEATURE_IDS_TAG.as_bytes(),
+            record.push_aux(&FEATURE_IDS_TAG,
                             &bam::record::Aux::String(feature_ids.as_bytes()));
         }
     }
+}
+
+/// Gene index TSV row
+#[derive(Debug, Deserialize)]
+struct GeneIndexRow {
+    pub transcript_id: String,
+    pub gene_id: String,
+    pub gene_name: String,
+    pub transcript_length: i64,
 }
 
 /// Feature definition CSV row
@@ -133,9 +145,14 @@ pub struct FeatureReference {
 }
 
 impl FeatureReference {
-    pub fn new<R: Read>(csv_stream: R) -> FeatureReference {
+    pub fn new<R: Read, R2: Read>(csv_stream: R, gene_index_stream: R2) -> FeatureReference {
         let reader = BufReader::new(csv_stream);
         let mut csv_reader = csv::Reader::from_reader(reader);
+
+        let gene_reader = BufReader::new(gene_index_stream);
+        let mut gene_csv_reader = csv::ReaderBuilder::new()
+            .delimiter(b'\t')
+            .from_reader(gene_reader);
 
         let mut type_map = HashMap::new();
         let mut type_vec = Vec::new();
@@ -143,6 +160,31 @@ impl FeatureReference {
         let mut fdefs = Vec::new();
         let mut fmaps = Vec::new();
 
+        // Create gene expression features
+        let mut seen_genes = HashSet::new();
+
+        type_map.insert("Gene Expression".to_owned(), 0);
+        type_vec.push("Gene Expression".to_owned());
+        fmaps.push(HashMap::new());
+
+        for record in gene_csv_reader.deserialize() {
+            let row: GeneIndexRow = record.expect("Failed to parse gene index TSV row");
+
+            // The rows are per-transcript but we only care about genes here
+            if seen_genes.contains(&row.gene_id) {
+                continue;
+            }
+            let num_fdefs = fdefs.len();
+            fdefs.push(FeatureDef {
+                index: num_fdefs,
+                id: row.gene_id.clone(),
+                sequence: vec![],
+                feature_type_idx: type_map.len() - 1,
+            });
+            seen_genes.insert(row.gene_id);
+        }
+
+        // Create feature barcode (fBC) features
         for record in csv_reader.deserialize() {
             let frow: FeatureRow = record.expect("Failed to parse feature definition row");
 
@@ -280,11 +322,16 @@ mod tests {
     fn test_load_feature_ref() {
         let fdf_path = "test/feature/citeseq.csv";
         let fdf_file = File::open(fdf_path).unwrap();
-        let _fref = FeatureReference::new(fdf_file);
+        let gi_path = "test/feature/gene_index.tab";
+        let gi_file = File::open(gi_path).unwrap();
+        let _fref = FeatureReference::new(fdf_file, gi_file);
     }
 
     #[test]
     fn test_load_feature_dist() {
+        let gi_path = "test/feature/gene_index.tab";
+        let gi_file = File::open(gi_path).unwrap();
+
         let fdf_csv = r#"
 id,name,read,pattern,sequence,feature_type
 ID1,Name1,R1,^(BC),AA,Type1
@@ -294,17 +341,20 @@ ID4,Name1,R1,^(BC),TT,Type3
 ID5,Name1,R1,^(BC),TT,Type3
 ID6,Name1,R1,^(BC),TT,Type3
 "#;
-        let fref = FeatureReference::new(Cursor::new(fdf_csv.as_bytes()));
+        let fref = FeatureReference::new(Cursor::new(fdf_csv.as_bytes()), gi_file);
 
-        let count_json = "[1, 1, 0, 9, 1, 0]";
+        let count_json = "[0, 0, 1, 1, 0, 9, 1, 0]";
 
         let x = load_feature_dist(Cursor::new(count_json.as_bytes()), &fref);
 
-        assert_eq!(x, vec![0.5, 0.5, 0.0, 9.0/10.0, 1.0/10.0, 0.0]);
+        assert_eq!(x, vec![0.0, 0.0, 0.5, 0.5, 0.0, 9.0/10.0, 1.0/10.0, 0.0]);
     }
 
     #[test]
     fn test_correct_feature() {
+        let gi_path = "test/feature/gene_index.tab";
+        let gi_file = File::open(gi_path).unwrap();
+
         let fdf_csv = r#"
 id,name,read,pattern,sequence,feature_type
 ID1,N,R1,^(BC),AAAA,type1
@@ -317,35 +367,35 @@ ID7,N,R1,^(BC),AATA,type3
 ID8,N,R1,^(BC),ATAA,type3
 ID9,N,R1,^(BC),TAAA,type3
 "#;
-        let fref = FeatureReference::new(Cursor::new(fdf_csv.as_bytes()));
-        let s = "[0, 10, 1, 10, 10, 10, 10, 10, 10]";
+        let fref = FeatureReference::new(Cursor::new(fdf_csv.as_bytes()), gi_file);
+        let s = "[0, 0, 0, 10, 1, 10, 10, 10, 10, 10, 10]";
         let fdist = load_feature_dist(Cursor::new(s.as_bytes()), &fref);
 
-        let (seq, qual, ftype) = (b"AAAT", b"IIII", 0);
+        let (seq, qual, ftype) = (b"AAAT", b"IIII", 1);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, None);
 
-        let (seq, qual, ftype) = (b"CGCC", b"IIII", 0);
+        let (seq, qual, ftype) = (b"CGCC", b"IIII", 1);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, Some(b"CCCC".to_vec()));
 
-        let (seq, qual, ftype) = (b"TTTA", b"IIII", 0);
+        let (seq, qual, ftype) = (b"TTTA", b"IIII", 1);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, None);
 
-        let (seq, qual, ftype) = (b"TTTC", b"IIII", 1);
+        let (seq, qual, ftype) = (b"TTTC", b"IIII", 2);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, None);
 
-        let (seq, qual, ftype) = (b"AAAA", b"III!", 2);
+        let (seq, qual, ftype) = (b"AAAA", b"III!", 3);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, Some(b"AAAT".to_vec()));
 
-        let (seq, qual, ftype) = (b"AAAA", b"I!II", 2);
+        let (seq, qual, ftype) = (b"AAAA", b"I!II", 3);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, Some(b"ATAA".to_vec()));
 
-        let (seq, qual, ftype) = (b"AAAA", b"IIII", 2);
+        let (seq, qual, ftype) = (b"AAAA", b"IIII", 3);
         let r = correct_feature_barcode(seq, qual, &fref, &fdist, ftype);
         assert_eq!(r, None);
     }

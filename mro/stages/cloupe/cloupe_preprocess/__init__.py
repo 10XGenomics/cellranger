@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 #
-# Copyright (c) 2016 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import martian
 import subprocess
 import os
@@ -32,7 +32,7 @@ stage CLOUPE_PREPROCESS(
 
 def get_gem_group_index_json(args, outs):
     if args.gem_group_index_json:
-        cr_utils.copy(args.gem_group_index_json, outs.gem_group_index_json)
+        cr_io.copy(args.gem_group_index_json, outs.gem_group_index_json)
     else:
         generated_index = cr_matrix.get_gem_group_index(args.filtered_gene_bc_matrices_h5)
         if generated_index:
@@ -55,33 +55,29 @@ def do_not_make_cloupe(args):
         martian.log_info("Skipping .cloupe generation due to missing analysis folder")
         return True
     if not os.path.exists(args.filtered_gene_bc_matrices_h5):
-        martian.log_info("Skipping .cloupe generation due to missing or zero-length gene-barcode matrix")
-        return True
-    genomes = cr_matrix.GeneBCMatrices.load_genomes_from_h5(args.filtered_gene_bc_matrices_h5)
-    if len(genomes) > 1:
-        martian.log_info("Skipping .cloupe generation due to multiple species in the gene-barcode matrix")
+        martian.log_info("Skipping .cloupe generation due to missing or zero-length feature-barcode matrix")
         return True
     return False
 
 def split(args):
-    # no mem usage on barnyard, as we'll skip
+    # no mem usage if skipped
     if do_not_make_cloupe(args):
-        return {'chunks': [{'__mem_gb': cr_constants.MIN_MEM_GB}]}
+        return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
 
     # CELLRANGER-762: worst case is that there's two copies of the sparse matrix,
     # one for reading, and one for writing
-    matrix_mem_gb = 2 * cr_matrix.GeneBCMatrix.get_mem_gb_from_matrix_h5(args.filtered_gene_bc_matrices_h5)
+    matrix_mem_gb = 2 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.filtered_gene_bc_matrices_h5)
     chunks = [{
-        '__mem_gb': max(matrix_mem_gb, cr_constants.MIN_MEM_GB)
+        '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
     }]
     return {'chunks': chunks}
 
 def join(args, outs, chunk_defs, chunk_outs):
     if chunk_outs[0].output_for_cloupe is None:
-        # Set output to null if noloupe is set, or if we ran on a barnyard
+        # Set output to null if noloupe is set
         outs.output_for_cloupe = None
     else:
-        cr_utils.copy(chunk_outs[0].output_for_cloupe, outs.output_for_cloupe)
+        cr_io.copy(chunk_outs[0].output_for_cloupe, outs.output_for_cloupe)
 
 def main(args, outs):
     if do_not_make_cloupe(args):

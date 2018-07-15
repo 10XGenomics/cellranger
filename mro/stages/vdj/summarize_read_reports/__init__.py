@@ -9,6 +9,7 @@ import itertools
 import cellranger.chemistry as cr_chem
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 __MRO__ = """
 stage SUMMARIZE_READ_REPORTS(
@@ -69,19 +70,19 @@ def main(args, outs):
         out_path, _ = cr_utils.splitexts(outs.read1s)
         _, in_ext = cr_utils.splitexts(args.read1)
         outs.read1s = out_path + in_ext
-        cr_utils.copy(args.read1, outs.read1s)
+        cr_io.copy(args.read1, outs.read1s)
 
     if args.read2 is not None:
         out_path, _ = cr_utils.splitexts(outs.read2s)
         _, in_ext = cr_utils.splitexts(args.read2)
         outs.read2s = out_path + in_ext
-        cr_utils.copy(args.read2, outs.read2s)
+        cr_io.copy(args.read2, outs.read2s)
 
     if args.bcs is not None:
         out_path, _ = cr_utils.splitexts(outs.corrected_bcs)
         _, in_ext = cr_utils.splitexts(args.bcs)
         outs.corrected_bcs = out_path + in_ext
-        cr_utils.copy(args.bcs, outs.corrected_bcs)
+        cr_io.copy(args.bcs, outs.corrected_bcs)
 
 def join(args, outs, chunk_defs, chunk_outs):
     summary_files = [
@@ -94,9 +95,9 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     cr_report.merge_jsons(summary_files, outs.summary)
 
-    cr_utils.copy(args.raw_barcode_counts, outs.raw_barcode_counts)
-    cr_utils.copy(args.corrected_barcode_counts, outs.corrected_barcode_counts)
-    cr_utils.copy(args.barcode_summary, outs.barcode_summary)
+    cr_io.copy(args.raw_barcode_counts, outs.raw_barcode_counts)
+    cr_io.copy(args.corrected_barcode_counts, outs.corrected_barcode_counts)
+    cr_io.copy(args.barcode_summary, outs.barcode_summary)
     outs.gem_groups = args.gem_groups
     outs.read_groups = args.read_groups
     outs.align = args.align

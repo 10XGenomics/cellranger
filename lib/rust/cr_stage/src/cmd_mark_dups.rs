@@ -15,7 +15,7 @@ use utils;
 
 pub struct MarkDuplicatesStage;
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 struct Metrics {
     total_reads: u64,
     low_support_umi_reads: u64,
@@ -24,6 +24,14 @@ struct Metrics {
     dup_reads: u64,
     umis: u64,
 }
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct LibraryInfo {
+    library_id: String,
+    library_type: String,
+    gem_group: u64,
+}
+
 
 /// Within each gene, correct Hamming-distance-one UMIs
 fn correct_umis(umigene_counts: HashMap<(Vec<u8>, String), u64>)
@@ -73,6 +81,12 @@ struct ChunkArgs {
     chunk_start: i64,
     chunk_end: Option<i64>,
     filter_umis: bool,
+    library_info: Vec<LibraryInfo>,
+}
+
+#[derive(Deserialize, Debug)]
+struct StageArgs {
+    library_info: Vec<LibraryInfo>,
 }
 
 
@@ -94,174 +108,197 @@ fn get_mate_type(record: &bam::Record) -> MateType {
 }
 
 /// For all the records w/ the same qname (a read or a read-pair),
-/// find the single gene confidently mapped to if any.
-fn get_qname_conf_mapped_gene<'a, I>(records: I) -> Option<String>
+/// find the single gene/feature confidently mapped to if any.
+fn get_qname_conf_mapped_feature<'a, I>(records: I) -> Option<String>
     where I: Iterator<Item = &'a bam::record::Record> {
-    let mut genes = Vec::new();
-    for record in records.filter(|&r| !r.is_secondary() &&
-                                 utils::get_read_extra_flags(r).intersects(utils::ExtraFlags::CONF_MAPPED)) {
-        genes.extend(utils::get_read_gene_ids(record).into_iter());
+    let mut features = Vec::new();
+    for record in records.filter(|&r| !r.is_secondary()) {
+        let flags = utils::get_read_extra_flags(record);
+
+        if flags.intersects(utils::ExtraFlags::CONF_MAPPED) ||
+            flags.intersects(utils::ExtraFlags::CONF_FEATURE) {
+                features.extend(utils::get_read_feature_ids(record).into_iter());
+            }
     }
-    genes.sort_unstable();
-    genes.dedup();
-    match genes.len() {
-        1 => genes.into_iter().nth(0),
+    features.sort_unstable();
+    features.dedup();
+    match features.len() {
+        1 => features.into_iter().nth(0),
         _ => None,
     }
 }
 
 fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
-        use bam::Read;
+    use bam::Read;
 
-        let mut metrics: Metrics = Default::default();
+    // Load library info
+    let library_info = &args.library_info;
 
-        let mut bam = bam::Reader::from_path(&args.input)
-            .expect("Failed to open input BAM file");
+    // Partition metrics by library
+    let mut metrics: Vec<Metrics> = vec![Default::default(); library_info.len()];
 
-        let mut out_bam = bam::Writer::from_path(outs["alignments"].as_str().unwrap(),
-                                                 &bam::Header::from_template(bam.header()))
-            .expect("Failed to open output BAM file");
+    let mut bam = bam::Reader::from_path(&args.input)
+        .expect("Failed to open input BAM file");
 
-        let range = (args.chunk_start, args.chunk_end);
-        let chunk_iter = BamChunkIter::new(&mut bam, range);
+    let mut out_bam = bam::Writer::from_path(outs["alignments"].as_str().unwrap(),
+                                             &bam::Header::from_template(bam.header()))
+        .expect("Failed to open output BAM file");
 
-        for (_bc, bc_group) in chunk_iter.map(|x| x.unwrap()).group_by(utils::get_read_barcode) {
-            if _bc.is_none() {
-                // Invalid barcode. Write all records as-is.
-                for record in bc_group {
-                    metrics.total_reads += 1;
-                    out_bam.write(&record).expect("Failed to write BAM record");
-                }
-                // Skip this barcode.
-                continue;
+    let range = (args.chunk_start, args.chunk_end);
+    let chunk_iter = BamChunkIter::new(&mut bam, range);
+
+    // Group records by (barcode, library)
+    let mut prev_bc = Some(vec![]);
+    let mut prev_lib_idx = 0;
+
+    for ((bc, lib_idx), bc_group) in chunk_iter.map(|r| r.unwrap()).group_by(|r| (utils::get_read_barcode(r), utils::get_read_library_index(r))) {
+        if bc.is_none() {
+            // Invalid barcode. Write all records as-is.
+            for record in bc_group {
+                metrics[lib_idx].total_reads += 1;
+                out_bam.write(&record).expect("Failed to write BAM record");
             }
+            // Skip this barcode.
+            continue;
+        }
+        // Verify sort order (bc, library_idx)
+        if bc == prev_bc {
+            assert!(lib_idx >= prev_lib_idx)
+        }
+        prev_bc = bc;
+        prev_lib_idx = lib_idx;
 
-            // Get raw UMI frequencies
-            let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
-            let mut low_support_umigenes: HashSet<(Vec<u8>, String)> = HashSet::new();
 
-            for (maybe_umi, umi_group) in bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
-                let mut gene_counts: HashMap<String, u64> = HashMap::new();
 
-                if let Some(umi) = maybe_umi {
-                    // Count (UMI, gene) pairs.
+        // Get raw UMI frequencies
+        let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
+        let mut low_support_umigenes: HashSet<(Vec<u8>, String)> = HashSet::new();
 
-                    // Assumes records are qname-contiguous in the input.
-                    for (qname, qname_records) in umi_group.into_iter()
-                        .filter(|&x| utils::is_read_dup_candidate(x))
-                        .group_by(|x| x.qname()) {
-                            match get_qname_conf_mapped_gene(qname_records.into_iter()) {
-                                None => { panic!(format!("Found 0 or >1 genes for confidently mapped read/pair {}", str::from_utf8(qname).unwrap())) },
-                                Some(gene) => {
-                                    *raw_umigene_counts.entry((umi.clone(), gene.clone())).or_insert(0) += 1;
-                                    *gene_counts.entry(gene.clone()).or_insert(0) += 1;
-                                },
-                            }
+        for (maybe_umi, umi_group) in bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
+            let mut gene_counts: HashMap<String, u64> = HashMap::new();
+
+            assert!(lib_idx >= prev_lib_idx);
+            prev_lib_idx = lib_idx;
+
+            if let Some(umi) = maybe_umi {
+                // Count (UMI, gene) pairs.
+
+                // Assumes records are qname-contiguous in the input.
+                for (qname, qname_records) in umi_group.into_iter()
+                    .filter(|&x| utils::is_read_dup_candidate(x))
+                    .group_by(|x| x.qname()) {
+                        match get_qname_conf_mapped_feature(qname_records.into_iter()) {
+                            None => { panic!(format!("Found 0 or >1 features for confidently mapped read/pair {}", str::from_utf8(qname).unwrap())) },
+                            Some(gene) => {
+                                *raw_umigene_counts.entry((umi.clone(), gene.clone())).or_insert(0) += 1;
+                                *gene_counts.entry(gene.clone()).or_insert(0) += 1;
+                            },
+                        }
                     } // for each qname
 
-                    // Mark (UMI, gene) pairs w/ frequency below the max for the UMI as low support.
-                    if let Some((_max_gene, max_count)) = gene_counts.iter().max_by_key(|x| x.1) {
-                        for (gene, count) in gene_counts.iter() {
-                            if args.filter_umis && count < max_count {
-                                low_support_umigenes.insert((umi.clone(), gene.clone()));
-                            }
+                // Mark (UMI, gene) pairs w/ frequency below the max for the UMI as low support.
+                if let Some((_max_gene, max_count)) = gene_counts.iter().max_by_key(|x| x.1) {
+                    for (gene, count) in gene_counts.iter() {
+                        if args.filter_umis && count < max_count {
+                            low_support_umigenes.insert((umi.clone(), gene.clone()));
                         }
                     }
                 }
             }
+        }
 
-            // Determine which UMIs need to be corrected
-            let umi_corrections = correct_umis(raw_umigene_counts);
+        // Determine which UMIs need to be corrected
+        let umi_corrections = correct_umis(raw_umigene_counts);
 
-            // Correct UMIs and mark PCR duplicates
-            let mut wrote_umigenes = HashSet::new();
+        // Correct UMIs and mark PCR duplicates
+        let mut wrote_umigenes = HashSet::new();
 
-            for (_qname, qname_records) in bc_group.iter().group_by(|x| x.qname()) {
-                // Take UMI from first record
-                let maybe_umi = utils::get_read_umi(&qname_records.iter().nth(0).unwrap());
+        for (_qname, qname_records) in bc_group.iter().group_by(|x| x.qname()) {
+            // Take UMI from first record
+            let maybe_umi = utils::get_read_umi(&qname_records.iter().nth(0).unwrap());
 
-                let maybe_gene = get_qname_conf_mapped_gene(qname_records.iter()
-                                                            .map(|x| *x));
+            let maybe_gene = get_qname_conf_mapped_feature(qname_records.iter()
+                                                           .map(|x| *x));
 
-                for record in qname_records {
-                    // Clone here because holding a &mut to the record
-                    // while simultaneously grouping by qname in the outer loop
-                    // makes rustc very unhappy.
-                    let mut new_record = record.clone();
-                    let mut new_flags = utils::get_read_extra_flags(&new_record);
+            for record in qname_records {
+                // Clone here because holding a &mut to the record
+                // while simultaneously grouping by qname in the outer loop
+                // makes rustc very unhappy.
+                let mut new_record = record.clone();
+                let mut new_flags = utils::get_read_extra_flags(&new_record);
 
-                    let is_secondary = record.is_secondary();
-                    let is_dup_candidate = utils::is_read_dup_candidate(&record);
+                let is_secondary = record.is_secondary();
+                let is_dup_candidate = utils::is_read_dup_candidate(&record);
 
-                    if !is_secondary {
-                        metrics.total_reads += 1;
-                    }
-                    metrics.candidate_dup_reads += is_dup_candidate as u64;
+                if !is_secondary {
+                    metrics[lib_idx].total_reads += 1;
+                }
+                metrics[lib_idx].candidate_dup_reads += is_dup_candidate as u64;
 
-                    if let (Some(umi), Some(gene)) = (maybe_umi.as_ref(), maybe_gene.as_ref()) {
-                        let key = (umi.clone(), gene.clone());
+                if let (Some(umi), Some(gene)) = (maybe_umi.as_ref(), maybe_gene.as_ref()) {
+                    let key = (umi.clone(), gene.clone());
 
-                        if !record.is_secondary() && low_support_umigenes.contains(&key) {
-                            // Low support (UMI, gene). Mark as low support.
-                            // - Only consider primary alignments for this flag.
-                            // - Do not correct the UMI.
-                            // - Do not mark duplicates w/ for this (UMI, gene).
-                            metrics.low_support_umi_reads += 1;
-                            new_flags |= utils::ExtraFlags::LOW_SUPPORT_UMI;
+                    if !record.is_secondary() && low_support_umigenes.contains(&key) {
+                        // Low support (UMI, gene). Mark as low support.
+                        // - Only consider primary alignments for this flag.
+                        // - Do not correct the UMI.
+                        // - Do not mark duplicates w/ for this (UMI, gene).
+                        metrics[lib_idx].low_support_umi_reads += 1;
+                        new_flags |= utils::ExtraFlags::LOW_SUPPORT_UMI;
 
-                        } else {
-                            // Correct UMIs in all records
-                            let (corrected_umi, is_corrected) = match umi_corrections.get(&key) {
-                                Some(new_umi) => (new_umi.clone(), true),
-                                None => (umi.clone(), false),
-                            };
+                    } else {
+                        // Correct UMIs in all records
+                        let (corrected_umi, is_corrected) = match umi_corrections.get(&key) {
+                            Some(new_umi) => (new_umi.clone(), true),
+                            None => (umi.clone(), false),
+                        };
 
-                            // Correct the UMI tag
-                            if is_corrected {
-                                metrics.umi_corrected_reads += 1;
-                                new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
-                                new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
-                                                    &bam::record::Aux::String(&corrected_umi));
-                            }
+                        // Correct the UMI tag
+                        if is_corrected {
+                            metrics[lib_idx].umi_corrected_reads += 1;
+                            new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
+                            new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
+                                                &bam::record::Aux::String(&corrected_umi));
+                        }
 
-                            // Don't try to dup mark secondary alignments.
-                            if is_dup_candidate {
-                                let dup_key = (corrected_umi, key.1, get_mate_type(&record));
+                        // Don't try to dup mark secondary alignments.
+                        if is_dup_candidate {
+                            let dup_key = (corrected_umi, key.1, get_mate_type(&record));
 
-                                if wrote_umigenes.contains(&dup_key) {
-                                    // Duplicate
-                                    metrics.dup_reads += 1;
-                                    let flags = record.flags();
-                                    new_record.set_flags(flags | 1024u16);
-                                } else {
-                                    // Non-duplicate
-                                    wrote_umigenes.insert(dup_key);
+                            if wrote_umigenes.contains(&dup_key) {
+                                // Duplicate
+                                metrics[lib_idx].dup_reads += 1;
+                                let flags = record.flags();
+                                new_record.set_flags(flags | 1024u16);
+                            } else {
+                                // Non-duplicate
+                                wrote_umigenes.insert(dup_key);
 
-                                    // Flag read1 as countable
-                                    if !record.is_last_in_template() {
-                                        metrics.umis += 1;
-                                        new_flags |= utils::ExtraFlags::UMI_COUNT;
-                                    }
+                                // Flag read1 as countable
+                                if !record.is_last_in_template() {
+                                    metrics[lib_idx].umis += 1;
+                                    new_flags |= utils::ExtraFlags::UMI_COUNT;
                                 }
                             }
                         }
                     }
-                    if new_flags.bits() > 0 {
-                        new_record.remove_aux(utils::EXTRA_FLAGS_TAG);
-                        new_record.push_aux(utils::EXTRA_FLAGS_TAG,
-                                            &bam::record::Aux::Integer(new_flags.bits() as i32));
-                    }
-                    out_bam.write(&new_record).expect("Failed to write BAM record");
                 }
+                if new_flags.bits() > 0 {
+                    new_record.remove_aux(utils::EXTRA_FLAGS_TAG);
+                    new_record.push_aux(utils::EXTRA_FLAGS_TAG,
+                                        &bam::record::Aux::Integer(new_flags.bits() as i32));
+                }
+                out_bam.write(&new_record).expect("Failed to write BAM record");
+            }
 
-            } // for each record
-        } // for each barcode
+        } // for each record
+    } // for each barcode
 
-        // Write metrics
-        utils::write_json_file(outs["metrics"].as_str().unwrap(), &metrics)
-            .expect("Failed to write metrics to JSON file");
+    // Write metrics
+    utils::write_json_file(outs["metrics"].as_str().unwrap(), &metrics)
+        .expect("Failed to write metrics to JSON file");
 
-        outs
+    outs
 }
 
 
@@ -290,7 +327,9 @@ impl MartianStage for MarkDuplicatesStage {
         cmd_mark_dups(&args, outs)
     }
 
-    fn join(&self, _: JsonDict, outs: JsonDict, _chunk_defs: Vec<JsonDict>, chunk_outs: Vec<JsonDict>) -> JsonDict {
+    fn join(&self, json_args: JsonDict, outs: JsonDict, _chunk_defs: Vec<JsonDict>, chunk_outs: Vec<JsonDict>) -> JsonDict {
+        let args: StageArgs = obj_decode(json_args);
+
         let mut final_outs = outs.clone();
 
         // Collect output BAMs
@@ -299,25 +338,47 @@ impl MartianStage for MarkDuplicatesStage {
             .map(|x| x["alignments"].clone())
                 .collect::<Vec<serde_json::Value>>());
 
-        // Merge summary metrics
-        let mut metrics: Metrics = Default::default();
+        // Load library info
+        let library_info = &args.library_info;
+
+        // Merge summary metrics, grouping by library_type
+        let mut metrics: HashMap<String, Metrics> = HashMap::new();
+        for lib in library_info {
+            metrics.insert(lib.library_type.clone(), Default::default());
+        }
+
         for chunk_out in chunk_outs.iter() {
-            let chunk: Metrics = utils::read_json_file(chunk_out["metrics"].as_str().unwrap())
+            let chunk: Vec<Metrics> = utils::read_json_file(chunk_out["metrics"].as_str().unwrap())
                 .expect("Failed to read from metrics JSON file");
-            metrics.total_reads += chunk.total_reads;
-            metrics.umi_corrected_reads += chunk.umi_corrected_reads;
-            metrics.dup_reads += chunk.dup_reads;
-            metrics.umis += chunk.umis;
-            metrics.candidate_dup_reads += chunk.candidate_dup_reads;
-            metrics.low_support_umi_reads += chunk.low_support_umi_reads;
+            for (lib_idx, lib) in chunk.iter().enumerate() {
+                let lt = &library_info[lib_idx].library_type;
+                let mut m = metrics.get_mut(lt).unwrap();
+
+                m.total_reads += lib.total_reads;
+                m.umi_corrected_reads += lib.umi_corrected_reads;
+                m.dup_reads += lib.dup_reads;
+                m.umis += lib.umis;
+                m.candidate_dup_reads += lib.candidate_dup_reads;
+                m.low_support_umi_reads += lib.low_support_umi_reads;
+            }
         }
 
         // Write summary metrics
-        utils::write_json_file(final_outs["summary"].as_str().unwrap(), &json!({
-            "corrected_umi_frac": metrics.umi_corrected_reads as f64 / metrics.total_reads as f64,
-            "low_support_umi_reads_frac": metrics.low_support_umi_reads as f64 / metrics.candidate_dup_reads as f64,
-            "multi_cdna_pcr_dupe_reads_frac": metrics.dup_reads as f64 / metrics.candidate_dup_reads as f64,
-        }))
+        let mut summary = serde_json::Map::new();
+        for (lib_type, lt_metrics) in &metrics {
+            let prefix = utils::get_library_type_metric_prefix(lib_type);
+            summary.insert(format!("{}corrected_umi_frac", prefix), json!(
+                           lt_metrics.umi_corrected_reads as f64 /
+                           lt_metrics.total_reads as f64));
+            summary.insert(format!("{}low_support_umi_reads_frac", prefix), json!(
+                           lt_metrics.low_support_umi_reads as f64 /
+                           lt_metrics.candidate_dup_reads as f64));
+            summary.insert(format!("{}multi_cdna_pcr_dupe_reads_frac", prefix), json!(
+                           lt_metrics.dup_reads as f64 /
+                           lt_metrics.candidate_dup_reads as f64));
+        }
+
+        utils::write_json_file(final_outs["summary"].as_str().unwrap(), &summary)
             .expect("Failed to write to summary JSON file");
 
         final_outs
@@ -418,7 +479,9 @@ mod test {
             expected_metrics.umis += test_flags.contains("C") as u64;
         }
 
-        let metrics: cmd_mark_dups::Metrics = utils::read_json_file(&metrics_filename).expect("Failed to read metrics file");
+        let lib_metrics: Vec<cmd_mark_dups::Metrics> = utils::read_json_file(&metrics_filename)
+            .expect("Failed to read metrics file");
+        let metrics = &lib_metrics[0];
         assert_eq!(metrics.total_reads,           expected_metrics.total_reads);
         assert_eq!(metrics.low_support_umi_reads, expected_metrics.low_support_umi_reads);
         assert_eq!(metrics.umi_corrected_reads,   expected_metrics.umi_corrected_reads);
@@ -460,6 +523,7 @@ mod test {
     }
 
     fn test_mark_dups<P: AsRef<Path>>(sam_text: &[u8], test_subdir: P) {
+        use super::LibraryInfo;
         // Setup test dir
         let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_output").join("mark_dups").join(test_subdir);
         fs::create_dir_all(&test_dir)
@@ -485,11 +549,20 @@ mod test {
         let chunk_intervals =
             chunk_bam_records(&in_bam_filename, &|x| utils::get_read_barcode(&x), 0.5, 256);
 
+        let lib_info: Vec<LibraryInfo> = serde_json::from_value(
+            json!([
+                {
+                    "library_type": "Gene Expression",
+                    "library_id": "0",
+                    "gem_group": 1,
+                }])).unwrap();
+
         let chunk_args = cmd_mark_dups::ChunkArgs {
             input: in_bam_filename.to_str().unwrap().to_owned(),
             chunk_start: chunk_intervals[0].0,
             chunk_end: chunk_intervals[0].1,
             filter_umis: true,
+            library_info: lib_info,
         };
 
         // Setup output
@@ -519,20 +592,20 @@ mod test {
     #[test]
     fn test_mark_dups_se() {
         let sam_text = b"
-r0:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r1:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r1:	256	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1
-r2:Lc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1
-r3:udc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1
-r4:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA
-r5:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2
-r6:	0	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1
-r12:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1
-r7:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1
-r8:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1
-r9:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r10:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r11:	0	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1
+r0:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r1:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r1:	256	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
+r2:Lc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0
+r3:udc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r4:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
+r5:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
+r6:	0	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r12:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r7:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r8:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r9:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r10:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r11:	0	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
 ";
         test_mark_dups(sam_text, &"se");
     }
@@ -541,56 +614,56 @@ r11:	0	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1
     fn test_mark_dups_pe() {
         let sam_text = b"
 # Non-duplicate
-r0:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r0:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
+r0:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r0:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
 # Duplicate
-r1:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r1:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
+r1:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r1:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
 # Secondary alignment for duplicate
-r1:	323	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1
-r1:	387	1	2	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1
+r1:	323	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
+r1:	387	1	2	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
 # Low-support gene for this UMI
-r2:Lc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1
-r2:Lc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1
+r2:Lc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0
+r2:Lc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0
 # UMI that should be corrected
-r3:udc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1
-r3:udc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1
+r3:udc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r3:udc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
 # Pair maps to no genes
-r4:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA
-r4:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA
+r4:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
+r4:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
 # Pair maps to multiple genes
-r5:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2
-r5:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2
+r5:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
+r5:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
 # Pair maps to discordant genes
-r15:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G1
-r15:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G2
+r15:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G1	li:i:0
+r15:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G2	li:i:0
 # Low MAPQ
-r6:	67	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1
-r6:	131	1	1	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1
+r6:	67	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r6:	131	1	1	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
 # No UB
-r12:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1
-r12:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1
+r12:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r12:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
 # Repeated UB
-r7:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1
-r7:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1
-r8:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1
-r8:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1
+r7:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r7:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r8:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r8:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
 # Repeated CB
-r9:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r9:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r10:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r10:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
+r9:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r9:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r10:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r10:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
 # Pair half-maps to gene
-r13:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
-r13:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1
+r13:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r13:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
 # No CB
-r11:	67	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1
-r11:	131	1	1	255	1M	*	0	0	T	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1
+r11:	67	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
+r11:	131	1	1	255	1M	*	0	0	T	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
 # Secondary alignments, primary comes after
-r14:	323	1	1	0	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1
-r14:	387	1	1	0	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1
-r14:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1
-r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1
+r14:	323	1	1	0	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1	li:i:0
+r14:	387	1	1	0	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1	li:i:0
+r14:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
+r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
 ";
         test_mark_dups(sam_text, &"pe");
     }

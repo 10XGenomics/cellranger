@@ -5,10 +5,11 @@
 import json
 import martian
 import tables
-import cellranger.analysis.io as cr_io
-import cellranger.constants as cr_constants
+import cellranger.analysis.io as analysis_io
+import cellranger.h5_constants as h5_constants
+import cellranger.analysis.constants as analysis_constants
 import cellranger.matrix as cr_matrix
-import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
 from cellranger.webshim.constants.gex import ReanalyzeSampleProperties
@@ -29,18 +30,18 @@ stage SUMMARIZE_REANALYSIS(
 def split(args):
     # Estimate memory usage from the matrix stored in the analysis h5
     if args.analysis:
-        with tables.open_file(cr_io.h5_path(args.analysis), 'r') as f:
-            matrix = getattr(f.root, cr_constants.ANALYSIS_H5_MATRIX_GROUP)
-            matrix_mem_gb = cr_matrix.GeneBCMatrix.get_mem_gb_from_group(matrix)
+        with tables.open_file(analysis_io.h5_path(args.analysis), 'r') as f:
+            matrix = getattr(f.root, analysis_constants.ANALYSIS_H5_MATRIX_GROUP)
+            matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_group(matrix)
     else:
-        matrix_mem_gb = cr_constants.MIN_MEM_GB
+        matrix_mem_gb = h5_constants.MIN_MEM_GB
 
     chunks = [{
         '__mem_gb': matrix_mem_gb,
     }]
     return {
         'chunks': chunks,
-        'join': {'__mem_gb': cr_constants.MIN_MEM_GB}
+        'join': {'__mem_gb': h5_constants.MIN_MEM_GB}
     }
 
 def main(args, outs):
@@ -68,5 +69,5 @@ def main(args, outs):
 def join(args, outs, chunk_defs, chunk_outs):
     chunk_out = chunk_outs[0]
 
-    cr_utils.copy(chunk_out.web_summary, outs.web_summary)
-    cr_utils.copy(chunk_out.summary, outs.summary)
+    cr_io.copy(chunk_out.web_summary, outs.web_summary)
+    cr_io.copy(chunk_out.summary, outs.summary)

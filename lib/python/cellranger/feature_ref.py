@@ -3,222 +3,149 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
-from collections import namedtuple
-import csv
-import itertools
-import re
+from collections import namedtuple, OrderedDict
+import h5py
+import cellranger.io as cr_io
 
-FeatureDef = namedtuple('FeatureDef', ['index', 'id', 'name', 'read', 'pattern', 'sequence', 'feature_type', 'tags'])
+FeatureDef = namedtuple('FeatureDef', ['index', 'id', 'name', 'feature_type', 'tags'])
 
-PatternEntry = namedtuple('PatternEntry', ['read', 'regex_string', 'regex', 'barcode_dict'])
-
-''' The result of a feature matching operation.
-    0  whitelist hits - (raw, [])   where 'raw' is the longest potential sequence.
-    1  whitelist hit  - (raw, [id])
-    >1 whitelist hits - (raw, [ids])
-'''
-
-FeatureMatchResult = namedtuple('FeatureMatchResult', ['barcode', 'qual', 'ids', 'indices'])
-
-NOT_COLUMNS = ['index']
-OPTIONAL_COLUMNS = ['tags']
-
-ALLOWED_READS = ['R1', 'R2']
+# Required HDF5 datasets
+REQUIRED_DATASETS = ['id', 'name', 'feature_type']
 
 class FeatureDefException(Exception):
     pass
 
 class FeatureReference(object):
-    ''' Store a list of features and extract them from a read sequence '''
+    '''Store a list of features (genes, antibodies, etc).'''
 
-    def __init__(self, filename, use_feature_types=None):
-        ''' Load a feature definition file '''
-        feature_defs = parse_feature_def_file(filename)
+    def __init__(self, feature_defs, all_tag_keys):
+        '''Create a FeatureReference.
 
-        # Store distinct patterns
-        patterns = {}
-
-        # Record total number of features (pre-filtering)
-        self.num_total_features = len(feature_defs)
-
-        # Filter features by type, if specified
-        if use_feature_types is not None:
-            feature_defs = filter(lambda x: x.feature_type in use_feature_types, feature_defs)
-
-        for fd in feature_defs:
-            regex_str, regex = compile_pattern(fd.pattern, len(fd.sequence))
-
-            # Treat equal regex pattern strings as generating equivalent automata
-            pattern_key = (fd.read, regex_str)
-            if pattern_key not in patterns:
-                patterns[pattern_key] = PatternEntry(fd.read, regex_str, regex, {})
-            entry = patterns[pattern_key]
-
-            if fd.sequence in entry.barcode_dict:
-                raise FeatureDefException('Found two feature definitions with the same read ("%s"), pattern ("%s") and barcode sequence ("%s"). This combination of values must be unique for each row in the feature definition file.' % (fd.read, fd.pattern, fd.sequence))
-
-            entry.barcode_dict[fd.sequence] = fd
-
-        self.feature_defs = feature_defs
-        self.patterns = patterns
-
-    def get_read_types(self):
-        ''' Determine which read types need to be inspected '''
-        return sorted(list(set([fd.read for fd in self.feature_defs])))
-
-    def extract_paired_end(self, r1_seq, r1_qual, r2_seq, r2_qual):
-        ''' Return a FeatureMatchResult '''
-        r1_any_whitelist, r1_matches = self._extract_from_seq(r1_seq, r1_qual, 'R1')
-        r2_any_whitelist, r2_matches = self._extract_from_seq(r2_seq, r2_qual, 'R2')
-        return self._filter_feature_matches(r1_matches + r2_matches,
-                                            r1_any_whitelist or r2_any_whitelist)
-
-    def extract_single_end(self, seq, qual, read_type):
-        ''' Return a FeatureMatchResult '''
-        any_whitelist, matches = self._extract_from_seq(seq, qual, read_type)
-        return self._filter_feature_matches(matches, any_whitelist)
-
-    def _extract_from_seq(self, seq, qual, read_type):
-        ''' Extract the feature barcode from a sequence.
-            Returns a list of (barcode, feature_def) tuples where barcode is the observed sequence
-              and feature_def is the matching feature definition or None if there isn't one.
+        Args:
+            feature_defs (list of FeatureDef): All feature definitions.
+            all_tag_keys (list of str): All optional tag keys.
         '''
-        matches = []
-        any_whitelist_hits = False
+        self.feature_defs = feature_defs
+        self.all_tag_keys = all_tag_keys
 
-        for ((entry_read, _), entry) in self.patterns.iteritems():
-            if entry_read != read_type:
-                continue
+        # Assert uniqueness of feature IDs
+        id_map = {}
+        for fdef in self.feature_defs:
+            if fdef.id in id_map:
+                this_fd_str = 'ID: %s; name: %s; type: %s' % (fdef.id, fdef.name, fdef.feature_type)
+                seen_fd_str = 'ID: %s; name: %s; type: %s' % (id_map[fdef.id].id, id_map[fdef.id].name, id_map[fdef.id].feature_type)
+                raise FeatureDefException('Found two feature definitions with the same ID: (%s) and (%s). All feature IDs must be distinct.' %
+                                          (this_fd_str, seen_fd_str))
+            id_map[fdef.id] = fdef
 
-            # Extract potential barcode sequences
-            regex_match = re.search(entry.regex, seq)
-            if regex_match is not None:
-                span = regex_match.span(1)
-                bc = seq[span[0]:span[1]]
-                bc_qual = qual[span[0]:span[1]]
+        self.id_map = id_map
 
-                # Look for exact whitelist match
-                hit = entry.barcode_dict.get(bc)
-                if hit is not None:
-                    any_whitelist_hits = True
-                matches.append((bc, bc_qual, hit))
+    @staticmethod
+    def addtags(feature_ref, new_tags, new_labels=None):
+        '''Add new tags and corresponding labels to existing feature_ref
+           If new labels are None, empty strings are supplied by default
+        
+        Args:
+            feature_ref: a FeatureReference instance
+            new_tags: a list of new tags
+            new_labels: per feature list of label values corresponding to the new tags
+        '''
+        assert len(new_tags) > 0
+        for tag in new_tags:
+            assert tag not in feature_ref.all_tag_keys
 
-        return any_whitelist_hits, matches
-
-    def _filter_feature_matches(self, matches, any_whitelist_hits):
-        if any_whitelist_hits:
-            # >0 whitelist hits. Remove entries w/ no whitelist hit.
-            matches = filter(lambda bc_hit: bc_hit[2], matches)
-
-            # Take the longest observed sequence as the canonical sequence
-            # NOTE: If there are multiple whitelist hits of equal length,
-            #   we choose an arbitrary sequence as the canonical sequence.
-            # However, information is not lost because the feature IDs tag
-            #   contains a list of each hit's unique feature ID.
-            best_hit = max(matches, key=lambda bc_hit: len(bc_hit[0]))
-            barcode, qual = best_hit[0:2]
-
-            # Record ids and indices of all whitelist hits (typically 1)
-            ids = map(lambda bc_hit: bc_hit[2].id, matches)
-            indices = map(lambda bc_hit: bc_hit[2].index, matches)
-
-            return FeatureMatchResult(barcode, qual, ids, indices)
-
-        elif len(matches) > 0:
-            # No whitelist hits but found some sequence.
-            # Take the longest observed sequence.
-            # NOTE: This will do the wrong thing if:
-            #     1) There are multiple possible barcode lengths for a given pattern,
-            #     2) This sequence doesn't match the whitelist at any barcode length,
-            #     3) And any but the longest observed barcode is 1-away from the whitelist.
-            #   The correct thing to do is to prioritize sequences that are near-matches to the whitelist
-            #   instead of just taking the longest sequence.
-            best_hit = max(matches, key=lambda bc_hit: len(bc_hit[0]))
-            barcode, qual = best_hit[0:2]
-
-            return FeatureMatchResult(barcode, qual, [], [])
-
+        use_labels = []
+        if new_labels is not None:
+            assert len(feature_ref.feature_defs) == len(new_labels)
+            for labels in new_labels:
+                assert len(labels) == len(new_tags)
+            use_labels = new_labels
         else:
-            return FeatureMatchResult(None, None, [], [])
+            # initialize to empty
+            for i in range(len(feature_ref.feature_defs)):
+                use_labels += [[''] * len(new_tags)]
+        assert len(feature_ref.feature_defs) == len(use_labels)
 
+        augmented_features = []
+        for fd, newvals in zip(feature_ref.feature_defs, use_labels):
+            A = {a:b for a,b in zip(new_tags, newvals)}
+            A.update(fd.tags)
+            augmented_features.append(FeatureDef(index=fd.index,
+                                      id=fd.id,
+                                      name=fd.name,
+                                      feature_type=fd.feature_type,
+                                      tags=A))
 
-def validate_sequence(seq):
-    if len(seq) == 0:
-        raise FeatureDefException('Feature sequence must be non-empty.')
-    if not re.match('^[ACGTN]+', seq):
-        raise FeatureDefException('Invalid sequence: "%s". The only allowed characters are A, C, G, T, and N.' % seq)
+        return FeatureReference(feature_defs=augmented_features,
+                                all_tag_keys=feature_ref.all_tag_keys + new_tags)
 
-def compile_pattern(pattern_str, length):
-    ''' Compile a feature definition pattern into a regex '''
-    if '(BC)' not in pattern_str:
-        raise FeatureDefException('Invalid pattern: "%s". The pattern must contain the string "(BC)".' % pattern_str)
+    @staticmethod
+    def join(feature_ref1, feature_ref2):
+        '''Concatenate two feature references, requires unique ids and identical tags'''
+        assert feature_ref1.all_tag_keys == feature_ref2.all_tag_keys
+        feature_defs1 = feature_ref1.feature_defs
+        feature_defs2 = feature_ref2.feature_defs
+        return FeatureReference(feature_defs=feature_defs1 + feature_defs2, all_tag_keys=feature_ref1.all_tag_keys)
 
-    check_pattern = re.sub('\(BC\)', '', pattern_str)
-    if not re.match('\^{0,1}[ACGTN]*\${0,1}', check_pattern):
-        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "^", optionally end with "$", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.')
+    @classmethod
+    def empty(cls):
+        return cls(feature_defs=[], all_tag_keys=[])
 
-    # Allow Ns to match anything
-    regex_str = re.sub('N', '.', pattern_str)
+    def get_num_features(self):
+        return len(self.feature_defs)
 
-    # Capture the feature barcode
-    regex_str = re.sub('\(BC\)', '(.{%d,%d})' % (length, length), regex_str)
+    def to_hdf5(self, group):
+        '''Write to an HDF5 group.'''
 
-    try:
-        regex = re.compile(regex_str)
-    except re.error:
-        raise FeatureDefException('Failed to compile the feature definition string "%s" into a regular expression: %s.' % (regex_str, str(re.error)))
+        # Write required datasets
+        for col in REQUIRED_DATASETS:
+            data = [getattr(f, col) for f in self.feature_defs]
+            cr_io.create_hdf5_string_dataset(group, col, data)
 
-    return regex_str, regex
+        # Write tag datasets
+        for col in self.all_tag_keys:
+            # Serialize missing data as empty unicode string
+            data = [f.tags.get(col, '') for f in self.feature_defs]
+            cr_io.create_hdf5_string_dataset(group, col, data)
 
-def parse_feature_def_file(filename):
-    ''' Load a feature definition file '''
+        # Record names of all tag columns
+        cr_io.create_hdf5_string_dataset(group, '_all_tag_keys', self.all_tag_keys)
 
-    feature_defs = []
-    seen_ids = set()
+    @classmethod
+    def from_hdf5(cls, group):
+        '''Load from an HDF5 group.
 
-    with open(filename, 'rU') as f:
-        # Skip comments
-        rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
+        Args:
+            group (h5py.Dataset): Group to load from.
+        Returns:
+            feature_ref (FeatureReference): New object.
+        '''
+        data = OrderedDict()
 
-        reader = csv.DictReader(rows)
+        # Load HDF5 datasets
+        # FIXME: ordering may not be guaranteed in python3
+        for name in group:
+            node = group[name]
+            if node.shape is None:
+                # Empty datset
+                data[name] = []
+            elif isinstance(node, h5py.Dataset):
+                if node.dtype.char == 'S':
+                    data[name] = cr_io.read_hdf5_string_dataset(node)
+                else:
+                    data[name] = node[:]
 
-        required_cols = [col for col in FeatureDef._fields if col not in (OPTIONAL_COLUMNS + NOT_COLUMNS)]
+        all_tag_keys = data['_all_tag_keys']
 
-        feature_index = 0
+        # Build FeatureDefs
+        feature_defs = []
+        num_features = len(data[REQUIRED_DATASETS[0]])
 
-        for row in reader:
-            # Check field presence
-            if not(set(required_cols).issubset(set(row.keys()))):
-                raise FeatureDefException('The feature definition file header must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
+        for i in xrange(num_features):
+            fdef_dict = {col: data[col][i] for col in REQUIRED_DATASETS}
+            tags = {k: data[k][i] for k in all_tag_keys if len(data[k][i]) > 0}
+            fdef_dict['index'] = i
+            fdef_dict['tags'] = tags
+            feature_defs.append(FeatureDef(**fdef_dict))
 
-            # Strip flanking whitespace from values
-            for key in row.iterkeys():
-                row[key] = row[key].strip()
-
-            # Check ID uniqueness
-            if row['id'] in seen_ids:
-                raise FeatureDefException('Found duplicated ID in feature definition file: "%s"' % row['id'])
-            seen_ids.add(row['id'])
-
-            # Additional columns become key-value pairs
-            tags = {}
-            for key in set(row.keys()) - set(required_cols):
-                tags[key] = row[key]
-                del row[key]
-            row['tags'] = tags
-
-            # Validate fields
-            validate_sequence(row['sequence'])
-
-            compile_pattern(row['pattern'], len(row['sequence']))
-
-            if row['read'] not in ALLOWED_READS:
-                raise FeatureDefException('The feature definition file contains a read type value "%s" which is not one of the allowed read types %s.' % str(ALLOWED_READS))
-
-            row['index'] = feature_index
-
-            feature_defs.append(FeatureDef(**row))
-
-            feature_index += 1
-
-    return feature_defs
+        return cls(feature_defs, all_tag_keys=all_tag_keys)

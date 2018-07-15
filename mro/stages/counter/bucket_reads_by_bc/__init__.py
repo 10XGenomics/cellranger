@@ -11,7 +11,7 @@ import math
 import os
 import tenkit.bam as tk_bam
 import tenkit.stats as tk_stats
-import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.utils as cr_utils
 
 __MRO__ = """
@@ -37,11 +37,11 @@ BAM_ALIGNMENTS_PER_MEM_GB = 750000
 def get_mem_gb_request_from_bam(bam_path):
     bytes_on_disk = os.path.getsize(bam_path)
     bytes_in_ram = round(PYSAM_TO_BAM_COMPRESSION_RATIO * bytes_on_disk)
-    return max(bytes_in_ram / 1e9, cr_constants.MIN_MEM_GB)
+    return max(bytes_in_ram / 1e9, h5_constants.MIN_MEM_GB)
 
 def get_mem_gb_request_from_num_alignments(num_alignments):
     mem_gb = tk_stats.robust_divide(num_alignments, BAM_ALIGNMENTS_PER_MEM_GB)
-    return max(int(math.ceil(mem_gb)), cr_constants.MIN_MEM_GB)
+    return max(int(math.ceil(mem_gb)), h5_constants.MIN_MEM_GB)
 
 def get_read_group_union(in_filenames):
     """ Get union of read group (@RG) headers from a list of BAM filenames """

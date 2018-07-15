@@ -27,7 +27,6 @@ pipeline SC_RNA_AGGREGATOR(
     out path   raw_gene_bc_matrices_mex,
     out h5     filtered_gene_bc_matrices_h5,
     out path   filtered_gene_bc_matrices_mex,
-    out h5     filtered_molecules,
     out h5     raw_molecules,
     out csv    cell_barcodes,
     out path   analysis,
@@ -52,32 +51,21 @@ pipeline SC_RNA_AGGREGATOR(
     )
 
     call MERGE_MOLECULES(
-        sample_defs     = self.sample_defs,
-        gem_group_index = SETUP_SAMPLES.gem_group_index,
+        sample_defs = self.sample_defs,
+        libraries   = SETUP_SAMPLES.libraries,
     ) using (
         volatile = true,
     )
 
-    call DETECT_CELLS(
-        molecule_chunks = MERGE_MOLECULES.chunked_molecules,
-    )
-
     call NORMALIZE_DEPTH(
-        normalization_mode      = self.normalization_mode,
-        detect_cells_gg_metrics = DETECT_CELLS.gem_group_metrics,
-        molecules               = MERGE_MOLECULES.merged_molecules,
-    )
-
-    call COUNT_GENES_FROM_MOLECULES(
-        gem_group_index   = SETUP_SAMPLES.gem_group_index,
-        raw_molecules     = NORMALIZE_DEPTH.out_molecules,
-        filtered_barcodes = DETECT_CELLS.cell_barcodes,
+        normalization_mode = self.normalization_mode,
+        molecules          = MERGE_MOLECULES.merged_molecules,
     )
 
     call SC_RNA_ANALYZER(
         no_secondary_analysis = self.no_secondary_analysis,
-        raw_matrices_h5       = COUNT_GENES_FROM_MOLECULES.raw_matrices_h5,
-        filtered_matrices_h5  = COUNT_GENES_FROM_MOLECULES.filtered_matrices_h5,
+        raw_matrices_h5       = NORMALIZE_DEPTH.raw_matrices_h5,
+        filtered_matrices_h5  = NORMALIZE_DEPTH.filtered_matrices_h5,
         num_analysis_bcs      = self.num_analysis_bcs,
         num_pca_bcs           = self.num_pca_bcs,
         num_pca_genes         = self.num_pca_genes,
@@ -104,22 +92,21 @@ pipeline SC_RNA_AGGREGATOR(
         aggregation_id           = self.aggregation_id,
         aggregation_desc         = self.aggregation_desc,
         gem_group_index          = SETUP_SAMPLES.gem_group_index,
-        filtered_matrices_h5     = COUNT_GENES_FROM_MOLECULES.filtered_matrices_h5,
-        barcode_summary_h5       = COUNT_GENES_FROM_MOLECULES.barcode_summary_h5,
+        filtered_matrices_h5     = NORMALIZE_DEPTH.filtered_matrices_h5,
+        barcode_summary_h5       = NORMALIZE_DEPTH.barcode_summary_h5,
         analysis                 = SC_RNA_ANALYZER.analysis,
         normalize_depth_summary  = NORMALIZE_DEPTH.summary,
-        count_genes_summary      = COUNT_GENES_FROM_MOLECULES.summary,
+        count_genes_summary      = NORMALIZE_DEPTH.summary,
         analyze_matrices_summary = SC_RNA_ANALYZER.summary,
     )
 
     return (
-        filtered_molecules            = COUNT_GENES_FROM_MOLECULES.filtered_molecules,
-        filtered_gene_bc_matrices_h5  = COUNT_GENES_FROM_MOLECULES.filtered_matrices_h5,
-        filtered_gene_bc_matrices_mex = COUNT_GENES_FROM_MOLECULES.filtered_matrices_mex,
-        raw_molecules                 = NORMALIZE_DEPTH.out_molecules,
-        raw_gene_bc_matrices_h5       = COUNT_GENES_FROM_MOLECULES.raw_matrices_h5,
-        raw_gene_bc_matrices_mex      = COUNT_GENES_FROM_MOLECULES.raw_matrices_mex,
-        cell_barcodes                 = DETECT_CELLS.cell_barcodes,
+        filtered_gene_bc_matrices_h5  = NORMALIZE_DEPTH.filtered_matrices_h5,
+        filtered_gene_bc_matrices_mex = NORMALIZE_DEPTH.filtered_matrices_mex,
+        raw_molecules                 = null,
+        raw_gene_bc_matrices_h5       = NORMALIZE_DEPTH.raw_matrices_h5,
+        raw_gene_bc_matrices_mex      = NORMALIZE_DEPTH.raw_matrices_mex,
+        cell_barcodes                 = null,
         analysis                      = SC_RNA_ANALYZER.analysis,
         analysis_csv                  = SC_RNA_ANALYZER.analysis_csv,
         analysis_summary              = SC_RNA_ANALYZER.summary,

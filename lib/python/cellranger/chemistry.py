@@ -13,6 +13,7 @@ import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
 import cellranger.utils as cr_utils
+import cellranger.io as cr_io
 
 class NoInputFastqsException(Exception):
     pass
@@ -487,7 +488,7 @@ def _compute_r1_length(fastqs, reads_interleaved):
     get_r1 = get_r1_interleaved if reads_interleaved else get_r1_noninterleaved
 
     for fastq in fastqs:
-        with cr_utils.open_maybe_gzip(fastq, 'r') as fq_file:
+        with cr_io.open_maybe_gzip(fastq, 'r') as fq_file:
             reads = tk_fasta.read_generator_fastq(fq_file, reads_interleaved)
 
             for r1 in get_r1(reads):

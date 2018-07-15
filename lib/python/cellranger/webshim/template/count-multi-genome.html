@@ -32,6 +32,14 @@
   </div>
   <div class="chart_card_gutter chart_card_gutter_single">&nbsp;</div>
   <div class="chart_card_column">
+    {% include 'charts/tsne-counts.html' %}
+  </div>
+  <div class="chart_card_gutter">&nbsp;</div>
+  <div class="chart_card_column">
+    {% include 'charts/tsne-clustering.html' %}
+  </div>
+  {% include 'charts/differential-expression.html' %}
+  <div class="chart_card_column">
     {% include 'charts/sequencing-saturation.html' %}
   </div>
   <div class="chart_card_gutter">&nbsp;</div>

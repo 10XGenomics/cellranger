@@ -11,8 +11,8 @@ import tenkit.fasta as tk_fasta
 import tenkit.cache as tk_cache
 import tenkit.safe_json as tk_safe_json
 import cellranger.chemistry as cr_chem
-import cellranger.constants as cr_constants
-import cellranger.utils as cr_utils
+import cellranger.h5_constants as h5_constants
+import cellranger.io as cr_io
 import cellranger.vdj.utils as vdj_utils
 
 __MRO__ = """
@@ -39,17 +39,17 @@ def main(args, outs):
 
     paired_end = cr_chem.is_paired_end(args.chemistry_def)
 
-    outs.read1s = martian.make_path('reads_1.fastq' + cr_constants.LZ4_SUFFIX)
-    r1_fq_out = cr_utils.open_maybe_gzip(outs.read1s, 'w')
+    outs.read1s = martian.make_path('reads_1.fastq' + h5_constants.LZ4_SUFFIX)
+    r1_fq_out = cr_io.open_maybe_gzip(outs.read1s, 'w')
 
     if paired_end:
-        outs.read2s = martian.make_path('reads_2.fastq' + cr_constants.LZ4_SUFFIX)
-        r2_fq_out = cr_utils.open_maybe_gzip(outs.read2s, 'w')
+        outs.read2s = martian.make_path('reads_2.fastq' + h5_constants.LZ4_SUFFIX)
+        r2_fq_out = cr_io.open_maybe_gzip(outs.read2s, 'w')
     else:
         outs.read2s = None
         r2_fq_out = None
 
-    barcodes_out = cr_utils.open_maybe_gzip(outs.chunk_barcodes, 'w')
+    barcodes_out = cr_io.open_maybe_gzip(outs.chunk_barcodes, 'w')
 
     merge_by_barcode(args.fastqs, r1_fq_out, r2_fq_out,
                      barcodes_out, paired_end)
