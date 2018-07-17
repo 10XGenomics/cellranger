@@ -14,7 +14,6 @@ import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
 import cellranger.preflight as cr_preflight
-import cellranger.io as cr_io
 import cellranger.vdj.preflight as vdj_preflight
 import cellranger.vdj.reference as vdj_ref
 import enum
@@ -285,10 +284,6 @@ def infer_sc3p_or_sc5p(chunks, kmer_idx_path, vdj_idx_path):
     return chemistry_name, report, metrics
 
 
-# The only reason we split is to allow VDR to kill intermediate files
-def split(args):
-    return {'chunks': [{'__mem_gb': 8}]}
-
 def main(args, outs):
     # Check chemistry restrictions
     if args.allowed_chems is not None and \
@@ -418,9 +413,3 @@ def main(args, outs):
     metrics['chemistry'] = chemistry_name
     with open(outs.summary, 'w') as f:
         json.dump(metrics, f)
-
-def join(args, outs, chunk_defs, chunk_outs):
-    cr_io.copy(chunk_outs[0].summary, outs.summary)
-    if chunk_outs[0].report is not None:
-        cr_io.copy(chunk_outs[0].report, outs.report)
-    outs.chemistry_type = chunk_outs[0].chemistry_type

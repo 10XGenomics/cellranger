@@ -406,7 +406,8 @@ def get_barcode_whitelist(chemistry):
     return chemistry['barcode_whitelist']
 
 def _get_barcode_whitelist_set(chemistry):
-    return set(cr_utils.load_barcode_whitelist(get_barcode_whitelist(chemistry)))
+    return cr_utils.load_barcode_whitelist(get_barcode_whitelist(chemistry),
+                                           as_set=True)
 
 def get_read_type_map(chemistry, fastq_mode):
     """ Get the mapping of read type to fastq filename for a given chemistry. """

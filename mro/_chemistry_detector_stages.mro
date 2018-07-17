@@ -13,7 +13,7 @@ stage DETECT_CHEMISTRY(
     out string   chemistry_type,
     out txt      report,
     src py       "stages/chemistry_detector/detect_chemistry",
-) split (
 ) using (
-    mem_gb = 6,
+    mem_gb   = 6,
+    volatile = strict,
 )

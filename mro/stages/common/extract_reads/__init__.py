@@ -190,10 +190,9 @@ def main(args, outs):
                                   num_libraries=num_libraries)
 
     # Determine if barcode sequences need to be reverse complemented.
-    bc_check_rc = FastqReader(args.read_chunks, bc_read_def, args.reads_interleaved, None, None)
-    barcode_whitelist = cr_utils.load_barcode_whitelist(args.barcode_whitelist)
-    barcode_rc = infer_barcode_reverse_complement(barcode_whitelist, bc_check_rc.in_iter)
-    bc_check_rc.close()
+    with FastqReader(args.read_chunks, bc_read_def, args.reads_interleaved, None, None) as bc_check_rc:
+        barcode_whitelist = cr_utils.load_barcode_whitelist(args.barcode_whitelist, True)
+        barcode_rc = infer_barcode_reverse_complement(barcode_whitelist, bc_check_rc.in_iter)
 
     # Log the untrimmed read lengths to stdout
     r1_read_def = cr_constants.ReadDef(rna_read_def.read_type, 0, None)

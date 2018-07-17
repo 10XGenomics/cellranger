@@ -13,7 +13,6 @@ import tenkit.constants as tk_constants
 import tenkit.fasta as tk_fasta
 import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
-import tenkit.stats as tk_stats
 import cellranger.constants as cr_constants
 import cellranger.h5_constants as h5_constants
 import cellranger.utils as cr_utils
@@ -71,8 +70,10 @@ def infer_barcode_reverse_complement(barcode_whitelist, read_iter):
         if tk_seq.get_rev_comp(seq) in barcode_whitelist:
             rc_valid_count += 1
 
-    frac_rc = tk_stats.robust_divide(rc_valid_count, rc_valid_count + reg_valid_count)
-    return frac_rc >= cr_constants.REVCOMP_BARCODE_THRESHOLD
+    if reg_valid_count:
+        return rc_valid_count >= ((rc_valid_count + reg_valid_count) *
+                                  cr_constants.REVCOMP_BARCODE_THRESHOLD)
+    return True
 
 class BarcodeCounter:
     def __init__(self, barcode_whitelist, out_counts, gem_groups=None):
@@ -263,9 +264,16 @@ class FastqReader:
                                                         r1_length=r1_length,
                                                         r2_length=r2_length)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
     def close(self):
         if self.in_fastq:
             self.in_fastq.close()
+            self.in_fastq = None
 
 class FastqFeatureReader:
     ''' Use a FeatureReference to extract specified feature barcodes from input fastqs

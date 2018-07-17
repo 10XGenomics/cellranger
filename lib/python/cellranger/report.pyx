@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
+cimport cython
 import collections
 import cPickle
 import h5py as h5
@@ -440,43 +441,91 @@ METRICS = {
 
 }
 
-class RawFastqMetricsCache:
+cdef class _RawFastqSeqMetrics:
+    cdef int total_bases
+    cdef int called_bases
+    cdef int q30_bases
+    cdef int n_bases
+
     def __init__(self):
-        self.total_reads = 0.0 # total number of paired-end inserts
-        self.total_read_pairs = 0.0 # total number of inserts with non-empty template sequence on both ends (after stripping BC + UMI)
-        self.primer_or_homopolymer_reads = 0.0
-        self.homopolymer_reads = collections.defaultdict(float) # nucleotide -> count
-        self.primer_reads = collections.defaultdict(float) # primer_name -> count
-        self.total_read_pairs_per_library = collections.defaultdict(float) # library_index -> count
-        self.total_bases = collections.defaultdict(float) # seq_type -> count
-        self.called_bases = collections.defaultdict(float) # seq_type -> count
-        self.q30_bases = collections.defaultdict(float) # seq_type -> count
-        self.n_bases = collections.defaultdict(float) # seq_type -> count
-        self.seq_types = set()
+        self.total_bases = 0
+        self.called_bases = 0
+        self.q30_bases = 0
+        self.n_bases = 0
+
+
+cdef class _RawFastqMetricsCache:
+    cdef int total_reads
+    cdef int total_read_pairs
+    cdef int primer_or_homopolymer_reads
+    cdef dict homopolymer_reads            # nucleotide -> count
+    cdef dict primer_reads                 # primer_name -> count
+    cdef dict total_read_pairs_per_library # library_index -> count
+    cdef dict _seq_types                   # seq_type -> counts
+
+
+    def __init__(self):
+        self.total_reads = 0 # total number of paired-end inserts
+        self.total_read_pairs = 0 # total number of inserts with non-empty template sequence on both ends (after stripping BC + UMI)
+        self.primer_or_homopolymer_reads = 0
+        self.homopolymer_reads = {}
+        self.primer_reads = {}
+        self.total_read_pairs_per_library = {}
+        self._seq_types = {}
 
     def finalize(self, reporter):
         get_metric = reporter._get_metric_attr
-        get_metric('total_reads').set_value(self.total_reads)
-        get_metric('total_read_pairs').set_value(self.total_read_pairs)
+        total_reads = float(self.total_reads)
+        total_read_pairs = float(self.total_read_pairs)
+        get_metric('total_reads').set_value(total_reads)
+        get_metric('total_read_pairs').set_value(total_read_pairs)
 
         for library_idx, count in self.total_read_pairs_per_library.iteritems():
             get_metric('total_read_pairs_per_library', library_idx).set_value(count)
 
-        for seq_type in self.seq_types:
-            total_bases = self.total_bases[seq_type]
-            called_bases = self.called_bases[seq_type]
-            q30_bases = self.q30_bases[seq_type]
-            n_bases = self.n_bases[seq_type]
+        cdef _RawFastqSeqMetrics metrics
+        for seq_type, metrics in self._seq_types.iteritems():
+            total_bases = float(metrics.total_bases)
+            called_bases = float(metrics.called_bases)
+            q30_bases = float(metrics.q30_bases)
+            n_bases = float(metrics.n_bases)
             get_metric('%s_bases_with_q30_frac' % seq_type).set_value(q30_bases, called_bases)
             get_metric('%s_N_bases_frac' % seq_type).set_value(n_bases, total_bases)
 
         for nuc, count in self.homopolymer_reads.iteritems():
-            get_metric('perfect_homopolymer_frac', nuc).set_value(count, self.total_reads)
+            get_metric('perfect_homopolymer_frac', nuc).set_value(count, total_reads)
 
         for primer_name, count in self.primer_reads.iteritems():
-            get_metric('perfect_primer_frac', primer_name).set_value(count, self.total_reads)
+            get_metric('perfect_primer_frac', primer_name).set_value(count, total_reads)
 
-        get_metric('read_with_perfect_primer_or_homopolymer_frac').set_value(self.primer_or_homopolymer_reads, self.total_reads)
+        primer_or_homopolymer_reads = float(self.primer_or_homopolymer_reads)
+        get_metric('read_with_perfect_primer_or_homopolymer_frac').set_value(primer_or_homopolymer_reads, total_reads)
+
+    cdef set_seq_qual_metrics(cache,
+                              bytes seq,
+                              const unsigned char[:] qvs,
+                              bytes seq_type):
+        cdef _RawFastqSeqMetrics metrics
+        if seq_type in cache._seq_types:
+            metrics = cache._seq_types[seq_type]
+        else:
+            metrics = _RawFastqSeqMetrics()
+            cache._seq_types[seq_type] = metrics
+        cdef unsigned char bases_q = 2+tk_fasta.ILLUMINA_QUAL_OFFSET 
+        cdef unsigned char q30_q
+        with nogil:
+            q30_q = bases_q+28
+            for i in range(qvs.shape[0]):
+                with cython.boundscheck(False):
+                    with cython.wraparound(False):
+                        if qvs[i] > bases_q:
+                            metrics.called_bases += 1
+                            if qvs[i] > q30_q:
+                                metrics.q30_bases += 1
+
+        metrics.total_bases += len(seq)
+        metrics.n_bases += seq.count('N')
+
 
 class Reporter:
     def __init__(self, umi_length=None, primers=None,
@@ -623,26 +672,9 @@ class Reporter:
     def get_all_prefixes(self):
         return self.prefixes
 
-    def _set_seq_qual_metrics(self, seq, qual, seq_type, cache):
-        cache.seq_types.add(seq_type)
-        qvs = tk_fasta.get_qvs(qual)
-
-        num_bases_q30 = np.count_nonzero(qvs >= 30)
-        # Don't count no-calls towards Q30 denominator.
-        # Assume no-calls get Q <= 2
-        num_bases_called = np.count_nonzero(qvs > 2)
-
-        num_bases = len(seq)
-        num_bases_n = seq.count('N')
-
-        cache.total_bases[seq_type] += num_bases
-        cache.called_bases[seq_type] += num_bases_called
-        cache.q30_bases[seq_type] += num_bases_q30
-        cache.n_bases[seq_type] += num_bases_n
-
     def raw_fastq_cb(self, read1, read2, bc_read, si_read, umi_read, library_idx,
                      skip_metrics=False):
-        cache = self.raw_fastq_cache
+        cdef _RawFastqMetricsCache cache = self.raw_fastq_cache
         get_metric = self._get_metric_attr
 
         name, seq, qual = read1
@@ -655,24 +687,27 @@ class Reporter:
         cache.total_reads += 1
         cache.total_read_pairs += 1
 
-        cache.total_read_pairs_per_library[library_idx] += 1
-        self._set_seq_qual_metrics(seq, qual, 'read', cache)
+        if library_idx in cache.total_read_pairs_per_library:
+            cache.total_read_pairs_per_library[library_idx] += 1
+        else:
+            cache.total_read_pairs_per_library[library_idx] = 1
+        cache.set_seq_qual_metrics(seq, qual, b'read')
 
         if skip_metrics:
             return
         # Metrics below this line are for human consumption only
 
         if seq2:
-            self._set_seq_qual_metrics(seq2, qual2, 'read2', cache)
+            cache.set_seq_qual_metrics(seq2, qual2, b'read2')
 
         if bc_seq:
-            self._set_seq_qual_metrics(bc_seq, bc_qual, 'bc', cache)
+            cache.set_seq_qual_metrics(bc_seq, bc_qual, b'bc')
 
         if si_seq:
-            self._set_seq_qual_metrics(si_seq, si_qual, 'sample_index', cache)
+            cache.set_seq_qual_metrics(si_seq, si_qual, b'sample_index')
 
         if umi_seq:
-            self._set_seq_qual_metrics(umi_seq, umi_qual, 'umi', cache)
+            cache.set_seq_qual_metrics(umi_seq, umi_qual, b'umi')
 
         seq_prefix = seq[:cr_constants.READ_PREFIX_LENGTH]
         get_metric('top_read_prefixes').add(seq_prefix)
@@ -689,7 +724,10 @@ class Reporter:
                 read_with_perfect_primer_or_homopolymer or perfect_homopolymer)
 
             if perfect_homopolymer:
-                cache.homopolymer_reads[nuc] += 1
+                if nuc in cache.homopolymer_reads:
+                    cache.homopolymer_reads[nuc] += 1
+                else:
+                    cache.homopolymer_reads[nuc] = 1
 
         for primer_name, primer in self.primers.iteritems():
             primer_seq = primer['seq']
@@ -703,7 +741,10 @@ class Reporter:
                 read_with_perfect_primer_or_homopolymer or perfect_primer)
 
             if present:
-                cache.primer_reads[primer_name] += 1
+                if primer_name in cache.primer_reads:
+                    cache.primer_reads[primer_name] += 1
+                else:
+                    cache.primer_reads[primer_name] = 1
 
         if read_with_perfect_primer_or_homopolymer:
             cache.primer_or_homopolymer_reads += 1
@@ -761,7 +802,7 @@ class Reporter:
         return seq if valid else None
 
     def extract_reads_init(self):
-        self.raw_fastq_cache = RawFastqMetricsCache()
+        self.raw_fastq_cache = _RawFastqMetricsCache()
 
     def extract_reads_finalize(self):
         self.raw_fastq_cache.finalize(self)

@@ -17,11 +17,52 @@ RUST_BINS=vdj_asm chunk_reads annotate_reads detect_chemistry cr_stage cr_stage_
 #
 # Targets for development builds.
 #
-all: $(RUST_BINS) louvain  
+all: $(RUST_BINS) louvain   cython
 	make -C tenkit all
 
-clean: rust-clean  louvain-clean
+clean: rust-clean  louvain-clean cython-clean
 	make -C tenkit clean
+
+#
+# Targets for cython builds
+#
+
+# Find python libs, includes, and default flags.
+PYTHON_ROOT:=$(shell python-config --exec-prefix)
+PYTHON_LIB_DIR:=$(dir $(lastword $(wildcard $(PYTHON_ROOT)/lib*/libpython*.so*)))
+PYTHON_SITE_PKG:=$(lastword $(wildcard $(PYTHON_LIB_DIR)/python*/site-packages))
+PYTHON_CFLAGS:=$(shell python-config --cflags)
+PYTHON_LDFLAGS:=$(shell python-config --ldflags)
+
+# Find stuff that needs to be cythonized.
+CYTHON_SRCS=$(shell find $(PWD)/mro/stages $(PWD)/lib/python -type f -name '*.pyx')
+CYTHON_LIBS=$(patsubst %.pyx, %.so, $(CYTHON_SRCS))
+CYTHON_BUILDPATH=$(shell pwd)/lib/cython
+CYTHON_FLAGS?=--line-directives $(EXTRA_CYTHON_FLAGS)
+
+# Prevent make from automatically deleting intermediate files.
+.PRECIOUS: $(CYTHON_BUILDPATH)/%.c $(CYTHON_BUILDPATH)/%.o
+
+.PHONY: cython
+
+$(CYTHON_BUILDPATH)/%.c: $(PWD)/%.pyx
+	mkdir -p $(@D) && cython $(CYTHON_FLAGS) -w $(<D) -o $(abspath $@) $(<F)
+
+$(CYTHON_BUILDPATH)/%.o: $(CYTHON_BUILDPATH)/%.c
+	$(CC) $(PYTHON_CFLAGS) $(CFLAGS) -g -O3 -c -fPIC -fopenmp \
+	    -I$(PYTHON_SITE_PKG)/numpy/core/include \
+	    -o $@ \
+	    $<
+
+$(PWD)/%.so: $(CYTHON_BUILDPATH)/%.o
+	$(CC) -L$(PYTHON_LIB_DIR) $(PYTHON_LDFLAGS) $(LDFLAGS) -shared -fopenmp -fPIC $< -o $@
+
+cython: $(CYTHON_LIBS)
+
+clean-cython:
+	rm -rf $(CYTHON_BUILDPATH)
+	rm -f $(CYTHON_LIBS)
+
 
 rust-clean:
 	rm -Rf lib/rust/.cargo

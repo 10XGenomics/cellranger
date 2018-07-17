@@ -483,11 +483,12 @@ def get_kmers_hamming_distance(kmers):
                 return min_hamming_distance
     return min_hamming_distance
 
-def load_barcode_tsv(filename):
+def load_barcode_tsv(filename, as_set=False):
     barcodes = [x.strip() for x in cr_io.open_maybe_gzip(filename, 'r') if not ('#' in x)]
-    if len(barcodes) != len(set(barcodes)):
+    barcode_set = set(barcodes)
+    if len(barcodes) != len(barcode_set):
         raise Exception('Duplicates found in barcode whitelist: %s' % filename)
-    return barcodes
+    return barcode_set if as_set else barcodes
 
 def get_barcode_whitelist_path(filename):
     # Look for exact path, .txt.gz, or .txt
@@ -503,7 +504,7 @@ def get_barcode_whitelist_path(filename):
         txt = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, filename + '.txt')
         return txt
 
-def load_barcode_whitelist(filename):
+def load_barcode_whitelist(filename, as_set=False):
     path = get_barcode_whitelist_path(filename)
 
     if path is None:
@@ -512,7 +513,7 @@ def load_barcode_whitelist(filename):
     if not os.path.isfile(path):
         raise NameError('Unable to find barcode whitelist: %s' % path)
 
-    return load_barcode_tsv(path)
+    return load_barcode_tsv(path, as_set)
 
 
 def load_barcode_summary(barcode_summary):
