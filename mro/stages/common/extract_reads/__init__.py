@@ -66,8 +66,6 @@ def split(args):
     chunks = []
     for chunk in args.chunks:
         chunk['__mem_gb'] = chunk_mem_gb
-        # FIXME: should be 1; CELLRANGER-1394
-        chunk['__threads'] = 2
 
         if args.initial_reads is None:
             chunk['initial_reads'] = None
