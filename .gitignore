@@ -19,4 +19,5 @@ coverage.xml
 nosetests.xml
 lib/python/cellranger/test_files/outputs
 lib/python/tenkit/test_files/demultiplex/
+lib/cython
 
