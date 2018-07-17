@@ -3,7 +3,7 @@
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 import cellranger.library_constants as lib_constants
 
 def get_library_type(sample_def):
@@ -39,47 +39,44 @@ def assign_library_ids(sample_defs):
     Returns:
       list of str: Library IDs, one per sample def.
     """
+    # Resulting library ID for each sample def
     sd_libs = []
-    ids = OrderedDict()
 
-    # Map library ids to libraries
+    # Map tuple of (gem_group (int), library_type (str)) to library ID (str)
+    library_to_id = OrderedDict()
+
+    # Assign a library ID to each sample def (most commonly by generating a new, unique one)
     for sd in sample_defs:
         gem_group = get_gem_group(sd)
         lib_type = get_library_type(sd)
-        lib = (gem_group, lib_type)
-        sd_libs.append(lib)
+        lib_tuple = (gem_group, lib_type) # library
+        sd_libs.append(lib_tuple) # library for each sample def
 
-        # If a library type isn't given, assign it an integer that maps
+        # If a library ID wasn't given by the user, assign it an integer that maps
         # uniquely to (gem_group, library_type)
-        default_id = str(len(ids))
-
-        if lib not in ids:
-            ids[lib] = []
+        default_id = library_to_id.get(lib_tuple, str(len(library_to_id)))
 
         lib_id = sd.get('library_id') or default_id
 
         if ':' in lib_id or '\t' in lib_id:
             raise ValueError('Invalid library ID: "%s". Library IDs may not contain ":" or tab characters.' % lib_id)
 
-        ids[lib].append(lib_id)
+        # Check if this library ID is already assigned to a different library.
+        if lib_id in set(library_to_id.values()):
+            # Find the first colliding library
+            other_lib = [other_lib for other_lib, other_lib_id in library_to_id.iteritems() if other_lib_id==lib_id][0]
+            if other_lib != lib_tuple:
+                raise ValueError('Library ID "%s" is already associated with library "%s." A library ID must identify exactly one library.' % (lib_id, other_lib))
 
-    # Verify that there is one library_id per library
-    for lib, lib_ids in ids.iteritems():
-        if len(lib_ids) > 1:
-            raise ValueError('Library (gem_group=%d, type=%s) was labeled with multiple library IDs: %s .' % \
-                             (lib[0], lib[1], ', '.join(lib_ids)))
+        if lib_tuple not in library_to_id:
+            library_to_id[lib_tuple] = lib_id
 
-    # Verify that there is one library per library_id
-    id2libs = defaultdict(set)
-    for lib, lib_ids in ids.iteritems():
-        assert len(lib_ids) == 1
-        id2libs[lib_ids[0]].add(lib)
-
-    for lib_id, libs in id2libs.iteritems():
-        if len(libs) > 1:
-            lib_list = ', '.join(map(lambda x: '(gem_group=%s, library_type=%s)' % x, libs))
-            raise ValueError('Library ID is not unique: "%s". It maps to the following libraries: %s' % (lib_id, lib_list))
-        assert len(libs) == 1
+        elif library_to_id[lib_tuple] != lib_id:
+            # Library already has an ID
+            raise ValueError('Library "%s" already has ID "%s." Cannot assign it the different ID "%s."' %
+                             (str(lib_tuple),
+                              library_to_id[lib_tuple],
+                              lib_id))
 
     # Map sample defs to library ids
-    return [ids[lib][0] for lib in sd_libs]
+    return [library_to_id[lib] for lib in sd_libs]
