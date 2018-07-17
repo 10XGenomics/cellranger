@@ -101,7 +101,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  json     bam_comments_json,
 ) using (
     # No index file is generated for the bam.
-    mem_gb = 2,
+    mem_gb   = 2,
     volatile = strict,
 )
 
@@ -143,7 +143,7 @@ stage MARK_DUPLICATES(
     out json  metrics,
     out bam   alignments,
 ) using (
-    mem_gb = 4,
+    mem_gb   = 4,
     volatile = strict,
 )
 
@@ -165,7 +165,7 @@ stage REPORT_MOLECULES(
     in  string chunk_start,
     in  string chunk_end,
 ) using (
-    mem_gb = 2,
+    mem_gb   = 2,
     volatile = strict,
 )
 
@@ -203,7 +203,7 @@ stage COUNT_GENES(
 ) split (
     in  bam    chunk_input,
 ) using (
-    mem_gb = 2,
+    mem_gb   = 2,
     volatile = strict,
 )
 
@@ -226,7 +226,7 @@ stage FILTER_BARCODES(
     src py     "stages/counter/filter_barcodes",
 ) split (
 ) using (
-    mem_gb = 8,
+    mem_gb   = 8,
     volatile = strict,
 )
 
@@ -277,4 +277,6 @@ stage CHECK_BARCODES_COMPATIBILITY(
     in  map      chemistry,
     in  bool     reads_interleaved,
     out string[] sampled_barcodes,
+) using (
+    mem_gb = 2,
 )
