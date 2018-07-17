@@ -1408,23 +1408,27 @@ def save_clonotype_info_csv(csv, consensus_contigs):
             clonotypes[clonotype_id]['members'] = set(contig.info_dict['cells'])
             clonotypes[clonotype_id]['frequency'] = contig.info_dict['clonotype_freq']
             clonotypes[clonotype_id]['proportion'] = contig.info_dict['clonotype_prop']
-            clonotypes[clonotype_id]['cdr3s_aa'] = set()
-            clonotypes[clonotype_id]['cdr3s_nt'] = set()
+            clonotypes[clonotype_id]['cdr3s'] = set()
         else:
             assert clonotypes[clonotype_id]['members'] == set(contig.info_dict['cells'])
             assert clonotypes[clonotype_id]['frequency'] == contig.info_dict['clonotype_freq']
             assert clonotypes[clonotype_id]['proportion'] == contig.info_dict['clonotype_prop']
 
-        clonotypes[clonotype_id]['cdr3s_aa'].add((chain, contig.cdr3))
-        clonotypes[clonotype_id]['cdr3s_nt'].add((chain, contig.cdr3_seq))
+        clonotypes[clonotype_id]['cdr3s'].add((chain, contig.cdr3_seq, contig.cdr3))
 
-    # Generate cdr3 annotation strings, chain:cdr3;chain:cdr3
-    # sorted by (chain, cdr3)
+    # Generate cdr3 annotation strings (for nt and aa), chain:cdr3;chain:cdr3
+    # sorted by (chain, cdr3_seq, cdr3_aa)
     def get_cdr3_list_string(chain_cdr3s):
-        return ';'.join(['%s:%s' % chain_cdr3 for chain_cdr3 in sorted(list(chain_cdr3s))])
+        cdr3s_nt = []
+        cdr3s_aa = []
+        for chain, nt, aa in sorted(list(chain_cdr3s)):
+            cdr3s_nt.append('%s:%s' % (chain, nt))
+            cdr3s_aa.append('%s:%s' % (chain, aa))
+        return ';'.join(cdr3s_nt), ';'.join(cdr3s_aa)
     for clonotype in clonotypes.itervalues():
-        clonotype['cdr3s_aa'] = get_cdr3_list_string(clonotype['cdr3s_aa'])
-        clonotype['cdr3s_nt'] = get_cdr3_list_string(clonotype['cdr3s_nt'])
+        cdr3s_nt, cdr3_aa = get_cdr3_list_string(clonotype['cdr3s'])
+        clonotype['cdr3s_nt'] = cdr3s_nt
+        clonotype['cdr3s_aa'] = cdr3_aa
 
     # Sort by frequency, descending
     clonotypes = sorted(clonotypes.values(), key=lambda c: c['frequency'], reverse=True)
