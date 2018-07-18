@@ -7,8 +7,8 @@
 @include "_sc_rna_analyzer_stages.mro"
 
 pipeline SC_RNA_REANALYZER_CS(
-    in  string analysis_id,
-    in  string analysis_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  h5     filtered_matrices_h5,
     in  csv    params_csv,
     in  csv    aggregation_csv,
@@ -69,16 +69,16 @@ pipeline SC_RNA_REANALYZER_CS(
     )
 
     call SUMMARIZE_REANALYSIS(
-        analysis_id       = self.analysis_id,
-        analysis_desc     = self.analysis_desc,
+        sample_id         = self.sample_id,
+        sample_desc       = self.sample_desc,
         filtered_matrices = self.filtered_matrices_h5,
         analysis          = SC_RNA_ANALYZER.analysis,
     )
 
     call CLOUPE_PREPROCESS(
         pipestance_type              = "SC_RNA_REANALYZER_CS",
-        sample_id                    = self.analysis_id,
-        sample_desc                  = self.analysis_desc,
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
         analysis                     = SC_RNA_ANALYZER.analysis,
         filtered_gene_bc_matrices_h5 = SC_RNA_ANALYZER.reanalyzed_matrix_h5,
         metrics_json                 = null,

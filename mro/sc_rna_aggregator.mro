@@ -2,8 +2,8 @@
 @include "_sc_rna_aggregator_stages.mro"
 
 pipeline SC_RNA_AGGREGATOR(
-    in  string aggregation_id,
-    in  string aggregation_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  map[]  sample_defs,
     in  string normalization_mode,
     in  bool   no_secondary_analysis,
@@ -89,8 +89,8 @@ pipeline SC_RNA_AGGREGATOR(
     )
 
     call SUMMARIZE_AGGREGATED_REPORTS(
-        aggregation_id           = self.aggregation_id,
-        aggregation_desc         = self.aggregation_desc,
+        sample_id                = self.sample_id,
+        sample_desc              = self.sample_desc,
         gem_group_index          = SETUP_SAMPLES.gem_group_index,
         filtered_matrices_h5     = NORMALIZE_DEPTH.filtered_matrices_h5,
         barcode_summary_h5       = NORMALIZE_DEPTH.barcode_summary_h5,

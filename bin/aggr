@@ -71,9 +71,9 @@ function implement_generate_mro {
 @include "sc_rna_aggregator_cs.mro"
 
 call SC_RNA_AGGREGATOR_CS(
-    aggregation_id = $sample_id,
+    sample_id = $sample_id,
     aggregation_csv = $aggregation_csv,
-    aggregation_desc = $sample_desc,
+    sample_desc = $sample_desc,
     pipestance_root = $pipestance_root,
     normalization_mode = $normalization_mode,
     no_secondary_analysis = $nosecondary,

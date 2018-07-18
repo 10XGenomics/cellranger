@@ -17,8 +17,8 @@ from cellranger.webshim.constants.shared import PIPELINE_REANALYZE
 
 __MRO__ = """
 stage SUMMARIZE_REANALYSIS(
-    in  string analysis_id,
-    in  string analysis_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  h5     filtered_matrices,
     in  path   analysis,
     out html   web_summary,
@@ -52,8 +52,8 @@ def main(args, outs):
     with open(outs.summary, 'w') as f:
         json.dump(summary, f, indent=4, sort_keys=True)
 
-    sample_properties = ReanalyzeSampleProperties(sample_id=args.analysis_id,
-                                                  sample_desc=args.analysis_desc,
+    sample_properties = ReanalyzeSampleProperties(sample_id=args.sample_id,
+                                                  sample_desc=args.sample_desc,
                                                   genomes=genomes,
                                                   version=martian.get_pipelines_version())
     sample_properties = dict(sample_properties._asdict())

@@ -6,8 +6,8 @@
 @include "_sc_rna_aggregator_stages.mro"
 
 pipeline SC_RNA_AGGREGATOR_CS(
-    in  string aggregation_id,
-    in  string aggregation_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  path   pipestance_root,
     in  csv    aggregation_csv,
     in  string normalization_mode,
@@ -33,8 +33,8 @@ pipeline SC_RNA_AGGREGATOR_CS(
     )
 
     call SC_RNA_AGGREGATOR(
-        aggregation_id        = self.aggregation_id,
-        aggregation_desc      = self.aggregation_desc,
+        sample_id             = self.sample_id,
+        sample_desc           = self.sample_desc,
         sample_defs           = PARSE_CSV.sample_defs,
         normalization_mode    = self.normalization_mode,
         no_secondary_analysis = self.no_secondary_analysis,
@@ -58,8 +58,8 @@ pipeline SC_RNA_AGGREGATOR_CS(
 
     call CLOUPE_PREPROCESS(
         pipestance_type              = "SC_RNA_AGGREGATOR_CS",
-        sample_id                    = self.aggregation_id,
-        sample_desc                  = self.aggregation_desc,
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
         analysis                     = SC_RNA_AGGREGATOR.analysis,
         filtered_gene_bc_matrices_h5 = SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_h5,
         metrics_json                 = SC_RNA_AGGREGATOR.summary,

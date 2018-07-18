@@ -124,8 +124,8 @@ function implement_generate_mro {
 @include "sc_rna_reanalyzer_cs.mro"
 
 call SC_RNA_REANALYZER_CS(
-    analysis_id = $sample_id,
-    analysis_desc = $sample_desc,
+    sample_id = $sample_id,
+    sample_desc = $sample_desc,
     filtered_matrices_h5 = $matrix,
     params_csv = $params,
     aggregation_csv = $aggregation_csv,

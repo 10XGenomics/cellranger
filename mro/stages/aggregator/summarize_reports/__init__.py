@@ -15,8 +15,8 @@ from cellranger.webshim.constants.shared import PIPELINE_AGGR
 
 __MRO__ = """
 stage SUMMARIZE_AGGREGATED_REPORTS(
-    in  string aggregation_id,
-    in  string aggregation_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  map    gem_group_index,
     in  h5     filtered_matrices_h5,
     in  h5     barcode_summary_h5,
@@ -58,8 +58,8 @@ def main(args, outs):
         json.dump(summary, f, indent=4, sort_keys=True)
 
     # build web summary
-    sample_properties = AggrSampleProperties(sample_id=args.aggregation_id,
-                                             sample_desc=args.aggregation_desc,
+    sample_properties = AggrSampleProperties(sample_id=args.sample_id,
+                                             sample_desc=args.sample_desc,
                                              genomes=genomes,
                                              version=martian.get_pipelines_version(),
                                              agg_batches=agg_batches)

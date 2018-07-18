@@ -244,8 +244,8 @@ stage PARSE_PARAM_CSV(
 )
 
 stage SUMMARIZE_REANALYSIS(
-    in  string analysis_id,
-    in  string analysis_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  h5     filtered_matrices,
     in  path   analysis,
     out html   web_summary,

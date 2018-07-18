@@ -67,8 +67,8 @@ stage NORMALIZE_DEPTH(
 )
 
 stage SUMMARIZE_AGGREGATED_REPORTS(
-    in  string aggregation_id,
-    in  string aggregation_desc,
+    in  string sample_id,
+    in  string sample_desc,
     in  map    gem_group_index,
     in  h5     filtered_matrices_h5,
     in  h5     barcode_summary_h5,
