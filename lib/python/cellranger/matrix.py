@@ -17,7 +17,6 @@ import scipy.sparse as sp_sparse
 import tenkit.safe_json as tk_safe_json
 import cellranger.h5_constants as h5_constants
 import cellranger.library_constants as lib_constants
-import cellranger.constants as cr_constants
 from cellranger.feature_ref import FeatureReference
 import cellranger.utils as cr_utils
 import cellranger.io as cr_io
@@ -228,11 +227,6 @@ class CountMatrix(object):
     def get(self, feature_id, bc):
         i, j = self.feature_id_to_int(feature_id), self.bc_to_int(bc)
         return self.m[i,j]
-
-    def get_nonzero(self):
-        i_array, j_array = self.m.nonzero()
-        return [(self.feature_ref.feature_defs[i], self.bcs[j], self.m[i, j])
-                 for i, j in itertools.izip(i_array, j_array)]
 
     def merge(self, other):
         '''Merge this matrix with another CountMatrix'''
@@ -577,61 +571,6 @@ class CountMatrix(object):
                 chemistry = "Unknown"
         return chemistry
 
-    def union_barcodes(self, cell_bc_seqs, genomes=None):
-        '''Take the union of all barcodes present in genome-specific matrices;
-        this is used to get a total cell count.'''
-        if genomes is None:
-            genomes = self.matrices.keys()
-        assert len(cell_bc_seqs) == len(genomes)
-        barcodes = set()
-        for txome_cell_bc_seqs in cell_bc_seqs:
-            barcodes.update(txome_cell_bc_seqs)
-        return sorted(barcodes)
-
-
-    @staticmethod
-    def build_from_mol_counter(molecule_counter, subsample_rate,
-                               feature_ref,
-                               subsample_result=None):
-        '''Construct a GeneBCMatrices object from a MoleculeCounter.
-            Args: subsample_result (dict) - Return some metrics results into this dict.'''
-
-        # Reconstruct all barcode sequences in the original matrices
-        barcode_whitelist = cr_utils.load_barcode_whitelist(molecule_counter.get_barcode_whitelist())
-        barcode_length = molecule_counter.get_barcode_length() or len(barcode_whitelist[0])
-
-        gem_groups = molecule_counter.get_gem_groups()
-        barcode_seqs = cr_utils.format_barcode_seqs(barcode_whitelist, gem_groups)
-
-        # TODO: implement this for reals. or get rid of need for it.
-        #genomes = molecule_counter.get_ref_column('genome_ids')
-        if subsample_result is not None:
-            subsample_result['mapped_reads'] = 0
-        return CountMatrix.empty(feature_ref, barcode_seqs, dtype='int32')
-        raise NotImplementedError('Under construction')
-        #########
-
-        # Reconstruct Gene tuples from the molecule info ref columns
-        gene_ids = molecule_counter.get_ref_column('gene_ids')
-        genome_ids = molecule_counter.get_ref_column('genome_ids')
-        gene_names = molecule_counter.get_ref_column('gene_names')
-        gene_tuples = [cr_constants.Gene(gid, gname, None, None, None) for (gid, gname) in itertools.izip(gene_ids, gene_names)]
-        genes = cr_utils.split_genes_by_genomes(gene_tuples, genome_ids)
-
-        matrices = CountMatrix(genes, barcode_seqs)
-
-        # Track results of subsampling
-        reads = 0
-
-        for mol in molecule_counter.get_molecule_iter(barcode_length, subsample_rate=subsample_rate):
-            matrices.add(mol.genome, mol.gene_id, mol.barcode)
-            reads += mol.reads
-
-        if subsample_result is not None:
-            subsample_result['mapped_reads'] = reads
-
-        return matrices
-
     def filter_barcodes(self, bcs_per_genome):
         '''Return CountMatrix containing only the specified barcodes.
         Args:
@@ -671,18 +610,6 @@ def merge_matrices(h5_filenames):
         matrix.tocsc()
     return matrix
 
-def concatenate_mex_dirs(mex_dir_list, out_mex_dir):
-    if len(mex_dir_list) == 0:
-        return
-
-    # copy tree structure of first dir (assuming bcs and genes are the same across all chunks)
-    cr_io.copytree(mex_dir_list[0], out_mex_dir)
-
-    # concatenate mtx
-    mtx_list = [os.path.join(base_dir, "matrix.mtx") for base_dir in mex_dir_list]
-    out_mtx = os.path.join(out_mex_dir, "matrix.mtx")
-    concatenate_mtx(mtx_list, out_mtx)
-
 def concatenate_mtx(mtx_list, out_mtx):
     if len(mtx_list) == 0:
         return
@@ -708,101 +635,8 @@ def concatenate_mtx(mtx_list, out_mtx):
                     in_file.readline()
                 shutil.copyfileobj(in_file, out_file)
 
-def concatenate_h5(h5_list, out_h5, extra_attrs={}):
-    # TODO: FIXME for aggr
-    if len(h5_list) == 0:
-        return
-
-    filters = tables.Filters(complevel = h5_constants.H5_COMPRESSION_LEVEL)
-    with tables.open_file(out_h5, mode = 'w', filters = filters) as f:
-        f.attrs[h5_constants.H5_FILETYPE_KEY] = MATRIX_H5_FILETYPE
-
-        # set optional top-level attributes
-        for (k,v) in extra_attrs.iteritems():
-            f.attrs[k] = v
-
-        # setup using first file as template
-        group_dsets = {}
-        group_shapes = {}
-
-        dtypes = h5_constants.H5_MATRIX_ATTRS
-        ext_attrs = ['data', 'indices']
-
-        with tables.open_file(h5_list[0], mode = 'r') as fin:
-            for in_group in fin.list_nodes(fin.root):
-                genome = in_group._v_name
-                out_group = f.create_group(f.root, genome)
-
-                dsets = {}
-
-                # copy static-size datasets
-                barcodes = getattr(in_group, 'barcodes').read()
-                dsets['barcodes'] = f.create_carray(out_group, 'barcodes', obj=barcodes)
-
-                feature_ref_in = CountMatrix.load_feature_ref_from_h5_group(in_group)
-                feature_ref = FeatureReference.from_hdf5(feature_ref_in)
-                feature_ref_out = out_group.create_group(h5_constants.H5_FEATURE_REF_ATTR)
-                feature_ref.to_hdf5(feature_ref_out)
-
-                indptr = getattr(in_group, 'indptr').read().astype(dtypes['indptr'])
-                dsets['indptr'] = f.create_carray(out_group, 'indptr', obj=indptr)
-
-                shape = [len(feature_ref.feature_defs), len(barcodes), 0]
-
-                # initialize extendable datasets
-                for name in ext_attrs:
-                    atom = tables.Atom.from_dtype(np.dtype(dtypes[name]))
-                    dsets[name] = f.create_earray(out_group, name, atom, (0,))
-
-                group_dsets[genome] = dsets
-                group_shapes[genome] = shape
-
-        first_mat = True
-        for h5_file in h5_list:
-            with tables.open_file(h5_file, mode = 'r') as fin:
-                for in_group in fin.list_nodes(fin.root):
-                    genome = in_group._v_name
-                    shape = group_shapes[genome]
-                    dsets = group_dsets[genome]
-
-                    data = getattr(in_group, 'data').read()
-                    indices = getattr(in_group, 'indices').read()
-                    indptr = getattr(in_group, 'indptr').read()
-
-                    dsets['data'].append(data)
-                    dsets['indices'].append(indices)
-
-                    if not first_mat:
-                        # combine column pointers
-                        # since the set of nonzero columns in each chunk is disjoint, this is simple
-                        old_indptr = dsets['indptr'][:]
-                        dsets['indptr'][:] = old_indptr + indptr
-
-                    shape[2] += len(data)
-
-                first_mat = False
-
-        # set shape
-        for (genome, shape) in group_shapes.iteritems():
-            feat_bcs = np.array(shape[0:2], dtype=dtypes['shape'])
-            dsets = group_dsets[genome]
-            dsets['shape'] = f.create_carray('/' + genome, 'shape', obj=feat_bcs)
-
-        # sanity check dimensions
-        expected_cols = shape[1]
-        expected_nnz = shape[2]
-        assert dsets['indptr'].nrows == expected_cols + 1
-        assert dsets['indptr'][-1] == expected_nnz
-        assert dsets['data'].nrows == expected_nnz
-        assert dsets['indices'].nrows == expected_nnz
-
 def make_matrix_attrs_count(sample_id, gem_groups, chemistry):
     matrix_attrs = make_library_map_count(sample_id, gem_groups)
-    matrix_attrs[h5_constants.H5_CHEMISTRY_DESC_KEY] = chemistry
-    return matrix_attrs
-
-def make_matrix_attrs_aggr(gem_group_index, chemistry):
-    matrix_attrs = make_library_map_aggr(gem_group_index)
     matrix_attrs[h5_constants.H5_CHEMISTRY_DESC_KEY] = chemistry
     return matrix_attrs
 

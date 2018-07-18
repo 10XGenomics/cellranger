@@ -30,15 +30,6 @@ import cellranger.webshim.constants.vdj as ws_vdj_constants
 from cellranger.webshim.data import SampleData
 import cellranger.webshim.template as template
 
-def max_norm(values):
-    min_value = min(values)
-    values = [v - min_value for v in values]
-
-    max_value = max(values)
-    if max_value > 0:
-        return [float(v) / float(max_value) for v in values]
-    return values
-
 def add_prefix(prefix, name):
     if '%s' in name:
         return name % prefix

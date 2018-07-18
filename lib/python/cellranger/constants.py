@@ -9,12 +9,9 @@ from cellranger.library_constants import GENE_EXPRESSION_LIBRARY_TYPE
 Interval = collections.namedtuple('Interval', ['chrom', 'start', 'end', 'length', 'strand'])
 Transcript = collections.namedtuple('Transcript', ['gene', 'length', 'gc_content', 'intervals'])
 Gene = collections.namedtuple('Gene', ['id', 'name', 'length', 'gc_content', 'intervals'])
-TranscriptAlignment = collections.namedtuple('TranscriptAlignment', ['transcript', 'strand', 'pos', 'cigarstring', 'alen'])
 Primer = collections.namedtuple('Primer', ['name', 'seq'])
 
 ReadDef = collections.namedtuple('ReadDef', 'read_type, offset, length')
-
-ProcessedRead = collections.namedtuple('ProcessedRead', 'raw_seq, processed_seq, qual')
 
 BAM_FILE_STREAM = '-' # filename telling samtools and pysam to read stdin / write stdout
 

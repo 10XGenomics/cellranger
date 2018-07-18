@@ -62,21 +62,6 @@ def write_h5(filename, data):
         for key, value in data.iteritems():
             f[key] = value
 
-def concatenate_h5(input_files, output_file):
-    with tables.open_file(output_file, mode = 'w') as fout:
-        dsets = {}
-        # init datasets using the first input
-        if len(input_files) > 0:
-            with tables.open_file(input_files[0], mode = 'r') as fin:
-                for node in fin.walk_nodes('/', 'Array'):
-                    atom = tables.Atom.from_dtype(np.dtype(node.dtype))
-                    dsets[node.name] = fout.create_earray('/', node.name, atom, (0,))
-        # copy the data
-        for input_file in input_files:
-            with tables.open_file(input_file, mode = 'r') as fin:
-                for (name, earray) in dsets.iteritems():
-                    earray.append(fin.get_node('/', name)[:])
-
 class SubprocessStream(object):
     """ Wrap a subprocess that we stream from or stream to """
     def __init__(self, *args, **kwargs):

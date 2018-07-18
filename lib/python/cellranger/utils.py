@@ -19,7 +19,6 @@ import tenkit.stats as tk_stats
 import tenkit.constants as tk_constants
 import cellranger.constants as cr_constants
 import cellranger.h5_constants as h5_constants
-import cellranger.library_constants as lib_constants
 import cellranger.io as cr_io
 
 def get_version():
@@ -41,45 +40,19 @@ def _load_reference_metadata_file(reference_path):
 def get_reference_star_path(reference_path):
     return os.path.join(reference_path, cr_constants.REFERENCE_STAR_PATH)
 
-def get_reference_genes_gtf(reference_path):
-    return os.path.join(reference_path, cr_constants.REFERENCE_GENES_GTF_PATH)
-
 def get_reference_genes_index(reference_path):
     return os.path.join(reference_path, cr_constants.REFERENCE_GENES_INDEX_PATH)
 
 def get_reference_genome_fasta(reference_path):
     return os.path.join(reference_path, cr_constants.REFERENCE_FASTA_PATH)
 
-def is_reference_star_indexed(fasta_path):
-    for filename in cr_constants.STAR_REQUIRED_FILES:
-        p = os.path.join(cr_constants.REFERENCE_STAR_PATH, filename)
-        if not os.path.exists(p):
-            return False
-    return True
-
-def get_fasta_hash(reference_path):
-    data = _load_reference_metadata_file(reference_path)
-    return data[cr_constants.REFERENCE_FASTA_HASH_KEY]
-
-def get_gtf_hash(reference_path):
-    data = _load_reference_metadata_file(reference_path)
-    return data[cr_constants.REFERENCE_GTF_HASH_KEY]
-
 def get_reference_genomes(reference_path):
     data = _load_reference_metadata_file(reference_path)
     return data[cr_constants.REFERENCE_GENOMES_KEY]
 
-def get_reference_num_threads_request(reference_path):
-    data = _load_reference_metadata_file(reference_path)
-    return data[cr_constants.REFERENCE_NUM_THREADS_KEY]
-
 def get_reference_mem_gb_request(reference_path):
     data = _load_reference_metadata_file(reference_path)
     return data[cr_constants.REFERENCE_MEM_GB_KEY]
-
-def get_mkref_version(reference_path):
-    data = _load_reference_metadata_file(reference_path)
-    return data[cr_constants.REFERENCE_MKREF_VERSION_KEY]
 
 def barcode_sort_key(read, squash_unbarcoded=False):
     formatted_bc = get_read_barcode(read)
@@ -144,28 +117,6 @@ def is_umi_corrected(raw_umi_seq, processed_umi_seq):
 
     return raw_umi_seq != processed_umi_seq
 
-def split_genes_by_genomes(genes, genomes):
-    """ Returns a list of lists [genome1, genome2, ...]
-    where genome1 = [gene1,gene2,...].
-    Args:
-      genes - list of Gene tuples
-      genomes - list of genome names, e.g. ['hg19', 'mm10']
-    """
-    assert len(genomes) > 0
-
-    if len(genomes) == 1:
-        return [genes]
-
-    d = collections.defaultdict(list)
-    for gene in genes:
-        genome = get_genome_from_str(gene.id, genomes)
-        d[genome].append(gene)
-
-    genes_per_genome = []
-    for genome in genomes:
-        genes_per_genome.append(d[genome])
-    return genes_per_genome
-
 def get_genome_from_str(s, genomes):
     assert len(genomes) > 0
 
@@ -208,9 +159,6 @@ def get_genome_from_read(read, chroms, genomes):
 
     return get_genome_from_str(chroms[read.tid], genomes)
 
-def get_read_num_hits(read):
-    return _get_read_tag(read, cr_constants.NUM_HITS_TAG)
-
 def get_read_barcode(read):
     return _get_read_tag(read, cr_constants.PROCESSED_BARCODE_TAG)
 
@@ -238,22 +186,6 @@ def get_read_gene_ids(read):
         return None
 
     return tuple(s.split(';'))
-
-def get_read_gene_names(read):
-    s =_get_read_tag(read, cr_constants.GENE_NAMES_TAG)
-    if s is None:
-        return None
-
-    return tuple(s.split(';'))
-
-def get_genes_from_transcripts(transcript_alignments, gene_index):
-    read_genes = collections.OrderedDict() # TODO replace OrderedDict
-    for alignment in transcript_alignments:
-        gene = gene_index.get_gene_from_transcript(alignment.transcript)
-        assert gene is not None
-        if gene.id not in read_genes:
-            read_genes[gene.id] = gene.name
-    return read_genes
 
 def get_read_transcripts_iter(read):
     s = _get_read_tag(read, cr_constants.TRANSCRIPTS_TAG)
@@ -283,38 +215,6 @@ def get_read_transcripts_iter(read):
 def get_mapping_region(read):
     region_tag = _get_read_tag(read, 'RE')
     return cr_constants.REGION_TAG_MAP.get(region_tag, None)
-
-def make_annotation_tags(tx, gx, gn):
-    return [(cr_constants.TRANSCRIPTS_TAG, tx), (cr_constants.GENE_IDS_TAG, gx), (cr_constants.GENE_NAMES_TAG, gn)]
-
-def iter_read_pairs(reads_iter, paired_end):
-    """
-    Iterate through mate pairs. In the paired end case, the number of R1:R2 alignments
-    should be either N:N or 1:N / N:1 (if one end is unmapped, in which case we treat it separately).
-    """
-    if not paired_end:
-        for read in reads_iter:
-            yield read, None
-    else:
-        r1s, r2s = [], []
-        for read in reads_iter:
-            if read.is_read2:
-                r2s.append(read)
-            else:
-                r1s.append(read)
-        if len(r1s) == len(r2s):
-            for r1, r2 in itertools.izip(r1s, r2s):
-                yield r1, r2
-        elif len(r1s) == 1:
-            for r2 in r2s:
-                yield None, r2
-            yield r1s[0], None
-        elif len(r2s) == 1:
-            for r1 in r1s:
-                yield r1, None
-            yield None, r2s[0]
-        else:
-            raise Exception("Inconsistent number of R1:R2 alignments (%d:%d)" % (len(r1s), len(r2s)))
 
 def iter_by_qname(in_genome_bam, in_trimmed_bam):
     # Iterate through multiple BAMs by qname simultaneously
@@ -403,18 +303,6 @@ def is_homopolymer_seq(seq):
 
 def is_unambiguous_nuc_seq(seq):
     return not bool(re.search(r'[^ACGT]', seq))
-
-def is_transcriptome_read_sense(read, strandedness):
-    """ - read: transcriptome-aligned read
-        - strandedness: library strandedness
-    """
-    if strandedness is None:
-        return True
-
-    if read.is_reverse ^ read.is_read2:
-        return strandedness == cr_constants.REVERSE_STRAND
-    else:
-        return strandedness == cr_constants.FORWARD_STRAND
 
 def get_read_extra_flags(read):
     return _get_read_tag(read, cr_constants.EXTRA_FLAGS_TAG) or 0
@@ -549,11 +437,6 @@ def load_barcode_summary(barcode_summary):
             return list(f[cr_constants.H5_BC_SEQUENCE_COL])
     return None
 
-def get_num_barcodes_from_barcode_summary(barcode_summary):
-    if barcode_summary:
-        with h5py.File(barcode_summary) as f:
-            return f[cr_constants.H5_BC_SEQUENCE_COL].size
-
 def compress_seq(s, bits=64):
     """Pack a DNA sequence (no Ns!) into a 2-bit format, into a python int."""
     assert len(s) <= (bits/2 - 1)
@@ -563,17 +446,6 @@ def compress_seq(s, bits=64):
         result = result << 2
         result = result | tk_seq.NUCS_INVERSE[nuc]
     return result
-
-def decompress_seq(x, length, bits=64):
-    x = np.uint64(x)
-    assert length <= (bits/2 - 1)
-    if x & (1L << (bits-1)):
-        return 'N' * length
-    result = bytearray(length)
-    for i in xrange(length):
-        result[(length-1)-i] = tk_seq.NUCS[x & np.uint64(0b11)]
-        x = x >> np.uint64(2)
-    return str(result)
 
 def set_tag(read, key, old_value, new_value):
     """ Set a bam tag for a read, overwriting the previous value """
@@ -615,9 +487,6 @@ def build_alignment_param_metrics(align):
 
 def get_high_conf_mapq(align):
     return align['high_conf_mapq']
-
-def get_aligner(align):
-    return align['aligner']
 
 def get_thread_request_from_mem_gb(mem_gb):
     """ For systems without memory reservations, reserve multiple threads if necessary to avoid running out of memory"""
@@ -737,14 +606,6 @@ def get_comp(seq):
 def get_rev(seq):
     return str(seq)[::-1]
 
-def flip_strand(strand):
-    if strand == '+':
-        return '-'
-    elif strand == '-':
-        return '+'
-    else:
-        return strand
-
 def get_seqs(l):
     if l == 1:
         return tk_seq.NUCS
@@ -799,7 +660,6 @@ def detect_paired_end_bam(bam_filename):
         if read.is_read1 or read.is_read2:
             return True
     return False
-    bam.close()
 
 def get_cigar_summary_stats(read, strand):
     """
@@ -994,25 +854,6 @@ def get_cell_associated_barcode_set(barcode_csv_filename, genome=None):
         if genome is None or g == genome:
             cell_bcs |= set(bcs)
     return cell_bcs
-
-""" Filter a list of sample defs by a list of desired library types.
-    If list=None, don't filter. """
-def filter_sample_def(sample_def, library_type_list):
-    if library_type_list is None:
-        return sample_def
-
-    filtered_sample_def = []
-
-    for this_sample_map in sample_def:
-        this_library_type = this_sample_map.get('library_type', lib_constants.DEFAULT_LIBRARY_TYPE)
-
-        if this_library_type is None:
-            this_library_type = lib_constants.DEFAULT_LIBRARY_TYPE
-
-        if this_library_type in library_type_list:
-            filtered_sample_def.append(this_sample_map)
-
-    return filtered_sample_def
 
 def splitexts(s):
     """ Like splitext, but handle concat'd extensions like .tar.gz.

@@ -24,10 +24,6 @@ def get_gem_group(sample_def):
     return int(gg)
 
 
-def get_library_id(sample_def):
-    return sample_def.get('library_id')
-
-
 def assign_library_ids(sample_defs):
     """ Assign library ids to a list of sample defs if not given already.
 

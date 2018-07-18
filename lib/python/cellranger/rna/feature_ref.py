@@ -32,8 +32,6 @@ PatternEntry = namedtuple('PatternEntry', ['read', 'regex_string', 'regex', 'bar
 
 FeatureMatchResult = namedtuple('FeatureMatchResult', ['barcode', 'qual', 'ids', 'indices'])
 
-NOT_COLUMNS = ['index', 'tags']
-
 ALLOWED_READS = ['R1', 'R2']
 
 class FeatureExtractor(object):

@@ -420,25 +420,11 @@ class GeneIndex(GtfParser):
             return self.gene_ids_map[gene_id]
         return None
 
-    def gene_id_to_name(self, gene_id):
-        if gene_id in self.gene_ids_map:
-            i = self.gene_ids_map[gene_id]
-            return self.genes[i].name
-        return None
-
-    def int_to_gene_id(self, i):
-        if i < len(self.genes):
-            return self.genes[i].id
-        return None
-
     def get_genes(self):
         return self.genes
 
     def get_gene(self, gene_id):
         return self.genes[self.gene_id_to_int(gene_id)]
-
-    def get_gene_ids(self):
-        return [gene.id for gene in self.genes]
 
     def get_gene_lengths(self):
         return [gene.length for gene in self.genes]
@@ -628,25 +614,6 @@ class STAR:
             # check for empty BAM
             if tk_bam.bam_is_empty(out_genome_bam_fn):
                 raise Exception('Aligned BAM is empty - check STAR logs for errors: %s .' % star_log )
-
-# TODO these next two methods are coupled, we should make a class
-def get_genome_index(genomes):
-    return {g: i for i, g in enumerate(genomes)}
-
-def get_genome_id(genome_name, genome_index):
-    none_genome_id = len(genome_index)
-    if genome_name is None:
-        return none_genome_id
-    elif genome_name in genome_index:
-        return genome_index[genome_name]
-    else:
-        raise Exception('Genome %s not found in index' % genome_name)
-
-def int_to_gene_id(i, gene_ids):
-    ''' Same as the GeneIndex method, but operates on a plain array. '''
-    if i < len(gene_ids):
-        return gene_ids[i]
-    return None
 
 def get_ref_name_from_genomes(genomes):
     return '_and_'.join(genomes)

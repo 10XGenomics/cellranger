@@ -8,7 +8,6 @@ import h5py
 import itertools
 import json
 import math
-import multiprocessing
 import numpy as np
 from cellranger.feature_ref import FeatureReference
 import cellranger.rna.library as rna_library
@@ -87,9 +86,6 @@ class MoleculeCounter:
 
     def get_barcode_whitelist(self):
         return self.get_metric(BC_WHITELIST_METRIC)
-
-    def get_chemistry_description(self):
-        return self.get_metric(CHEMISTRY_DESC_METRIC)
 
     def get_gem_groups(self):
         return map(int, self.get_metric(GEM_GROUPS_METRIC).keys())
@@ -361,11 +357,6 @@ class MoleculeCounter:
         this may only be a file view instead of a full array. """
         return self.columns[col_name]
 
-    def get_column_chunked(self, col_name, chunk_size):
-        data = self.get_column_lazy(col_name)
-        for i in xrange(0, len(data), chunk_size):
-            yield data[i:(i+chunk_size)]
-
     def get_column(self, col_name):
         """Load an entire column of data into memory"""
         return self.get_column_lazy(col_name)[:]
@@ -432,17 +423,6 @@ class MoleculeCounter:
             pass_filter=new_pf,
             genomes=genomes,
         )
-
-
-
-
-
-
-
-
-
-
-
 
     @staticmethod
     def concatenate(out_filename, in_filenames, metrics=None):
@@ -540,17 +520,6 @@ class MoleculeCounter:
             chunk_end = starts[i+1] if i+1 < n else self.nrows()
             yield (chunk_start, chunk_end - chunk_start)
 
-    def get_chunks_by_gem_group(self):
-        """ Return exactly one chunk per gem group."""
-        gem_group_arr = self.get_column('gem_group')
-        # verify gem groups are sorted
-        assert np.all(np.diff(gem_group_arr)>=0)
-        unique_ggs = np.unique(gem_group_arr)
-        gg_key = lambda i: gem_group_arr[i]
-        chunk_iter = self.get_chunks_from_partition(unique_ggs, gg_key)
-        for (gg, chunk) in zip(unique_ggs, chunk_iter):
-            yield (gg, chunk[0], chunk[1])
-
     def get_chunks(self, target_chunk_len, preserve_boundaries=True):
         """ Get chunks, optionally preserving boundaries defined by get_chunk_key().
             Yields (chunk_start, chunk_len) which are closed intervals """
@@ -562,10 +531,6 @@ class MoleculeCounter:
             chunk_len = 1 + chunk_end - chunk_start
             yield (chunk_start, chunk_len)
             chunk_start = 1 + chunk_end
-
-    @staticmethod
-    def compress_barcode_index(x):
-        return MOLECULE_INFO_COLUMNS['barcode_idx'](x)
 
     @staticmethod
     def compress_gem_group(x):
@@ -638,48 +603,6 @@ class MoleculeCounter:
         combined_metrics[LIBRARIES_METRIC] = lib_metrics
         return combined_metrics
 
-    def get_molecule_iter(self, barcode_length, subsample_rate=1.0):
-        raise NotImplementedError
-        # """ Return an iterator on Molecule tuples """
-        # assert subsample_rate >= 0 and subsample_rate <= 1.0
-
-        # # Store the previous compressed barcode so we don't have to decompress every single row
-        # prev_compressed_bc = None
-        # prev_gem_group = None
-        # prev_bc = None
-
-        # # Load the molecule data
-        # mol_barcodes = self.get_column('barcode')
-        # mol_gem_groups = self.get_column('gem_group')
-        # mol_genome_ints = self.get_column('genome')
-        # mol_gene_ints = self.get_column('gene')
-        # mol_reads = self.get_column('reads')
-
-        # gene_ids = self.get_ref_column('gene_ids')
-        # genome_ids = self.get_ref_column('genome_ids')
-
-        # if subsample_rate < 1.0:
-        #     mol_reads = np.random.binomial(mol_reads, subsample_rate)
-
-        # for compressed_bc, gem_group, genome_int, gene_int, reads in itertools.izip(mol_barcodes,
-        #                                                                             mol_gem_groups,
-        #                                                                             mol_genome_ints,
-        #                                                                             mol_gene_ints,
-        #                                                                             mol_reads):
-        #         if reads == 0:
-        #             continue
-
-        #         # Decompress the cell barcode if necessary
-        #         if compressed_bc == prev_compressed_bc and gem_group == prev_gem_group:
-        #             bc = prev_bc
-        #         else:
-        #             bc = cr_utils.format_barcode_seq(self.decompress_barcode_seq(compressed_bc, barcode_length=barcode_length),
-        #                                              gem_group)
-        #         yield Molecule(barcode=bc,
-        #                        genome=genome_ids[genome_int],
-        #                        gene_id=gene_ids[gene_int],
-        #                        reads=reads)
-
     @staticmethod
     def get_compressed_bc_iter(barcodes):
         """ Yields compressed barcode tuples that can be compared against
@@ -724,10 +647,6 @@ class MoleculeCounter:
         return MoleculeCounter._sum_metric(mol_h5_list, metric_name, LIBRARIES_METRIC)
 
     @staticmethod
-    def sum_gem_group_metric(mol_h5_list, metric_name):
-        return MoleculeCounter._sum_metric(mol_h5_list, metric_name, GEM_GROUPS_METRIC)
-
-    @staticmethod
     def get_total_conf_mapped_reads_in_cells_chunk(filename, filtered_bcs_set, start, length, queue):
         total_mapped_reads = 0
         with MoleculeCounter.open(filename, 'r', start, length) as mc:
@@ -740,39 +659,3 @@ class MoleculeCounter:
                     continue
                 total_mapped_reads += reads
         queue.put(total_mapped_reads)
-
-    @staticmethod
-    def get_total_conf_mapped_reads_in_cells(filename, filtered_barcodes, mem_gb):
-        """ Number of confidently mapped reads w/ valid, filtered barcodes.
-            Because this is called from a 'split' function, we must stay within the given mem limit.
-            NOTE: We re-open the file for each chunk IN ISOLATED PROCESSES
-                  due to a possible memory leak in h5py. Tests show the mem usage is nondeterministic, too.
-                  https://github.com/h5py/h5py/issues/763 (among many others)
-        Args: filtered_barcodes (set) - set of barcode strings (e.g., ACGT-1)
-              filename (str) - path to molecule info HDF5 file
-              mem_gb (int) - limit memory usage to this value """
-
-        filtered_bcs_set = set(MoleculeCounter.get_compressed_bc_iter(filtered_barcodes))
-
-        entries_per_chunk = int(np.floor(float(mem_gb*1e9)) / MoleculeCounter.get_record_bytes())
-        print 'Entries per chunk: %d' % entries_per_chunk
-
-        with MoleculeCounter.open(filename, 'r') as mc:
-            num_entries = mc.nrows()
-
-        total_mapped_reads = 0
-        for start in xrange(0, num_entries, entries_per_chunk):
-            queue = multiprocessing.Queue()
-            p = multiprocessing.Process(target=MoleculeCounter.get_total_conf_mapped_reads_in_cells_chunk,
-                                        args=(filename, filtered_bcs_set, start, entries_per_chunk, queue))
-            p.start()
-            p.join()
-            total_mapped_reads += queue.get()
-
-        return total_mapped_reads
-
-    def decompress_barcode_seq(self, bc_int, barcode_length=None):
-        bc_len = barcode_length or self.get_barcode_length()
-        return cr_utils.decompress_seq(bc_int,
-                                       bc_len,
-                                       MoleculeCounter.get_barcode_bits())
