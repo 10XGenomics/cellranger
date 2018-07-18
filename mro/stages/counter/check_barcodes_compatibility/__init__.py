@@ -11,8 +11,6 @@ import cellranger.constants as cr_constants
 from cellranger.library_constants import GENE_EXPRESSION_LIBRARY_TYPE
 import cellranger.utils as cr_utils
 from cellranger.fastq import FastqReader
-import puppy.phenotype.constants as ph_constants
-import puppy.phenotype.utils as ph_utils
 import tenkit.stats as tk_stats
 
 
@@ -63,6 +61,16 @@ def split(args):
     for chunk in args.chunks:
         chunk_counts[chunk["gem_group"]][chunk["library_type"]] += 1
 
+    single_library = True
+    for gem_group in chunk_counts:
+        if len(chunk_counts[gem_group]) > 1:
+            single_library = False
+
+    if single_library:
+        martian.log_info('Single library in input. No need to check barcode compatibility.')
+        # `[]` for the chunks will skip the main
+        return {'chunks': [], 'join': {}}
+
     num_reads_to_check_barcode = cr_constants.NUM_READS_TO_CHECK_BARCODE if args.num_reads_to_check_barcode is None else args.num_reads_to_check_barcode
     chunks = []
     for chunk in args.chunks:
@@ -70,17 +78,22 @@ def split(args):
         chunk_def['num_reads_per_chunk_to_check_barcode'] = int(tk_stats.robust_divide(num_reads_to_check_barcode, chunk_counts[chunk["gem_group"]][chunk["library_type"]]))
         chunks.append(chunk_def)
 
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 4}}
 
 def join(args, outs, chunk_defs, chunk_outs):
+    outs.barcode_compatible = True
+
+    if chunk_outs is None or len(chunk_outs) == 0:
+        return
+
     # aggreagate barcodes from chunk, {gem_group : {library_type : count_of_fastq_file} }
     sampled_barcodes = defaultdict(lambda: defaultdict(list))
     for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):
         gem_group, lib = chunk_def.gem_group, chunk_def.library_type
         sampled_barcodes[gem_group][lib].extend(chunk_out.sampled_barcodes)
 
-    barcodes_in_whitelist = set(cr_utils.load_barcode_whitelist(args.barcode_whitelist))
-    guide_bc_need_translate = (args.barcode_whitelist is not None) and (args.barcode_whitelist not in ph_constants.BARCODES_IDENTICAL)
+    barcodes_in_whitelist = cr_utils.load_barcode_whitelist(args.barcode_whitelist, as_set=True)
+    barcode_translate_map = cr_utils.load_barcode_translate_map(args.barcode_whitelist)
 
     sampled_bc_counter_in_wl = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     outs.barcode_compatibility_info = {} # record sampled barcode info
@@ -101,8 +114,8 @@ def join(args, outs, chunk_defs, chunk_outs):
             raw_bc_counter = Counter(sampled_bc)
             bc_counter = defaultdict(int)
             for b in unique_bc_in_wl:
-                if (lib != GENE_EXPRESSION_LIBRARY_TYPE) and guide_bc_need_translate:
-                    bc_trans = ph_utils.guide_bc_to_cell_bc(b, args.barcode_whitelist)
+                if (lib != GENE_EXPRESSION_LIBRARY_TYPE) and (barcode_translate_map is not None):
+                    bc_trans = barcode_translate_map.get(b, b)
                 else:
                     bc_trans = b
                 bc_counter[bc_trans] += raw_bc_counter[b]
@@ -110,7 +123,6 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     barcode_compatibility_cutoff = cr_constants.BARCODE_COMPATIBILITY_CUTOFF if args.barcode_compatibility_cutoff is None else args.barcode_compatibility_cutoff
 
-    outs.barcode_compatible = True
     outs.barcode_compatibility_info['pairwise_compatibility'] = {}
     # for every gem_group, check each pair of library types
     for gem_group in sampled_barcodes:

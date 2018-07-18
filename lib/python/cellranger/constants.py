@@ -23,6 +23,7 @@ REVCOMP_BARCODE_THRESHOLD = 0.75
 
 CELLRANGER_LIB_PATH = os.path.dirname(os.path.abspath(__file__))
 BARCODE_WHITELIST_PATH = os.path.join(CELLRANGER_LIB_PATH, 'barcodes')
+BARCODE_WHITELIST_TRANSLATE_PATH = os.path.join(BARCODE_WHITELIST_PATH, 'translation')
 
 NO_INPUT_FASTQS_MESSAGE = "No input FASTQs were found with the requested sample indices."
 

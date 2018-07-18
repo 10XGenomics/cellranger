@@ -515,6 +515,33 @@ def load_barcode_whitelist(filename, as_set=False):
 
     return load_barcode_tsv(path, as_set)
 
+def load_barcode_translate_map(bc_whitelist):
+    """
+    Guide BC to Cell BC translate.
+
+    If the barcode whitelist needs to translate, return the mapping dictionary,
+    else, return None.
+    """
+    if bc_whitelist is None:
+        return None
+
+    file_path = None
+    for extension in ['.txt', '.txt.gz']:
+        file_ext = os.path.join(cr_constants.BARCODE_WHITELIST_TRANSLATE_PATH, bc_whitelist + extension)
+        if os.path.exists(file_ext):
+            file_path = file_ext
+            break
+        
+    if file_path is None:
+        return None
+    else:
+        translate_map = {}
+        for line in cr_io.open_maybe_gzip(file_path, 'r'):
+            if line.startswith('#'):
+                continue
+            bcs = line.strip().split()
+            translate_map[bcs[0]] = bcs[1]
+        return translate_map
 
 def load_barcode_summary(barcode_summary):
     if barcode_summary:
