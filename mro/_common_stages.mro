@@ -21,6 +21,8 @@ stage CELLRANGER_PREFLIGHT(
     in  int      r1_length,
     in  int      r2_length,
     src py       "stages/common/cellranger_preflight",
+) using (
+    mem_gb = 2,
 )
 
 stage CELLRANGER_PREFLIGHT_LOCAL(
@@ -36,6 +38,8 @@ stage CELLRANGER_PREFLIGHT_LOCAL(
     in  int      r1_length,
     in  int      r2_length,
     src py       "stages/common/cellranger_preflight",
+) using (
+    mem_gb = 2,
 )
 
 stage SETUP_CHUNKS(
