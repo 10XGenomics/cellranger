@@ -10,6 +10,7 @@ import cellranger.h5_constants as h5_constants
 import cellranger.analysis.constants as analysis_constants
 import cellranger.matrix as cr_matrix
 import cellranger.io as cr_io
+import cellranger.library_constants as lib_constants
 
 __MRO__ = """
 stage RUN_DIFFERENTIAL_EXPRESSION(
@@ -51,6 +52,9 @@ def main(args, outs):
         return
 
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
+
+    # For now, only compute for gene expression features
+    matrix = matrix.select_features_by_type(lib_constants.GENE_EXPRESSION_LIBRARY_TYPE)
 
     clustering = SingleGenomeAnalysis.load_clustering_from_h5(args.clustering_h5, args.clustering_key)
 
