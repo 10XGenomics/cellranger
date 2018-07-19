@@ -138,12 +138,12 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     # format warning/error message if incompatible
     if outs.barcode_compatible is False:
-        log_msg = 'Barcodes from libraries are not compatible.\n'
+        log_msg = 'Barcodes from libraries are not compatible.'
         for gem_group in outs.barcode_compatibility_info['pairwise_compatibility']:
             for pair in outs.barcode_compatibility_info['pairwise_compatibility'][gem_group]:
                 if pair[3] < barcode_compatibility_cutoff:
-                    log_msg += ' - gem_group {}: Barcodes from [{}] and [{}] has cosine similarity {:.4f}\n'.format(gem_group, pair[0], pair[1], pair[3])
-        log_msg += 'Exiting pipeline'
+                    log_msg += '\n - GEM group {}: Barcodes from [{}] and [{}] have cosine similarity {:.4f}'.format(gem_group, pair[0], pair[1], pair[3])
+
         martian.log_info(log_msg)
         martian.exit(log_msg)
     return
