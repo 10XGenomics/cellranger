@@ -511,7 +511,7 @@ cdef class _RawFastqMetricsCache:
         else:
             metrics = _RawFastqSeqMetrics()
             cache._seq_types[seq_type] = metrics
-        cdef unsigned char bases_q = 2+tk_fasta.ILLUMINA_QUAL_OFFSET 
+        cdef unsigned char bases_q = 2+tk_fasta.ILLUMINA_QUAL_OFFSET
         cdef unsigned char q30_q
         with nogil:
             q30_q = bases_q+28
@@ -924,13 +924,19 @@ class Reporter:
             conf_mapped_deduped = not read.is_duplicate
 
         if conf_mapped_deduped:
-            for reference in [genome, lib_constants.MULTI_REFS_PREFIX]:
-                # Only report barcode_reads for multi_* if there are multiple genomes
-                if reference != lib_constants.MULTI_REFS_PREFIX or self.has_multiple_genomes:
-                    conf_mapped_deduped_barcode_reads = self._get_metric_attr(
-                        'transcriptome_conf_mapped_deduped_barcoded_reads',
-                        library_prefix, reference)
-                    conf_mapped_deduped_barcode_reads.add(bc)
+            if genome is not None:
+                conf_mapped_deduped_barcode_reads = self._get_metric_attr(
+                    'transcriptome_conf_mapped_deduped_barcoded_reads',
+                    library_prefix, genome)
+                conf_mapped_deduped_barcode_reads.add(bc)
+
+            # Only report barcode_reads for multi_* if there are multiple genomes
+            # or the library type is genomeless
+            if self.has_multiple_genomes or genome is None:
+                conf_mapped_deduped_barcode_reads = self._get_metric_attr(
+                    'transcriptome_conf_mapped_deduped_barcoded_reads',
+                    library_prefix, lib_constants.MULTI_REFS_PREFIX)
+                conf_mapped_deduped_barcode_reads.add(bc)
 
             return True, genome, gene_id, bc
 
