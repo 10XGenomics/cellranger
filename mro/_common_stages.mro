@@ -44,6 +44,7 @@ stage SETUP_CHUNKS(
     in  string[] library_type_filter,
     in  string   chemistry_name,
     in  map      custom_chemistry_def,
+    in  string   default_library_type,
     out map[]    chunks,
     out map      chemistry_def,
     out string   barcode_whitelist,

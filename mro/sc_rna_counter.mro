@@ -107,6 +107,7 @@ pipeline SC_RNA_COUNTER(
         library_type_filter  = self.library_type_filter,
         chemistry_name       = CHEMISTRY_DETECTOR.chemistry_type,
         custom_chemistry_def = self.custom_chemistry_def,
+        default_library_type = null,
     ) using (
         local    = true,
         volatile = true,

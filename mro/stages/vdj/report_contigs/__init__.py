@@ -8,8 +8,10 @@ import os
 import pandas as pd
 import tenkit.stats as tk_stats
 import cellranger.h5_constants as h5_constants
+import cellranger.library_constants as lib_constants
 import cellranger.utils as cr_utils
 import cellranger.io as cr_io
+import cellranger.rna.library as rna_library
 import cellranger.vdj.annotations as vdj_annotations
 import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.report as vdj_report
@@ -36,6 +38,8 @@ stage REPORT_CONTIGS(
 MIN_CHAIN_TYPE_CONTIG_FRAC = 0.05
 
 MEM_GB_PER_UMI_SUMMARY_GB = 4.5
+
+LIBRARY_TYPE = lib_constants.VDJ_LIBRARY_TYPE
 
 def split(args):
     mem_gb_annot = vdj_utils.get_mem_gb_from_annotations_json(args.annotations)
@@ -126,7 +130,9 @@ def main(args, outs):
         assemblable_read_pairs_by_bc = cr_utils.get_metric_from_json(args.assemble_metrics_summary, 'assemblable_read_pairs_by_bc')
         assemblable_read_pairs = sum(assemblable_read_pairs_by_bc.get(bc, 0) for bc in barcodes)
 
-        total_read_pairs = cr_utils.get_metric_from_json(args.reads_summary, 'total_read_pairs')
+        lib_type_prefix = rna_library.get_library_type_metric_prefix(LIBRARY_TYPE)
+        total_read_pairs = cr_utils.get_metric_from_json(args.reads_summary, '%stotal_read_pairs'
+                                                         % lib_type_prefix)
 
         reporter._get_metric_attr('vdj_assemblable_read_pairs_per_filtered_bc').set_value(assemblable_read_pairs, len(barcodes))
         reporter._get_metric_attr('vdj_sequencing_efficiency').set_value(assemblable_read_pairs, total_read_pairs)

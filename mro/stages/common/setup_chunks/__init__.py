@@ -14,6 +14,7 @@ import tenkit.fasta as tk_fasta
 import tenkit.preflight as tk_preflight
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
 import cellranger.h5_constants as h5_constants
 import cellranger.fastq as cr_fastq
 import cellranger.sample_def as cr_sample_def
@@ -25,6 +26,7 @@ stage SETUP_CHUNKS(
     in  string[] library_type_filter,
     in  string chemistry_name,
     in  map    custom_chemistry_def,
+    in  string default_library_type,
     out map[]  chunks,
     out map    chemistry_def,
     out string barcode_whitelist,
@@ -137,12 +139,13 @@ def main(args, outs):
 
     ## Assign library ids
     sample_defs = args.sample_def
-    library_ids = cr_sample_def.assign_library_ids(sample_defs)
+    default_lib_type = args.default_library_type or lib_constants.DEFAULT_LIBRARY_TYPE
+    library_ids = cr_sample_def.assign_library_ids(sample_defs, default_lib_type)
 
     for sample_def, library_id in zip(sample_defs, library_ids):
         fq_spec = cr_fastq.FastqSpec.from_sample_def(sample_def)
         gem_group = cr_sample_def.get_gem_group(sample_def)
-        library_type = cr_sample_def.get_library_type(sample_def)
+        library_type = cr_sample_def.get_library_type(sample_def) or default_lib_type
 
         chunks = setup_chunks(args.sample_id,
                               fq_spec,

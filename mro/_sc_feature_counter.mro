@@ -74,6 +74,7 @@ pipeline _SC_FEATURE_COUNTER(
         library_type_filter  = self.library_type_filter,
         chemistry_name       = self.chemistry_name,
         custom_chemistry_def = self.custom_chemistry_def,
+        default_library_type = null,
     ) using (
         local    = true,
         volatile = true,

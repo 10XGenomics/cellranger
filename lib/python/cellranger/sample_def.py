@@ -7,8 +7,7 @@ from collections import OrderedDict
 import cellranger.library_constants as lib_constants
 
 def get_library_type(sample_def):
-    return sample_def.get('library_type') or lib_constants.DEFAULT_LIBRARY_TYPE
-
+    return sample_def.get('library_type')
 
 def get_gem_group(sample_def):
     """ Get the GEM group from a sample def.
@@ -24,7 +23,7 @@ def get_gem_group(sample_def):
     return int(gg)
 
 
-def assign_library_ids(sample_defs):
+def assign_library_ids(sample_defs, default_library_type=lib_constants.DEFAULT_LIBRARY_TYPE):
     """ Assign library ids to a list of sample defs if not given already.
 
     Each (gem group, library_type) must have a distinct library id. If missing,
@@ -32,6 +31,7 @@ def assign_library_ids(sample_defs):
 
     Args:
       sample_defs (list of dict): Sample defs, some possibly already containing a library_id key
+      default_library_type (str): Use if a library_type is None or empty
     Returns:
       list of str: Library IDs, one per sample def.
     """
@@ -44,7 +44,7 @@ def assign_library_ids(sample_defs):
     # Assign a library ID to each sample def (most commonly by generating a new, unique one)
     for sd in sample_defs:
         gem_group = get_gem_group(sd)
-        lib_type = get_library_type(sd)
+        lib_type = get_library_type(sd) or default_library_type
         lib_tuple = (gem_group, lib_type) # library
         sd_libs.append(lib_tuple) # library for each sample def
 

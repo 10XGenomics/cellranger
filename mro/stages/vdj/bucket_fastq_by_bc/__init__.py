@@ -14,6 +14,8 @@ import math
 import tenkit.fasta as tk_fasta
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+import cellranger.rna.library as rna_library
+import cellranger.library_constants as lib_constants
 import cellranger.fastq as cr_fastq
 import cellranger.utils as cr_utils
 import cellranger.io as cr_io
@@ -63,7 +65,12 @@ def split(args):
             gg_library_ids = [lib['library_id'] for lib in args.library_info if lib['gem_group'] == gg]
             assert len(gg_library_ids) == 1
 
-            readpairs = reads_summary['%s_total_read_pairs_per_library' % gg_library_ids[0]]
+            lib_type_prefix = rna_library.get_library_type_metric_prefix(
+                lib_constants.VDJ_LIBRARY_TYPE)
+            readpairs = reads_summary['%s%s_total_read_pairs_per_library' %
+                                      (lib_type_prefix,
+                                       gg_library_ids[0])]
+
             chunks_per_gem_group[str(gg)] = max(2,
                                                 int(math.ceil(float(readpairs) / \
                                                               args.readpairs_per_chunk)))
