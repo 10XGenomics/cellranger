@@ -36,8 +36,17 @@ stage VLOUPE_PREPROCESS(
 )
 """
 
+def split(args):
+    """ This exists only for the mem request """
+    return {
+        'join' : {'__mem_gb': 10}
+    }
 
 def main(args, outs):
+    """ Dummy main """
+    return
+
+def join(args, outs, chunk_defs, chunk_outs):
     """
     Run the vlconverter executable with inputs that should be available in the outs
     folder at the end of the pipeline run.  This will generate "output_for_vloupe.vloupe"
