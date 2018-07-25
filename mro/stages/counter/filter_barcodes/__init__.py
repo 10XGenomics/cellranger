@@ -161,6 +161,14 @@ def filter_barcodes(args, outs):
         summary['%s_filtered_bcs' % genome] = txome_summary['filtered_bcs']
         summary['%s_filtered_bcs_cv' % genome] = txome_summary['filtered_bcs_cv']
 
+    # Deduplicate and sort filtered barcode sequences
+    # Sort by (gem_group, barcode_sequence)
+    barcode_sort_key = lambda x: cr_utils.split_barcode_seq(x)[::-1]
+
+    for genome, bcs in genome_filtered_bcs.iteritems():
+        genome_filtered_bcs[genome] = sorted(list(set(bcs)), key=barcode_sort_key)
+    filtered_bcs = sorted(list(set(filtered_bcs)), key=barcode_sort_key)
+
     # Re-compute various metrics on the filtered matrix
     reads_summary = cr_utils.merge_jsons_as_dict([args.raw_fastq_summary, args.attach_bcs_summary])
     matrix_summary = rna_report_mat.report_genomes(matrix,
