@@ -270,7 +270,8 @@ class CountMatrix(object):
             group.create_dataset(attr, data=arr,
                                  chunks=(HDF5_CHUNK_SIZE,),
                                  maxshape=(None,),
-                                 compression=HDF5_COMPRESSION)
+                                 compression=HDF5_COMPRESSION,
+                                 shuffle=True)
 
     @staticmethod
     def load_dims(group):

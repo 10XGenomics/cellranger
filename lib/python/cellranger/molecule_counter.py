@@ -208,9 +208,11 @@ class MoleculeCounter:
         """
         group.create_dataset('pass_filter', data=bc_info.pass_filter,
                              maxshape=(None, bc_info.pass_filter.shape[1]),
-                             compression=HDF5_COMPRESSION)
+                             compression=HDF5_COMPRESSION,
+                             shuffle=True)
         cr_io.create_hdf5_string_dataset(group, 'genomes', bc_info.genomes,
-                                         compression=HDF5_COMPRESSION)
+                                         compression=HDF5_COMPRESSION,
+                                         shuffle=True)
 
     @staticmethod
     def load_barcode_info(group):
