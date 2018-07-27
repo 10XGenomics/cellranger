@@ -419,7 +419,7 @@ def load_barcode_translate_map(bc_whitelist):
         if os.path.exists(file_ext):
             file_path = file_ext
             break
-        
+
     if file_path is None:
         return None
     else:
@@ -539,9 +539,12 @@ def merge_jsons_as_dict(in_filenames):
     for filename in in_filenames:
         if filename is None:
             continue
-        with open(filename, 'r') as f:
-            data = json.load(f)
-            update_require_unique_key(d, data)
+        try:
+            with open(filename, 'r') as f:
+                data = json.load(f)
+                update_require_unique_key(d, data)
+	except IOError:
+	    continue
     return d
 
 def get_metric_from_json(filename, key):
