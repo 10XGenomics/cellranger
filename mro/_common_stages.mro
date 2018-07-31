@@ -63,6 +63,8 @@ stage CHUNK_READS(
     src py    "stages/common/chunk_reads",
 ) split (
     in  map   read_chunks,
+) using (
+    mem_gb = 2,
 )
 
 stage EXTRACT_READS(
@@ -100,5 +102,5 @@ stage EXTRACT_READS(
     in  bool     reads_interleaved,
     in  bool     barcode_rc,
 ) using (
-    mem_gb = 3,
+    mem_gb = 2,
 )

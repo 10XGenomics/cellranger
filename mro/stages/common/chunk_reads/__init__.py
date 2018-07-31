@@ -26,13 +26,10 @@ def split(args):
         chunk_def = {}
         chunk_def['read_chunk'] = chunk
         chunk_def['__threads'] = 4
-        chunk_def['__mem_gb'] = h5_constants.MIN_MEM_GB
+        chunk_def['__mem_gb'] = 1 # h5_constants.MIN_MEM_GB
         chunks.append(chunk_def)
 
-    join = {
-        '__mem_gb': h5_constants.MIN_MEM_GB,
-    }
-    return {'chunks': chunks, 'join': join}
+    return {'chunks': chunks, 'join': {'__mem_gb' : 1}}
 
 
 def join(args, outs, chunk_defs, chunk_outs):

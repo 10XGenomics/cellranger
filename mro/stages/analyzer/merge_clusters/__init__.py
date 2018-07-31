@@ -38,14 +38,13 @@ MIN_DE_GENES = 1
 
 def split(args):
     if args.skip:
-        return {'chunks': [{}]}
+        return {'chunks': [{'__mem_gb': 1}]}
 
-    matrix_mem_gb = CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
-
+    # matrix_mem_gb = CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
     return {
-        'chunks': [{}],
+        'chunks': [{'__mem_gb': 1}],
         'join': {
-            '__mem_gb': max(h5_constants.MIN_MEM_GB, 2 * matrix_mem_gb),
+            '__mem_gb': 4,
         }
     }
 

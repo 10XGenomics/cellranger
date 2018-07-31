@@ -241,6 +241,7 @@ stage SUBSAMPLE_READS(
     in  map[]  subsample_info,
     out pickle metrics,
 ) using (
+    mem_gb = 2,
     volatile = strict,
 )
 
@@ -261,6 +262,7 @@ stage SUMMARIZE_BASIC_REPORTS(
     src py     "stages/counter/summarize_basic_reports",
 ) split (
 ) using (
+    mem_gb   = 2,
     volatile = strict,
 )
 

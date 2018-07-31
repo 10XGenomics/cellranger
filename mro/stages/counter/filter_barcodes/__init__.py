@@ -44,7 +44,6 @@ stage FILTER_BARCODES(
 
 def split(args):
     mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
-    print mem_gb
     mem_gb = max(mem_gb, FILTER_BARCODES_MIN_MEM_GB)
 
     return {

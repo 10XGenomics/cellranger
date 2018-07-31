@@ -23,4 +23,6 @@ stage SUMMARIZE_REPORTS(
     out json   alerts,
     src py     "stages/counter/summarize_reports",
 ) split (
+) using (
+    mem_gb = 2,
 )

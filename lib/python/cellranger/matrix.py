@@ -146,6 +146,8 @@ class CountMatrixView(object):
         return self.matrix.bcs_to_ints(bcs)
 
     def ints_to_bcs(self, bc_ints):
+        if bc_ints is None or len(bc_ints) == 0:
+            return []
         sliced_bc_ints = np.flatnonzero(self.bc_mask)
         orig_bc_ints = sliced_bc_ints[np.asarray(bc_ints)]
         return [self.matrix.bcs[i] for i in orig_bc_ints]

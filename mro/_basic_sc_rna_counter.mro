@@ -153,7 +153,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     call SORT_BY_POS(
         inputs      = MARK_DUPLICATES.output,
         num_threads = 6,
-        mem_gb      = 8,
+        mem_gb      = 2,
     )
 
     call COUNT_GENES(

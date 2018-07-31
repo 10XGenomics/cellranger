@@ -2,14 +2,23 @@
 // Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 //
 
+use std::fs;
+use std::io;
+use std::fs::File;
+use std::path::Path;
 use std::collections::{HashMap, HashSet};
 use std::str;
+use std::cmp::{min, max};
 use std::default::Default;
 use itertools::Itertools;
 use rust_htslib::bam;
-use tenkit::chunk_bam::{chunk_bam_records, BamChunkIter};
+use tenkit::chunk_bam::{bam_block_offsets, chunk_bam_records, BamChunkIter, GzipHeader, GzipExtra, GzipISIZE, BamTellIter};
 use martian::*;
 use serde_json;
+
+use bincode::internal::deserialize_from;
+use bincode::Infinite;
+use byteorder;
 
 use utils;
 
@@ -31,7 +40,6 @@ pub struct LibraryInfo {
     library_type: String,
     gem_group: u64,
 }
-
 
 /// Within each gene, correct Hamming-distance-one UMIs
 fn correct_umis(umigene_counts: HashMap<(Vec<u8>, String), u64>)
@@ -89,7 +97,6 @@ struct StageArgs {
     library_info: Vec<LibraryInfo>,
 }
 
-
 /// Denotes whether a record is unpaired, first of a read-pair, or second of a read-pair
 #[derive(Debug, PartialEq, Hash, Eq)]
 enum MateType {
@@ -125,6 +132,104 @@ fn get_qname_conf_mapped_feature<'a, I>(records: I) -> Option<String>
     match features.len() {
         1 => features.into_iter().nth(0),
         _ => None,
+    }
+}
+
+/// Estimate BAM file compression ratio.
+/// Iterate first N BGZF blocks, get the BSIZE (block SIZE) and ISIZE (size of uncompressed
+/// data) of block, estimate the compression ratio as the average of (ISIZE/BSIZE).
+///
+/// Note: this function shares significant amount of code with parse_bgzf_header function.
+fn bam_compression_ratio<P: AsRef<Path>>(bam_path : &P) -> f64{
+    use self::io::Seek;
+
+    let bam_bytes = fs::metadata(bam_path)
+        .expect("Failed to get filesize of input BAM").len();
+    let mut bgzf = File::open(bam_path).expect("Failed to open input BAM");
+    bgzf.seek(io::SeekFrom::Start(0)).expect("Failed to get the beginning of the BAM file ");
+
+    let mut i = 0;
+    let mut compression_ratios : Vec<f64> = Vec::new();
+    while i < 1000 {
+        i += 1;
+        
+        let cur_pos = bgzf.seek(io::SeekFrom::Current(0))
+            .expect("Failed to get current position in BAM file");
+        
+        if cur_pos == bam_bytes {
+            break;
+        }
+
+        let header: GzipHeader = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
+            .expect("Failed to deserialize gzip header - invalid BAM file");
+
+        if header.id1 != 31 || header.id2 != 139 {
+            panic!("Invalid gzip header in BAM file");
+        }
+
+        // Determine the BGZF block size
+        let extra: GzipExtra = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
+            .expect("Failed to deserialize gzip extra field - invalid BAM file");
+        if extra.id1 != 66 || extra.id2 != 67 || extra.slen != 2 {
+            panic!("BSIZE field not found in BGZF header - invalid BAM file");
+        }
+        
+        // Determine the size of uncompressed data
+        let isize_pos = cur_pos + (extra.bsize as u64) + 1 - 4;
+        bgzf.seek(io::SeekFrom::Start(isize_pos))
+            .expect("Failed to get isize position in BAM file");
+        let isize: GzipISIZE = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
+            .expect("Failed to deserialize gzip isize field - invalid BAM file");
+        
+        if extra.bsize > 0 && isize.isize > extra.bsize as u32 {
+            compression_ratios.push(extra.bsize as f64 * 1.0 / (min(isize.isize, 2u32.pow(16)) as f64));
+        } 
+    }
+
+    if compression_ratios.len() == 0 {
+        0.2                 
+    } else {
+        compression_ratios.iter().cloned().fold(0./0., f64::min)
+    }
+}
+
+fn major_barcode_proportion_within_chunk(bam: &mut bam::Reader,
+                                         block_offsets : &Vec<u64>,
+                                         left_block_idx : usize,
+                                         right_block_idx : usize,
+                                         num_sample_per_chunk : i32) -> f64 {
+    use self::bam::Read;
+    use std::collections::btree_map::BTreeMap;
+
+    let step = max(((right_block_idx - left_block_idx) as i32 / num_sample_per_chunk) as usize, 1);
+    let mut idx = left_block_idx; 
+    let mut barcode_counter : BTreeMap<Vec<u8>, u32> = BTreeMap::new();
+
+    while idx < right_block_idx {
+        bam.seek((block_offsets[idx] << 16) as i64)
+        .expect("Failed to get block position in BAM file");
+
+        let mut bam_iter = BamTellIter { bam: bam };
+        if let Some(Ok((_, record))) = bam_iter.next() {
+            if let Some(bc) = utils::get_read_barcode(&record) {
+                *barcode_counter.entry(bc).or_insert(0) += 1; 
+            }
+        }
+
+        idx += step;
+    };
+
+    // calculate major barcode proportion
+    let (mut total_bc_count, mut major_bc_count) = (0u32, 0u32);
+    for (_, count) in &barcode_counter {
+        total_bc_count += count;
+        major_bc_count = max(*count, major_bc_count);
+    };
+
+    if total_bc_count == 0 {
+        1f64
+    } else {
+        (major_bc_count as f64) / (total_bc_count as f64)
     }
 }
 
@@ -167,8 +272,6 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
         }
         prev_bc = bc;
         prev_lib_idx = lib_idx;
-
-
 
         // Get raw UMI frequencies
         let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
@@ -301,21 +404,44 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
     outs
 }
 
-
 impl MartianStage for MarkDuplicatesStage {
     fn split(&self, args: JsonDict) -> JsonDict {
         let bam = args["input"].as_str().unwrap();
 
-        let chunk_intervals =
-            chunk_bam_records(&bam, &|x| utils::get_read_barcode(&x), 0.5, 256);
+        let bam_comp_ratio = bam_compression_ratio(&bam);
+        let mut bam_reader = bam::Reader::from_path(bam).expect("Failed to open input BAM");
 
-        let chunks: Vec<serde_json::Value> = chunk_intervals.into_iter().map(|ci|
-            json!({
-                "chunk_start": ci.0,
-                "chunk_end": ci.1,
-                "__mem_gb": 12,
-            })
-        ).collect();
+        let block_offsets = bam_block_offsets(&bam);
+        let chunk_intervals =
+            chunk_bam_records(&bam, &block_offsets, &|x| utils::get_read_barcode(&x), 0.5, 256);
+
+        let mut left_idx = 0usize;
+        let mut chunks : Vec<serde_json::Value> = Vec::new();
+
+        for offset in &chunk_intervals {
+            let right_idx = match offset.1 {
+                Some(end) => block_offsets.binary_search(&((end >> 16) as u64))
+                .expect("BAM file error - chunk offset is not block offset"),
+                _ => block_offsets.len() as usize
+            }; 
+
+            let major_bc_prop = major_barcode_proportion_within_chunk(&mut bam_reader, &block_offsets, left_idx, right_idx, 1000);
+            let chunk_size_gb = ((block_offsets[right_idx - 1usize] - block_offsets[left_idx]) as f64) / bam_comp_ratio / (1024u64.pow(3) as f64);
+            // emprically learned model for memory usage estimation
+            let mem_gb = 2f64 + chunk_size_gb + chunk_size_gb * major_bc_prop;
+            let mem_gb_round = min(64i32, max(2i32, ((mem_gb / 2.0f64).ceil() * 2.0f64) as i32)); // round to next even
+
+            chunks.push(json!({
+                "chunk_start": offset.0,
+                "chunk_end": offset.1,
+                "chunk_size_gb" : chunk_size_gb,
+                "bam_compression_ratio" : bam_comp_ratio,
+                "major_barcode_proportion" : major_bc_prop,
+                "__mem_gb": mem_gb_round,
+            }));
+
+            left_idx = right_idx;
+        }
 
         serde_json::from_value(json!({
             "chunks": json!(chunks),
@@ -395,7 +521,7 @@ mod test {
     use rust_htslib::bam::HeaderView;
     use rust_htslib::bam::header::{Header, HeaderRecord};
     use rust_htslib::bam::Read;
-    use tenkit::chunk_bam::chunk_bam_records;
+    use tenkit::chunk_bam::{bam_block_offsets, chunk_bam_records};
     use serde_json;
 
     use cmd_mark_dups;
@@ -546,8 +672,9 @@ mod test {
         }
 
         // Setup input
+        let block_offsets = bam_block_offsets(&in_bam_filename);
         let chunk_intervals =
-            chunk_bam_records(&in_bam_filename, &|x| utils::get_read_barcode(&x), 0.5, 256);
+            chunk_bam_records(&in_bam_filename, &block_offsets, &|x| utils::get_read_barcode(&x), 0.5, 256);
 
         let lib_info: Vec<LibraryInfo> = serde_json::from_value(
             json!([
@@ -666,5 +793,96 @@ r14:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx
 r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
 ";
         test_mark_dups(sam_text, &"pe");
+    }
+   
+
+    extern crate rand;
+    use self::rand::Rng;
+	
+    /// Generate a random nucleotide sequence of length len
+    fn random_sequence<R: Rng>(len: usize, rng: &mut R) -> Vec<u8> {
+        let nucs = b"ACGT";
+        (0..len).map(|_| nucs[rng.gen_range(0, 4)]).collect()
+    }
+
+    fn create_sorted_bam_with_bc<P: AsRef<Path>, R: Rng>(filename: P,
+                                                         barcodes: &Vec<Vec<u8>>,
+                                                         num_tids: u64, 
+                                                         reads_per_tid: u64,
+                                                         rng: &mut R) {
+        use rust_htslib::bam::header::{Header, HeaderRecord};
+
+        let read_len = 100;
+        let qual = vec![b'I'; read_len];
+        let cigar = bam::record::CigarString(vec![bam::record::Cigar::Match(read_len as u32)]);
+
+        let mut header = Header::new();
+        for i in 0..num_tids {
+            header.push_record(
+                HeaderRecord::new(b"SQ")
+                    .push_tag(b"SN", &format!("chr{}", 1 + i))
+                    .push_tag(b"LN", &10000000),
+            );
+      	}
+        let mut writer =
+            bam::Writer::from_path(filename, &header).expect("Failed to create bam writer");
+
+        for tid in 0..num_tids {
+            for pos in 0..reads_per_tid {
+                let mut rec = bam::Record::new();
+                let seq = random_sequence(read_len, rng);
+                rec.set(b"1", &cigar, &seq, &qual);
+                rec.set_tid(tid as i32);
+                rec.set_pos(pos as i32);
+                let bc = rng.choose(&barcodes).unwrap();
+                rec.push_aux(b"CB", &bam::record::Aux::String(&bc[..]));
+                writer.write(&rec).expect("Failed to write BAM record");
+     		}
+       	}
+        drop(writer);
+    }
+
+    #[test]
+    fn test_bam_comp_ratio() {
+		let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_output").join("comp_ratio");
+		fs::create_dir_all(&test_dir).expect("Failed to create test output dir");
+		let test_bam = test_dir.join("test.bam");
+        let mut rng = rand::thread_rng();
+
+        let barcodes : Vec<Vec<u8>> = (0..10).map(|_| random_sequence(12, &mut rng)).collect();
+        create_sorted_bam_with_bc(&test_bam, &barcodes, 6, 5000, &mut rng);
+
+        let comp_ratio = cmd_mark_dups::bam_compression_ratio(&test_bam);
+        println!("{:?}", comp_ratio);
+        assert!(comp_ratio >= 0.1 && comp_ratio <= 0.5);
+    }
+
+    #[test]
+    fn test_chunk_sample_bc() {
+		let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_output").join("sample_bc");
+        fs::create_dir_all(&test_dir).expect("Failed to create test output dir");        
+        let mut rng = rand::thread_rng();
+
+        // completely random barcode
+        let barcodes : Vec<Vec<u8>> = (0..1000).map(|_| random_sequence(12, &mut rng)).collect();
+        let test_bam = test_dir.join("test_random.bam");
+        create_sorted_bam_with_bc(&test_bam, &barcodes, 6, 5000, &mut rng);
+
+        let mut bam_reader = bam::Reader::from_path(&test_bam).expect("Failed to open input BAM");
+        let block_offsets = bam_block_offsets(&test_bam);
+        let major_bc_prop = cmd_mark_dups::major_barcode_proportion_within_chunk(&mut bam_reader, &block_offsets, 0, block_offsets.len(), 1000);
+        println!("{:?}", major_bc_prop);
+        assert!(major_bc_prop >= 0.0 && major_bc_prop <= 0.1);
+
+        // same random barcode
+        let barcodes : Vec<Vec<u8>> = (0..1).map(|_| random_sequence(12, &mut rng)).collect();
+        let test_bam = test_dir.join("test_same_bc.bam");
+        create_sorted_bam_with_bc(&test_bam, &barcodes, 6, 5000, &mut rng);
+
+        let mut bam_reader = bam::Reader::from_path(&test_bam).expect("Failed to open input BAM");
+        let block_offsets = bam_block_offsets(&test_bam);
+        let major_bc_prop = cmd_mark_dups::major_barcode_proportion_within_chunk(&mut bam_reader, &block_offsets, 0, block_offsets.len(), 1000);
+        println!("{:?}", major_bc_prop);
+        assert!(major_bc_prop == 1.0);        
     }
 }

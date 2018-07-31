@@ -28,7 +28,6 @@ def split(args):
         })
     join = {
         '__threads': args.num_threads,
-        '__mem_gb': args.mem_gb,
     }
     return {'chunks': chunks, 'join': join}
 

@@ -64,9 +64,6 @@ def split(args):
     with open(bam_comment_fn, 'w') as f:
         json.dump(args.bam_comments, f)
 
-    chunk_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist)
-    join_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
-
     # Write library info to a file
     libraries_fn = martian.make_path('libraries.json')
     with open(libraries_fn, 'w') as f:
@@ -83,10 +80,10 @@ def split(args):
             'library_id': library_id,
             'library_info_json': libraries_fn,
             'bam_comments_json': bam_comment_fn,
-            '__mem_gb': chunk_mem_gb,
+            '__mem_gb': 4,
         })
     join = {
-        '__mem_gb': join_mem_gb,
+        '__mem_gb': 6,
     }
     return {'chunks': chunks, 'join': join}
 

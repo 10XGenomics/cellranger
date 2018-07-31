@@ -30,8 +30,7 @@ stage DETECT_CHEMISTRY(
     out string chemistry_type,
     out txt    report,
     src py     "stages/chemistry_detector/detect_chemistry",
-) split using (
-)
+) 
 """
 
 BCL_PROCESSOR_READ_TYPE = 'RA'

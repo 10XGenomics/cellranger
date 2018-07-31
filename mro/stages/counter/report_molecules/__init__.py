@@ -43,8 +43,7 @@ stage REPORT_MOLECULES(
 MAX_MEM_GB = 64
 
 def split(args):
-    chunk_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist)
-    whitelist_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, [1], use_min=False)
+    chunk_mem_gb = 4
 
     # Estimate the total number of rows in the final molecule info. Worst case.
     total_reads = cr_utils.get_metric_from_json(args.extract_reads_summary, 'total_reads')
@@ -52,9 +51,10 @@ def split(args):
 
     # Memory for concatenating molecule info
     # N = total number of rows
-    # 8 bytes to store the largest column
-    mol_info_mem_gb = int(math.ceil((8 * mol_info_rows)/1e9))
-    join_mem_gb = min(MAX_MEM_GB, max(h5_constants.MIN_MEM_GB, whitelist_mem_gb + mol_info_mem_gb))
+    # 8*N bytes to store the sort indices
+    # (8+8+8)*N bytes to load, concatenate, and index into a 64-bit data column
+    mol_info_mem_gb = int(math.ceil((32 * mol_info_rows)/1e9))
+    join_mem_gb = min(MAX_MEM_GB, max(h5_constants.MIN_MEM_GB, mol_info_mem_gb))
 
     chunks = []
     for chunk_input in args.inputs:

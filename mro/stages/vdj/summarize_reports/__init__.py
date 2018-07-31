@@ -47,16 +47,14 @@ stage SUMMARIZE_REPORTS(
     out csv    barcode_umi_summary,
     out h5     umi_info,
     src py     "stages/vdj/summarize_reports",
-) split using (
 )
 """
 
 def split(args):
-    mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
     return {
         'chunks': [{}],
         'join': {
-            '__mem_gb': mem_gb,
+            '__mem_gb': 2,
         },
     }
 

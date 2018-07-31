@@ -47,7 +47,7 @@ def split(args):
         '__mem_gb': mem_gb,
         '__threads': threads,
     }]
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 1}}
 
 def main(args, outs):
     if args.skip:

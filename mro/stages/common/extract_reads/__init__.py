@@ -59,13 +59,11 @@ stage EXTRACT_READS(
 COMPRESSION = 'lz4'
 
 def split(args):
-    gem_groups = [chunk['gem_group'] for chunk in args.chunks]
-    chunk_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist)
-    join_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, gem_groups)
-
     chunks = []
     for chunk in args.chunks:
-        chunk['__mem_gb'] = chunk_mem_gb
+        # TODO: quick fix to thread error in EXTRACT_READS (CR-210-06), need to fix it before release
+        chunk['__threads'] = 2
+        chunk['__mem_gb'] = 4
 
         if args.initial_reads is None:
             chunk['initial_reads'] = None
@@ -74,7 +72,7 @@ def split(args):
 
         chunks.append(chunk)
     join = {
-        '__mem_gb': join_mem_gb,
+        '__mem_gb': 4,
     }
     return {'chunks': chunks, 'join': join}
 

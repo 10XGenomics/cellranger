@@ -22,16 +22,14 @@ stage SUMMARIZE_BASIC_REPORTS(
     in  int[]  gem_groups,
     out json   summary,
     src py     "stages/counter/summarize_basic_reports",
-) split using (
-)
+) 
 """
 
 def split(args):
-    mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups)
     chunks = [{
-        '__mem_gb': mem_gb,
+        '__mem_gb': 1,
     }]
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 1}}
 
 def main(args, outs):
     summary_files = [

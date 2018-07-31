@@ -37,39 +37,15 @@ stage COUNT_GENES(
 """
 
 def split(args):
-    chunk_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist)
-
     chunks = []
     for chunk_input in args.inputs:
         chunks.append({
             'chunk_input': chunk_input,
-            '__mem_gb': chunk_mem_gb,
+            '__mem_gb': 8,
         })
 
-    join_mem_gb = cr_utils.get_mem_gb_request_from_barcode_whitelist(args.barcode_whitelist, args.gem_groups, use_min=False)
-
-    # Account for memory used by reporters (particularly the bc and umi diversity dicts)
-    genomes = cr_utils.get_reference_genomes(args.reference_path)
-
-    barcode_whitelist = cr_utils.load_barcode_whitelist(args.barcode_whitelist)
-    if barcode_whitelist is not None:
-        num_barcodes = len(barcode_whitelist) * max(args.gem_groups)
-    else:
-        num_barcodes = cr_utils.get_num_barcodes_from_barcode_csv(args.barcode_summary)
-
-    max_bc_diversity_entries = num_barcodes
-    max_umi_diversity_entries = 4 ** cr_chem.get_umi_length(args.chemistry_def)
-
-    # Multiply by 2 to hold the current reporter + accumulating reporter in the merge
-    bc_diversity_mem_gb = (2 * max_bc_diversity_entries * cr_constants.BYTES_PER_STR_INT_DICT_ENTRY * (len(genomes) + 1) * len(cr_constants.READ_TYPES))/1e9
-    umi_diversity_mem_gb = (2 * max_umi_diversity_entries * cr_constants.BYTES_PER_STR_INT_DICT_ENTRY * (len(genomes) + 1) * len(cr_constants.READ_TYPES))/1e9
-    join_mem_gb = min(cr_constants.COUNT_GENES_MAX_MEM_GB,
-                      max(h5_constants.MIN_MEM_GB,
-                          int(math.ceil(join_mem_gb +
-                                        bc_diversity_mem_gb +
-                                        umi_diversity_mem_gb))))
     join = {
-        '__mem_gb': join_mem_gb,
+        '__mem_gb': 8,
     }
     return {'chunks': chunks, 'join': join}
 

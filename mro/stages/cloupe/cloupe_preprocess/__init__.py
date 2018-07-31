@@ -70,7 +70,7 @@ def split(args):
     chunks = [{
         '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
     }]
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 1}}
 
 def join(args, outs, chunk_defs, chunk_outs):
     if chunk_outs[0].output_for_cloupe is None:

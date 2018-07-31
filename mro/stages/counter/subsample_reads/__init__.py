@@ -132,8 +132,9 @@ def split(args):
             'subsample_info': subsamplings,
             '__mem_gb': MoleculeCounter.estimate_mem_gb(chunk_len),
         })
+        
     join = {
-        '__mem_gb': 4,
+        '__mem_gb': 6,
     }
 
     mc.close()

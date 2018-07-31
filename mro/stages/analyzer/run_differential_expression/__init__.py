@@ -33,7 +33,7 @@ def split(args):
 
     chunks = []
     matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
-    chunk_mem_gb = max(matrix_mem_gb * 3, h5_constants.MIN_MEM_GB)
+    chunk_mem_gb = max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
 
     # HACK - give big jobs more threads in order to avoid overloading a node
     threads = cr_io.get_thread_request_from_mem_gb(chunk_mem_gb)
@@ -45,7 +45,7 @@ def split(args):
             '__threads': threads,
         })
 
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb' : 1}}
 
 def main(args, outs):
     if args.skip:

@@ -46,7 +46,7 @@ def split(args):
             'tsne_dims': tsne_dims,
             '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB),
         })
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb' : 1}}
 
 def main(args, outs):
     if args.skip:
