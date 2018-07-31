@@ -80,12 +80,8 @@ class MultiGenomeAnalysis:
         # Prior probability of a doublet given counts for each cell type (ignore N_cells > 2)
         p_obs_multiplet = 2 * (float(n_cells0) / float(n_cells0 + n_cells1)) * (float(n_cells1) / float(n_cells0 + n_cells1))
 
-        # Brute force MLE of binomial n
-        n_mle = 0
-        if n_obs_multiplets > 0:
-            likelihood = scipy.stats.binom.pmf(n_obs_multiplets, xrange(0, n_cells0 + n_cells1), p_obs_multiplet)
-            n_mle = np.argmax(likelihood)
-        return n_mle
+        # Analytical MOM/MLE of binomial N given p, k
+        return float(n_obs_multiplets) / p_obs_multiplet
 
     @staticmethod
     def _compute_count_purity(counts0, counts1):
