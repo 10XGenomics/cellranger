@@ -4,7 +4,6 @@
 #
 import martian
 import cellranger.report as cr_report
-import cellranger.utils as cr_utils
 import cellranger.io as cr_io
 import cellranger.vdj.constants as vdj_constants
 import cellranger.webshim.common as cr_webshim

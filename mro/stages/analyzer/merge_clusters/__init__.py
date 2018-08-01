@@ -14,7 +14,6 @@ import cellranger.analysis.io as analysis_io
 from cellranger.analysis.diffexp import compute_sseq_params, sseq_differential_expression
 import cellranger.analysis.graphclust as cr_graphclust
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
-import cellranger.h5_constants as h5_constants
 from cellranger.matrix import CountMatrix
 
 __MRO__ = """

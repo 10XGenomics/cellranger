@@ -6,7 +6,6 @@ import json
 import os
 import martian
 import tenkit.log_subprocess as tk_subproc
-import cellranger.h5_constants as h5_constants
 
 __MRO__ = """
 stage CHUNK_READS(
@@ -26,7 +25,7 @@ def split(args):
         chunk_def = {}
         chunk_def['read_chunk'] = chunk
         chunk_def['__threads'] = 4
-        chunk_def['__mem_gb'] = 1 # h5_constants.MIN_MEM_GB
+        chunk_def['__mem_gb'] = 1
         chunks.append(chunk_def)
 
     return {'chunks': chunks, 'join': {'__mem_gb' : 1}}

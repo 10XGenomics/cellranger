@@ -2,11 +2,9 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
-import math
 import tenkit.bam as tk_bam
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
-import cellranger.h5_constants as h5_constants
 import cellranger.rna.feature_ref as rna_feature_ref
 import cellranger.matrix as cr_matrix
 import cellranger.reference as cr_reference
