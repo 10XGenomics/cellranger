@@ -3,6 +3,7 @@
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
 import cPickle
+from collections import defaultdict
 import json
 import numpy as np
 import cellranger.constants as cr_constants
@@ -50,10 +51,18 @@ def split(args):
     genomes = sorted(set(f.tags.get('genome', '') for f in mc.feature_reference.feature_defs))
     cell_bcs_by_genome = get_cell_associated_barcodes(genomes, args.filtered_barcodes)
 
-    # TODO FIXME: Need to allow for per-library cellcounts
-    #   In addition to distinct gem groups, we need
-    #   per-library counts because some feature types might only have a subset of the GEX cell-assoc barcodes.
-    n_cells_per_lib = np.array([len(cell_bcs_by_genome[''])] * len(mc.library_info))
+    # Get cell counts per gem group
+    n_cells_per_gg = defaultdict(int)
+    for bc in cell_bcs_by_genome['']:
+        _, gem_group = cr_utils.split_barcode_seq(bc)
+        n_cells_per_gg[gem_group] += 1
+
+    # Assign gem group cell counts to their constituent libraries
+    # TODO FIXME: Need to allow for per-library cell counts
+    #   because some feature types might only have a subset of the GEX cell-assoc barcodes.
+    n_cells_per_lib = np.zeros(len(mc.library_info), dtype=int)
+    for lib_idx, lib in enumerate(mc.library_info):
+        n_cells_per_lib[lib_idx] = n_cells_per_gg[lib['gem_group']]
 
     if n_cells_per_lib.sum() == 0:
         return {'chunks': []}
@@ -108,6 +117,9 @@ def split(args):
                 rates = np.zeros(len(library_info), dtype=float)
                 rates[lib_indexes] = target_usable_counts[lib_indexes].astype(float) \
                                      / usable_count_per_lib[lib_indexes]
+
+                # Zero out the libraries for which we have fewer reads than the target
+                rates[rates > 1] = 0.0
 
                 enough_data = np.any((rates > 0) & (rates <= 1))
                 if not enough_data:
