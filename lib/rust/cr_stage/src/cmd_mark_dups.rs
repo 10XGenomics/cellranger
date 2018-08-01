@@ -7,9 +7,11 @@ use std::io;
 use std::fs::File;
 use std::path::Path;
 use std::collections::{HashMap, HashSet};
+use std::io::{BufWriter, Write};
 use std::str;
 use std::cmp::{min, max};
 use std::default::Default;
+use bincode;
 use itertools::Itertools;
 use rust_htslib::bam;
 use tenkit::chunk_bam::{bam_block_offsets, chunk_bam_records, BamChunkIter, GzipHeader, GzipExtra, GzipISIZE, BamTellIter};
@@ -25,6 +27,7 @@ use utils;
 pub struct MarkDuplicatesStage;
 
 #[derive(Serialize, Deserialize, Default, Clone)]
+/// Read accounting
 struct Metrics {
     total_reads: u64,
     low_support_umi_reads: u64,
@@ -32,6 +35,19 @@ struct Metrics {
     candidate_dup_reads: u64,
     dup_reads: u64,
     umis: u64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+/// Per-barcode information
+struct BarcodeSummary {
+    barcodes: HashMap<Vec<u8>, BarcodeSummaryEntry>,
+}
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct BarcodeSummaryEntry {
+    reads: u64,
+    umis: u64,
+    candidate_dup_reads: u64,
+    umi_corrected_reads: u64,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -152,10 +168,10 @@ fn bam_compression_ratio<P: AsRef<Path>>(bam_path : &P) -> f64{
     let mut compression_ratios : Vec<f64> = Vec::new();
     while i < 1000 {
         i += 1;
-        
+
         let cur_pos = bgzf.seek(io::SeekFrom::Current(0))
             .expect("Failed to get current position in BAM file");
-        
+
         if cur_pos == bam_bytes {
             break;
         }
@@ -173,21 +189,21 @@ fn bam_compression_ratio<P: AsRef<Path>>(bam_path : &P) -> f64{
         if extra.id1 != 66 || extra.id2 != 67 || extra.slen != 2 {
             panic!("BSIZE field not found in BGZF header - invalid BAM file");
         }
-        
+
         // Determine the size of uncompressed data
         let isize_pos = cur_pos + (extra.bsize as u64) + 1 - 4;
         bgzf.seek(io::SeekFrom::Start(isize_pos))
             .expect("Failed to get isize position in BAM file");
         let isize: GzipISIZE = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
             .expect("Failed to deserialize gzip isize field - invalid BAM file");
-        
+
         if extra.bsize > 0 && isize.isize > extra.bsize as u32 {
             compression_ratios.push(extra.bsize as f64 * 1.0 / (min(isize.isize, 2u32.pow(16)) as f64));
-        } 
+        }
     }
 
     if compression_ratios.len() == 0 {
-        0.2                 
+        0.2
     } else {
         compression_ratios.iter().cloned().fold(0./0., f64::min)
     }
@@ -202,7 +218,7 @@ fn major_barcode_proportion_within_chunk(bam: &mut bam::Reader,
     use std::collections::btree_map::BTreeMap;
 
     let step = max(((right_block_idx - left_block_idx) as i32 / num_sample_per_chunk) as usize, 1);
-    let mut idx = left_block_idx; 
+    let mut idx = left_block_idx;
     let mut barcode_counter : BTreeMap<Vec<u8>, u32> = BTreeMap::new();
 
     while idx < right_block_idx {
@@ -212,7 +228,7 @@ fn major_barcode_proportion_within_chunk(bam: &mut bam::Reader,
         let mut bam_iter = BamTellIter { bam: bam };
         if let Some(Ok((_, record))) = bam_iter.next() {
             if let Some(bc) = utils::get_read_barcode(&record) {
-                *barcode_counter.entry(bc).or_insert(0) += 1; 
+                *barcode_counter.entry(bc).or_insert(0) += 1;
             }
         }
 
@@ -241,6 +257,7 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
 
     // Partition metrics by library
     let mut metrics: Vec<Metrics> = vec![Default::default(); library_info.len()];
+    let mut bc_summaries: Vec<BarcodeSummary> = vec![Default::default(); library_info.len()];
 
     let mut bam = bam::Reader::from_path(&args.input)
         .expect("Failed to open input BAM file");
@@ -253,11 +270,11 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
     let chunk_iter = BamChunkIter::new(&mut bam, range);
 
     // Group records by (barcode, library)
-    let mut prev_bc = Some(vec![]);
+    let mut prev_bc = vec![];
     let mut prev_lib_idx = 0;
 
-    for ((bc, lib_idx), bc_group) in chunk_iter.map(|r| r.unwrap()).group_by(|r| (utils::get_read_barcode(r), utils::get_read_library_index(r))) {
-        if bc.is_none() {
+    for ((maybe_bc, lib_idx), bc_group) in chunk_iter.map(|r| r.unwrap()).group_by(|r| (utils::get_read_barcode(r), utils::get_read_library_index(r))) {
+        if maybe_bc.is_none() {
             // Invalid barcode. Write all records as-is.
             for record in bc_group {
                 metrics[lib_idx].total_reads += 1;
@@ -267,11 +284,18 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
             continue;
         }
         // Verify sort order (bc, library_idx)
+        let bc = maybe_bc.unwrap();
         if bc == prev_bc {
             assert!(lib_idx >= prev_lib_idx)
         }
-        prev_bc = bc;
-        prev_lib_idx = lib_idx;
+
+        // HACK: Rust's entry api still requires key-ownership to query,
+        //       so do it the ugly way.
+        if bc_summaries[lib_idx].barcodes.get(&bc).is_none() {
+            // Only clone the key when it's not present
+            bc_summaries[lib_idx].barcodes.insert(bc.clone(), Default::default());
+        }
+        let barcode_summary = bc_summaries[lib_idx].barcodes.get_mut(&bc).unwrap();
 
         // Get raw UMI frequencies
         let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
@@ -279,8 +303,7 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
 
         for (maybe_umi, umi_group) in bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
             let mut gene_counts: HashMap<String, u64> = HashMap::new();
-
-            assert!(lib_idx >= prev_lib_idx);
+            assert!(prev_bc != bc || lib_idx >= prev_lib_idx);
             prev_lib_idx = lib_idx;
 
             if let Some(umi) = maybe_umi {
@@ -335,7 +358,9 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
 
                 if !is_secondary {
                     metrics[lib_idx].total_reads += 1;
+                    barcode_summary.reads += 1
                 }
+
                 metrics[lib_idx].candidate_dup_reads += is_dup_candidate as u64;
 
                 if let (Some(umi), Some(gene)) = (maybe_umi.as_ref(), maybe_gene.as_ref()) {
@@ -359,6 +384,8 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
                         // Correct the UMI tag
                         if is_corrected {
                             metrics[lib_idx].umi_corrected_reads += 1;
+                            barcode_summary.umi_corrected_reads += 1;
+
                             new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
                             new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
                                                 &bam::record::Aux::String(&corrected_umi));
@@ -367,6 +394,8 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
                         // Don't try to dup mark secondary alignments.
                         if is_dup_candidate {
                             let dup_key = (corrected_umi, key.1, get_mate_type(&record));
+
+                            barcode_summary.candidate_dup_reads += 1;
 
                             if wrote_umigenes.contains(&dup_key) {
                                 // Duplicate
@@ -380,6 +409,7 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
                                 // Flag read1 as countable
                                 if !record.is_last_in_template() {
                                     metrics[lib_idx].umis += 1;
+                                    barcode_summary.umis += 1;
                                     new_flags |= utils::ExtraFlags::UMI_COUNT;
                                 }
                             }
@@ -395,11 +425,22 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
             }
 
         } // for each record
+
+        prev_bc = bc;
+        prev_lib_idx = lib_idx;
+
     } // for each barcode
 
     // Write metrics
     utils::write_json_file(outs["metrics"].as_str().unwrap(), &metrics)
         .expect("Failed to write metrics to JSON file");
+
+    // Write barcode summary
+    let chunk_bc_file = File::create(outs["chunk_barcode_summary"].as_str().unwrap())
+        .expect("Failed to open barcode summary file for writing");
+    let mut writer = BufWriter::new(chunk_bc_file);
+    bincode::serialize_into(&mut writer, &bc_summaries, bincode::Infinite)
+        .expect("Failed to serialize barcode summary to file");
 
     outs
 }
@@ -423,7 +464,7 @@ impl MartianStage for MarkDuplicatesStage {
                 Some(end) => block_offsets.binary_search(&((end >> 16) as u64))
                 .expect("BAM file error - chunk offset is not block offset"),
                 _ => block_offsets.len() as usize
-            }; 
+            };
 
             let major_bc_prop = major_barcode_proportion_within_chunk(&mut bam_reader, &block_offsets, left_idx, right_idx, 1000);
             let chunk_size_gb = ((block_offsets[right_idx - 1usize] - block_offsets[left_idx]) as f64) / bam_comp_ratio / (1024u64.pow(3) as f64);
@@ -488,6 +529,61 @@ impl MartianStage for MarkDuplicatesStage {
                 m.low_support_umi_reads += lib.low_support_umi_reads;
             }
         }
+
+        // Merge per-barcode data, grouping by library_type
+        let mut bc_summaries: HashMap<String, BarcodeSummary> = HashMap::new();
+        for lib in library_info {
+            bc_summaries.insert(lib.library_type.clone(), Default::default());
+        }
+
+        for chunk_out in chunk_outs.iter() {
+            let mut reader = File::open(chunk_out["chunk_barcode_summary"].as_str().unwrap())
+                .expect("Failed to open barcode summary binary file for reading");
+
+            let chunk: Vec<BarcodeSummary> =
+                bincode::deserialize_from(&mut reader, bincode::Infinite)
+                .expect("Failed to deserialize from barcode summary bincode file");
+
+            for (lib_idx, lib) in chunk.iter().enumerate() {
+                let lt = &library_info[lib_idx].library_type;
+                let mut bc_summaries_lt = bc_summaries.get_mut(lt).unwrap();
+
+                // Merge the per-chunk barcode summaries into a single barcode summary
+                // for this library type.
+                for (bc, bc_entry) in &lib.barcodes {
+                    if bc_summaries_lt.barcodes.get(bc).is_none() {
+                        bc_summaries_lt.barcodes.insert(bc.clone(),
+                                                        Default::default());
+                    }
+                    let new_entry = bc_summaries_lt.barcodes.get_mut(bc).unwrap();
+
+                    new_entry.reads += bc_entry.reads;
+                    new_entry.umis += bc_entry.umis;
+                    new_entry.candidate_dup_reads += bc_entry.candidate_dup_reads;
+                    new_entry.umi_corrected_reads += bc_entry.umi_corrected_reads;
+                }
+            }
+        }
+
+        // Write per-barcode data
+        let bc_summary_file = File::create(final_outs["barcode_summary"].as_str().unwrap())
+            .expect("Failed to open barcode summary file for writing");
+        let mut writer = BufWriter::new(bc_summary_file);
+        write!(writer,
+               "library_type,barcode,reads,umis,candidate_dup_reads,umi_corrected_reads\n")
+            .expect("Failed to write to barcode summary file");
+        for (lib_type, bc_summary) in bc_summaries {
+            for (bc, entry) in bc_summary.barcodes {
+                write!(writer, "\"{}\",{},{},{},{},{}\n",
+                       lib_type, str::from_utf8(&bc).unwrap(),
+                       entry.reads,
+                       entry.umis, entry.candidate_dup_reads,
+                       entry.umi_corrected_reads)
+                    .expect("Failed to write to barcode summary file");
+            }
+        }
+        drop(writer);
+
 
         // Write summary metrics
         let mut summary = serde_json::Map::new();
@@ -695,9 +791,11 @@ mod test {
         // Setup output
         let metrics_filename = test_dir.join("metrics.json");
         let out_bam_filename = test_dir.join("output.bam");
+        let bc_summary_filename = test_dir.join("chunk_barcode_summary.bin");
         let chunk_outs = match json!({
             "metrics": metrics_filename.clone(),
             "alignments": out_bam_filename.clone(),
+            "chunk_barcode_summary": bc_summary_filename.clone(),
         }) {
             serde_json::Value::Object(x) => Some(x),
             _ => None,
@@ -794,11 +892,11 @@ r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx
 ";
         test_mark_dups(sam_text, &"pe");
     }
-   
+
 
     extern crate rand;
     use self::rand::Rng;
-	
+
     /// Generate a random nucleotide sequence of length len
     fn random_sequence<R: Rng>(len: usize, rng: &mut R) -> Vec<u8> {
         let nucs = b"ACGT";
@@ -807,7 +905,7 @@ r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx
 
     fn create_sorted_bam_with_bc<P: AsRef<Path>, R: Rng>(filename: P,
                                                          barcodes: &Vec<Vec<u8>>,
-                                                         num_tids: u64, 
+                                                         num_tids: u64,
                                                          reads_per_tid: u64,
                                                          rng: &mut R) {
         use rust_htslib::bam::header::{Header, HeaderRecord};
@@ -860,7 +958,7 @@ r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx
     #[test]
     fn test_chunk_sample_bc() {
 		let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_output").join("sample_bc");
-        fs::create_dir_all(&test_dir).expect("Failed to create test output dir");        
+        fs::create_dir_all(&test_dir).expect("Failed to create test output dir");
         let mut rng = rand::thread_rng();
 
         // completely random barcode
@@ -883,6 +981,6 @@ r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx
         let block_offsets = bam_block_offsets(&test_bam);
         let major_bc_prop = cmd_mark_dups::major_barcode_proportion_within_chunk(&mut bam_reader, &block_offsets, 0, block_offsets.len(), 1000);
         println!("{:?}", major_bc_prop);
-        assert!(major_bc_prop == 1.0);        
+        assert!(major_bc_prop == 1.0);
     }
 }
