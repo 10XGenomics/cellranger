@@ -3,6 +3,7 @@
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
 from collections import OrderedDict
+from cellranger.feature_ref import FeatureDef
 import copy
 import h5py as h5
 import itertools
@@ -27,6 +28,7 @@ HDF5_COMPRESSION = 'gzip'
 HDF5_CHUNK_SIZE = 80000
 
 DEFAULT_DATA_DTYPE = 'int32'
+
 
 # some helper functions from stats
 def sum_sparse_matrix(matrix, axis=0):
@@ -431,9 +433,21 @@ class CountMatrix(object):
             [bc for bc in self.bcs if gem_group == cr_utils.split_barcode_seq(bc)[1]])
 
     def select_features(self, indices):
-        '''Select a subset of features and return the resulting matrix.'''
-        feature_ref = FeatureReference(feature_defs=[self.feature_ref.feature_defs[i] for i in indices],
-                                       all_tag_keys=self.feature_ref.all_tag_keys)
+        '''Select a subset of features and return the resulting matrix.
+        We also update FeatureDefs to keep their indices consistent with their new position'''
+
+        old_feature_defs = [self.feature_ref.feature_defs[i] for i in indices]
+
+        updated_feature_defs = [FeatureDef( index = i,
+                                            id = fd.id,
+                                            name = fd.name,
+                                            feature_type = fd.feature_type,
+                                            tags = fd.tags
+                                          )
+                                          for (i, fd) in enumerate(old_feature_defs)]
+
+        feature_ref = FeatureReference(feature_defs = updated_feature_defs,
+                                       all_tag_keys = self.feature_ref.all_tag_keys)
 
         return CountMatrix(feature_ref=feature_ref,
                            bcs=self.bcs,

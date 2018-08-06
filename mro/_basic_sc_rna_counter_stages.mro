@@ -243,7 +243,7 @@ stage SUBSAMPLE_READS(
     in  map[]  subsample_info,
     out pickle metrics,
 ) using (
-    mem_gb = 2,
+    mem_gb   = 2,
     volatile = strict,
 )
 

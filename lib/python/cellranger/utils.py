@@ -317,17 +317,18 @@ def is_read_conf_mapped_to_feature(read):
     return (get_read_extra_flags(read) & cr_constants.EXTRA_FLAGS_CONF_MAPPED_FEATURE) > 0
 
 
-def is_read_dupe_candidate(read, high_conf_mapq, use_corrected_umi=True):
+def is_read_dupe_candidate(read, high_conf_mapq, use_corrected_umi=True, use_umis=True):
     if use_corrected_umi:
         umi = get_read_umi(read)
     else:
         umi = get_read_raw_umi(read)
 
     return not read.is_secondary and \
-        (umi is not None) and \
+        (umi is not None or not use_umis) and \
         (get_read_barcode(read) is not None) and \
         not is_read_low_support_umi(read) and \
-        is_read_conf_mapped_to_transcriptome(read, high_conf_mapq)
+        (is_read_conf_mapped_to_transcriptome(read, high_conf_mapq) or \
+         is_read_conf_mapped_to_feature(read))
 
 def is_read_conf_mapped_to_transcriptome(read, high_conf_mapq):
     if read.is_unmapped:
@@ -537,7 +538,7 @@ def merge_jsons_as_dict(in_filenames):
     """ Merge a list of json files and return the result as a dictionary """
     d = {}
     for filename in in_filenames:
-        if filename is None:
+        if (filename is None) or (not(os.path.isfile(filename))):
             continue
         try:
             with open(filename, 'r') as f:

@@ -101,6 +101,7 @@ def main(args, outs):
 
     for qname, reads_iter, _ in cr_utils.iter_by_qname(in_bam, None):
         is_conf_mapped_deduped, genome, feature_id, bc = reporter.count_genes_bam_cb(reads_iter,
+                                                                                     libraries,
                                                                                      library_prefixes,
                                                                                      use_umis=cr_chem.has_umis(args.chemistry_def))
         if is_conf_mapped_deduped:

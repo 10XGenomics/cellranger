@@ -102,6 +102,7 @@ impl ReadData {
         return self.r1_data.len() == self.r2_data.len()
     }
 
+    /// Mapped to genome
     pub fn is_mapped(&self) -> bool {
         return (self.r1_data.len() > 0 && !self.r1_data[0].rec.is_unmapped()) ||
                (self.r2_data.len() > 0 && !self.r2_data[0].rec.is_unmapped())
@@ -111,6 +112,18 @@ impl ReadData {
     /// Should always exist.
     pub fn get_primary_index(&self) -> Option<usize> {
         self.r1_data.iter().position(|x| !x.rec.is_secondary())
+    }
+
+    /// Mapped to a single non-gene-expression feature
+    pub fn is_conf_mapped_to_non_gex_feature(&self) -> bool {
+        if let Some(ref feature_data) = self.feature_data {
+            if let Some(ref id_string) = feature_data.ids {
+                // The presence of a semicolon in the feature IDs list
+                // indicates mapping to multiple features.
+                return id_string.chars().all(|c| c != ';')
+            }
+        }
+        return false;
     }
 
     /// Is there a primary alignment that mapped uniquely to the
@@ -267,11 +280,14 @@ impl MetricGroup for MappingMetrics {
 
 #[derive(Serialize, Deserialize)]
 struct ReadMetrics {
-    unmapped_reads:     PercentMetric,
-    good_umi_reads:     PercentMetric,
-    good_bc_reads:      PercentMetric,
-    corrected_bc_reads: PercentMetric,
+    unmapped_reads:     PercentMetric,      // Reads not mapped to genome
+    good_umi_reads:     PercentMetric,      // UMI passes the various filters
+    good_bc_reads:      PercentMetric,      // barcode on whitelist post-correction
+    corrected_bc_reads: PercentMetric,      // reads where cell barcode was corrected
     mapping_metrics:    PrefixGroup<MappingMetrics>, // per-genome
+    feature_bc_extracted_reads: PercentMetric, // reads were feature barcode was extracted
+    corrected_feature_bc_reads: PercentMetric, // reads where feature barcode was corrected, given extracted
+    unrecognized_feature_bc_reads: PercentMetric, // reads feature barcode was unrecognized, given extracted
 }
 
 impl ReadMetrics {
@@ -289,6 +305,9 @@ impl MetricGroup for ReadMetrics {
             good_bc_reads:      PercentMetric::new(),
             corrected_bc_reads: PercentMetric::new(),
             mapping_metrics:    PrefixGroup::new(&genomes),
+            feature_bc_extracted_reads: PercentMetric::new(),
+            corrected_feature_bc_reads: PercentMetric::new(),
+            unrecognized_feature_bc_reads: PercentMetric::new(),
         }
     }
 
@@ -297,6 +316,9 @@ impl MetricGroup for ReadMetrics {
         self.good_umi_reads.merge(&other.good_umi_reads);
         self.good_bc_reads.merge(&other.good_bc_reads);
         self.corrected_bc_reads.merge(&other.corrected_bc_reads);
+        self.feature_bc_extracted_reads.merge(&other.feature_bc_extracted_reads);
+        self.corrected_feature_bc_reads.merge(&other.corrected_feature_bc_reads);
+        self.unrecognized_feature_bc_reads.merge(&other.unrecognized_feature_bc_reads);
         self.mapping_metrics.merge(&other.mapping_metrics);
     }
 
@@ -306,6 +328,9 @@ impl MetricGroup for ReadMetrics {
         results.insert("good_umi_frac".into(), self.good_umi_reads.report());
         results.insert("good_bc_frac".into(), self.good_bc_reads.report());
         results.insert("corrected_bc_frac".into(), self.corrected_bc_reads.report());
+        results.insert("feature_bc_extracted_frac".into(), self.feature_bc_extracted_reads.report());
+        results.insert("corrected_feature_bc_frac".into(), self.corrected_feature_bc_reads.report());
+        results.insert("unrecognized_feature_bc_frac".into(), self.unrecognized_feature_bc_reads.report());
         results.extend(self.mapping_metrics.report());
         return results
     }
@@ -602,6 +627,15 @@ impl<'a> Reporter<'a> {
             &None => {},
         }
 
+        self.metrics.read_metrics.feature_bc_extracted_reads.add(&read_data.feature_data.is_some());
+
+        if let &Some(ref feature_data) = &read_data.feature_data {
+            // In order to have feature_data, there must have been a raw feature sequence
+            // So these metrics are conditional on "a feature barcode was extracted."
+            self.metrics.read_metrics.corrected_feature_bc_reads.add(&feature_data.was_corrected);
+            self.metrics.read_metrics.unrecognized_feature_bc_reads.add(&feature_data.corrected_seq.is_none());
+        }
+
         let unmapped = !read_data.is_mapped();
         self.metrics.read_metrics.unmapped_reads.add(&unmapped);
 
@@ -651,9 +685,27 @@ impl<'a> Reporter<'a> {
         paired_stats.insert_sizes.sort();
         let median_insert_size = utils::median(&paired_stats.insert_sizes) as u64;
 
-        if read_data.is_mapped() {
-            let conf_mapped_to_transcriptome = read_data.is_conf_mapped_to_transcriptome();
+        let is_mapped = read_data.is_mapped();
+        let is_conf_mapped_to_non_gex_feature = read_data.is_conf_mapped_to_non_gex_feature();
+        let is_conf_mapped_to_transcriptome = read_data.is_conf_mapped_to_transcriptome();
 
+        // Assert that "mapped to genome" and "conf mapped to non-gene-expression feature"
+        //   are mutually exclusive. I.e., non-GEX feature reads are always unmapped.
+        assert!(is_mapped && !is_conf_mapped_to_non_gex_feature || !is_mapped);
+
+        if is_conf_mapped_to_non_gex_feature {
+            // Confidently mapped
+            read_conf_mapped.insert((MULTI_REFS_PREFIX.to_string(), // genome is meaningless
+                                     REGION_TRANSCRIPTOME.to_string())); // pretend it's the transcriptome
+
+            // and barcoded
+            if corrected_bc_seq.is_some() {
+                read_conf_mapped_barcoded.insert((MULTI_REFS_PREFIX.to_string(),
+                                                  REGION_TRANSCRIPTOME.to_string()));
+            }
+        }
+
+        if is_mapped {
             for rdata in read_data.r1_data.iter().chain(read_data.r2_data.iter()) {
                 let alignment = &rdata.rec;
                 let annotation = &rdata.anno;
@@ -677,7 +729,7 @@ impl<'a> Reporter<'a> {
 
                 if alignment.mapq() >= HIGH_CONF_MAPQ {
                     self.count_regions(&mut read_conf_mapped, &genome, &region,
-                                       conf_mapped_to_transcriptome);
+                                       is_conf_mapped_to_transcriptome);
 
                     if annotation.is_antisense() {
                         read_antisense.insert(genome.clone());
@@ -686,7 +738,7 @@ impl<'a> Reporter<'a> {
 
                     if corrected_bc_seq.is_some() { // conf mapped and barcoded
                         self.count_regions(&mut read_conf_mapped_barcoded, &genome, &region,
-                                           conf_mapped_to_transcriptome);
+                                           is_conf_mapped_to_transcriptome);
                     }
                 }
             }

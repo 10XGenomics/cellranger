@@ -51,16 +51,24 @@ impl FeatureChecker {
                             .map(|x| x.as_bytes());
 
         // Try to correct the raw sequence if there is no processed sequence
-        let corrected_seq = tags.get(str::from_utf8(PROC_FEATURE_BARCODE_TAG).unwrap())
-            .map(|x| x.as_bytes().to_owned())
-            .or(
-                match (raw_seq.as_ref(), qual.as_ref()) {
-                    (Some(seq), Some(qual)) => correct_feature_barcode(seq, qual,
-                                                                       &self.feature_reference,
-                                                                       &self.feature_dist,
-                                                                       self.feat_type_idx),
-                    _ =>  None,
-                }
+        let (corrected_seq, was_corrected) =
+            tags.get(str::from_utf8(PROC_FEATURE_BARCODE_TAG).unwrap())
+            .map_or_else(||
+                         // The processed seq doesn't exist; try to correct the raw seq
+                         match (raw_seq.as_ref(), qual.as_ref()) {
+                             (Some(seq), Some(qual)) =>
+                                 correct_feature_barcode(seq, qual,
+                                                         &self.feature_reference,
+                                                         &self.feature_dist,
+                                                         self.feat_type_idx)
+                                 .map_or(
+                                     (None, false),
+                                     |new_seq| (Some(new_seq), true)),
+                             // No sequence to correct
+                             _ =>  (None, false),
+                         },
+                         // The processed seq exists, pass it through uncorrected
+                         |x| (Some(x.as_bytes().to_owned()), false),
             );
 
         // Take the given feature(s), or try to find the feature for the corrected sequence
@@ -75,6 +83,7 @@ impl FeatureChecker {
                 corrected_seq: corrected_seq,
                 qual: qual.to_owned(),
                 ids: ids.cloned(),
+                was_corrected: was_corrected,
             }),
             _ => None,
         }
@@ -87,7 +96,8 @@ pub struct FeatureData {
     pub raw_seq: Vec<u8>,
     pub corrected_seq: Option<Vec<u8>>,
     pub qual: Vec<u8>,
-    pub ids: Option<String>,
+    pub ids: Option<String>, // semicolon-delimited list of feature IDs
+    pub was_corrected: bool, // this feature barcode was corrected
 }
 
 impl FeatureData {

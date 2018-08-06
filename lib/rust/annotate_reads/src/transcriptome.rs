@@ -9,7 +9,7 @@ use std::cmp;
 use std::collections::{HashSet, BTreeMap};
 use utils;
 
-use features::{FEATURE_IDS_TAG, FeatureData};
+use features::{FEATURE_IDS_TAG};
 use reference::{TranscriptIndex, Gene};
 
 // These only exist in BAM land; just use bytes.
@@ -755,8 +755,8 @@ impl TranscriptAnnotator {
 /// Compute the Extra Flags BAM tag and add to a BAM record
 pub fn add_extra_flags(record: &mut Record,
                        is_qname_conf_mapped: bool,
-                       is_qname_gene_discordant: bool,
-                       feature_data: &Option<FeatureData>) {
+                       is_qname_conf_mapped_to_feature: bool,
+                       is_qname_gene_discordant: bool) {
     // Note: only attach these flags to primary alignment
     if !record.is_secondary() {
         let mut flags: ExtraFlags = Default::default();
@@ -770,12 +770,8 @@ pub fn add_extra_flags(record: &mut Record,
             flags |= GENE_DISCORDANT;
         }
 
-        if let &Some(ref feature_data) = feature_data {
-            if let Some(ref id_string) = feature_data.ids {
-                if !id_string.chars().any(|c| c == ';') {
-                    flags |= CONF_FEATURE;
-                }
-            }
+        if is_qname_conf_mapped_to_feature {
+            flags |= CONF_FEATURE;
         }
 
         record.push_aux(EXTRA_FLAGS_TAG, &Aux::Integer(flags.bits() as i32));

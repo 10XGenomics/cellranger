@@ -12,6 +12,9 @@ import cellranger.matrix as cr_matrix
 import cellranger.io as cr_io
 import cellranger.library_constants as lib_constants
 
+NUM_THREADS_MIN = 4
+#TODO Not clear why this stage takes > 1 thread. Martian thinks it does and kills it on long jobs
+
 __MRO__ = """
 stage RUN_DIFFERENTIAL_EXPRESSION(
     in  h5     matrix_h5,
@@ -36,7 +39,7 @@ def split(args):
     chunk_mem_gb = max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
 
     # HACK - give big jobs more threads in order to avoid overloading a node
-    threads = cr_io.get_thread_request_from_mem_gb(chunk_mem_gb)
+    threads = min(cr_io.get_thread_request_from_mem_gb(chunk_mem_gb), NUM_THREADS_MIN)
 
     for key in SingleGenomeAnalysis.load_clustering_keys_from_h5(args.clustering_h5):
         chunks.append({

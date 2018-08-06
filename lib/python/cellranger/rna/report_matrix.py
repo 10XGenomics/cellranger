@@ -41,6 +41,9 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
     matrix = matrix.view()
 
     genomes = matrix.get_genomes()
+    if len(genomes) == 0:
+        # For genomeless features, use "multi" in place of the genome prefix
+        genomes = [lib_constants.MULTI_REFS_PREFIX]
 
     # Get number of cell bcs across all genomes
     cell_bcs_union = reduce(lambda a,x: a | set(x), cell_bc_seqs.itervalues(), set())
@@ -53,7 +56,11 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
     d['%s_%s_total_conf_mapped_reads_per_filtered_bc' % (lib_constants.MULTI_REFS_PREFIX, cr_constants.TRANSCRIPTOME_REGION)] = tk_stats.robust_divide(total_conf_mapped_reads, n_cell_bcs_union)
 
     # Split the matrix by genome
-    genome_matrices = OrderedDict(((g, matrix.select_features_by_genome(g)) for g in genomes))
+    if genomes[0] != lib_constants.MULTI_REFS_PREFIX:
+        genome_matrices = OrderedDict(((g, matrix.select_features_by_genome(g)) for g in genomes))
+    else:
+        # Genomeless feature types
+        genome_matrices = OrderedDict(((lib_constants.MULTI_REFS_PREFIX, matrix),))
 
     # Total UMI counts across all matrices and all filtered barcodes
     total_umi_counts = 0
@@ -121,7 +128,12 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
 
         usable_reads += (filtered_bc_h5_row * np.array(barcode_summary_h5[h5_key])).sum()
 
+    # Fraction reads usable
     d['%s_transcriptome_usable_reads_frac' % lib_constants.MULTI_REFS_PREFIX] = tk_stats.robust_divide(usable_reads, total_reads)
+    # Usable reads
+    d['%s_usable_reads' % lib_constants.MULTI_REFS_PREFIX] = usable_reads
+    # Usable reads per cell
+    d['%s_usable_reads_per_filtered_bc' % lib_constants.MULTI_REFS_PREFIX] = tk_stats.robust_divide(usable_reads, n_cell_bcs_union)
 
 
     # Compute matrix density
@@ -153,11 +165,12 @@ def _report(matrix, genome, barcode_summary_h5, recovered_cells, cell_bc_seqs,
                                                                   filtered_mat_shape[0]*filtered_mat_shape[1])
 
     counts_per_gene = filtered_mat.sum(axis=1)
-    top_genes_with_counts = {filtered_mat.int_to_feature_id(i): int(count) for i, count in cr_matrix.top_n(counts_per_gene, cr_constants.TOP_N)}
+    genes_top_n = min(cr_constants.TOP_N, len(counts_per_gene))
+    top_genes_with_counts = {filtered_mat.int_to_feature_id(i): int(count) for i, count in cr_matrix.top_n(counts_per_gene, genes_top_n)}
     d['filtered_bcs_top_genes_with_reads'] = top_genes_with_counts
 
     unique_bcs_per_gene = filtered_mat.count_ge(axis=1, threshold=cr_constants.MIN_COUNTS_PER_BARCODE)
-    top_genes_with_unique_bcs = {filtered_mat.int_to_feature_id(i): int(count) for i, count in cr_matrix.top_n(unique_bcs_per_gene, cr_constants.TOP_N)}
+    top_genes_with_unique_bcs = {filtered_mat.int_to_feature_id(i): int(count) for i, count in cr_matrix.top_n(unique_bcs_per_gene, genes_top_n)}
     d['filtered_bcs_top_genes_with_unique_bcs'] = top_genes_with_unique_bcs
 
     # Total genes and counts
@@ -274,6 +287,21 @@ def report_genomes(matrix, reads_summary, barcode_summary_h5_path, recovered_cel
                     key = '_'.join([genome, key])
                     m[key] = value
 
+        else:
+            # This feature has no genomes
+            cell_bcs_union = list(reduce(lambda a,x: a | set(x), cell_bc_seqs.itervalues(), set()))
+            genome_summary = _report(submatrix,
+                                     lib_constants.MULTI_REFS_PREFIX,
+                                     barcode_summary_h5,
+                                     recovered_cells,
+                                     cell_bcs_union,
+                                     prefix)
+            for key, value in genome_summary.iteritems():
+                key = '_'.join([lib_constants.MULTI_REFS_PREFIX, key])
+                m[key] = value
+
+
+        # Prepend feature type to metric keys
         m_prefixed = {(prefix+k): v for k, v in m.iteritems()}
         metrics.update(m_prefixed)
 

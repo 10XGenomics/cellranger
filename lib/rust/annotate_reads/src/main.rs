@@ -407,7 +407,9 @@ fn process_qname(tag_string: &str,
         false => None,
     });
 
-    let is_conf_mapped = read_data.is_conf_mapped_to_transcriptome();
+    let is_conf_mapped_to_transcriptome = read_data.is_conf_mapped_to_transcriptome();
+    let is_conf_mapped_to_feature = is_conf_mapped_to_transcriptome ||
+        read_data.is_conf_mapped_to_non_gex_feature();
     let is_gene_discordant = read_data.is_gene_discordant();
 
     // Interleave pairs of aligned records (R1,R2; R1,R2; ...)
@@ -420,14 +422,18 @@ fn process_qname(tag_string: &str,
 
             let ref mut r1 = read_data.r1_data[i];
             process_record(&stripped_qname, r1, pair_data,
-                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped,
+                           &read_data.bc_umi_data, &read_data.feature_data,
+                           is_conf_mapped_to_transcriptome,
+                           is_conf_mapped_to_feature,
                            is_gene_discordant, gem_group, library_index);
             out_bam.write(&r1.rec).unwrap();
         }
         if read_data.is_paired_end() {
             let ref mut r2 = read_data.r2_data[i];
             process_record(&stripped_qname, r2, Some(&read_data.pair_data[i]),
-                           &read_data.bc_umi_data, &read_data.feature_data, is_conf_mapped,
+                           &read_data.bc_umi_data, &read_data.feature_data,
+                           is_conf_mapped_to_transcriptome,
+                           is_conf_mapped_to_feature,
                            is_gene_discordant, gem_group, library_index);
             out_bam.write(&r2.rec).unwrap();
         }
@@ -437,14 +443,16 @@ fn process_qname(tag_string: &str,
 }
 
 /// Attach BAM tags to a single record.
-/// is_conf_mapped: the qname is confidently mapped to the transcriptome
+/// is_conf_mapped_to_transcriptome: the qname is confidently mapped to the transcriptome
+/// is_conf_mapped_to_feature: the qname is confidently mapped to the transcriptome or a non-gex-feature
 /// is_gene_discordant: the qname is gene-discordant
 fn process_record(qname: &[u8],
                   record_data: &mut RecordData,
                   pair_anno: Option<&PairAnnotationData>,
                   bc_umi_data: &BarcodeUmiData,
                   feature_data: &Option<FeatureData>,
-                  is_conf_mapped: bool,
+                  is_conf_mapped_to_transcriptome: bool,
+                  is_conf_mapped_to_feature: bool,
                   is_gene_discordant: bool,
                   gem_group: &u8,
                   library_index: usize) {
@@ -457,9 +465,9 @@ fn process_record(qname: &[u8],
     // Attach extra flags
     if !record_data.rec.is_secondary() {
         transcriptome::add_extra_flags(&mut record_data.rec,
-                                       is_conf_mapped,
-                                       is_gene_discordant,
-                                       feature_data);
+                                       is_conf_mapped_to_transcriptome,
+                                       is_conf_mapped_to_feature,
+                                       is_gene_discordant)
     }
 
     // Attach library id

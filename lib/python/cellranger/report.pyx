@@ -859,63 +859,78 @@ class Reporter:
         processed_umi_seq = cr_utils.get_read_umi(read)
         self._get_metric_attr('corrected_umi_frac').add(1, filter=cr_utils.is_umi_corrected(raw_umi_seq, processed_umi_seq))
 
-    def _get_gene_bc_umi(self, read):
-        ''' If a read is worthy of being counted by COUNT_GENES, return the relevant info. Otherwise return None. '''
-        if read.is_secondary:
-            return None
-        gene_ids = cr_utils.get_read_gene_ids(read)
-        if gene_ids is None or len(gene_ids) != 1:
-            return None
-        bc = cr_utils.get_read_barcode(read)
-        if bc is None:
-            return None
-        umi = cr_utils.get_read_umi(read) # could be None
-        return gene_ids[0], bc, umi
-
-    def count_genes_bam_cb(self, reads, library_prefixes, use_umis=True):
-        """Generate a UMI count (or don't)
+    def count_genes_bam_cb(self, records, library_info, library_prefixes, use_umis=True):
+        """Determine whether to generate a UMI count; compute read-level metrics
         Args:
-          reads (list of pyam.AlignedSegment): Records for a single qname
+          records (iterable of pyam.AlignedSegment): Records for a single qname
+          library_info (list of dict): Library metadata.
           library_prefixes (list of str): List of metric library prefixes, one per library in the BAM
-          use_umis (bool): Use UMIs to count
+          use_umis (bool): Use UMIs to count.
         Returns:
           A tuple as per the code below
         """
-        assert self.high_conf_mapq
+        assert self.high_conf_mapq is not None
 
-        read1, read2, gene1, gene2, bc, umi = None, None, None, None, None, None
-        for read in reads:
-            gene_bc_umi = self._get_gene_bc_umi(read)
-            if gene_bc_umi is not None:
-                gene, bc, umi = gene_bc_umi
-                if read.is_read2:
-                    read2, gene2 = read, gene
-                else:
-                    read1, gene1 = read, gene
+        read1, read2, feature1, feature2, bc, umi = None, None, None, None, None, None
+        for rec in records:
+            if not cr_utils.is_read_dupe_candidate(rec, self.high_conf_mapq,
+                                                   use_umis=use_umis):
+                continue
 
-        # Take the primary alignment for Read1
-        read = read1 if read1 is not None else read2
-        gene_id = gene1 if gene1 is not None else gene2
+            rec_bc = cr_utils.get_read_barcode(rec)
+            rec_umi = cr_utils.get_read_umi(rec)
+            feature_ids = cr_utils.get_read_gene_ids(rec)
 
-        if read is None or gene_id is None or \
-           (umi is None and use_umis) or \
-           cr_utils.is_read_low_support_umi(read):
+            # We shouldn't see differing barcodes or UMIs
+            # among records with the same qname.
+            assert bc is None or bc == rec_bc
+            assert umi is None or umi == rec_umi
+
+            if rec.is_read2:
+                # Normally we wouldn't see >1 primary record for a QNAME
+                # but we can if the sequencing data were intentionally duplicated.
+                # Prioritize the record that is not a duplicate
+                if read2 is not None and cr_utils.is_read_umi_count(read2):
+                    continue
+                read2, feature2, bc, umi = rec, feature_ids[0], rec_bc, rec_umi
+            else:
+                if read1 is not None and cr_utils.is_read_umi_count(read1):
+                    continue
+                read1, feature1, bc, umi = rec, feature_ids[0], rec_bc, rec_umi
+
+        # We didn't find any suitable records
+        if read1 is None and read2 is None:
             return False, None, None, None
 
-        genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
+        # We shouldn't see discordant features between read1 and read2
+        assert feature1 is None or feature2 is None or feature1 == feature2
+
+        # Prefer the primary alignment for Read1
+        read = read1 if read1 is not None else read2
+        feature_id = feature1 if feature1 is not None else feature2
 
         library_idx = cr_utils.get_read_library_index(read)
         library_prefix = library_prefixes[library_idx]
 
-        usable = cr_utils.is_read_dupe_candidate(read, self.high_conf_mapq)
+        if rna_library.has_genomes(library_info[library_idx]['library_type']):
+            genome = cr_utils.get_genome_from_read(read, self.chroms, self.genomes)
+        else:
+            genome = None
 
-        # Initialize this barcode
-        if usable:
-            for reference in [genome] + ([lib_constants.MULTI_REFS_PREFIX] if self.has_multiple_genomes else []):
-                    conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads',
-                                                                      library_prefix,
-                                                                      reference)
-                    conf_mapped_barcode_reads.add(bc)
+        # Update read counts that will end up in the barcode_summary.h5
+        if genome is not None:
+            conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads',
+                                                              library_prefix,
+                                                              genome)
+            conf_mapped_barcode_reads.add(bc)
+
+        # Only report barcode_reads for multi_* if there are multiple genomes
+        # or the library type is genomeless
+        if self.has_multiple_genomes or genome is None:
+            conf_mapped_barcode_reads = self._get_metric_attr('transcriptome_conf_mapped_barcoded_reads',
+                                                              library_prefix,
+                                                              lib_constants.MULTI_REFS_PREFIX)
+            conf_mapped_barcode_reads.add(bc)
 
         # Count this read
         if use_umis:
@@ -923,6 +938,7 @@ class Reporter:
         else:
             conf_mapped_deduped = not read.is_duplicate
 
+        # Update UMI counts that will end up in the barcode_summary.h5
         if conf_mapped_deduped:
             if genome is not None:
                 conf_mapped_deduped_barcode_reads = self._get_metric_attr(
@@ -938,7 +954,7 @@ class Reporter:
                     library_prefix, lib_constants.MULTI_REFS_PREFIX)
                 conf_mapped_deduped_barcode_reads.add(bc)
 
-            return True, genome, gene_id, bc
+            return True, genome, feature_id, bc
 
         return False, None, None, None
 
