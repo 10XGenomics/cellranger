@@ -200,8 +200,10 @@ def nb_asymptotic_test(x_a, x_b, size_factor_a, size_factor_b, mu, phi):
     p = np.empty(len(x_a))
     p[left] = 2 * scipy.stats.beta.cdf((x_a[left] + 0.5) / total[left],
                                        alpha[left], beta[left])
-    p[right] = 2 * (1 - scipy.stats.beta.cdf((x_a[right] - 0.5) / total[right],
-                                             alpha[right], beta[right]))
+    # If X ~ Beta(a, b) then 1 - X ~ Beta(b, a)
+    # This avoids the asymmetry in beta.cdf
+    p[right] = 2 * (scipy.stats.beta.cdf((x_b[right] - 0.5) / total[right],
+                                         beta[right], alpha[right]))
     return p
 
 def adjust_pvalue_bh(p):
