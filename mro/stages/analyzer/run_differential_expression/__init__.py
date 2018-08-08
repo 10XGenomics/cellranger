@@ -35,7 +35,8 @@ def split(args):
         return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
 
     chunks = []
-    matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
+    # FIXME: Add one for reasons unknown
+    matrix_mem_gb = 1 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
     chunk_mem_gb = max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
 
     # HACK - give big jobs more threads in order to avoid overloading a node
