@@ -14,7 +14,6 @@ import tenkit.safe_json as tk_safe_json
 import tenkit.stats as tk_stats
 
 import cellranger.constants as cr_constants
-import cellranger.h5_constants as h5_constants
 import cellranger.library_constants as lib_constants
 import cellranger.matrix as cr_matrix
 import cellranger.molecule_counter as cr_mol_counter
@@ -92,20 +91,24 @@ def split(args):
     tgt_chunk_len = cr_constants.NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK
 
     chunks = []
+    join_mem_gb = 0
     with MoleculeCounter.open(args.molecules, 'r') as mc:
         for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
+            mem_gb = MoleculeCounter.estimate_mem_gb(chunk_len, scale=8.0)
+            join_mem_gb = max(join_mem_gb, mem_gb)
             chunks.append({
                 'frac_reads_kept': list(frac_reads_kept),
                 'num_cells': list(cells),
                 'chunk_start': chunk_start,
                 'chunk_len': chunk_len,
                 # Request enough for two copies
-                '__mem_gb': MoleculeCounter.estimate_mem_gb(chunk_len, scale=2.0),
+                '__mem_gb': mem_gb,
             })
+
     return {
         'chunks': chunks,
         'join': {
-            '__mem_gb': h5_constants.MIN_MEM_GB
+            '__mem_gb': join_mem_gb
         }
     }
 

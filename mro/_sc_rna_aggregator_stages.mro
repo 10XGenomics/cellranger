@@ -43,7 +43,11 @@ stage MERGE_MOLECULES(
 ) split (
     in  string aggr_id,
     in  h5     molecule_h5,
+    in  int    barcode_idx_offset,
+    in  pickle merged_barcodes,
     out h5     molecule_h5,
+) using (
+    mem_gb = 8,
 )
 
 stage NORMALIZE_DEPTH(

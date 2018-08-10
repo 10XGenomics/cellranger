@@ -23,7 +23,6 @@ def main(args, outs):
     global_fasta_hash = None
     global_gtf_hash = None
     chemistries = set()
-    global_whitelist = None
 
     # TODO make assertions about the required metrics!
 
@@ -80,18 +79,8 @@ def main(args, outs):
                 martian.exit("Molecules were produced using different annotation GTFs (%s, %s)" % (global_gtf_hash, mol_gtf_hash))
 
             # TODO: Check feature refs
-
-
-            mol_whitelist = counter.get_metric('chemistry_barcode_whitelist')
             chemistry = counter.get_metric('chemistry_name')
-            if global_whitelist is None:
-                global_whitelist = mol_whitelist
-            elif global_whitelist != mol_whitelist:
-                chem_list = ', '.join(sorted(list(chemistries)))
-                verb = 'is' if len(chemistries) == 1 else 'are'
-                martian.exit("Molecules were produced with chemistries with incompatible barcode whitelists: %s %s incompatible with %s" % (chem_list, verb, chemistry))
             chemistries.add(chemistry)
-
 
             if counter.is_aggregated():
                 martian.exit("Molecule file was aggregated from multiple samples: %s.\n Aggregated outputs cannot be re-aggregated, please pass each of the original samples instead." % mol_h5)
