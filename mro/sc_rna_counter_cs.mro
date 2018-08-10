@@ -88,6 +88,7 @@ pipeline SC_RNA_COUNTER_CS(
             "SC5P_auto",
             "SC3Pv1",
             "SC3Pv2",
+            "SC3Pv3",
             "SC5P-PE",
             "SC5P-R2",
             "SC5P-R1",

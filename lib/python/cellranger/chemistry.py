@@ -96,6 +96,43 @@ CHEMISTRY_SC3P_V2 = {
     'barcode_whitelist': '737K-august-2016',
 }
 
+CHEMISTRY_SC3P_V3 = {
+    'name': 'SC3Pv3',
+    'description': 'Single Cell 3\' v3',
+    'barcode_read_type': 'R1',
+    'barcode_read_offset': 0,
+    'barcode_read_length': 16,
+    'umi_read_type': 'R1',
+    'umi_read_offset': 16,
+    'umi_read_length': 12,
+    'rna_read_type': 'R2',
+    'rna_read_offset': 0,
+    'rna_read_length': None,
+    'rna_read2_type': None,
+    'rna_read2_offset': 0,
+    'rna_read2_length': None,
+    'si_read_type': 'I1',
+    'si_read_offset': 0,
+    'si_read_length': None,
+    'strandedness': '+',
+    'endedness': cr_constants.THREE_PRIME,
+    'read_type_to_bcl_processor_filename': {
+        'R1': 'RA', # Read1, Read2 interleaved
+        'R2': None,
+        'I1': 'I1', # Index7
+        'I2': 'I2', 
+    },
+    # Valid for the following argument to bcl2fastq:
+    # --use-bases-mask=Y26,I8,Y98
+    'read_type_to_bcl2fastq_filename': {
+        'R1': 'R1', # Read1
+        'R2': 'R2', # Read2
+        'I1': 'I1', # Index7
+        'I2': None, # Index5
+    },
+    'barcode_whitelist': '3M-february-2018',
+}
+
 # Single Cell V(D)J
 CHEMISTRY_SCVDJ = {
     'name': 'SCVDJ',
@@ -293,6 +330,7 @@ CHEMISTRY_SC5P_R1 = {
 SC3P_CHEMISTRIES = [
     CHEMISTRY_SC3P_V1,
     CHEMISTRY_SC3P_V2,
+    CHEMISTRY_SC3P_V3,
 ]
 
 SC5P_CHEMISTRIES = [

@@ -34,9 +34,9 @@ Options:
                             analysis.
     --chemistry=CHEM    Assay configuration. One of: 'auto' for autodetection,
                             'threeprime' for Single Cell 3', 'fiveprime' for
-                            Single Cell 5', 'SC3Pv1' or 'SC3Pv2' for Single
-                            Cell 3' v1/v2, 'SC5P-PE' or 'SC5P-R2' for
-                            Single Cell 5' paired-end/R2-only. Default: auto.
+                            Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3' 
+                            for Single Cell 3' v1/v2/v3, 'SC5P-PE' or 'SC5P-R2' 
+                            for Single Cell 5' paired-end/R2-only. Default: auto.
     $DOCOPT_OPTIONS_FASTQS
 
 # Martian Runtime
