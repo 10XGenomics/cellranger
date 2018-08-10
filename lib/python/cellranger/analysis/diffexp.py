@@ -202,7 +202,7 @@ def nb_asymptotic_test(x_a, x_b, size_factor_a, size_factor_b, mu, phi):
                                        alpha[left], beta[left])
     # If X ~ Beta(a, b) then 1 - X ~ Beta(b, a)
     # This avoids the asymmetry in beta.cdf
-    p[right] = 2 * (scipy.stats.beta.cdf((x_b[right] - 0.5) / total[right],
+    p[right] = 2 * (scipy.stats.beta.cdf((x_b[right] + 0.5) / total[right],
                                          beta[right], alpha[right]))
     return p
 
