@@ -103,10 +103,14 @@ class MoleculeCounter:
         return sum([np.dtype(x).itemsize for x in MOLECULE_INFO_COLUMNS.values()])
 
     @staticmethod
-    def estimate_mem_gb(chunk_len, scale=1.0):
+    def estimate_mem_gb(chunk_len, scale=1.0, cap=True):
         """ Estimate memory usage of this object given a number of records. """
         mol_entries_per_gb = int(1e9 / MoleculeCounter.get_record_bytes())
-        return max(h5_constants.MIN_MEM_GB, round(math.ceil(scale * chunk_len / mol_entries_per_gb)))
+        mem_gb = round(math.ceil(scale * chunk_len / mol_entries_per_gb))
+        if cap:
+            return max(h5_constants.MIN_MEM_GB, mem_gb)
+        else:
+            return mem_gb
 
     @staticmethod
     def build_barcode_info(filtered_barcodes_by_genome, library_info, barcodes):
@@ -368,8 +372,12 @@ class MoleculeCounter:
         self.ref_columns[col_name] = self.h5.create_carray(self.h5.root, col_name, obj=np.array(values))
 
     def get_ref_column(self, col_name):
-        array = self.ref_columns[col_name]
-        return array[:]
+        """Load a reference array into memory as a numpy array"""
+        return self.get_ref_column_lazy(col_name)[:]
+
+    def get_ref_column_lazy(self, col_name):
+        """Get a reference array as a lazy h5py Dataset"""
+        return self.ref_columns[col_name]
 
     def get_feature_ref(self):
         return FeatureReference.from_hdf5(self.h5[h5_constants.H5_FEATURE_REF_ATTR])

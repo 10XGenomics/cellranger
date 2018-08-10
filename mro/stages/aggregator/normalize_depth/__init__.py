@@ -9,13 +9,15 @@ import itertools
 import json
 import numpy as np
 import scipy.sparse as sp_sparse
-
+from cellranger.logperf import LogPerf
 import tenkit.safe_json as tk_safe_json
 import tenkit.stats as tk_stats
 
 import cellranger.constants as cr_constants
+import cellranger.h5_constants as h5_constants
 import cellranger.library_constants as lib_constants
 import cellranger.matrix as cr_matrix
+from cellranger.matrix import CountMatrix
 import cellranger.molecule_counter as cr_mol_counter
 from cellranger.molecule_counter import MoleculeCounter
 import cellranger.io as cr_io
@@ -92,10 +94,31 @@ def split(args):
 
     chunks = []
     join_mem_gb = 0
+
+    # For memory request calculation
+    num_gem_groups = len(set(lib['gem_group'] for lib in library_info))
+
     with MoleculeCounter.open(args.molecules, 'r') as mc:
+        # Number of barcodes in the full matrix
+        num_barcodes = mc.get_ref_column_lazy('barcodes').shape[0]
+
+        # Worst case number of nonzero elements in final matrix
+        num_nonzero = mc.nrows()
+        join_mem_gb = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes*num_gem_groups,
+                                                                       num_nonzero)
+
         for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
-            mem_gb = MoleculeCounter.estimate_mem_gb(chunk_len, scale=8.0)
-            join_mem_gb = max(join_mem_gb, mem_gb)
+            mol_mem_gb = MoleculeCounter.estimate_mem_gb(chunk_len, scale=2.0, cap=False)
+            print 'molecule_info mem_gb = %d' % mol_mem_gb
+
+            # Worst case number of nonzero elements in chunk matrix
+            num_nonzero = chunk_len
+            matrix_mem_gb = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes*num_gem_groups,
+                                                                     num_nonzero)
+            print 'matrix mem_gb = %d' % matrix_mem_gb
+
+            mem_gb = max(h5_constants.MIN_MEM_GB, matrix_mem_gb + mol_mem_gb)
+
             chunks.append({
                 'frac_reads_kept': list(frac_reads_kept),
                 'num_cells': list(cells),
@@ -151,6 +174,8 @@ def summarize_read_matrix(matrix, library_info, barcode_info, barcode_seqs):
 def main(args, outs):
     np.random.seed(0)
 
+    LogPerf.mem()
+
     with MoleculeCounter.open(args.molecules, 'r') as mc:
         library_info = mc.get_library_info()
         barcode_info = mc.get_barcode_info()
@@ -197,6 +222,9 @@ def main(args, outs):
         num_bcs = whitelist_size * len(gem_groups)
         num_features = feature_ref.get_num_features()
 
+        print 'downsampled'
+        LogPerf.mem()
+
         # Convert molecule barcode indices into matrix barcode indices
         # FIXME: assumes one barcode whitelist
         mol_barcode_idx += (mol_gem_group-1)*whitelist_size
@@ -204,6 +232,8 @@ def main(args, outs):
         umi_matrix = sp_sparse.coo_matrix((ones,
                                            (mol_feature_idx, mol_barcode_idx)),
                                           shape=(num_features, num_bcs))
+        print 'created umi matrix'
+        LogPerf.mem()
 
         # Create a read-count matrix so we can summarize reads per barcode
         read_matrix = sp_sparse.coo_matrix((new_read_pairs,
@@ -217,19 +247,29 @@ def main(args, outs):
         # Get all barcodes strings for the raw matrix
         # FIXME: assumes one barcode whitelist
         barcode_seqs = mc.get_barcodes()
+
+        print len(barcode_seqs), len(gem_groups)
+        print 'creating barcode strings'
+        LogPerf.mem()
+
         barcodes = [cr_utils.format_barcode_seq(bc, gg) for gg, bc in \
                     itertools.product(gem_groups, barcode_seqs)]
 
+        print 'created barcode strings'
+        LogPerf.mem()
+
         # Get mapped reads per barcode per library,genome
         read_summary = {}
-        read_matrix = cr_matrix.CountMatrix(feature_ref, barcodes, read_matrix)
+        read_matrix = CountMatrix(feature_ref, barcodes, read_matrix)
         read_matrix.m = read_matrix.m.tocsc(copy=True)
         read_summary = summarize_read_matrix(read_matrix, library_info, barcode_info,
                                              barcode_seqs)
         del read_matrix
 
+        print 'created read matrix'
+        LogPerf.mem()
         # Construct the raw UMI matrix
-        raw_umi_matrix = cr_matrix.CountMatrix(feature_ref, barcodes, umi_matrix)
+        raw_umi_matrix = CountMatrix(feature_ref, barcodes, umi_matrix)
         raw_umi_matrix.save_h5_file(outs.raw_matrix_h5)
 
         # Construct the filtered UMI matrix
@@ -238,6 +278,9 @@ def main(args, outs):
                                                              barcode_seqs)
         filtered_umi_matrix = raw_umi_matrix.select_barcodes_by_seq(filtered_bcs)
         filtered_umi_matrix.save_h5_file(outs.filtered_matrix_h5)
+
+        print 'created filtered umi matrix'
+        LogPerf.mem()
 
         summary = {
             'read_summary': read_summary,
