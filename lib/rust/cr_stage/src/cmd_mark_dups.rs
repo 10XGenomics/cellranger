@@ -2,6 +2,12 @@
 // Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 //
 
+/// This stage does the following:
+/// 1) Correct UMI sequences
+/// 2) Mark BAM records as low-support (putatively chimeric) UMIs
+/// 3) Mark BAM records as PCR duplicates
+/// 4) Compute metrics related to the above
+
 use std::fs;
 use std::io;
 use std::fs::File;
@@ -249,6 +255,151 @@ fn major_barcode_proportion_within_chunk(bam: &mut bam::Reader,
     }
 }
 
+/// Do duplicate marking on a single barcode's worth of data
+fn process_barcode(bc_group: &mut Vec<bam::Record>,
+                   metrics: &mut Vec<Metrics>,
+                   bc_summaries: &mut Vec<BarcodeSummary>,
+                   out_bam: &mut bam::Writer,
+                   lib_idx: usize,
+                   bc: &Vec<u8>,
+                   filter_umis: bool) {
+    // HACK: Rust's entry api still requires key-ownership to query,
+    //       so do it the ugly way.
+    if bc_summaries[lib_idx].barcodes.get(bc).is_none() {
+        // Only clone the key when it's not present
+        bc_summaries[lib_idx].barcodes.insert(bc.clone(), Default::default());
+    }
+    let barcode_summary = bc_summaries[lib_idx].barcodes.get_mut(bc).unwrap();
+
+    // Get raw UMI frequencies
+    let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
+    let mut low_support_umigenes: HashSet<(Vec<u8>, String)> = HashSet::new();
+
+    for (maybe_umi, umi_group) in bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
+        let mut gene_counts: HashMap<String, u64> = HashMap::new();
+
+        if let Some(umi) = maybe_umi {
+            // Count (raw UMI, feature) pairs to prepare for UMI correction.
+            // Track (raw UMI, feature) pairs with submaximal count per (raw UMI)
+            //   to prepare for marking of low-support UMIs (putative chimeras).
+
+            // Assumes records are qname-contiguous in the input.
+            for (qname, qname_records) in umi_group.into_iter()
+                .filter(|&x| utils::is_read_dup_candidate(x))
+                .group_by(|x| x.qname()) {
+                    match get_qname_conf_mapped_feature(qname_records.into_iter()) {
+                        None => { panic!(format!("Found 0 or >1 features for confidently mapped read/pair {}", str::from_utf8(qname).unwrap())) },
+                        Some(gene) => {
+                            *raw_umigene_counts.entry((umi.clone(), gene.clone())).or_insert(0) += 1;
+                            *gene_counts.entry(gene.clone()).or_insert(0) += 1;
+                        },
+                    }
+                } // for each qname
+
+            // Mark (UMI, gene) pairs w/ frequency below the max for the UMI as low support.
+            if let Some((_max_gene, max_count)) = gene_counts.iter().max_by_key(|x| x.1) {
+                for (gene, count) in gene_counts.iter() {
+                    if filter_umis && count < max_count {
+                        low_support_umigenes.insert((umi.clone(), gene.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Determine which UMIs need to be corrected
+    let umi_corrections = correct_umis(raw_umigene_counts);
+
+    // Correct UMIs and mark PCR duplicates
+    let mut wrote_umigenes = HashSet::new();
+
+    for (_qname, qname_records) in bc_group.iter().group_by(|x| x.qname()) {
+        // Take UMI from first record
+        let maybe_umi = utils::get_read_umi(&qname_records.iter().nth(0).unwrap());
+
+        let maybe_gene = get_qname_conf_mapped_feature(qname_records.iter()
+                                                       .map(|x| *x));
+
+        for record in qname_records {
+            // Clone here because holding a &mut to the record
+            // while simultaneously grouping by qname in the outer loop
+            // makes rustc very unhappy.
+            let mut new_record = record.clone();
+            let mut new_flags = utils::get_read_extra_flags(&new_record);
+
+            let is_secondary = record.is_secondary();
+            let is_dup_candidate = utils::is_read_dup_candidate(&record);
+
+            if !is_secondary {
+                metrics[lib_idx].total_reads += 1;
+                barcode_summary.reads += 1
+            }
+
+            metrics[lib_idx].candidate_dup_reads += is_dup_candidate as u64;
+
+            if let (Some(umi), Some(gene)) = (maybe_umi.as_ref(), maybe_gene.as_ref()) {
+                let key = (umi.clone(), gene.clone());
+
+                if !record.is_secondary() && low_support_umigenes.contains(&key) {
+                    // Low support (UMI, gene). Mark as low support.
+                    // - Only consider primary alignments for this flag.
+                    // - Do not correct the UMI.
+                    // - Do not mark duplicates w/ for this (UMI, gene).
+                    metrics[lib_idx].low_support_umi_reads += 1;
+                    new_flags |= utils::ExtraFlags::LOW_SUPPORT_UMI;
+
+                } else {
+                    // Correct UMIs in all records
+                    let (corrected_umi, is_corrected) = match umi_corrections.get(&key) {
+                        Some(new_umi) => (new_umi.clone(), true),
+                        None => (umi.clone(), false),
+                    };
+
+                    // Correct the UMI tag
+                    if is_corrected {
+                        metrics[lib_idx].umi_corrected_reads += 1;
+                        barcode_summary.umi_corrected_reads += 1;
+
+                        new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
+                        new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
+                                            &bam::record::Aux::String(&corrected_umi));
+                    }
+
+                    // Don't try to dup mark secondary alignments.
+                    if is_dup_candidate {
+                        let dup_key = (corrected_umi, key.1, get_mate_type(&record));
+
+                        barcode_summary.candidate_dup_reads += 1;
+
+                        if wrote_umigenes.contains(&dup_key) {
+                            // Duplicate
+                            metrics[lib_idx].dup_reads += 1;
+                            let flags = record.flags();
+                            new_record.set_flags(flags | 1024u16);
+                        } else {
+                            // Non-duplicate
+                            wrote_umigenes.insert(dup_key);
+
+                            // Flag read1 as countable
+                            if !record.is_last_in_template() {
+                                metrics[lib_idx].umis += 1;
+                                barcode_summary.umis += 1;
+                                new_flags |= utils::ExtraFlags::UMI_COUNT;
+                            }
+                        }
+                    }
+                }
+            }
+            if new_flags.bits() > 0 {
+                new_record.remove_aux(utils::EXTRA_FLAGS_TAG);
+                new_record.push_aux(utils::EXTRA_FLAGS_TAG,
+                                    &bam::record::Aux::Integer(new_flags.bits() as i32));
+            }
+            out_bam.write(&new_record).expect("Failed to write BAM record");
+        }
+    }
+}
+
 fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
     use bam::Read;
 
@@ -269,167 +420,61 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
     let range = (args.chunk_start, args.chunk_end);
     let chunk_iter = BamChunkIter::new(&mut bam, range);
 
-    // Group records by (barcode, library)
-    let mut prev_bc = vec![];
-    let mut prev_lib_idx = 0;
+    let mut maybe_prev_bc: Option<Vec<u8>> = None;
+    let mut maybe_prev_lib_idx: Option<usize> = None;
 
-    for ((maybe_bc, lib_idx), bc_group) in chunk_iter.map(|r| r.unwrap()).group_by(|r| (utils::get_read_barcode(r), utils::get_read_library_index(r))) {
+    // Records for a single group
+    let mut group_records: Vec<bam::Record> = vec![];
+
+    // Group records by (barcode, library) and process each barcode.
+    // The following code previously used itertools group_by().
+    // For the pathological case of a large dataset
+    // with a typical number of invalid barcodes,
+    // it would load an entire chunk of invalid-barcode records
+    // into memory unnecessarily. Chaining filter() upstream did not
+    // work due to the required side effects of metric-tallying and BAM writing.
+    // So here we do filter(...).group_by(...) from scratch.
+    for record in chunk_iter.map(|r| r.unwrap()) {
+        let maybe_bc = utils::get_read_barcode(&record);
+        let lib_idx = utils::get_read_library_index(&record);
+
+        // Skip records without a valid barcode.
         if maybe_bc.is_none() {
-            // Invalid barcode. Write all records as-is.
-            for record in bc_group {
-                metrics[lib_idx].total_reads += 1;
-                out_bam.write(&record).expect("Failed to write BAM record");
-            }
-            // Skip this barcode.
+            metrics[lib_idx].total_reads += 1;
+            out_bam.write(&record).expect("Failed to write BAM record");
             continue;
         }
-        // Verify sort order (bc, library_idx)
+
         let bc = maybe_bc.unwrap();
-        if bc == prev_bc {
-            assert!(lib_idx >= prev_lib_idx)
-        }
 
-        // HACK: Rust's entry api still requires key-ownership to query,
-        //       so do it the ugly way.
-        if bc_summaries[lib_idx].barcodes.get(&bc).is_none() {
-            // Only clone the key when it's not present
-            bc_summaries[lib_idx].barcodes.insert(bc.clone(), Default::default());
-        }
-        let barcode_summary = bc_summaries[lib_idx].barcodes.get_mut(&bc).unwrap();
+        if let (Some(ref prev_bc), Some(ref prev_lib_idx)) = (maybe_prev_bc, maybe_prev_lib_idx) {
+            // Verify sort order (bc, library_idx)
+            // Within a barcode, the library index is non-decreasing
+            assert!(bc != *prev_bc || lib_idx >= *prev_lib_idx);
 
-        // Get raw UMI frequencies
-        let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
-        let mut low_support_umigenes: HashSet<(Vec<u8>, String)> = HashSet::new();
-
-        for (maybe_umi, umi_group) in bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
-            let mut gene_counts: HashMap<String, u64> = HashMap::new();
-            assert!(prev_bc != bc || lib_idx >= prev_lib_idx);
-            prev_lib_idx = lib_idx;
-
-            if let Some(umi) = maybe_umi {
-                // Count (UMI, gene) pairs.
-
-                // Assumes records are qname-contiguous in the input.
-                for (qname, qname_records) in umi_group.into_iter()
-                    .filter(|&x| utils::is_read_dup_candidate(x))
-                    .group_by(|x| x.qname()) {
-                        match get_qname_conf_mapped_feature(qname_records.into_iter()) {
-                            None => { panic!(format!("Found 0 or >1 features for confidently mapped read/pair {}", str::from_utf8(qname).unwrap())) },
-                            Some(gene) => {
-                                *raw_umigene_counts.entry((umi.clone(), gene.clone())).or_insert(0) += 1;
-                                *gene_counts.entry(gene.clone()).or_insert(0) += 1;
-                            },
-                        }
-                    } // for each qname
-
-                // Mark (UMI, gene) pairs w/ frequency below the max for the UMI as low support.
-                if let Some((_max_gene, max_count)) = gene_counts.iter().max_by_key(|x| x.1) {
-                    for (gene, count) in gene_counts.iter() {
-                        if args.filter_umis && count < max_count {
-                            low_support_umigenes.insert((umi.clone(), gene.clone()));
-                        }
-                    }
-                }
+            if bc != *prev_bc || lib_idx != *prev_lib_idx {
+                // Hit a group key boundary
+                process_barcode(&mut group_records,
+                                &mut metrics, &mut bc_summaries, &mut out_bam,
+                                *prev_lib_idx, prev_bc, args.filter_umis);
+                group_records.clear()
             }
         }
 
-        // Determine which UMIs need to be corrected
-        let umi_corrections = correct_umis(raw_umigene_counts);
+        // Accumulate the records in this group
+        group_records.push(record);
 
-        // Correct UMIs and mark PCR duplicates
-        let mut wrote_umigenes = HashSet::new();
+        maybe_prev_bc = Some(bc);
+        maybe_prev_lib_idx = Some(lib_idx);
+    } // for each record
 
-        for (_qname, qname_records) in bc_group.iter().group_by(|x| x.qname()) {
-            // Take UMI from first record
-            let maybe_umi = utils::get_read_umi(&qname_records.iter().nth(0).unwrap());
-
-            let maybe_gene = get_qname_conf_mapped_feature(qname_records.iter()
-                                                           .map(|x| *x));
-
-            for record in qname_records {
-                // Clone here because holding a &mut to the record
-                // while simultaneously grouping by qname in the outer loop
-                // makes rustc very unhappy.
-                let mut new_record = record.clone();
-                let mut new_flags = utils::get_read_extra_flags(&new_record);
-
-                let is_secondary = record.is_secondary();
-                let is_dup_candidate = utils::is_read_dup_candidate(&record);
-
-                if !is_secondary {
-                    metrics[lib_idx].total_reads += 1;
-                    barcode_summary.reads += 1
-                }
-
-                metrics[lib_idx].candidate_dup_reads += is_dup_candidate as u64;
-
-                if let (Some(umi), Some(gene)) = (maybe_umi.as_ref(), maybe_gene.as_ref()) {
-                    let key = (umi.clone(), gene.clone());
-
-                    if !record.is_secondary() && low_support_umigenes.contains(&key) {
-                        // Low support (UMI, gene). Mark as low support.
-                        // - Only consider primary alignments for this flag.
-                        // - Do not correct the UMI.
-                        // - Do not mark duplicates w/ for this (UMI, gene).
-                        metrics[lib_idx].low_support_umi_reads += 1;
-                        new_flags |= utils::ExtraFlags::LOW_SUPPORT_UMI;
-
-                    } else {
-                        // Correct UMIs in all records
-                        let (corrected_umi, is_corrected) = match umi_corrections.get(&key) {
-                            Some(new_umi) => (new_umi.clone(), true),
-                            None => (umi.clone(), false),
-                        };
-
-                        // Correct the UMI tag
-                        if is_corrected {
-                            metrics[lib_idx].umi_corrected_reads += 1;
-                            barcode_summary.umi_corrected_reads += 1;
-
-                            new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
-                            new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
-                                                &bam::record::Aux::String(&corrected_umi));
-                        }
-
-                        // Don't try to dup mark secondary alignments.
-                        if is_dup_candidate {
-                            let dup_key = (corrected_umi, key.1, get_mate_type(&record));
-
-                            barcode_summary.candidate_dup_reads += 1;
-
-                            if wrote_umigenes.contains(&dup_key) {
-                                // Duplicate
-                                metrics[lib_idx].dup_reads += 1;
-                                let flags = record.flags();
-                                new_record.set_flags(flags | 1024u16);
-                            } else {
-                                // Non-duplicate
-                                wrote_umigenes.insert(dup_key);
-
-                                // Flag read1 as countable
-                                if !record.is_last_in_template() {
-                                    metrics[lib_idx].umis += 1;
-                                    barcode_summary.umis += 1;
-                                    new_flags |= utils::ExtraFlags::UMI_COUNT;
-                                }
-                            }
-                        }
-                    }
-                }
-                if new_flags.bits() > 0 {
-                    new_record.remove_aux(utils::EXTRA_FLAGS_TAG);
-                    new_record.push_aux(utils::EXTRA_FLAGS_TAG,
-                                        &bam::record::Aux::Integer(new_flags.bits() as i32));
-                }
-                out_bam.write(&new_record).expect("Failed to write BAM record");
-            }
-
-        } // for each record
-
-        prev_bc = bc;
-        prev_lib_idx = lib_idx;
-
-    } // for each barcode
+    // Process the final group
+    if !group_records.is_empty() {
+        process_barcode(&mut group_records,
+                        &mut metrics, &mut bc_summaries, &mut out_bam,
+                        maybe_prev_lib_idx.unwrap(), &maybe_prev_bc.unwrap(),
+                        args.filter_umis);
+    }
 
     // Write metrics
     utils::write_json_file(outs["metrics"].as_str().unwrap(), &metrics)
