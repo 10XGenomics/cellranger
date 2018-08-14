@@ -41,7 +41,7 @@ stage SUMMARIZE_READ_REPORTS(
 ) split (
     in  fastq    read1,
     in  fastq    read2,
-    in  fastq    tags,
+    in  fastq    chunk_tags,
 ) using (
     volatile = strict,
 )
@@ -93,7 +93,7 @@ stage ATTACH_BCS_AND_UMIS(
     src py       "stages/counter/attach_bcs_and_umis",
 ) split (
     in  bam      chunk_genome_input,
-    in  fastq    tags,
+    in  fastq    chunk_tags,
     in  int      gem_group,
     in  string   library_type,
     in  string   library_id,

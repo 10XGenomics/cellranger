@@ -98,24 +98,24 @@ stage SUMMARIZE_VDJ_READ_REPORTS(
 )
 
 stage FILTER_VDJ_READS(
-    in  path    vdj_reference_path,
-    in  lz4[]   read1s                   "Per-chunk fastqs",
-    in  lz4[]   read2s                   "Per-chunk fastqs",
-    in  json[]  chunk_barcodes           "Per-chunk barcodes",
-    in  map     chemistry_def,
-    in  map     sw_params                "Params for SW alignment (seed, min_sw_score)",
-    out pickle  chunked_reporter,
-    out pickle  chunked_gene_umi_counts,
-    out bam[]   barcode_chunked_bams,
-    out json[]  barcodes_in_chunks,
-    out tsv[]   reads_per_bc,
-    out json    summary,
-    out h5      umi_info,
-    src py      "stages/vdj/filter_vdj_reads",
+    in  path   vdj_reference_path,
+    in  lz4[]  read1s                   "Per-chunk fastqs",
+    in  lz4[]  read2s                   "Per-chunk fastqs",
+    in  json[] chunk_barcodes           "Per-chunk barcodes",
+    in  map    chemistry_def,
+    in  map    sw_params                "Params for SW alignment (seed, min_sw_score)",
+    out pickle chunked_reporter,
+    out pickle chunked_gene_umi_counts,
+    out bam[]  barcode_chunked_bams,
+    out json[] barcodes_in_chunks,
+    out tsv[]  reads_per_bc,
+    out json   summary,
+    out h5     umi_info,
+    src py     "stages/vdj/filter_vdj_reads",
 ) split (
-    in  fastq   read1_chunk,
-    in  fastq   read2_chunk,
-    in  json    barcodes_chunk,
+    in  fastq  read1_chunk,
+    in  fastq  read2_chunk,
+    in  json   barcodes_chunk,
 )
 
 stage FILTER_UMIS(

@@ -74,7 +74,7 @@ def split(args):
             args.genome_inputs, args.tags, args.gem_groups, args.library_types, args.library_ids):
         chunks.append({
             'chunk_genome_input': chunk_genome_input,
-            'tags': tags,
+            'chunk_tags': tags,
             'gem_group': gem_group,
             'library_type': library_type,
             'library_id': library_id,
@@ -100,7 +100,7 @@ def main(args, outs):
     cmd = [
         'annotate_reads', 'main',
         args.chunk_genome_input,
-        args.tags,
+        args.chunk_tags,
         outs.output,
         outs.chunked_reporter,
         args.reference_path,

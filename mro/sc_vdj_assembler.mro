@@ -204,13 +204,15 @@ pipeline SC_VDJ_ASSEMBLER(
         chemistry_def = SETUP_CHUNKS.chemistry_def,
     )
 
-    call volatile FILTER_VDJ_READS(
+    call FILTER_VDJ_READS(
         vdj_reference_path = self.vdj_reference_path,
         read1s             = GROUP_FASTQ_BY_BC.read1s,
         read2s             = GROUP_FASTQ_BY_BC.read2s,
         chunk_barcodes     = GROUP_FASTQ_BY_BC.chunk_barcodes,
         chemistry_def      = SETUP_CHUNKS.chemistry_def,
         sw_params          = self.filter_sw_params,
+    ) using (
+        volatile = true,
     )
 
     call volatile FILTER_BARCODES_VDJ(
@@ -223,12 +225,14 @@ pipeline SC_VDJ_ASSEMBLER(
         force_cells           = self.force_cells,
     )
 
-    call volatile FILTER_UMIS(
+    call FILTER_UMIS(
         vdj_reference_path    = self.vdj_reference_path,
         umi_info              = FILTER_VDJ_READS.umi_info,
         gem_groups            = SUMMARIZE_VDJ_READ_REPORTS.gem_groups,
         target_n50            = self.target_n50_rppu,
         min_readpairs_per_umi = FILTER_BARCODES_VDJ.min_readpairs_per_umi,
+    ) using (
+        volatile = true,
     )
 
     call ASSEMBLE_VDJ(

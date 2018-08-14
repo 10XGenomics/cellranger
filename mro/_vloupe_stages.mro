@@ -34,5 +34,5 @@ stage VLOUPE_PREPROCESS(
     in  csv       metrics_csv,
     out vloupe    output_for_vloupe,
     src py        "stages/vloupe/vloupe_preprocess",
-) split using (
+) split (
 )

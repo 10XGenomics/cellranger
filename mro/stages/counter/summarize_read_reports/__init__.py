@@ -38,7 +38,7 @@ stage SUMMARIZE_READ_REPORTS(
     out string[] bam_comments,
     out fastq[]  read1s,
     out fastq[]  read2s,
-    out fastq[]  tags,
+    out fastq[]  chunk_tags,
     src py       "stages/counter/summarize_read_reports",
 ) split using (
     in  fastq    read1,
@@ -60,7 +60,7 @@ def split(args):
         chunks.append({
             'read1': read1 if args.retain_fastqs else None,
             'read2': read2 if paired_end and args.retain_fastqs else None,
-            'tags': tags,
+            'chunk_tags': tags,
         })
 
     return {'chunks': chunks}
@@ -77,11 +77,11 @@ def main(args, outs):
         _, in_ext = cr_utils.splitexts(args.read2)
         outs.read2s = out_path + in_ext
         cr_io.copy(args.read2, outs.read2s)
-    if args.tags is not None:
+    if args.chunk_tags is not None:
         out_path, _ = cr_utils.splitexts(outs.tags)
-        _, in_ext = cr_utils.splitexts(args.tags)
+        _, in_ext = cr_utils.splitexts(args.chunk_tags)
         outs.tags = out_path + in_ext
-        cr_io.copy(args.tags, outs.tags)
+        cr_io.copy(args.chunk_tags, outs.tags)
 
 def join(args, outs, chunk_defs, chunk_outs):
     cr_io.copy(args.extract_reads_summary, outs.summary)
