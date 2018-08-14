@@ -2,6 +2,10 @@
 #
 # Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 #
+
+""" Merge the molecule info files, remapping barcode indices, gem-groups, and libraries
+    into their aggregated spaceversions """
+
 import numpy as np
 import cPickle
 import martian
@@ -14,20 +18,22 @@ __MRO__ = """
 stage MERGE_MOLECULES(
     in  map[]  sample_defs,
     in  map[]  libraries,
-    in  map    gem_group_index,
     out h5     merged_molecules,
-    out h5[]   chunked_molecules,
+    out map    gem_group_barcode_ranges,
     src py     "stages/aggregator/merge_molecules",
 ) split using (
     in  string aggr_id,
     in  h5     molecule_h5,
     in  int    barcode_idx_offset,
+    in  int    barcode_idx_end,
     in  pickle merged_barcodes,
+    out int[]  new_gem_groups,
     out h5     molecule_h5,
 )
 """
 
 def split(args):
+    """ Chunk the data by input library """
     chunks, merged_barcodes = [], []
     barcode_whitelist_to_idx_offset = {}
     barcode_idx_offset = 0
@@ -45,11 +51,14 @@ def split(args):
                 barcode_whitelist_to_idx_offset[barcode_whitelist] = barcode_idx_offset
                 barcode_idx_offset += len(barcodes)
 
+            idx_offset = barcode_whitelist_to_idx_offset[barcode_whitelist]
+
             chunks.append({
                 'aggr_id': sample_def[cr_constants.AGG_ID_FIELD],
                 'molecule_h5': sample_def[cr_constants.AGG_H5_FIELD],
                 '__mem_gb': mem_gb,
-                'barcode_idx_offset': barcode_whitelist_to_idx_offset[barcode_whitelist],
+                'barcode_idx_offset': idx_offset,
+                'barcode_idx_end': idx_offset + len(barcodes),
                 'merged_barcodes': merged_barcodes_file,
             })
 
@@ -96,6 +105,8 @@ def main(args, outs):
                     old_gg = ds[:]
                     new_gg = gg_map[old_gg]
                     out_mc.append_column(col, new_gg)
+
+                    outs.new_gem_groups = np.flatnonzero(np.bincount(new_gg)).tolist()
 
                 elif col == 'library_idx':
                     old_idx = ds[:]
@@ -154,3 +165,10 @@ def join(args, outs, chunk_defs, chunk_outs):
     metrics = MoleculeCounter.naive_concatenate_metrics(molecules)
     metrics[cr_mol_counter.IS_AGGREGATED_METRIC] = True
     MoleculeCounter.concatenate(outs.merged_molecules, molecules, metrics=metrics)
+
+    # Record, for each gem group, the range of barcode indices it can contain.
+    outs.gem_group_barcode_ranges = {}
+    for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):
+        for gg in chunk_out.new_gem_groups:
+            outs.gem_group_barcode_ranges[str(gg)] = [chunk_def.barcode_idx_offset,
+                                                      chunk_def.barcode_idx_end]

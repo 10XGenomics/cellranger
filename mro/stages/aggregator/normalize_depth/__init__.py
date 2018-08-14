@@ -30,6 +30,7 @@ stage NORMALIZE_DEPTH(
     in  h5     molecules,
     in  map    detect_cells_gg_metrics,
     in  string normalization_mode,
+    in  map    gem_group_barcode_ranges,
     out h5     out_molecules,
     out json   summary,
     src py     "stages/aggregator/normalize_depth",
@@ -217,17 +218,35 @@ def main(args, outs):
 
         feature_ref = mc.get_feature_ref()
 
-        # FIXME: assumes one barcode whitelist
-        whitelist_size = mc.h5['barcodes'].shape[0]
-        num_bcs = whitelist_size * len(gem_groups)
+        # Compute matrix dimensions
+        # Get the range of possible barcode indices for each gem group.
+        gg_barcode_idx_start = np.zeros(1+len(gem_groups), dtype=int)
+        gg_barcode_idx_len = np.zeros(1+len(gem_groups), dtype=int)
+        for gg_str, idx_range in sorted(args.gem_group_barcode_ranges.iteritems(),
+                                        key=lambda kv: int(kv[0])):
+            gg = int(gg_str)
+            gg_barcode_idx_start[gg] = idx_range[0]
+            gg_barcode_idx_len[gg] = idx_range[1] - idx_range[0]
+
+        num_bcs = gg_barcode_idx_len.sum()
         num_features = feature_ref.get_num_features()
 
         print 'downsampled'
         LogPerf.mem()
 
         # Convert molecule barcode indices into matrix barcode indices
-        # FIXME: assumes one barcode whitelist
-        mol_barcode_idx += (mol_gem_group-1)*whitelist_size
+        # The molecule info barcode_idx is in this space:
+        #  [W_0, W_1, ...] where W_i is distinct original whitelist i.
+        # The matrix is in, e.g., this space:
+        #  [w_0-1, w_1-2, w_0-3, ...] where w_i-j is a copy of whitelist i for gem group j.
+
+        # Return to the original whitelist index
+        mol_barcode_idx -= gg_barcode_idx_start.astype(np.uint64)[mol_gem_group]
+
+        # Offset by the cumulative whitelist length up to a barcode's gem group
+        gg_barcode_matrix_start = np.cumsum(gg_barcode_idx_len).astype(np.uint64)
+        mol_barcode_idx += gg_barcode_matrix_start[mol_gem_group - 1]
+
         ones = np.ones(len(mol_barcode_idx), dtype=cr_matrix.DEFAULT_DATA_DTYPE)
         umi_matrix = sp_sparse.coo_matrix((ones,
                                            (mol_feature_idx, mol_barcode_idx)),
@@ -245,15 +264,18 @@ def main(args, outs):
         del new_read_pairs
 
         # Get all barcodes strings for the raw matrix
-        # FIXME: assumes one barcode whitelist
         barcode_seqs = mc.get_barcodes()
 
         print len(barcode_seqs), len(gem_groups)
         print 'creating barcode strings'
         LogPerf.mem()
 
-        barcodes = [cr_utils.format_barcode_seq(bc, gg) for gg, bc in \
-                    itertools.product(gem_groups, barcode_seqs)]
+        barcodes = []
+        for gg in gem_groups:
+            idx_start = gg_barcode_idx_start[gg]
+            idx_end = idx_start + gg_barcode_idx_len[gg]
+            gg_bcs = [cr_utils.format_barcode_seq(bc, gg) for bc in barcode_seqs[idx_start:idx_end]]
+            barcodes.extend(gg_bcs)
 
         print 'created barcode strings'
         LogPerf.mem()

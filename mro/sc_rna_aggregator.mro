@@ -58,8 +58,9 @@ pipeline SC_RNA_AGGREGATOR(
     )
 
     call NORMALIZE_DEPTH(
-        normalization_mode = self.normalization_mode,
-        molecules          = MERGE_MOLECULES.merged_molecules,
+        normalization_mode       = self.normalization_mode,
+        molecules                = MERGE_MOLECULES.merged_molecules,
+        gem_group_barcode_ranges = MERGE_MOLECULES.gem_group_barcode_ranges,
     )
 
     call SC_RNA_ANALYZER(
