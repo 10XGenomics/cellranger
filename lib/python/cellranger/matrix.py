@@ -453,6 +453,9 @@ class CountMatrix(object):
                            bcs=self.bcs,
                            matrix=self.m[indices, :])
 
+    def select_features_by_ids(self, feature_ids):
+        return self.select_features(self.feature_ids_to_ints(feature_ids))
+
     def select_features_by_genome(self, genome):
         '''Select the subset of gene-expression features for genes in a specific genome'''
         indices = []
