@@ -143,7 +143,7 @@ mod tests {
 
         let test_bam_name = "test/inputs/test_index.bam";
 
-        let bam = bam::Reader::from_path(&Path::new(&(test_bam_name.to_string()))).unwrap();
+        let mut bam = bam::Reader::from_path(&Path::new(&(test_bam_name.to_string()))).unwrap();
         let mut records = bam.records();
 
         for i in 0..4 {
@@ -206,8 +206,15 @@ mod tests {
                 assert_eq!(new_rec2.qual(), rec2.qual());
                 assert_eq!(new_rec2.seq().as_bytes(), rec2.seq().as_bytes());
 
-                assert_eq!(new_rec1.cigar().iter().cloned().collect::<Vec<_>>(), vec![bam::record::Cigar::Equal(read1.len() as u32)]);
-                assert_eq!(new_rec2.cigar().iter().cloned().collect::<Vec<_>>(), vec![bam::record::Cigar::Equal(read2.len() as u32)]);
+                assert_eq!(
+                    new_rec1.cigar().iter().cloned().collect::<Vec<_>>(), 
+                    vec![bam::record::Cigar::Equal(read1.len() as u32)]
+                );
+
+                assert_eq!(
+                    new_rec2.cigar().iter().cloned().collect::<Vec<_>>(), 
+                    vec![bam::record::Cigar::Equal(read2.len() as u32)]
+                );
             }
             
             {

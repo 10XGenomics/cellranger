@@ -10,6 +10,7 @@ use std::cmp;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::f64;
+use failure::Error;
 
 use rust_htslib::bam::record::{Record, Aux};
 
@@ -372,37 +373,39 @@ impl BarcodeUmiChecker {
 
 impl BarcodeUmiData {
     /// Add tags to a BAM record
-    pub fn attach_tags(&self, record: &mut Record, gem_group: &u8) {
+    pub fn attach_tags(&self, record: &mut Record, gem_group: &u8) -> Result<(), Error> {
         // Attach sample index
         if let Some(ref si_data) = self.sample_index_data {
             record.push_aux(&SI_SEQ_TAG.as_bytes(),
-                            &Aux::String(si_data.seq.as_bytes()));
+                            &Aux::String(si_data.seq.as_bytes()))?;
             record.push_aux(&SI_QUAL_TAG.as_bytes(),
-                            &Aux::String(&si_data.qual));
+                            &Aux::String(&si_data.qual))?;
         };
 
         if let Some(ref bc_data) = self.barcode_data {
             record.push_aux(&RAW_BC_SEQ_TAG.as_bytes(),
-                            &Aux::String(bc_data.raw_seq.as_bytes()));
+                            &Aux::String(bc_data.raw_seq.as_bytes()))?;
             record.push_aux(&RAW_BC_QUAL_TAG.as_bytes(),
-                            &Aux::String(&bc_data.qual));
+                            &Aux::String(&bc_data.qual))?;
             if let Some(ref corrected_seq) = bc_data.processed_seq {
                 let processed_bc = utils::get_processed_bc(&corrected_seq, gem_group);
                 record.push_aux(&PROC_BC_SEQ_TAG.as_bytes(),
-                                &Aux::String(processed_bc.as_bytes()));
+                                &Aux::String(processed_bc.as_bytes()))?;
             }
         }
 
         // Attach UMI
         if let Some(ref umi_data) = self.umi_data {
             record.push_aux(&RAW_UMI_SEQ_TAG.as_bytes(),
-                            &Aux::String(umi_data.raw_seq.as_bytes()));
+                            &Aux::String(umi_data.raw_seq.as_bytes()))?;
             record.push_aux(&RAW_UMI_QUAL_TAG.as_bytes(),
-                            &Aux::String(&umi_data.qual));
+                            &Aux::String(&umi_data.qual))?;
             if umi_data.is_valid {
                 record.push_aux(&PROC_UMI_SEQ_TAG.as_bytes(),
-                                &Aux::String(umi_data.raw_seq.as_bytes()));
+                                &Aux::String(umi_data.raw_seq.as_bytes()))?;
             }
         };
+
+        Ok(())
     }
 }

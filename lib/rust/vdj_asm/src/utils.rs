@@ -327,7 +327,11 @@ pub fn drop_read(subsample_rate: f64, name: &str) -> bool {
             key.hash(&mut hasher);
 
             let hash = hasher.finish();
-            let seed = [(hash >> 32) as u32, hash as u32, (hash >> 32) as u32, hash as u32];
+            
+            let mut seed = [0u8; 16];
+            for i in 0..8 {
+                seed[i] = (hash >> (i*8) & 0xFF) as u8;
+            }
             let mut rng: rand::XorShiftRng = rand::SeedableRng::from_seed(seed);
             rng.gen::<f64>() > subsample_rate
         }
@@ -378,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_replace_ns() {
-        let seed: &[_] = &[1, 2, 3, 4];
+        let seed = [0u8; 32];
         let mut rng : StdRng = SeedableRng::from_seed(seed);
         assert_eq!(replace_ns_rand(&"ACGT".to_string(), &mut rng), "ACGT".to_string());
         assert!(replace_ns_rand(&"ACGTNNN".to_string(), &mut rng).starts_with("ACGT"));

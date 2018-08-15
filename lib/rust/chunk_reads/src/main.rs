@@ -2,16 +2,8 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
-// `error_chain!` can recurse deeply
-#![recursion_limit = "1024"]
-
-#[macro_use]
-extern crate error_chain;
-
 #[macro_use]
 extern crate serde_derive;
-
-#[macro_use]
 extern crate serde_json;
 
 extern crate docopt;
@@ -20,9 +12,7 @@ extern crate rayon;
 extern crate tempdir;
 extern crate lz4;
 extern crate flate2;
-
-#[cfg(test)]
-extern crate fastq_10x;
+extern crate failure;
 
 use rayon::prelude::*;
 
@@ -30,7 +20,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use std::fs::File;
-use std::io;
 use std::io::Write;
 use docopt::Docopt;
 use fastq::{parse_path, Record};
@@ -38,22 +27,10 @@ use serde_json::Value;
 use serde_json::map::Map;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use failure::Error;
 
-// We'll put our errors in an `errors` module, and other modules in
-// this crate will `use errors::*;` to get access to everything
-// `error_chain!` creates.
-mod errors {
-    // Create the Error, ErrorKind, ResultExt, and Result types
-    error_chain! {
-        foreign_links {
-            Io(::std::io::Error) #[doc = "Link to a `std::error::Error` type."];
-            Json(::serde_json::Error);
-        }
-    }
-}
-
-use errors::*;
-
+#[cfg(test)]
+mod fastq_10x;
 
 const USAGE: &'static str = "
 Usage:
@@ -74,6 +51,7 @@ pub struct MartianArgs {
     reads_interleaved: bool,
 }
 
+#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize)]
 pub struct ReadChunk {
     R1: Option<String>,
@@ -105,14 +83,14 @@ struct CompressionSpec{
 }
 
 /// Read JSON from a chunk file
-fn read_file<P: AsRef<Path>>(filename: P) -> Result<String> {
-    let mut f = try!(File::open(filename.as_ref()));
+fn read_file<P: AsRef<Path>>(filename: P) -> Result<String, Error> {
+    let mut f = File::open(filename.as_ref())?;
     let mut buf = String::new();
-    let s = try!(f.read_to_string(&mut buf));
+    f.read_to_string(&mut buf)?;
     Ok(buf)
 }
 
-fn write_json<P: AsRef<Path>>(filename: P, val: &serde_json::Value) -> Result<()>
+fn write_json<P: AsRef<Path>>(filename: P, val: &serde_json::Value) -> Result<(), Error>
 {
     let mut f = File::create(&filename)?;
     serde_json::to_writer_pretty(&mut f, val)?;
@@ -122,26 +100,17 @@ fn write_json<P: AsRef<Path>>(filename: P, val: &serde_json::Value) -> Result<()
 fn main() {
     if let Err(ref e) = run() {
         println!("error: {}", e);
+        println!("caused by: {}", e.cause());
 
-        for e in e.iter().skip(1) {
-            println!("caused by: {}", e);
-        }
-
-        // The backtrace is not always generated. Try to run this example
-        // with `RUST_BACKTRACE=1`.
-
-        if let Some(backtrace) = e.backtrace() {
-            println!("------------");
-            println!("If you believe this is a bug in chunk_reads, please report a bug to support@10xgenomics.com.");
-            println!("{:?}", backtrace);
-        }
-
+        println!("------------");
+        println!("If you believe this is a bug in chunk_reads, please report a bug to support@10xgenomics.com.");
+        println!("{:?}", e.backtrace());
         ::std::process::exit(1);
     }
 }
 
 
-fn run() -> Result<Vec<(Option<String>, Option<String>, Option<String>, Option<String>)>> {
+fn run() -> Result<Vec<(Option<String>, Option<String>, Option<String>, Option<String>)>, Error> {
     println!("chunk_reads v{}", "VERSION");
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.deserialize())
@@ -150,7 +119,7 @@ fn run() -> Result<Vec<(Option<String>, Option<String>, Option<String>, Option<S
 }
 
 
-fn run_args(args: Args) -> Result<Vec<(Option<String>, Option<String>, Option<String>, Option<String>)>> {
+fn run_args(args: Args) -> Result<Vec<(Option<String>, Option<String>, Option<String>, Option<String>)>, Error> {
 
     // Load arguments
     let (read_chunks, interleaved) =
@@ -190,7 +159,10 @@ fn run_args(args: Args) -> Result<Vec<(Option<String>, Option<String>, Option<St
     let out_path = Path::new(&args.arg_output_path);
 
     let mut _out_chunks = Vec::new();
-    rayon::initialize(rayon::Configuration::new().num_threads(2));
+
+    // Try to build ThreadPool, but swallow GlobalPoolAlreadyInitialized
+    let _err = rayon::ThreadPoolBuilder::new().num_threads(2).build_global();
+
     chunks.into_par_iter().map(|(name, in_file, interleaved)| {
 
         let read_per_chunk =
@@ -205,7 +177,7 @@ fn run_args(args: Args) -> Result<Vec<(Option<String>, Option<String>, Option<St
             (Some(m), lvl) => Some(CompressionSpec{method: m, level: lvl}),
         };
         chunk_fastq(Path::new(&in_file), read_per_chunk, out_path, name, cmp_spec)
-    }).collect_into(&mut _out_chunks);
+    }).collect_into_vec(&mut _out_chunks);
 
     let mut out_chunks = vec![];
     for oc in _out_chunks {
@@ -239,7 +211,7 @@ fn run_args(args: Args) -> Result<Vec<(Option<String>, Option<String>, Option<St
 
     let mut out_chunks_path = out_path.to_path_buf();
     out_chunks_path.push(Path::new("read_chunks.json"));
-    write_json(out_chunks_path, &Value::Array(out_read_chunks));
+    write_json(out_chunks_path, &Value::Array(out_read_chunks))?;
 
     println!("{:?}", &out_chunks);
     Ok(out_read_sets)
@@ -279,11 +251,11 @@ impl<W: Write> Drop for StreamWrapper<W> {
 }
 
 fn chunk_fastq(p: &Path, nrecord: usize, out_path: &Path, out_prefix: &str,
-               compress: Option<CompressionSpec>) -> Result<(String, Vec<PathBuf>)> {
+               compress: Option<CompressionSpec>) -> Result<(String, Vec<PathBuf>), Error> {
     use CompressionMethod::{Lz4, Gzip};
 
     println!("opening: {:?}", p);
-    let rr = parse_path(Some(p), |mut parser| {
+    let rr = parse_path(Some(p), |parser| {
         let mut paths: Vec<PathBuf> = vec![];
         let mut total = 0;
         let mut this_chunk = 0;
@@ -300,19 +272,19 @@ fn chunk_fastq(p: &Path, nrecord: usize, out_path: &Path, out_prefix: &str,
         paths.push(path);
 
         let mut bufwrite = match &compress {
-            &Some(CompressionSpec{method: Lz4, level: level}) =>
+            &Some(CompressionSpec{method: Lz4, level}) =>
                 Box::new(StreamWrapper{ s: Some(lz4::EncoderBuilder::new()
                                                 .level(level).build(output)
                                                 .expect("Failed to init lz4 encoder")) }) as Box<Write>,
             &Some(CompressionSpec{method: Gzip, ..}) =>
-                Box::new(GzEncoder::new(output, Compression::Fast)) as Box<Write>,
+                Box::new(GzEncoder::new(output, Compression::fast())) as Box<Write>,
             &None => Box::new(std::io::BufWriter::new(output)) as Box<Write>,
         };
 
         let ret = parser.each(|rec| {
             total += 1;
             this_chunk += 1;
-            rec.write(&mut bufwrite);
+            let _ = rec.write(&mut bufwrite).unwrap();
 
             if this_chunk == nrecord {
                 total_chunks += 1;
@@ -326,7 +298,7 @@ fn chunk_fastq(p: &Path, nrecord: usize, out_path: &Path, out_prefix: &str,
                                                         .level(level).build(output)
                                                         .expect("Failed to init lz4 encoder")) }) as Box<Write>,
                     &Some(CompressionSpec{method: Gzip, ..}) =>
-                        Box::new(GzEncoder::new(output, Compression::Fast)) as Box<Write>,
+                        Box::new(GzEncoder::new(output, Compression::fast())) as Box<Write>,
                     &None => Box::new(std::io::BufWriter::new(output)) as Box<Write>,
                 };
 
@@ -334,7 +306,7 @@ fn chunk_fastq(p: &Path, nrecord: usize, out_path: &Path, out_prefix: &str,
             }
 
             true
-        }).map(|r| paths);
+        }).map(|_r| paths);
 
         println!("got recs: {}", total);
         ret
@@ -343,19 +315,18 @@ fn chunk_fastq(p: &Path, nrecord: usize, out_path: &Path, out_prefix: &str,
 
     match rr {
         Ok(Ok(paths)) => Ok((out_prefix.to_string(), paths)),
-        Ok(Err(v)) => Err(v).chain_err(|| "fastq parsing error"),
-        Err(v) => Err(v).chain_err(|| "fastq file opening error"),
+        Ok(Err(v)) => Err(v.into()),
+        Err(v) => Err(v.into()),
     }
 }
-
-
-
 
 #[cfg(test)]
 mod tests {
     use tempdir;
     use super::*;
-    use fastq_10x::*;
+    use ::fastq_10x::*;
+
+    //use fastq::RawReadSet;
     use std::collections::HashMap;
 
     type ReadSet = HashMap<Vec<u8>, RawReadSet>;
@@ -365,7 +336,6 @@ mod tests {
             reads.insert((r.0).0.clone(), r);
         }
     }
-
 
     pub fn strict_compare_read_sets(orig_set: ReadSet, new_set: ReadSet) {
 
@@ -416,7 +386,7 @@ mod tests {
 
         println!("opening chunks");
         let mut output_reads = ReadSet::new();
-        for (r1, r2, i1, i2) in out_path_sets {
+        for (r1, r2, i1, _i2) in out_path_sets {
             load_fastq_set(&mut output_reads, open_fastq_pair_iter(r1.unwrap(), r2.unwrap(), i1));
         }
 
@@ -455,7 +425,7 @@ mod tests {
 
         println!("opening chunks");
         let mut output_reads = ReadSet::new();
-        for (r1, r2, i1, i2) in out_path_sets {
+        for (r1, _r2, i1, _i2) in out_path_sets {
             load_fastq_set(&mut output_reads, open_interleaved_fastq_pair_iter(r1.unwrap(), i1));
         }
 

@@ -19,6 +19,9 @@ extern crate flate2;
 extern crate bio;
 extern crate lz4;
 
+#[macro_use]
+extern crate failure;
+
 mod barcodes;
 mod features;
 mod metrics;
@@ -32,6 +35,7 @@ use std::fs::File;
 use std::io::{BufReader};
 use std::str;
 use std::collections::{HashSet, HashMap, BTreeMap};
+use failure::Error;
 
 use docopt::Docopt;
 
@@ -110,16 +114,18 @@ pub struct LibraryInfo {
 fn main() {
     let args: Args = Docopt::new(USAGE).and_then(|d| d.deserialize()).unwrap_or_else(|e| e.exit());
     if args.cmd_main {
-        annotate_reads_main(args);
+        annotate_reads_main(args).unwrap();
     } else {
         annotate_reads_join(args);
     }
 }
 
-fn annotate_reads_main(args: Args) {
+fn annotate_reads_main(args: Args) -> Result<(), Error> {
 
     println!("Loading indices");
-    let reference_path = args.arg_reference_path.unwrap();
+    let reference_path = args.arg_reference_path.ok_or(format_err!("No reference path given"))?;
+
+    
     let strandedness = Strandedness::from_string(args.arg_strandedness.unwrap());
     let params = AnnotationParams {
         chemistry_strandedness:     strandedness,
@@ -177,7 +183,7 @@ fn annotate_reads_main(args: Args) {
     };
 
     println!("Setting up BAMs");
-    let in_bam = bam::Reader::from_path(Path::new(&args.arg_in_bam.unwrap())).unwrap();
+    let mut in_bam = bam::Reader::from_path(Path::new(&args.arg_in_bam.unwrap()))?;
     let mut out_header = Header::from_template(in_bam.header());
 
     // Append PG tag
@@ -212,7 +218,7 @@ fn annotate_reads_main(args: Args) {
         out_header.push_comment(format!("library_info:{}", lib_str).as_bytes());
     }
 
-    let mut out_bam = bam::Writer::from_path(Path::new(&args.arg_out_bam.unwrap()), &out_header).unwrap();
+    let mut out_bam = bam::Writer::from_path(Path::new(&args.arg_out_bam.unwrap()), &out_header)?;
 
     let chroms = in_bam.header().target_names().iter().map(|s| str::from_utf8(s).unwrap().to_string()).collect();
     let genomes = utils::get_reference_genomes(&reference_path);
@@ -239,7 +245,7 @@ fn annotate_reads_main(args: Args) {
         process_qname(tags_rec.unwrap().id(),
                       genome_alignments, &mut reporter,
                       &annotator, &bc_umi_checker, &feature_checker,
-                      &mut out_bam, &gem_group, library_index);
+                      &mut out_bam, &gem_group, library_index)?;
     }
 
     println!("Writing metrics");
@@ -249,6 +255,8 @@ fn annotate_reads_main(args: Args) {
     let mut meta: HashMap<String, Value> = HashMap::new();
     meta.insert("num_alignments".into(), json!(num_alignments));
     utils::write_json(json!(meta), &args.arg_out_metadata.unwrap());
+
+    Ok(())
 }
 
 fn annotate_reads_join(args: Args) {
@@ -285,8 +293,6 @@ fn annotate_reads_join(args: Args) {
     serde_json::to_writer_pretty(writer, &summary).expect("Failed to write JSON");
 
     //merged_metrics.write_barcodes_csv(&args.arg_out_bc_csv.unwrap());
-
-
 }
 
 /// Use transcriptome alignments to promote a single genome alignment
@@ -359,7 +365,7 @@ fn process_qname(tag_string: &str,
                  feature_checker: &Option<FeatureChecker>,
                  out_bam: &mut bam::Writer,
                  gem_group: &u8,
-                 library_index: usize) {
+                 library_index: usize) -> Result<(), Error> {
     let fastq_header = CellrangerFastqHeader::new(tag_string);
 
     let bc_umi_data = bc_umi_checker.process_barcodes_and_umis(&fastq_header.tags);
@@ -425,8 +431,8 @@ fn process_qname(tag_string: &str,
                            &read_data.bc_umi_data, &read_data.feature_data,
                            is_conf_mapped_to_transcriptome,
                            is_conf_mapped_to_feature,
-                           is_gene_discordant, gem_group, library_index);
-            out_bam.write(&r1.rec).unwrap();
+                           is_gene_discordant, gem_group, library_index)?;
+            out_bam.write(&r1.rec)?;
         }
         if read_data.is_paired_end() {
             let ref mut r2 = read_data.r2_data[i];
@@ -434,12 +440,13 @@ fn process_qname(tag_string: &str,
                            &read_data.bc_umi_data, &read_data.feature_data,
                            is_conf_mapped_to_transcriptome,
                            is_conf_mapped_to_feature,
-                           is_gene_discordant, gem_group, library_index);
-            out_bam.write(&r2.rec).unwrap();
+                           is_gene_discordant, gem_group, library_index)?;
+            out_bam.write(&r2.rec)?;
         }
     }
 
     reporter.update_metrics(&read_data);
+    Ok(())
 }
 
 /// Attach BAM tags to a single record.
@@ -455,12 +462,12 @@ fn process_record(qname: &[u8],
                   is_conf_mapped_to_feature: bool,
                   is_gene_discordant: bool,
                   gem_group: &u8,
-                  library_index: usize) {
+                  library_index: usize) -> Result<(), Error> {
     // Strip auxiliary tags from the qname
     record_data.rec.set_qname(qname);
 
     // Attach annotation tags
-    record_data.anno.attach_tags(&mut record_data.rec, pair_anno);
+    record_data.anno.attach_tags(&mut record_data.rec, pair_anno)?;
 
     // Attach extra flags
     if !record_data.rec.is_secondary() {
@@ -472,15 +479,17 @@ fn process_record(qname: &[u8],
 
     // Attach library id
     record_data.rec.push_aux(&LIBRARY_INDEX_TAG.as_bytes(),
-                             &rust_htslib::bam::record::Aux::Integer(library_index as i32));
+                             &rust_htslib::bam::record::Aux::Integer(library_index as i64))?;
 
     // Attach cell barcode and UMI
-    bc_umi_data.attach_tags(&mut record_data.rec, gem_group);
+    bc_umi_data.attach_tags(&mut record_data.rec, gem_group)?;
 
     // Attach feature tags
     if let &Some(ref feature_data) = feature_data {
         feature_data.attach_tags(&mut record_data.rec);
     }
+
+    Ok(())
 }
 
 
@@ -523,7 +532,7 @@ mod tests {
             flag_bam_comments:      None,
             flag_feature_ref:       None,
         };
-        annotate_reads_main(args_main);
+        annotate_reads_main(args_main).unwrap();
 
         let args_join = Args {
             cmd_main:               false,

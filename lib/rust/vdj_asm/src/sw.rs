@@ -142,7 +142,7 @@ impl<'a> AlignHelper<'a> {
     pub fn find_read_matches(&self, read: &Read, min_align_score: i32) -> Option<AlignmentPacket> {
         
         let mut all_kmer_matches: Vec<(i32, usize, usize, usize)> = Vec::new();
-        let read_seq = read.seq.to_dna_string();
+        let read_seq = read.seq.to_string();
         let read_seq = read_seq.as_bytes();
         let mut ref_kmer_counts = vec![0i32; self.refs.len()];
 
@@ -166,7 +166,7 @@ impl<'a> AlignHelper<'a> {
         let mut aligner = banded::Aligner::with_scoring(self.scoring.clone(), self.k, self.w);
         for (ref_idx, match_group) in &all_kmer_matches.into_iter().group_by(|x| x.1) {
             let matches = match_group.into_iter().map(|x| (x.2 as u32, x.3 as u32)).collect();
-            let ref_seq = &self.refs[ref_idx].to_dna_string();
+            let ref_seq = &self.refs[ref_idx].to_string();
             let alignment = aligner.custom_with_expanded_matches(read_seq, ref_seq.as_bytes(), matches, Some(1), true);
             if alignment.score > min_align_score {
                 let align_pack = AlignmentPacket::new(ref_idx, alignment);
@@ -183,7 +183,7 @@ impl<'a> AlignHelper<'a> {
         assert!(min_align_score >= 0);
         
         let mut all_kmer_matches: Vec<(i32, usize, usize, usize)> = Vec::new();
-        let read_seq = read.seq.to_dna_string();
+        let read_seq = read.seq.to_string();
         let read_seq = read_seq.as_bytes();
         let mut ref_kmer_counts = vec![0i32; self.refs.len()];
         for i in 0..(read_seq.len() + 1).saturating_sub(self.k) {
@@ -204,7 +204,7 @@ impl<'a> AlignHelper<'a> {
         all_kmer_matches.sort();
         
         for (ref_idx, match_group) in &all_kmer_matches.into_iter().group_by(|x| x.1) {
-            let matches = match_group.into_iter().map(|x| (x.2 as u32, x.3 as u32)).collect();
+            let matches : Vec<_> = match_group.map(|x| (x.2 as u32, x.3 as u32)).collect();
             let sparse_al = sdpkpp(&matches, self.k, self.scoring.match_fn.match_score as u32, 
                 self.scoring.gap_open, self.scoring.gap_extend);
             if sparse_al.score > min_align_score as u32 {

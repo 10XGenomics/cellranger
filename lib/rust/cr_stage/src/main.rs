@@ -16,15 +16,17 @@ extern crate tenkit;
 extern crate docopt;
 extern crate chrono;
 #[macro_use] extern crate bitflags;
+extern crate failure;
 
 use std::collections::{HashMap};
+use std::io::Write;
 use std::env;
 use std::str;
 use docopt::Docopt;
 use itertools::Itertools;
 use rust_htslib::bam;
-use log::LogLevelFilter;
-use env_logger::LogBuilder;
+use log::LevelFilter;
+use env_logger::Builder;
 use chrono::Local;
 use martian::*;
 
@@ -56,15 +58,15 @@ fn main() {
     // Martian does its own logging -- don't configure if we're being called by martian
     if !args.cmd_martian {
         // Setup logging
-        LogBuilder::new()
-            .format(|record| {
-                format!("{} [{}] - {}",
+        Builder::new()
+            .format(|buf, record| {
+                write!(buf, "{} [{}] - {}",
                         Local::now().format("%Y-%m-%dT%H:%M:%S"),
                         record.level(),
                         record.args())
             })
-            .filter(None, LogLevelFilter::Info)
-            .init().expect("Failed to setup logging");
+            .filter(None, LevelFilter::Info)
+            .init();
 
     } else if args.cmd_martian {
 

@@ -29,7 +29,7 @@ pub fn load_txt<T: FromStr>(file: &str) -> Vec<T> {
 }
 
 pub fn load_txt_gz<T: FromStr>(file: &str) -> Vec<T> {
-    let gz = GzDecoder::new(File::open(file).unwrap()).unwrap();
+    let gz = GzDecoder::new(File::open(file).unwrap());
     let rdr = BufReader::new(gz);
     let rows = rdr.lines().map(|l| l.ok().and_then(|s| s.parse::<T>().ok()).unwrap()).collect();
     return rows
@@ -162,10 +162,10 @@ pub fn set_primary(record: &mut Record) {
 pub fn alen(read: &Record) -> i64 {
     // NOTE: end_pos in rust_htslib was recently fixed to account for deletions, we could update to that instead
     let mut alen = 0;
-    for c in read.cigar().into_iter() {
+
+    for c in read.cigar().iter() {
         match *c {
             Cigar::Match(l) | Cigar::Del(l) | Cigar::RefSkip(l) | Cigar::Equal(l) | Cigar::Diff(l) => alen += l as i64,
-            Cigar::Back(l) => alen -= l as i64,
             _ => ()
         }
     }
@@ -205,7 +205,7 @@ pub fn open_lz4<P: AsRef<Path>>(filename: P) -> lz4::Decoder<File> {
 
 pub fn open_gzip<P: AsRef<Path>>(filename: P) -> GzDecoder<File> {
     let f = File::open(filename).expect("Failed to open file for reading");
-    GzDecoder::new(f).expect("Failed to create gzip decoder")
+    GzDecoder::new(f)
 }
 
 pub fn open_maybe_compressed<P: AsRef<Path>>(filename: P) -> Box<Read> {

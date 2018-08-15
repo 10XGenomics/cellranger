@@ -105,7 +105,7 @@ mod tests {
 
         type MyKmer = IntKmer<u64>;
 
-        let seed: &[_] = &[1, 2, 3, 4];
+        let seed = [0; 32];
         let mut rng: StdRng = SeedableRng::from_seed(seed);
 
         // Generate transcript sequence and index

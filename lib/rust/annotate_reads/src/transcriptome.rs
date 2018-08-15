@@ -2,6 +2,7 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
+use failure::Error;
 use rust_htslib::bam::record::{Cigar, Record, Aux};
 use std::path::Path;
 use std::str;
@@ -136,49 +137,51 @@ impl AnnotationData {
     /// Add tags to a BAM record.
     /// Set is_conf_mapped to true if the qname is confidently mapped to
     /// the transcriptome.
-    pub fn attach_tags(&mut self, record: &mut Record, pair_anno: Option<&PairAnnotationData>) {
+    pub fn attach_tags(&mut self, record: &mut Record, pair_anno: Option<&PairAnnotationData>) -> Result<(), Error> {
         if let Some(tag) = self.make_tx_tag() {
-            record.push_aux(TRANSCRIPT_TAG, &Aux::String(tag.as_bytes()));
+            record.push_aux(TRANSCRIPT_TAG, &Aux::String(tag.as_bytes()))?;
         }
 
         if let Some(pair) = pair_anno {
             // Write the pair's annotation
             if let Some((tag_gx, tag_gn)) = pair.make_gx_gn_tags() {
-                record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
-                record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+                record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()))?;
+                record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()))?;
 
                 // Record the gene IDs as the feature IDs
-                record.push_aux(FEATURE_IDS_TAG, &Aux::String(tag_gx.as_bytes()));
+                record.push_aux(FEATURE_IDS_TAG, &Aux::String(tag_gx.as_bytes()))?;
             }
 
             if self.genes != pair.genes {
                 // This record disagrees with the pair, so store its single-end
                 // gene annotations separately.
                 if let Some((tag_gx, tag_gn)) = self.make_gx_gn_tags() {
-                    record.push_aux(UNPAIRED_GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
-                    record.push_aux(UNPAIRED_GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+                    record.push_aux(UNPAIRED_GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()))?;
+                    record.push_aux(UNPAIRED_GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()))?;
                 }
             }
 
         } else {
             // Unpaired case
             if let Some((tag_gx, tag_gn)) = self.make_gx_gn_tags() {
-                record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()));
-                record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()));
+                record.push_aux(GENE_ID_TAG, &Aux::String(tag_gx.as_bytes()))?;
+                record.push_aux(GENE_NAME_TAG, &Aux::String(tag_gn.as_bytes()))?;
 
-                record.push_aux(FEATURE_IDS_TAG, &Aux::String(tag_gx.as_bytes()));
+                record.push_aux(FEATURE_IDS_TAG, &Aux::String(tag_gx.as_bytes()))?;
             }
         }
 
         if let Some(tag) = self.make_re_tag() {
-            record.push_aux(REGION_TAG, &Aux::Char(tag.as_bytes()[0]));
+            record.push_aux(REGION_TAG, &Aux::Char(tag.as_bytes()[0]))?;
         }
         if let Some(tag) = self.make_mm_tag() {
-            record.push_aux(MULTIMAPPER_TAG, &Aux::Integer(tag));
+            record.push_aux(MULTIMAPPER_TAG, &Aux::Integer(tag as i64))?;
         }
         if let Some(tag) = self.make_an_tag() {
-            record.push_aux(ANTISENSE_TAG, &Aux::String(tag.as_bytes()));
+            record.push_aux(ANTISENSE_TAG, &Aux::String(tag.as_bytes()))?;
         }
+
+        Ok(())
     }
 }
 
@@ -299,7 +302,6 @@ enum CigarType {
     Pad,
     Equal,
     Diff,
-    Back,
 }
 
 // TODO: rust_htslib now has an improved CIGAR API, so we should try using that if it's simpler
@@ -321,7 +323,6 @@ impl FlatCigar {
             CigarType::Pad      => 'P',
             CigarType::Equal    => '=',
             CigarType::Diff     => 'X',
-            CigarType::Back     => 'B',
         };
         return format!("{}{}", self.len, symbol)
     }
@@ -338,7 +339,6 @@ fn flatten_cigar(cig: &Cigar) -> FlatCigar {
         &Cigar::Pad(len)      => FlatCigar { op: CigarType::Pad, len: len },
         &Cigar::Equal(len)    => FlatCigar { op: CigarType::Equal, len: len },
         &Cigar::Diff(len)     => FlatCigar { op: CigarType::Diff, len: len },
-        &Cigar::Back(len)     => FlatCigar { op: CigarType::Back, len: len },
     }
 }
 
@@ -762,19 +762,19 @@ pub fn add_extra_flags(record: &mut Record,
         let mut flags: ExtraFlags = Default::default();
 
         if is_qname_conf_mapped {
-            flags |= CONF_MAPPED;
-            flags |= CONF_FEATURE;
+            flags |= ExtraFlags::CONF_MAPPED;
+            flags |= ExtraFlags::CONF_FEATURE;
         }
 
         if is_qname_gene_discordant {
-            flags |= GENE_DISCORDANT;
+            flags |= ExtraFlags::GENE_DISCORDANT;
         }
 
         if is_qname_conf_mapped_to_feature {
-            flags |= CONF_FEATURE;
+            flags |= ExtraFlags::CONF_FEATURE;
         }
 
-        record.push_aux(EXTRA_FLAGS_TAG, &Aux::Integer(flags.bits() as i32));
+        record.push_aux(EXTRA_FLAGS_TAG, &Aux::Integer(flags.bits() as i64)).unwrap();
     }
 }
 

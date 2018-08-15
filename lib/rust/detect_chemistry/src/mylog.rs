@@ -4,18 +4,19 @@
 
 // Custom logger
 
-use log::LogLevelFilter;
-use env_logger::LogBuilder;
+use log::LevelFilter;
+use env_logger::Builder;
 use chrono::Local;
+use std::io::Write;
 
 pub fn init_log() {
-    let _ = LogBuilder::new()
-        .format(|record| {
-            format!("{} [{}] - {}",
+    let _ = Builder::new()
+        .format(|buf, record| {
+            write!(buf, "{} [{}] - {}",
                     Local::now().format("%Y-%m-%dT%H:%M:%S"),
                     record.level(),
                     record.args())
         })
-        .filter(None, LogLevelFilter::Info)
+        .filter(None, LevelFilter::Info)
         .init();
 }

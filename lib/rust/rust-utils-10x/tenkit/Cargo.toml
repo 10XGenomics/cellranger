@@ -1,0 +1,20 @@
+[package]
+name = "tenkit"
+version = "0.1.0"
+authors = ["Sreenath Krishnan <sreenath.krishnan@10xgenomics.com>"]
+
+[dependencies]
+bincode = "*"
+byteorder = "*"
+itertools = "*"
+regex = "*"
+serde = "*"
+serde_derive = "*"
+log = "*"
+fxhash = "*"
+num = "*"
+rust-htslib = ">=0.21"
+
+[dev-dependencies]
+env_logger = "*"
+rand = "*"

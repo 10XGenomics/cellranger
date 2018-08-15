@@ -9,6 +9,7 @@ archive/
 .nfs*
 lib/registry
 lib/rust/.cargo
+lib/rust/target
 lib/rust/*/target
 lib/rust/.crates.toml
 lib/.crates.toml

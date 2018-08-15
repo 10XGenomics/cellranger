@@ -23,12 +23,12 @@ use rust_htslib::bam;
 use tenkit::chunk_bam::{bam_block_offsets, chunk_bam_records, BamChunkIter, GzipHeader, GzipExtra, GzipISIZE, BamTellIter};
 use martian::*;
 use serde_json;
-
-use bincode::internal::deserialize_from;
-use bincode::Infinite;
-use byteorder;
+use failure::ResultExt;
+use failure::Error;
+use bincode::deserialize_from;
 
 use utils;
+use bam::Read;
 
 pub struct MarkDuplicatesStage;
 
@@ -142,11 +142,11 @@ fn get_qname_conf_mapped_feature<'a, I>(records: I) -> Option<String>
     where I: Iterator<Item = &'a bam::record::Record> {
     let mut features = Vec::new();
     for record in records.filter(|&r| !r.is_secondary()) {
-        let flags = utils::get_read_extra_flags(record);
+        let flags = utils::get_read_extra_flags(&record);
 
         if flags.intersects(utils::ExtraFlags::CONF_MAPPED) ||
             flags.intersects(utils::ExtraFlags::CONF_FEATURE) {
-                features.extend(utils::get_read_feature_ids(record).into_iter());
+                features.extend(utils::get_read_feature_ids(&record).into_iter());
             }
     }
     features.sort_unstable();
@@ -182,7 +182,7 @@ fn bam_compression_ratio<P: AsRef<Path>>(bam_path : &P) -> f64{
             break;
         }
 
-        let header: GzipHeader = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
+        let header: GzipHeader = deserialize_from(&mut bgzf)
             .expect("Failed to deserialize gzip header - invalid BAM file");
 
         if header.id1 != 31 || header.id2 != 139 {
@@ -190,7 +190,7 @@ fn bam_compression_ratio<P: AsRef<Path>>(bam_path : &P) -> f64{
         }
 
         // Determine the BGZF block size
-        let extra: GzipExtra = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
+        let extra: GzipExtra = deserialize_from(&mut bgzf)
             .expect("Failed to deserialize gzip extra field - invalid BAM file");
         if extra.id1 != 66 || extra.id2 != 67 || extra.slen != 2 {
             panic!("BSIZE field not found in BGZF header - invalid BAM file");
@@ -200,7 +200,7 @@ fn bam_compression_ratio<P: AsRef<Path>>(bam_path : &P) -> f64{
         let isize_pos = cur_pos + (extra.bsize as u64) + 1 - 4;
         bgzf.seek(io::SeekFrom::Start(isize_pos))
             .expect("Failed to get isize position in BAM file");
-        let isize: GzipISIZE = deserialize_from::<_, _, _, byteorder::LittleEndian>(&mut bgzf, Infinite)
+        let isize: GzipISIZE = deserialize_from(&mut bgzf)
             .expect("Failed to deserialize gzip isize field - invalid BAM file");
 
         if extra.bsize > 0 && isize.isize > extra.bsize as u32 {
@@ -275,7 +275,7 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
     let mut raw_umigene_counts: HashMap<(Vec<u8>, String), u64> = HashMap::new();
     let mut low_support_umigenes: HashSet<(Vec<u8>, String)> = HashSet::new();
 
-    for (maybe_umi, umi_group) in bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
+    for (maybe_umi, umi_group) in &bc_group.iter().group_by(|x| utils::get_read_umi(&x)) {
         let mut gene_counts: HashMap<String, u64> = HashMap::new();
 
         if let Some(umi) = maybe_umi {
@@ -284,7 +284,7 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
             //   to prepare for marking of low-support UMIs (putative chimeras).
 
             // Assumes records are qname-contiguous in the input.
-            for (qname, qname_records) in umi_group.into_iter()
+            for (qname, qname_records) in &umi_group.into_iter()
                 .filter(|&x| utils::is_read_dup_candidate(x))
                 .group_by(|x| x.qname()) {
                     match get_qname_conf_mapped_feature(qname_records.into_iter()) {
@@ -313,7 +313,9 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
     // Correct UMIs and mark PCR duplicates
     let mut wrote_umigenes = HashSet::new();
 
-    for (_qname, qname_records) in bc_group.iter().group_by(|x| x.qname()) {
+    for (_qname, _qname_records) in &bc_group.iter().group_by(|x| x.qname()) {
+
+        let qname_records: Vec<_> = _qname_records.collect();
         // Take UMI from first record
         let maybe_umi = utils::get_read_umi(&qname_records.iter().nth(0).unwrap());
 
@@ -361,7 +363,7 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
                         barcode_summary.umi_corrected_reads += 1;
 
                         new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
-                        new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
+                        let _ = new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
                                             &bam::record::Aux::String(&corrected_umi));
                     }
 
@@ -392,16 +394,15 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
             }
             if new_flags.bits() > 0 {
                 new_record.remove_aux(utils::EXTRA_FLAGS_TAG);
-                new_record.push_aux(utils::EXTRA_FLAGS_TAG,
-                                    &bam::record::Aux::Integer(new_flags.bits() as i32));
+                let _ = new_record.push_aux(utils::EXTRA_FLAGS_TAG,
+                                    &bam::record::Aux::Integer(new_flags.bits() as i64));
             }
             out_bam.write(&new_record).expect("Failed to write BAM record");
         }
     }
 }
 
-fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
-    use bam::Read;
+fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> Result<JsonDict, Error> {
 
     // Load library info
     let library_info = &args.library_info;
@@ -411,7 +412,7 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
     let mut bc_summaries: Vec<BarcodeSummary> = vec![Default::default(); library_info.len()];
 
     let mut bam = bam::Reader::from_path(&args.input)
-        .expect("Failed to open input BAM file");
+        .context("Failed to open input BAM file")?;
 
     let mut out_bam = bam::Writer::from_path(outs["alignments"].as_str().unwrap(),
                                              &bam::Header::from_template(bam.header()))
@@ -439,6 +440,7 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
         let lib_idx = utils::get_read_library_index(&record);
 
         // Skip records without a valid barcode.
+
         if maybe_bc.is_none() {
             metrics[lib_idx].total_reads += 1;
             out_bam.write(&record).expect("Failed to write BAM record");
@@ -446,6 +448,7 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
         }
 
         let bc = maybe_bc.unwrap();
+
 
         if let (Some(ref prev_bc), Some(ref prev_lib_idx)) = (maybe_prev_bc, maybe_prev_lib_idx) {
             // Verify sort order (bc, library_idx)
@@ -484,14 +487,14 @@ fn cmd_mark_dups(args: &ChunkArgs, outs: JsonDict) -> JsonDict {
     let chunk_bc_file = File::create(outs["chunk_barcode_summary"].as_str().unwrap())
         .expect("Failed to open barcode summary file for writing");
     let mut writer = BufWriter::new(chunk_bc_file);
-    bincode::serialize_into(&mut writer, &bc_summaries, bincode::Infinite)
+    bincode::serialize_into(&mut writer, &bc_summaries)
         .expect("Failed to serialize barcode summary to file");
 
-    outs
+    Ok(outs)
 }
 
 impl MartianStage for MarkDuplicatesStage {
-    fn split(&self, args: JsonDict) -> JsonDict {
+    fn split(&self, args: JsonDict) -> Result<JsonDict, Error> {
         let bam = args["input"].as_str().unwrap();
 
         let bam_comp_ratio = bam_compression_ratio(&bam);
@@ -529,17 +532,19 @@ impl MartianStage for MarkDuplicatesStage {
             left_idx = right_idx;
         }
 
-        serde_json::from_value(json!({
-            "chunks": json!(chunks),
-        })).expect("Failed to serialize split outs")
+        let r = json!({
+            "chunks": chunks
+            });
+
+        Ok(r.as_object().unwrap().clone())
     }
 
-    fn main(&self, json_args: JsonDict, outs: JsonDict) -> JsonDict {
+    fn main(&self, json_args: JsonDict, outs: JsonDict) -> Result<JsonDict, Error> {
         let args: ChunkArgs = obj_decode(json_args);
         cmd_mark_dups(&args, outs)
     }
 
-    fn join(&self, json_args: JsonDict, outs: JsonDict, _chunk_defs: Vec<JsonDict>, chunk_outs: Vec<JsonDict>) -> JsonDict {
+    fn join(&self, json_args: JsonDict, outs: JsonDict, _chunk_defs: Vec<JsonDict>, chunk_outs: Vec<JsonDict>) -> Result<JsonDict, Error> {
         let args: StageArgs = obj_decode(json_args);
 
         let mut final_outs = outs.clone();
@@ -586,7 +591,7 @@ impl MartianStage for MarkDuplicatesStage {
                 .expect("Failed to open barcode summary binary file for reading");
 
             let chunk: Vec<BarcodeSummary> =
-                bincode::deserialize_from(&mut reader, bincode::Infinite)
+                bincode::deserialize_from(&mut reader)
                 .expect("Failed to deserialize from barcode summary bincode file");
 
             for (lib_idx, lib) in chunk.iter().enumerate() {
@@ -648,7 +653,7 @@ impl MartianStage for MarkDuplicatesStage {
         utils::write_json_file(final_outs["summary"].as_str().unwrap(), &summary)
             .expect("Failed to write to summary JSON file");
 
-        final_outs
+        Ok(final_outs)
     }
 }
 
@@ -697,15 +702,7 @@ mod test {
             .split(|x| *x == b'\n')
             .filter(|x| x.len() > 0 && x[0] != b'@' && x[0] != b'#') // strip headers and test comments
             .map(|line| {
-                // Split qname from read_id:test_flags
-                let qname = str::from_utf8(line).unwrap().split('\t').nth(0).unwrap();
-                let parts: Vec<&str> = qname.split(':').collect();
-                let new_line = match parts[1].len() > 0 {
-                    true => format!("{}\ttf:Z:{}", str::from_utf8(line).unwrap(), parts[1]),
-                    false => str::from_utf8(line.clone()).unwrap().to_owned(),
-                };
-                let mut rec = bam::Record::from_sam(header, new_line.as_bytes()).unwrap();
-                rec.set_qname(parts[0].as_bytes());
+                let rec = bam::Record::from_sam(header, line).unwrap();
                 rec
             })
             .collect()
@@ -846,7 +843,7 @@ mod test {
             _ => None,
         }.unwrap();
 
-        let outs = cmd_mark_dups::cmd_mark_dups(&chunk_args, chunk_outs);
+        let outs = cmd_mark_dups::cmd_mark_dups(&chunk_args, chunk_outs).unwrap();
 
         // Check outs dict
         assert_eq!(outs["metrics"].as_str().unwrap(), metrics_filename.to_str().unwrap());
@@ -862,20 +859,20 @@ mod test {
     #[test]
     fn test_mark_dups_se() {
         let sam_text = b"
-r0:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r1:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r1:	256	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
-r2:Lc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0
-r3:udc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r4:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
-r5:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
-r6:	0	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
-r12:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
-r7:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r8:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r9:cC	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r10:dc	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r11:	0	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
+r0	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r1	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
+r1	256	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
+r2	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0\ttf:Z:Lc
+r3	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:udc
+r4	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
+r5	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
+r6	0	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r1:	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r7	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r8	0	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
+r9	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r10	0	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
+r11	0	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
 ";
         test_mark_dups(sam_text, &"se");
     }
@@ -884,56 +881,56 @@ r11:	0	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
     fn test_mark_dups_pe() {
         let sam_text = b"
 # Non-duplicate
-r0:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r0:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r0	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r0	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:c
 # Duplicate
-r1:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r1:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r1	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
+r1	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
 # Secondary alignment for duplicate
-r1:	323	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
-r1:	387	1	2	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
+r1	323	1	2	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
+r1	387	1	2	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	fx:Z:G1	li:i:0
 # Low-support gene for this UMI
-r2:Lc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0
-r2:Lc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0
+r2	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0\ttf:Z:Lc
+r2	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G2	xf:i:1	fx:Z:G2	li:i:0\ttf:Z:Lc
 # UMI that should be corrected
-r3:udc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r3:udc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r3	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:udc
+r3	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:udc
 # Pair maps to no genes
-r4:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
-r4:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
+r4	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
+r4	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	li:i:0
 # Pair maps to multiple genes
-r5:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
-r5:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
+r5	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
+r5	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1;G2	fx:Z:G1;G2	li:i:0
 # Pair maps to discordant genes
-r15:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G1	li:i:0
-r15:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G2	li:i:0
+r15	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G1	li:i:0
+r15	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	gX:Z:G2	li:i:0
 # Low MAPQ
-r6:	67	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
-r6:	131	1	1	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r6	67	1	1	0	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r6	131	1	1	0	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	UB:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
 # No UB
-r12:	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
-r12:	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r12	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
+r12	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:AATA	GX:Z:G1	fx:Z:G1	li:i:0
 # Repeated UB
-r7:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r7:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r8:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r8:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r7	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r7	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:c
+r8	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
+r8	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAAA-1	UR:Z:CCCC	UB:Z:CCCC	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
 # Repeated CB
-r9:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r9:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r10:dc	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r10:dc	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r9	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r9	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:c
+r10	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
+r10	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:dc
 # Pair half-maps to gene
-r13:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
-r13:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0
+r13	67	1	1	255	1M	*	0	0	A	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:cC
+r13	131	1	1	255	1M	*	0	0	T	F	CB:Z:AAGG-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G1	xf:i:1	fx:Z:G1	li:i:0\ttf:Z:c
 # No CB
-r11:	67	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
-r11:	131	1	1	255	1M	*	0	0	T	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
+r11	67	1	1	255	1M	*	0	0	A	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
+r11	131	1	1	255	1M	*	0	0	T	F	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
 # Secondary alignments, primary comes after
-r14:	323	1	1	0	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1	li:i:0
-r14:	387	1	1	0	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1	li:i:0
-r14:cC	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
-r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0
+r14	323	1	1	0	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1	li:i:0
+r14	387	1	1	0	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	xf:i:1	li:i:0
+r14	67	1	1	255	1M	*	0	0	A	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0\ttf:Z:cC
+r14	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx:Z:G3	li:i:0\ttf:Z:c
 ";
         test_mark_dups(sam_text, &"pe");
     }
@@ -978,7 +975,7 @@ r14:c	131	1	1	255	1M	*	0	0	T	F	CB:Z:AATT-1	UR:Z:AAAA	UB:Z:AAAA	GX:Z:G3	xf:i:1	fx
                 rec.set_tid(tid as i32);
                 rec.set_pos(pos as i32);
                 let bc = rng.choose(&barcodes).unwrap();
-                rec.push_aux(b"CB", &bam::record::Aux::String(&bc[..]));
+                rec.push_aux(b"CB", &bam::record::Aux::String(&bc[..])).unwrap();
                 writer.write(&rec).expect("Failed to write BAM record");
      		}
        	}

@@ -104,19 +104,19 @@ impl FeatureData {
     /// Attach feature-related BAM tags to a BAM record.
     pub fn attach_tags(&self, record: &mut bam::Record) {
         record.push_aux(&RAW_FEATURE_BARCODE_TAG,
-                        &bam::record::Aux::String(&self.raw_seq));
+                        &bam::record::Aux::String(&self.raw_seq)).unwrap();
 
         if let Some(ref seq) = self.corrected_seq {
             record.push_aux(&PROC_FEATURE_BARCODE_TAG,
-                            &bam::record::Aux::String(seq));
+                            &bam::record::Aux::String(seq)).unwrap();
         }
 
         record.push_aux(&FEATURE_BARCODE_QUAL_TAG,
-                        &bam::record::Aux::String(&self.qual));
+                        &bam::record::Aux::String(&self.qual)).unwrap();
 
         if let Some(ref feature_ids) = self.ids {
             record.push_aux(&FEATURE_IDS_TAG,
-                            &bam::record::Aux::String(feature_ids.as_bytes()));
+                            &bam::record::Aux::String(feature_ids.as_bytes())).unwrap();
         }
     }
 }

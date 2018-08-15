@@ -5,7 +5,7 @@ authors = ["Sofia <sofia@10xtechnologies.com>"]
 
 [dependencies]
 flate2 = "*"
-itertools = "^0.6"
+itertools = "^0.7"
 docopt = "*"
 serde = "*"
 serde_derive = "*"
@@ -13,9 +13,11 @@ serde_json = "*"
 time = "*"
 num = "*"
 libc = "*"
-bio = { git = "https://github.com/pryvkin10x/rust-bio.git", branch="pmarks/banded-sw" }
-rand = "0.3"
-rust-htslib = "0.13.0"
+bio = "*"
+rand = "0.5"
 debruijn = { git = "https://github.com/10XGenomics/rust-debruijn.git" }
 lazy_static = "*"
 lz4 = "*"
+fxhash = "*"
+failure = "*"
+rust-htslib = ">=0.21"

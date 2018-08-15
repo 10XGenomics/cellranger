@@ -18,12 +18,9 @@ pdqsort = "*"
 log = "*"
 env_logger = "*"
 chrono = "*"
-rand = "*"
+rand = "0.5"
 flate2 = "*"
 
 [dependencies.boomphf]
 git = "https://github.com/10XGenomics/rust-boomphf"
 features = ["serde"]
-
-[profile.release]
-#debug = true

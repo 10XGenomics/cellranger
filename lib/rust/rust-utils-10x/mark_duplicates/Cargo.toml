@@ -1,0 +1,16 @@
+[package]
+name = "mark_duplicates"
+version = "0.1.0"
+authors = ["Sreenath Krishnan <sreenath.krishnan@10xgenomics.com>"]
+
+[dependencies]
+time = "*"
+itertools = "*"
+regex = "0.2.2"
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
+fxhash = "*"
+tenkit = { path = "../tenkit" }
+num = "*"
+rust-htslib = ">=0.21"

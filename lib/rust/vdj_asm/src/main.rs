@@ -15,6 +15,8 @@ extern crate num;
 extern crate rand;
 extern crate rust_htslib;
 extern crate lz4;
+extern crate fxhash;
+extern crate failure;
 
 #[macro_use]
 extern crate serde_derive;
@@ -51,6 +53,7 @@ use docopt::Docopt;
 use constants::{MAX_NUM_READPAIRS, MATCH_SCORE, MISMATCH_SCORE, GAP_OPEN, GAP_EXTEND, CLIP, DUMMY_CONTIG_NAME, QUAL_OFFSET, KMER_LEN_BANDED_ALIGN, WINDOW_SIZE_BANDED_ALIGN};
 use std::fs;
 use std::fs::File;
+use failure::Error;
 
 use time::PreciseTime;
 
@@ -152,7 +155,7 @@ fn main() {
     }
 }
 
-pub fn vdj_asm(args: Args) {
+pub fn vdj_asm(args: Args) -> Result<(), Error> {
 
     let input_bam_filename = args.arg_inbam.clone().unwrap();
     let out_dirname = args.arg_outdir.clone().unwrap();
@@ -182,7 +185,7 @@ pub fn vdj_asm(args: Args) {
     let mut assembly_outs = asm::AssemblyOuts::new(fasta_writer, fastq_writer, summary_writer, umi_summary_writer);
 
 
-    let in_bam = bam::Reader::from_path(&Path::new(&input_bam_filename)).ok().expect("Error opening input bam.");
+    let mut in_bam = bam::Reader::from_path(&Path::new(&input_bam_filename)).ok().expect("Error opening input bam.");
 
     // Will create one bam per barcode and merge incrementally
     // Can't append to a single bam, because header (contig names) is not known in advance.
@@ -215,7 +218,7 @@ pub fn vdj_asm(args: Args) {
                 // if we've reached the BAM limit, squash the current set
                 if out_bams.len() >= bam_merge_frequency {
                     let squashed_bam_filename = format!("{}_{}_{}.bam", out_prefix, bc.clone(), out_bams.len());
-                    bam_utils::concatenate_bams(&out_bams, &squashed_bam_filename);
+                    bam_utils::concatenate_bams(&out_bams, &squashed_bam_filename)?;
                     for bam in out_bams.iter() {
                         match fs::remove_file(bam) {
                             Ok(()) => (),
@@ -243,22 +246,26 @@ pub fn vdj_asm(args: Args) {
 
     assembly_outs.close();
 
-    bam_utils::concatenate_bams(&out_bams, &(out_prefix.to_string() + ".bam"));
+    bam_utils::concatenate_bams(&out_bams, &(out_prefix.to_string() + ".bam"))?;
     bam_utils::sort_and_index(&(out_prefix.to_string() + ".bam"), &(out_prefix.to_string() + "_sorted.bam"));
+    Ok(())
 }
 
 struct ReservoirSampler<T> {
     max_items: usize,
     items_seen: usize,
     items: Vec<T>,
-    rand: rand::StdRng,
+    rand: rand::XorShiftRng,
 }
 
 impl<T> ReservoirSampler<T> {
-    pub fn new(max_items: usize, seed: usize) -> ReservoirSampler<T> {
+    pub fn new(max_items: usize, seed: u64) -> ReservoirSampler<T> {
 
-        let seed: &[_] = &[seed, 1, 1, 1];
-        let rng: rand::StdRng = rand::SeedableRng::from_seed(seed);
+        let mut seed_bytes = [0u8; 16];
+        for i in 0..8 {
+            seed_bytes[i] = ((seed >> (i*8)) & 0xFF) as u8
+        }
+        let rng: rand::XorShiftRng = rand::SeedableRng::from_seed(seed_bytes);
 
         ReservoirSampler {
             max_items: max_items,
@@ -484,7 +491,7 @@ fn asm_bc<I: Iterator<Item=bam::Record>, T: Write>(mut bam_iter: I, barcode: &st
     if args.flag_plot {
         println!("Writing gfa");
         let path = out_prefix.to_string() + "_" + &barcode + "_graph.gfa";
-        graph.graph.to_gfa(path);
+        graph.graph.to_gfa(path).unwrap();
     }
 
     if args.flag_plot_json {
@@ -885,7 +892,7 @@ mod tests {
         seqs
     }
 
-    fn count_records(bam: &bam::Reader) -> (usize, usize) {
+    fn count_records(bam: &mut bam::Reader) -> (usize, usize) {
         let mut mapped_records = 0;
         let mut unmapped_records = 0;
         for record in bam.records() {
@@ -951,7 +958,7 @@ mod tests {
         args.flag_single_end = true;
         args.flag_min_contig = Some(150);
 
-        vdj_asm(args.clone()); // use all reads
+        vdj_asm(args.clone()).unwrap(); // use all reads
 
         let assembled_seqs = get_seqs_by_barcode(&"test/outputs/asm/test_asm_se.fasta");
 
@@ -959,8 +966,8 @@ mod tests {
             assert_eq!(*seqs, *assembled_seqs.get(bc).unwrap());
         }
 
-        let bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm_se.bam")).ok().expect("Error reading test_asm.bam");
-        let (mapped, unmapped) = count_records(&bam);
+        let mut bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm_se.bam")).ok().expect("Error reading test_asm.bam");
+        let (mapped, _unmapped) = count_records(&mut bam);
         assert_eq!(mapped, 24);
 
         let header = bam.header();
@@ -994,7 +1001,7 @@ mod tests {
         init_test(outdir);
 
         {
-            vdj_asm(args.clone()); // use all read-pairs
+            vdj_asm(args.clone()).unwrap(); // use all read-pairs
 
             let assembled_seqs = get_seqs_by_barcode(&"test/outputs/asm/test_asm.fasta");
 
@@ -1002,8 +1009,8 @@ mod tests {
                 assert_eq!(*seqs, *assembled_seqs.get(bc).unwrap());
             }
 
-            let bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm.bam")).ok().expect("Error reading test_asm.bam");
-            let (mapped, unmapped) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm.bam")).ok().expect("Error reading test_asm.bam");
+            let (mapped, unmapped) = count_records(&mut bam);
             assert_eq!(unmapped, 6);
             assert_eq!(mapped, 48);
 
@@ -1029,7 +1036,7 @@ mod tests {
             // Use only the first 3 read-pairs per barcode per chain.
             // So in all barcodes we'll use as much data as in the last barcode.
             // 4 + 2 readpairs will be left unmapped.
-            vdj_asm(args.clone());
+            vdj_asm(args.clone()).unwrap();
 
             let assembled_seqs = get_seqs_by_barcode(&"test/outputs/asm/test_asm.fasta");
 
@@ -1045,10 +1052,10 @@ mod tests {
         {
             args.flag_min_contig = Some(250);
 
-            vdj_asm(args.clone());
+            vdj_asm(args.clone()).unwrap();
 
-            let bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm.bam")).ok().expect("Error reading test_asm.bam");
-            let (_, unmapped) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm.bam")).ok().expect("Error reading test_asm.bam");
+            let (_, unmapped) = count_records(&mut bam);
             assert_eq!(unmapped, 18);
 
             // We won't assemble anything from the last barcode.
@@ -1061,7 +1068,7 @@ mod tests {
             args.flag_single_end = true;
             args.flag_min_contig = Some(150);
 
-            vdj_asm(args.clone()); // use all reads
+            vdj_asm(args.clone()).unwrap(); // use all reads
 
             let assembled_seqs = get_seqs_by_barcode(&"test/outputs/asm/test_asm.fasta");
 
@@ -1069,8 +1076,8 @@ mod tests {
                 assert_eq!(*seqs, *assembled_seqs.get(bc).unwrap());
             }
 
-            let bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm.bam")).ok().expect("Error reading test_asm.bam");
-            let (mapped, unmapped) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm.bam")).ok().expect("Error reading test_asm.bam");
+            let (mapped, unmapped) = count_records(&mut bam);
             assert_eq!(unmapped, 6);
             assert_eq!(mapped, 48);
 
@@ -1083,7 +1090,7 @@ mod tests {
             args.flag_single_end = true;
             args.flag_min_contig = Some(150);
 
-            vdj_asm(args.clone());
+            vdj_asm(args.clone()).unwrap();
 
             let assembled_seqs = get_seqs_by_barcode(&"test/outputs/asm/test_asm_se.fasta");
 
@@ -1091,8 +1098,8 @@ mod tests {
                 assert_eq!(*seqs, *assembled_seqs.get(bc).unwrap());
             }
 
-            let bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm_se.bam")).ok().expect("Error reading test_asm.bam");
-            let (mapped, unmapped) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm_se.bam")).ok().expect("Error reading test_asm.bam");
+            let (mapped, unmapped) = count_records(&mut bam);
             // every other read in the input is unmapped
             assert_eq!(unmapped, 24);
             assert_eq!(mapped, 24);
@@ -1105,7 +1112,7 @@ mod tests {
             args.flag_min_umi_reads = Some(1);
             args.flag_seed = Some(1);
             args.flag_min_sw_score = Some(50.0);
-            vdj_asm(args.clone());
+            vdj_asm(args.clone()).unwrap();
 
             let bam = bam::Reader::from_path(Path::new(&"test/outputs/asm/test_asm_se.bam")).ok().expect("Error reading test_asm.bam");
             let header = bam.header();
@@ -1156,8 +1163,8 @@ mod tests {
         {
             get_base_qualities(args.clone());
 
-            let bam = bam::Reader::from_path(Path::new(&out_bam)).ok().expect("Error reading test_base_quals.bam");
-            let (mapped, unmapped) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&out_bam)).ok().expect("Error reading test_base_quals.bam");
+            let (mapped, unmapped) = count_records(&mut bam);
             // Two records left unmapped because they didn't have a good seed for mapping.
             assert_eq!(unmapped, 2);
             assert_eq!(mapped, 6);
@@ -1176,8 +1183,8 @@ mod tests {
             args3.flag_single_end = true;
             get_base_qualities(args3);
 
-            let bam = bam::Reader::from_path(Path::new(&out_bam)).ok().expect("Error reading test_base_quals.bam");
-            let (mapped, unmapped) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&out_bam)).ok().expect("Error reading test_base_quals.bam");
+            let (mapped, unmapped) = count_records(&mut bam);
             assert_eq!(unmapped, 2);
             assert_eq!(mapped, 6);
         }
@@ -1187,8 +1194,8 @@ mod tests {
             get_base_qualities(args4);
 
             let new_out_bam = "test/outputs/base_quals/test_base_quals_invalid_bases.bam";
-            let bam = bam::Reader::from_path(Path::new(&new_out_bam)).ok().expect("Error reading output bam");
-            let (mapped, _) = count_records(&bam);
+            let mut bam = bam::Reader::from_path(Path::new(&new_out_bam)).ok().expect("Error reading output bam");
+            let (mapped, _) = count_records(&mut bam);
             assert_eq!(mapped, 0);
         }
     }

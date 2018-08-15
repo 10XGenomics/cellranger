@@ -1,12 +1,14 @@
 //
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
+use fxhash::FxHashMap;
 
 use debruijn::{filter, kmer};
 use debruijn::dna_string::DnaString;
 use debruijn::{Exts, Dir, Kmer, Mer};
-use debruijn::paths::{DebruijnGraph, Node, SimpleCompress, PathCompression};
-use debruijn::fx::{FxHashMap};
+use debruijn::graph::{DebruijnGraph, Node};
+use debruijn::compression::{SimpleCompress, compress_kmers};
+
 use debruijn::Vmer;
 
 use std::fmt::Debug;
@@ -32,11 +34,13 @@ pub fn build_graph(reads: &Vec<&graph_read::Read>,
     }
 
     let summarizer = filter::CountFilterSet::new(min_kmers);
-    let (mut valid_kmers, obs_kmers): (Vec<(Kmer1, (Exts, Vec<u32>))>, _) = 
-        filter::filter_kmers_core::<Kmer1, _, _, _, _>(&seqs, summarizer, false);
+    let mut valid_kmers : Vec<(Kmer1, (Exts, Vec<u32>))> = {
+        let (kmer_hashmap, _) = filter::filter_kmers::<Kmer1, _, _, _, _>(&seqs, &Box::new(summarizer), true, false, 4);
+        // convert hashmap back to vec
+        kmer_hashmap.iter().map(|(k,e,d)| (*k, (*e, d.clone()))).collect()
+    };
 
-    println!("Kmers observed: {}, kmers accepted: {}", obs_kmers.len(), valid_kmers.len());
-
+    println!("Kmers accepted: {}", valid_kmers.len());
 
     // if we have a ton of valid kmers, drop the ones with least coverage
     if valid_kmers.len() > max_kmers {
@@ -46,13 +50,10 @@ pub fn build_graph(reads: &Vec<&graph_read::Read>,
     valid_kmers.sort_by_key(|x| -((x.1).1.len() as isize));
     valid_kmers.truncate(max_kmers);
     valid_kmers.sort();
-    filter::fix_exts_local(&mut valid_kmers);
-
+    filter::remove_censored_exts(true, &mut valid_kmers);
 
     let cmp = SimpleCompress::new(|mut a: Vec<u32>, b: &Vec<u32>| { a.extend(b); a.sort(); a.dedup(); a });
-    let path_comp: PathCompression<Kmer1, DnaString, _, _> = PathCompression::new(false, cmp);
-    let mut graph = path_comp.build_nodes(&valid_kmers).finish();
-    graph.fix_exts(None);
+    let graph = compress_kmers(true, cmp, &valid_kmers).finish();
 
     println!("# Edges: {}", graph.len());
     IndexedGraph::new(graph)
@@ -83,11 +84,11 @@ impl ReadDb {
     pub fn with_capacity(size: usize) -> ReadDb {
         let mut mappings = Vec::with_capacity(size);
         for _ in 0..size {
-            let edge_mappings = FxHashMap();
+            let edge_mappings = FxHashMap::default();
             mappings.push(edge_mappings);
         }
         ReadDb {
-            reads: FxHashMap(),
+            reads: FxHashMap::default(),
             mappings: mappings
         }
     }
@@ -124,7 +125,7 @@ impl<K: Kmer, D: Debug> IndexedGraph<K, D> {
 
     pub fn new(graph: DebruijnGraph<K,D>) -> Self {
 
-        let mut kmer_map: FxHashMap<K, (usize, usize)> = FxHashMap();
+        let mut kmer_map: FxHashMap<K, (usize, usize)> = FxHashMap::default();
 
         // e is an Edge object: not very useful, we want to convert to VEdge which has pointers
         // to left and right edges.
@@ -350,7 +351,7 @@ impl<K: Kmer, D: Debug> IndexedGraph<K, D> {
         let match_score = scoring.match_fn.match_score as f64;
         let clip_penalty = -scoring.xclip_prefix as f64;
 
-        let mut support_reads: FxHashMap<ReadType, (usize, f64)> = FxHashMap();
+        let mut support_reads: FxHashMap<ReadType, (usize, f64)> = FxHashMap::default();
 
         let mut last_edge_idx = 0;
         let last_edge = new_path[last_edge_idx];
@@ -434,7 +435,7 @@ impl<K: Kmer, D: Debug> IndexedGraph<K, D> {
 
 
     fn extension_qualities(&self, node: usize, read_db: &ReadDb, dir: Dir, rt_err: f64,
-            mut ext_qual_lookup: &mut FxHashMap<(usize, i8), Vec<(usize, u8)> >) -> Vec<(usize, u8)> {
+            ext_qual_lookup: &mut FxHashMap<(usize, i8), Vec<(usize, u8)> >) -> Vec<(usize, u8)> {
 
         let key = match dir {
             Dir::Left => (node, -1),

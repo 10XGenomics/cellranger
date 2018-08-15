@@ -4,16 +4,14 @@ version = "0.1.0"
 authors = ["Patrick Marks <patrick@10xgenomics.com>"]
 
 [dependencies]
-fastq = { git = "https://github.com/pryvkin10x/fastq-rs.git", branch = "master" }
-serde = ">=1.0.0"
-serde_derive = ">=1.0.0"
-serde_json = ">=1.0.0"
+fastq = "0.5"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
 docopt = "*"
-rayon = "^0.8"
+rayon = "1.0"
 error-chain = "*"
 tempdir = "*"
 lz4 = "*"
 flate2 = "*"
-
-[dev-dependencies]
-fastq_10x = { path = "external/rust-fastq-10x" }
+failure = "*"

@@ -116,7 +116,7 @@ pub fn index_transcripts_mphf<R: Read, K: Kmer + Hash>(fa_reader: fasta::Reader<
     kmers.dedup();
 
     info!("Hashing {} unique kmers", kmers.len());
-    let mphf = Mphf::new(gamma, &kmers, None);
+    let mphf = Mphf::new(gamma, &kmers);
 
     info!("Arranging {} unique kmers", kmers.len());
 
@@ -140,12 +140,12 @@ pub fn index_transcripts_mphf<R: Read, K: Kmer + Hash>(fa_reader: fasta::Reader<
 
 // Get the type of kmer index stored in a file
 pub fn get_index_type<R: Read>(mut reader: &mut R) -> KmerIndexType {
-     bincode::deserialize_from(&mut reader, bincode::Infinite)
+     bincode::deserialize_from(&mut reader)
         .expect("Failed to read index type")
 }
 
 pub fn load_index<I: DeserializeOwned, R: Read>(mut reader: &mut R) -> I {
-    let index: I = bincode::deserialize_from(&mut reader, bincode::Infinite)
+    let index: I = bincode::deserialize_from(&mut reader)
         .expect("Failed to deserialize index");
     index
 }
@@ -167,7 +167,7 @@ mod tests {
 
         type MyKmer = IntKmer<u64>;
 
-        let seed: &[_] = &[1, 2, 3, 4];
+        let seed = [0; 32];
         let mut rng: StdRng = SeedableRng::from_seed(seed);
 
         let seq = random_seq_rng(100, &mut rng);

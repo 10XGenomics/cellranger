@@ -87,8 +87,8 @@ lib/bin:
 
 $(RUST_BINS): lib/bin
 	set -e ; \
-	pushd lib/rust/$@ >/dev/null; \
-	cargo build --release --bin $@; \
-	cp target/release/$@ ../../bin/; \
+	pushd lib/rust >/dev/null; \
+	cargo build --release; \
+	cp target/release/$@ ../bin/; \
 	popd > /dev/null
 

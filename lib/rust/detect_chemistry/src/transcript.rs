@@ -82,7 +82,8 @@ pub fn fetch_transcript<R: Read + Seek>(reader: &mut fasta::IndexedReader<R>,
     for (start, end) in exons {
         let mut exon_seq = Vec::with_capacity((end-start) as usize);
 
-        match reader.read(&transcript.chr, start as u64, end as u64, &mut exon_seq) {
+	let _ = reader.fetch(&transcript.chr, start as u64, end as u64);
+        match reader.read(&mut exon_seq) {
             Ok(_) => {},
             Err(e) => {
                 println!("WARNING: Failed to fetch sequence from genome FASTA file. \nIgnoring {:?}",e);

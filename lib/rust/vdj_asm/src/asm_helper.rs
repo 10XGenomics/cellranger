@@ -2,7 +2,7 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
-use debruijn::fx::FxHashMap;
+use fxhash::FxHashMap;
 use constants::UmiType;
 use utils;
 use std::collections::HashSet;
