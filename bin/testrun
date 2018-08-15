@@ -29,18 +29,18 @@ function implement_process_options {
     echo
     # This refers to the tiny-ref and tiny-fastq module versions,
     # and is independent of the Cell Ranger version.  The test modules
-    # first shipped with LR 1.2.0.
-    TEST_FASTQ_VERSION="1.2.0"
-    TEST_REF_VERSION="1.2.0"
+    # first shipped with LR 3.0.0.
+    TEST_FASTQ_VERSION="3.0.0"
+    TEST_REF_VERSION="3.0.0"
     dist_path=$TENX_SCRIPTDIR/../../..
 
-    fastq_mode=\"BCL_PROCESSOR\"
+    fastq_mode=\"ILMN_BCL2FASTQ\"
 
     tiny_fastq=$dist_path/cellranger-tiny-fastq/$TEST_FASTQ_VERSION
     fastqs="$(abspath $tiny_fastq)"
-    lanes=null
-    sample_names=\[\ \"any\"\ \]
-    indices=\[\ \"TTTCATGA\"\ \]
+    lanes=\[\ \"1\",\"2\"\ \]
+    sample_names=\[\ \"tinygex\"\ \]
+    indices=\[\ \"any\"\ \]
     sample_desc=\"CellRangerTest\"
     no_secondary_analysis=null
 
@@ -48,7 +48,7 @@ function implement_process_options {
     reference_path=\"$(abspath $tiny_ref)\"
     recovered_cells=null
     force_cells=null
-    chemistry=\"SC3Pv2\"
+    chemistry=\"SC3Pv3\"
 }
 
 function implement_generate_sample_defs {
