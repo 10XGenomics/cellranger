@@ -42,8 +42,11 @@ def split(args):
             '__mem_gb': 8,
         })
 
+    # FIXME: Need two copies of the matrix, but we don't have matrices yet
+    #        Consider using info from MARK_DUPLICATES and the whitelists
+    #          to estimate the matrix memory size.
     join = {
-        '__mem_gb': 8,
+        '__mem_gb': 12,
     }
     return {'chunks': chunks, 'join': join}
 
