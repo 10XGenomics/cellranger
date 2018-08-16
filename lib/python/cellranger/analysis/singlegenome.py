@@ -88,7 +88,7 @@ class SingleGenomeAnalysis:
 
         for name, tsne in self.tsne.iteritems():
             self.tsne[name] = TSNE(tsne.transformed_tsne_matrix[cell_bc_indices, :],
-                                   name=name)
+                                   name=tsne.name, key=tsne.key)
 
     def subsample_bcs(self, num_bcs):
         """ Subsample barcodes across entire analysis (matrix, DR, etc) """
