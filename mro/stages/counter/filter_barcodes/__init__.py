@@ -14,7 +14,7 @@ import cellranger.matrix as cr_matrix
 import cellranger.stats as cr_stats
 import cellranger.constants as cr_constants
 import cellranger.library_constants as lib_constants
-import cellranger.rna.feature_ref as rna_feature_ref
+import cellranger.rna.matrix as rna_matrix
 import cellranger.rna.report_matrix as rna_report_mat
 import cellranger.utils as cr_utils
 
@@ -62,7 +62,10 @@ def join(args, outs, _chunk_defs, _chunk_outs):
 
     matrix_attrs = cr_matrix.make_matrix_attrs_count(args.sample_id, args.gem_groups, cr_chem.get_description(args.chemistry_def))
     filtered_matrix.save_h5_file(outs.filtered_matrices_h5, extra_attrs=matrix_attrs)
-    filtered_matrix.save_mex(outs.filtered_matrices_mex, rna_feature_ref.save_features_tsv)
+
+    rna_matrix.save_mex(filtered_matrix,
+                        outs.filtered_matrices_mex,
+                        martian.get_pipelines_version())
 
 def filter_barcodes(args, outs):
     random.seed(0)

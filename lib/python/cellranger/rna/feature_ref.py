@@ -8,6 +8,7 @@ import csv
 import itertools
 import re
 import os
+import cellranger.io as cr_io
 import cellranger.library_constants as lib_constants
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
@@ -200,11 +201,17 @@ class FeatureExtractor(object):
         '''
         return len(self.patterns) > 0
 
-def save_features_tsv(feature_ref, base_dir):
+def save_features_tsv(feature_ref, base_dir, compress):
+    """Save a FeatureReference to a tsv file"""
     out_features_fn = os.path.join(base_dir, 'features.tsv')
-    with open(out_features_fn, 'w') as f:
+    if compress:
+        out_features_fn += '.gz'
+
+    with cr_io.open_maybe_gzip(out_features_fn, 'w') as f:
         for feature_def in feature_ref.feature_defs:
-            f.write(feature_def.id + '\t' + feature_def.name + '\n')
+            f.write('\t'.join((feature_def.id,
+                               feature_def.name,
+                               feature_def.feature_type)) + '\n')
 
 def from_transcriptome_and_csv(gene_ref_path, feature_def_filename):
     '''Create a FeatureReference.

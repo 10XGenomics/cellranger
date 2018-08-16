@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
+import martian
 import tenkit.bam as tk_bam
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
@@ -9,6 +10,7 @@ import cellranger.rna.feature_ref as rna_feature_ref
 import cellranger.matrix as cr_matrix
 import cellranger.reference as cr_reference
 import cellranger.rna.library as rna_library
+import cellranger.rna.matrix as rna_matrix
 import cellranger.report as cr_report
 import cellranger.utils as cr_utils
 
@@ -55,7 +57,10 @@ def join_matrices(args, outs, chunk_defs, chunk_outs):
     matrix = cr_matrix.merge_matrices(chunk_h5s)
     matrix_attrs = cr_matrix.make_matrix_attrs_count(args.sample_id, args.gem_groups, cr_chem.get_description(args.chemistry_def))
     matrix.save_h5_file(outs.matrices_h5, extra_attrs=matrix_attrs)
-    matrix.save_mex(outs.matrices_mex, rna_feature_ref.save_features_tsv)
+
+    rna_matrix.save_mex(matrix,
+                        outs.matrices_mex,
+                        martian.get_pipelines_version())
 
 def join_reporter(args, outs, chunk_defs, chunk_outs):
     outs.chunked_reporter = None

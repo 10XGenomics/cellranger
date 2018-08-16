@@ -518,14 +518,23 @@ class CountMatrix(object):
         return np.nonzero(reads_per_bc >= value)[0]
 
 
-    def save_mex(self, base_dir, save_features_func):
-        '''Save in Matrix Market Exchange format.'''
+    def save_mex(self, base_dir, save_features_func, metadata=None, compress=True):
+        """Save in Matrix Market Exchange format.
+        Args:
+          base_dir (str): Path to directory to write files in.
+          save_features_func (func): Func that takes (FeatureReference, base_dir, compress) and writes
+                                     a file describing the features.
+          metadata (dict): Optional metadata to encode into the comments as JSON.
+        """
         self.tocoo()
 
         cr_io.makedirs(base_dir, allow_existing=True)
 
         out_matrix_fn = os.path.join(base_dir, 'matrix.mtx')
         out_barcodes_fn = os.path.join(base_dir, 'barcodes.tsv')
+        if compress:
+            out_matrix_fn += '.gz'
+            out_barcodes_fn += '.gz'
 
         # This method only supports an integer matrix.
         assert self.m.dtype in ['uint32', 'int32', 'uint64', 'int64']
@@ -536,9 +545,16 @@ class CountMatrix(object):
         rep = 'coordinate'
         field = 'integer'
         symmetry = 'general'
-        comment=''
 
-        with open(out_matrix_fn, 'wb') as stream:
+        metadata = metadata or {}
+        metadata.update({
+            'format_version': MATRIX_H5_VERSION,
+        })
+
+        metadata_str = json.dumps(metadata)
+        comment = 'metadata_json: %s' % metadata_str
+
+        with cr_io.open_maybe_gzip(out_matrix_fn, 'w') as stream:
             # write initial header line
             stream.write(np.compat.asbytes('%%MatrixMarket matrix {0} {1} {2}\n'.format(rep, field, symmetry)))
 
@@ -553,9 +569,9 @@ class CountMatrix(object):
                 stream.write(np.compat.asbytes(("%i %i %i\n" % (r, c, d))))
 
         # both GEX and ATAC provide an implementation of this in respective feature_ref.py
-        save_features_func(self.feature_ref, base_dir)
+        save_features_func(self.feature_ref, base_dir, compress=compress)
 
-        with open(out_barcodes_fn, 'w') as f:
+        with cr_io.open_maybe_gzip(out_barcodes_fn, 'w') as f:
             for bc in self.bcs:
                 f.write(bc + '\n')
 

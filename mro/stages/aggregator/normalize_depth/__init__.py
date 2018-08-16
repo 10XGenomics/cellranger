@@ -7,6 +7,7 @@ import copy
 import h5py
 import itertools
 import json
+import martian
 import numpy as np
 import scipy.sparse as sp_sparse
 from cellranger.logperf import LogPerf
@@ -21,7 +22,7 @@ from cellranger.matrix import CountMatrix
 import cellranger.molecule_counter as cr_mol_counter
 from cellranger.molecule_counter import MoleculeCounter
 import cellranger.io as cr_io
-import cellranger.rna.feature_ref as rna_feature_ref
+import cellranger.rna.matrix as rna_matrix
 import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 
@@ -483,10 +484,13 @@ def join(args, outs, chunk_defs, chunk_outs):
         })
 
     # Write MEX format (do it last because it converts the matrices to COO)
-    raw_matrix.save_mex(outs.raw_matrices_mex,
-                        rna_feature_ref.save_features_tsv)
-    filt_mat.save_mex(outs.filtered_matrices_mex,
-                      rna_feature_ref.save_features_tsv)
+    version = martian.get_pipelines_version()
+    rna_matrix.save_mex(raw_matrix,
+                        outs.raw_matrices_mex,
+                        version)
+    rna_matrix.save_mex(filt_mat,
+                        outs.filtered_matrices_mex,
+                        version)
 
     with open(outs.summary, 'w') as f:
         json.dump(tk_safe_json.json_sanitize(summary), f, indent=4, sort_keys=True)
