@@ -5,6 +5,7 @@
 import csv
 import numpy as np
 import os
+import six
 import tables
 import cellranger.h5_constants as h5_constants
 
@@ -24,6 +25,11 @@ def save_h5(f, group, key, namedtuple):
     subgroup = f.create_group(group, '_'+key)
     for field in namedtuple._fields:
         arr = getattr(namedtuple, field)
+
+        # XML encode strings so we can store them as HDF5 ASCII
+        if isinstance(arr, six.string_types):
+            arr = np.string_(arr.encode('ascii', 'xmlcharrefreplace'))
+
         if not hasattr(arr, 'dtype'):
             raise ValueError('%s/%s must be a numpy array or scalar' % (group,key))
 

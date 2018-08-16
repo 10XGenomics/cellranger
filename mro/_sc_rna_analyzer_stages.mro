@@ -175,22 +175,23 @@ stage RUN_DIFFERENTIAL_EXPRESSION(
 )
 
 stage RUN_TSNE(
-    in  h5    matrix_h5,
-    in  h5    pca_h5,
-    in  bool  skip,
-    in  int   random_seed,
-    in  int   perplexity,
-    in  int   input_pcs,
-    in  int   max_dims,
-    in  int   max_iter,
-    in  int   stop_lying_iter,
-    in  int   mom_switch_iter,
-    in  float theta,
-    out h5    tsne_h5,
-    out path  tsne_csv,
-    src py    "stages/analyzer/run_tsne",
+    in  h5     matrix_h5,
+    in  h5     pca_h5,
+    in  bool   skip,
+    in  int    random_seed,
+    in  int    perplexity,
+    in  int    input_pcs,
+    in  int    max_dims,
+    in  int    max_iter,
+    in  int    stop_lying_iter,
+    in  int    mom_switch_iter,
+    in  float  theta,
+    out h5     tsne_h5,
+    out path   tsne_csv,
+    src py     "stages/analyzer/run_tsne",
 ) split (
-    in  int   tsne_dims,
+    in  int    tsne_dims,
+    in  string feature_type,
 ) using (
     volatile = strict,
 )

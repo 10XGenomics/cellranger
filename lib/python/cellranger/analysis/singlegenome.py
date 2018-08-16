@@ -86,8 +86,9 @@ class SingleGenomeAnalysis:
         for key, clustering in self.clusterings.iteritems():
             self.clusterings[key] = cr_clustering.subselect_barcodes(clustering, cell_bc_indices)
 
-        for n_tsne_components, tsne in self.tsne.iteritems():
-            self.tsne[n_tsne_components] = TSNE(tsne.transformed_tsne_matrix[cell_bc_indices, :])
+        for name, tsne in self.tsne.iteritems():
+            self.tsne[name] = TSNE(tsne.transformed_tsne_matrix[cell_bc_indices, :],
+                                   name=name)
 
     def subsample_bcs(self, num_bcs):
         """ Subsample barcodes across entire analysis (matrix, DR, etc) """
@@ -108,8 +109,8 @@ class SingleGenomeAnalysis:
     def get_clustering(self, cluster_key):
         return self.clusterings[cluster_key]
 
-    def get_tsne(self, n_tsne_components=analysis_constants.TSNE_N_COMPONENTS):
-        return self.tsne[n_tsne_components]
+    def get_tsne(self, key=analysis_constants.TSNE_DEFAULT_KEY):
+        return self.tsne[key]
 
     @staticmethod
     def load_h5(filename, method):
@@ -169,8 +170,8 @@ class SingleGenomeAnalysis:
             self.differential_expression[clustering_key] = de
 
     def _load_tsne_h5(self, group):
-        for n_tsne_components, tsne in analysis_io.load_h5_iter(group, TSNE):
-            self.tsne[int(n_tsne_components)] = tsne
+        for _, tsne in analysis_io.load_h5_iter(group, TSNE):
+            self.tsne[tsne.key] = tsne
 
     @staticmethod
     def load_pca_from_h5(filename):

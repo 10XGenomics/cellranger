@@ -12,9 +12,12 @@ import numpy as np
 import os
 import tsne as tsne_bh
 
-TSNE = collections.namedtuple('TSNE', ['transformed_tsne_matrix'])
+TSNE = collections.namedtuple('TSNE', ['transformed_tsne_matrix',
+                                       'name', # Human readable form
+                                       'key', # Machine queryable form, must be unique
+])
 
-def run_tsne(transformed_pca_matrix, tsne_dims=None, input_pcs=None, perplexity=None, theta=None,
+def run_tsne(transformed_pca_matrix, name='TSNE', key='TSNE', tsne_dims=None, input_pcs=None, perplexity=None, theta=None,
              max_iter=None, stop_lying_iter=None, mom_switch_iter=None, copy_data=False, random_state=None):
 
     if tsne_dims is None:
@@ -55,18 +58,23 @@ def run_tsne(transformed_pca_matrix, tsne_dims=None, input_pcs=None, perplexity=
                                              copy_data = copy_data,
                                              random_state = np.random.RandomState(random_state))
 
-    return TSNE(transformed_tsne_matrix)
+    return TSNE(transformed_tsne_matrix, name=name, key=key)
 
-def save_tsne_csv(tsne_map, matrix, base_dir):
-    for n_tsne_components, tsne in tsne_map.iteritems():
-        n_tsne_components_dir = os.path.join(base_dir, '%d_components' % n_tsne_components)
-        cr_io.makedirs(n_tsne_components_dir, allow_existing=True)
+def save_tsne_csv(tsne, matrix, base_dir):
+    """Save a TSNE object to CSV"""
+    # Preserve backward compatibility with pre-3.0 CSV files
+    #   where the CSV directory was named "2_components" and the HDF5 dataset was named "_2"
+    key = tsne.key + '_components'
 
-        matrix_fn = os.path.join(n_tsne_components_dir, 'projection.csv')
-        matrix_header = ['Barcode'] + ['TSNE-%d' % (i+1) for i in xrange(n_tsne_components)]
-        analysis_io.save_matrix_csv(matrix_fn, tsne.transformed_tsne_matrix, matrix_header, matrix.bcs)
+    tsne_dir = os.path.join(base_dir, key)
+    cr_io.makedirs(tsne_dir, allow_existing=True)
 
-def save_tsne_h5(tsne_map, f):
+    matrix_fn = os.path.join(tsne_dir, 'projection.csv')
+    n_tsne_components = tsne.transformed_tsne_matrix.shape[1]
+    matrix_header = ['Barcode'] + ['TSNE-%d' % (i+1) for i in xrange(n_tsne_components)]
+    analysis_io.save_matrix_csv(matrix_fn, tsne.transformed_tsne_matrix, matrix_header, matrix.bcs)
+
+def save_tsne_h5(tsne, f):
+    """Save a TSNE object to HDF5"""
     group = f.create_group(f.root, analysis_constants.ANALYSIS_H5_TSNE_GROUP)
-    for n_tsne_components, tsne in tsne_map.iteritems():
-        analysis_io.save_h5(f, group, str(n_tsne_components), tsne)
+    analysis_io.save_h5(f, group, tsne.key, tsne)

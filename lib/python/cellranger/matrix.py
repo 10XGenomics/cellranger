@@ -382,9 +382,15 @@ class CountMatrix(object):
 
     @staticmethod
     def load_feature_ref_from_h5_group(group):
-        '''Load just the FeatureRef from an h5.'''
+        '''Load just the FeatureRef from an h5py.Group.'''
         feature_group = group[h5_constants.H5_FEATURE_REF_ATTR]
         return FeatureReference.from_hdf5(feature_group)
+
+    @staticmethod
+    def load_feature_ref_from_h5_file(filename):
+        """Load just the FeatureRef from a matrix HDF5 file."""
+        with h5.File(filename, 'r') as f:
+            return CountMatrix.load_feature_ref_from_h5_group(f['matrix'])
 
     def tolil(self):
         if type(self.m) is not sp_sparse.lil_matrix:
