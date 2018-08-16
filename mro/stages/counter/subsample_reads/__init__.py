@@ -118,6 +118,9 @@ def split(args):
                 rates[lib_indexes] = target_usable_counts[lib_indexes].astype(float) \
                                      / usable_count_per_lib[lib_indexes]
 
+                # Clamp rates that are close to 1 to 1
+                rates[np.absolute(rates - 1) < 1e-3] = 1
+
                 # Zero out the libraries for which we have fewer reads than the target
                 rates[rates > 1] = 0.0
 
@@ -144,7 +147,7 @@ def split(args):
             'subsample_info': subsamplings,
             '__mem_gb': MoleculeCounter.estimate_mem_gb(chunk_len),
         })
-        
+
     join = {
         '__mem_gb': 6,
     }
