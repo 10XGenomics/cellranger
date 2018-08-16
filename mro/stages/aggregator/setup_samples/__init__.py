@@ -22,8 +22,20 @@ def main(args, outs):
     gg_index = {}
     libraries = []
 
+    ### Batch info
+    # If a column 'batch' is given in sample_defs (read from input csv), that
+    # column will be used as batch identifier, otherwise, aggr_id will be 
+    # used as batch identifier.
+    # Each batch will have a distinct batch_id, which is an increasing integer. 
+    batch_name_to_id = {}
+
     for sample_def in args.sample_defs:
         seen_ggs = set()
+
+        aggr_id = sample_def[cr_constants.AGG_ID_FIELD]
+        batch_name = sample_def.get(cr_constants.AGG_BATCH_FIELD, aggr_id)
+        if batch_name not in batch_name_to_id:
+            batch_name_to_id[batch_name] = len(batch_name_to_id) 
 
         with MoleculeCounter.open(sample_def[cr_constants.AGG_H5_FIELD], 'r') as mc:
             old_libraries = mc.get_library_info()
@@ -31,7 +43,6 @@ def main(args, outs):
         for lib_idx, old_lib in enumerate(old_libraries):
             # Remap gem groups
             old_gg = old_lib['gem_group']
-            aggr_id = sample_def[cr_constants.AGG_ID_FIELD]
 
             # Increment gem group if this is a new one from the same input sample
             if old_gg not in seen_ggs:
@@ -48,6 +59,8 @@ def main(args, outs):
             new_lib['old_library_index'] = lib_idx
             new_lib['old_gem_group'] = old_gg
             new_lib['aggr_id'] = sample_def[cr_constants.AGG_ID_FIELD]
+            new_lib['batch_name'] = batch_name
+            new_lib['batch_id'] = batch_name_to_id[batch_name]
             libraries.append(new_lib)
 
             # Track gem groups

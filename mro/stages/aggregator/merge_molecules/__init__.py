@@ -149,7 +149,7 @@ def get_library_mapping(aggr_id, libraries):
         lib['index'] = i
 
     my_libs = [lib for lib in libraries if lib['aggr_id'] == aggr_id]
-    max_old_gg = max(lib['gem_group'] for lib in my_libs)
+    max_old_gg = max(lib['old_gem_group'] for lib in my_libs)
     max_old_lib_idx = max(lib['old_library_index'] for lib in my_libs)
 
     gem_group_map = np.zeros(1+max_old_gg, dtype=MoleculeCounter.get_column_dtype('gem_group'))
