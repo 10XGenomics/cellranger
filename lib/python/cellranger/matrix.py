@@ -201,7 +201,8 @@ class CountMatrix(object):
         return sorted([self.feature_id_to_int(fid) for fid in feature_ids])
 
     def feature_id_to_name(self, feature_id):
-        return self.feature_id_to_int(feature_id)
+        idx = self.feature_id_to_int(feature_id)
+        return self.feature_ref.feature_defs[idx].name
 
     def int_to_feature_id(self, i):
         return self.feature_ref.feature_defs[i].id
