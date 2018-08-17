@@ -110,6 +110,13 @@ class SingleGenomeAnalysis:
         return self.clusterings[cluster_key]
 
     def get_tsne(self, key=analysis_constants.TSNE_DEFAULT_KEY):
+        # Backward compatibility with older analysis HDF5 files
+        # for which the key ends up being None because the 'key'
+        # dataset was not generated in older versions.
+        if analysis_constants.TSNE_DEFAULT_KEY not in self.tsne \
+           and None in self.tsne:
+            key = None
+
         return self.tsne[key]
 
     @staticmethod
