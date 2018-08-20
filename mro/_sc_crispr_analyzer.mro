@@ -1,0 +1,60 @@
+#
+# Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#
+#
+@include "_sc_crispr_analyzer_stages.mro"
+
+filetype pdf;
+filetype csv;
+filetype h5;
+filetype json;
+
+pipeline _CRISPR_ANALYZER(
+    in  h5     molecule_info,
+    in  h5     filtered_feature_counts_matrix,
+    in  csv    filtered_barcodes,
+    in  csv    feature_reference,
+    in  string feature_type,
+    in  json   counter_metrics_json,
+    out csv    protospacer_calls_summary,
+    out csv    protospacer_calls_per_cell,
+    out json   crispr_analysis_metrics_json,
+    out json   cells_per_protospacer,
+    out csv    perturbations_by_feature,
+    out csv    perturbations_by_target,
+)
+{
+    call CALL_PROTOSPACERS(
+        filtered_barcodes    = self.filtered_barcodes,
+        molecule_info        = self.molecule_info,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        feature_type         = self.feature_type,
+        feature_reference    = self.feature_reference,
+        counter_metrics_json = self.counter_metrics_json,
+    )
+
+    call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_FEATURE(
+        protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        feature_reference          = self.feature_reference,
+        by_feature                 = true,
+        ignore_multiples           = false,
+    )
+
+    call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_TARGET(
+        protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        feature_reference          = self.feature_reference,
+        by_feature                 = false,
+        ignore_multiples           = false,
+    )
+
+    return (
+        protospacer_calls_summary    = CALL_PROTOSPACERS.protospacer_calls_summary,
+        protospacer_calls_per_cell   = CALL_PROTOSPACERS.protospacer_calls_per_cell,
+        perturbations_by_feature     = _PERTURBATIONS_BY_FEATURE.perturbation_efficiencies,
+        perturbations_by_target      = _PERTURBATIONS_BY_TARGET.perturbation_efficiencies,
+        crispr_analysis_metrics_json = CALL_PROTOSPACERS.protospacer_call_metrics_json,
+        cells_per_protospacer        = CALL_PROTOSPACERS.cells_per_protospacer,
+    )
+}

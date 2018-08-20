@@ -13,12 +13,11 @@ from cellranger.webshim.constants.shared import PIPELINE_COUNT
 
 __MRO__ = """
 stage SUMMARIZE_REPORTS(
+    in  json[] summaries,
     in  string sample_id,
     in  string sample_desc,
     in  path   reference_path,
-    in  json   basic_counter_summary,
     in  path   analysis,
-    in  json   analyze_matrices_summary,
     in  h5     barcode_summary_h5,
     in  h5     filtered_gene_bc_matrices_h5,
     in  string barcode_whitelist,
@@ -39,12 +38,7 @@ def split(args):
     return {'chunks': chunks, 'join': {'__mem_gb': 1}}
 
 def main(args, outs):
-    summary_files = [
-        args.basic_counter_summary,
-        args.analyze_matrices_summary,
-    ]
-
-    cr_report.merge_jsons(summary_files, outs.metrics_summary_json)
+    cr_report.merge_jsons(args.summaries, outs.metrics_summary_json)
 
     sample_data_paths = cr_webshim_data.SampleDataPaths(
         summary_path=outs.metrics_summary_json,

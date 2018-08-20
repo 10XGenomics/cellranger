@@ -7,6 +7,7 @@
 @include "_basic_sc_rna_counter.mro"
 @include "_basic_sc_rna_counter_stages.mro"
 @include "_sc_rna_counter_stages.mro"
+@include "_sc_crispr_analyzer.mro"
 
 pipeline SC_RNA_COUNTER(
     in  string   sample_id,
@@ -39,6 +40,11 @@ pipeline SC_RNA_COUNTER(
     out bam.bai  possorted_genome_bam_index,
     out json     metrics_summary_json,
     out csv      metrics_summary_csv,
+    out csv      protospacer_calls_summary,
+    out csv      protospacer_calls_per_cell,
+    out csv      perturbations_by_feature,
+    out csv      perturbations_by_target,
+    out json     cells_per_protospacer,
     out html     web_summary,
     out h5       barcode_summary,
     out h5       molecule_info,
@@ -99,6 +105,10 @@ pipeline SC_RNA_COUNTER(
         vdj_reference_path  = null,
         chemistry_name_spec = self.chemistry_name,
         allowed_chems       = self.allowed_chems,
+    )
+
+    call DISABLE_FEATURE_STAGES(
+        sample_def = self.sample_def,
     )
 
     call SETUP_CHUNKS(
@@ -175,12 +185,26 @@ pipeline SC_RNA_COUNTER(
         force_cells           = null,
     )
 
+    call _CRISPR_ANALYZER(
+        molecule_info        = _BASIC_SC_RNA_COUNTER.molecule_info,
+        filtered_feature_counts_matrix = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        filtered_barcodes    = _BASIC_SC_RNA_COUNTER.filtered_barcodes,
+        feature_reference    = self.feature_reference,
+        feature_type         = "CRISPR",
+        counter_metrics_json = _BASIC_SC_RNA_COUNTER.summary,
+    ) using (
+        disabled = DISABLE_FEATURE_STAGES.disable_crispr,
+    )
+
     call SUMMARIZE_REPORTS(
+        summaries                    = [
+            _BASIC_SC_RNA_COUNTER.summary,
+            SC_RNA_ANALYZER.summary,
+            _CRISPR_ANALYZER.crispr_analysis_metrics_json,
+        ],
         sample_id                    = self.sample_id,
         sample_desc                  = self.sample_desc,
         reference_path               = self.reference_path,
-        basic_counter_summary        = _BASIC_SC_RNA_COUNTER.summary,
-        analyze_matrices_summary     = SC_RNA_ANALYZER.summary,
         analysis                     = SC_RNA_ANALYZER.analysis,
         barcode_summary_h5           = _BASIC_SC_RNA_COUNTER.barcode_summary,
         filtered_gene_bc_matrices_h5 = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
@@ -194,6 +218,11 @@ pipeline SC_RNA_COUNTER(
         web_summary                   = SUMMARIZE_REPORTS.web_summary,
         metrics_summary_json          = SUMMARIZE_REPORTS.metrics_summary_json,
         metrics_summary_csv           = SUMMARIZE_REPORTS.metrics_summary_csv,
+        protospacer_calls_summary     = _CRISPR_ANALYZER.protospacer_calls_summary,
+        protospacer_calls_per_cell    = _CRISPR_ANALYZER.protospacer_calls_per_cell,
+        cells_per_protospacer         = _CRISPR_ANALYZER.cells_per_protospacer,
+        perturbations_by_feature      = _CRISPR_ANALYZER.perturbations_by_feature,
+        perturbations_by_target       = _CRISPR_ANALYZER.perturbations_by_target,
         barcode_summary               = _BASIC_SC_RNA_COUNTER.barcode_summary,
         molecule_info                 = _BASIC_SC_RNA_COUNTER.molecule_info,
         raw_gene_bc_matrices_h5       = _BASIC_SC_RNA_COUNTER.raw_gene_bc_matrices_h5,

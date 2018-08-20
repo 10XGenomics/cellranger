@@ -42,6 +42,13 @@ stage CELLRANGER_PREFLIGHT_LOCAL(
     mem_gb = 2,
 )
 
+stage DISABLE_FEATURE_STAGES(
+    in  map[] sample_def,
+    out bool  disable_crispr,
+    out bool  disable_antibody,
+    src py    "stages/common/disable_feature_stages",
+)
+
 stage SETUP_CHUNKS(
     in  string   sample_id,
     in  map[]    sample_def,

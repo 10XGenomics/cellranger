@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 from collections import OrderedDict
 from cellranger.feature_ref import FeatureDef
@@ -137,6 +137,9 @@ class CountMatrixView(object):
             if feature.feature_type == feature_type:
                 indices.append(feature.index)
         return self.select_features(indices)
+
+    def select_features_by_ids(self, feature_ids):
+        return self.matrix.select_features(self.matrix.feature_ids_to_ints(feature_ids))
 
     def get_genomes(self):
         return CountMatrix._get_genomes_from_feature_ref(self.feature_ref)

@@ -7,12 +7,11 @@ filetype h5;
 filetype html;
 
 stage SUMMARIZE_REPORTS(
+    in  json[] summaries,
     in  string sample_id,
     in  string sample_desc,
     in  path   reference_path,
-    in  json   basic_counter_summary,
     in  path   analysis,
-    in  json   analyze_matrices_summary,
     in  h5     barcode_summary_h5,
     in  h5     filtered_gene_bc_matrices_h5,
     in  string barcode_whitelist,

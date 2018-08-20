@@ -5,6 +5,10 @@
 from collections import namedtuple
 import cellranger.analysis.constants as analysis_constants
 import cellranger.webshim.constants.shared as shared
+import cellranger.feature.constants as feature_constants
+
+REPORT_PREFIX_CRISPR = feature_constants.REPORT_PREFIX_CRISPR + '_'
+DISPLAY_PREFIX_CRISPR = feature_constants.DISPLAY_PREFIX_CRISPR + ' '
 
 # These define information about the sample required to generate a web summary
 CountSampleProperties = namedtuple('CountSampleProperties',
@@ -351,6 +355,141 @@ Q30_METRICS = [
     },
 ]
 
+CRISPR_Q30_METRICS = [
+    {
+        'name': REPORT_PREFIX_CRISPR + 'bc_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Q30 Bases in Barcode',
+        'description': 'Fraction of cell barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'read_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Q30 Bases in CRISPR Read',
+        'description': 'Fraction of CRISPR read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3\' v2 chemistry.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'read2_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Q30 Bases in CRISPR Read 2',
+        'description': 'Fraction of CRISPR read 2 bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'sample_index_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Q30 Bases in Sample Index',
+        'description': 'Fraction of sample index bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'umi_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Q30 Bases in UMI',
+        'description': 'Fraction of UMI bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    ]
+
+CRISPR_SEQUENCING_METRICS = [
+    {
+        'name': REPORT_PREFIX_CRISPR + 'total_reads',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Total Reads',
+        'description': 'Total number of reads',
+        'format': 'integer',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_valid_barcodes',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Valid Barcodes',
+        'description': 'Fraction of reads with a barcode found in or corrected to one that is found in the whitelist',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_corrected_barcodes',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Barcodes Corrected',
+        'description': 'Fraction of reads with a barcode corrected to one in the whitelist',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_valid_umis',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Valid UMIs',
+        'description': 'Fraction of reads with a UMI that does not contain unknown bases or homopolymers',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_reads_umi_corrected',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads that have Corrected UMIs',
+        'description': 'Fraction of reads with a UMI that has been corrected',
+        'format': 'percent',
+    },
+    ] + CRISPR_Q30_METRICS
+
+CRISPR_APPLICATION_METRICS = [
+     {
+        'name': REPORT_PREFIX_CRISPR + 'frac_raw_feature',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads with Putative Protospacer Sequence',
+        'description': 'Fraction of reads from which a putative protospacer sequence could be extracted',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_feature_reads',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Guide Reads',
+        'description': 'Fraction of reads with a recognized protospacer sequence',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_feature_reads_usable',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Guide Reads Usable',
+        'description': 'Fraction of reads with a recognized protospacer sequence, a valid UMI, and a cell-associated barcode',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'feature_reads_usable_per_cell',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Guide Reads Usable per Cell',
+        'description': 'Number of guide reads usable divided by the number of cell-associated barcodes',
+        'format': '%.0f',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_reads_feature_unknown',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Protospacer Not Recognized',
+        'description': 'Among all reads with a putative protospacer sequence, the fraction with a protospacer sequence that was not recognized',
+        'format': 'percent',
+    },
+  {
+        'name': REPORT_PREFIX_CRISPR + 'frac_reads_feature_corrected',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Protospacer Corrected',
+        'description': 'Among all reads with a putative protospacer sequence, the fraction whose protospacer sequence was corrected to a recognized one',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_reads_chimeras',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads with Low Support UMI',
+        'description': 'Fraction of reads associated with UMIs that have low read-support',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'feature_reads_in_cells',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Guide Reads in Cells',
+        'description': 'Among reads with a recognized protospacer sequence, a valid UMI, and a valid barcode, the fraction associated with cell-containing partitions',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_cells_with_protospacer',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Cells with 1 or more protospacers detected',
+        'description': 'Cells with 1 or more protospacers detected',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_cells_with_multiple_protospacer',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Cells with 2 or more protospacers detected',
+        'description': 'Cells with 2 or more protospacers detected',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'median_umis_per_cell',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Median UMIs per Cell (summed over all recognized protospacers)',
+        'description': 'Median UMIs per Cell (summed over all recognized protospacers)',
+        'format': '%.2f',
+    },
+]
+
 SEQUENCING_METRICS = [
     TOTAL_READS_METRIC,
     PRENORM_READS_METRIC,
@@ -451,6 +590,14 @@ METRICS = [
     {
         'name': 'Cells',
         'metrics': DETECTED_CELL_METRICS,
+    },
+    {
+        'name': 'CRISPR Sequencing',
+        'metrics': CRISPR_SEQUENCING_METRICS,
+    },
+    {
+        'name': 'CRISPR Application',
+        'metrics': CRISPR_APPLICATION_METRICS,
     },
     {
         'name': 'GEM Partitions',
