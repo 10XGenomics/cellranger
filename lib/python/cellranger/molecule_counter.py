@@ -147,7 +147,11 @@ class MoleculeCounter:
                 for library_idx in library_inds:
                     pf_tuples.append((barcode_idx, library_idx, genome_idx))
 
-        pass_filter = np.array(pf_tuples, dtype=BARCODE_INFO_DTYPES['pass_filter'])
+        if len(pf_tuples) > 0:
+            pass_filter = np.array(pf_tuples, dtype=BARCODE_INFO_DTYPES['pass_filter'])
+        else:
+            pass_filter = np.zeros((0,3), dtype=BARCODE_INFO_DTYPES['pass_filter'])
+
         assert pass_filter.shape[0] == len(pf_tuples)
         assert pass_filter.shape[1] == 3
 
@@ -428,7 +432,13 @@ class MoleculeCounter:
             assert bc_info.pass_filter.shape[1] == 3
             assert bc_info.genomes == genomes
             pfs.append(bc_info.pass_filter)
-        new_pf = np.unique(np.concatenate(pfs, axis=0), axis=0)
+
+        new_pf = np.concatenate(pfs, axis=0)
+
+        # Deduplicate the tuples. Unique throws an error on a zero-row array.
+        if new_pf.shape[0] > 0:
+            new_pf = np.unique(new_pf, axis=0)
+
         return BarcodeInfo(
             pass_filter=new_pf,
             genomes=genomes,

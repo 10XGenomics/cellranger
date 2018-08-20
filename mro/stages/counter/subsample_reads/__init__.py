@@ -280,7 +280,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     cell_bcs = sorted(list(cell_bcs_by_genome['']))
     cell_bc_to_int = {bc: i for i, bc in enumerate(cell_bcs)}
 
-    subsample_info = chunk_defs[0].subsample_info
+    subsample_info = chunk_defs[0].subsample_info if len(chunk_defs) > 0 else []
 
     for i, task in enumerate(subsample_info):
         lib_type = task['library_type']
