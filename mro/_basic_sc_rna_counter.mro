@@ -169,17 +169,18 @@ pipeline _BASIC_SC_RNA_COUNTER(
     )
 
     call FILTER_BARCODES(
-        sample_id          = self.sample_id,
-        matrices_h5        = COUNT_GENES.matrices_h5,
-        raw_fastq_summary  = SUMMARIZE_READ_REPORTS.summary,
-        attach_bcs_summary = ATTACH_BCS_AND_UMIS.summary,
-        recovered_cells    = self.recovered_cells,
-        force_cells        = self.force_cells,
-        barcode_summary    = COUNT_GENES.barcode_summary,
-        barcode_whitelist  = self.barcode_whitelist,
-        gem_groups         = SUMMARIZE_READ_REPORTS.gem_groups,
-        chemistry_def      = self.chemistry_def,
-        cell_barcodes      = self.cell_barcodes,
+        sample_id              = self.sample_id,
+        matrices_h5            = COUNT_GENES.matrices_h5,
+        barcode_correction_csv = MARK_DUPLICATES.barcode_summary,
+        raw_fastq_summary      = SUMMARIZE_READ_REPORTS.summary,
+        attach_bcs_summary     = ATTACH_BCS_AND_UMIS.summary,
+        recovered_cells        = self.recovered_cells,
+        force_cells            = self.force_cells,
+        barcode_summary        = COUNT_GENES.barcode_summary,
+        barcode_whitelist      = self.barcode_whitelist,
+        gem_groups             = SUMMARIZE_READ_REPORTS.gem_groups,
+        chemistry_def          = self.chemistry_def,
+        cell_barcodes          = self.cell_barcodes,
     )
 
     call REPORT_MOLECULES(

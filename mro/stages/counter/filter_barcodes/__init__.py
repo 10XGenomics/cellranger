@@ -6,6 +6,7 @@ import collections
 import csv
 import json
 import numpy as np
+import pandas as pd
 import random
 import martian
 import tenkit.safe_json as tk_safe_json
@@ -17,6 +18,8 @@ import cellranger.library_constants as lib_constants
 import cellranger.rna.matrix as rna_matrix
 import cellranger.rna.report_matrix as rna_report_mat
 import cellranger.utils as cr_utils
+import puppy.phenotype.antibody.antibody_utils as ab_utils
+import puppy.phenotype.antibody.high_umi_correction as high_umi_correction_utils
 
 FILTER_BARCODES_MIN_MEM_GB = 2.0
 
@@ -29,12 +32,14 @@ stage FILTER_BARCODES(
     in  int    recovered_cells,
     in  int    force_cells,
     in  h5     barcode_summary,
+    in  csv    barcode_correction_csv,
     in  string barcode_whitelist,
     in  int[]  gem_groups,
     in  map    chemistry_def,
     in  json   cell_barcodes          "Cell barcode override",
     out json   summary,
     out csv    filtered_barcodes,
+    out csv    aggregate_barcodes,
     out h5     filtered_matrices_h5,
     out path   filtered_matrices_mex,
     src py     "stages/counter/filter_barcodes",
@@ -67,13 +72,33 @@ def join(args, outs, _chunk_defs, _chunk_outs):
                         outs.filtered_matrices_mex,
                         martian.get_pipelines_version())
 
+def remove_bcs_with_high_umi_corrected_reads(correction_data, matrix):
+    """ Given a CountMatrix and and csv file containing information about umi corrected reads,
+        detect all barcodes with unusually high fraction of corrected reads (proobably aggregates),
+        and remove them from the CoutMatrix """
+
+    bcs_to_remove, reads_lost, removed_bcs_df = high_umi_correction_utils.detect_aggregate_bcs(correction_data)
+    filtered_bcs = ab_utils.remove_keys_from_dict(matrix.bcs_map, bcs_to_remove)
+    cleaned_matrix = matrix.select_barcodes_by_seq(filtered_bcs)
+
+    ### report how many aggregates were found, and the fraction of reads those accounted for
+    metrics_to_report = {}
+    metrics_to_report['ANTIBODY_number_highly_corrected_GEMs'] = len(bcs_to_remove)
+    metrics_to_report['ANTIBODY_reads_lost_to_highly_corrected_GEMs'] = reads_lost
+
+    return cleaned_matrix, metrics_to_report, removed_bcs_df
+
 def filter_barcodes(args, outs):
     random.seed(0)
     np.random.seed(0)
 
-    matrix = cr_matrix.CountMatrix.load_h5_file(args.matrices_h5)
+    correction_data = pd.read_csv(args.barcode_correction_csv)
+    raw_matrix = cr_matrix.CountMatrix.load_h5_file(args.matrices_h5)
+    matrix, metrics_to_report, removed_bcs_df = remove_bcs_with_high_umi_corrected_reads(correction_data, raw_matrix)
+    ### report all idenitified aggregate barcodes, together with their reads, umi corrected reads, fraction of corrected reads, and fraction of total reads
+    removed_bcs_df.to_csv(outs.aggregate_barcodes)
 
-    summary = {}
+    summary = metrics_to_report
 
     if args.cell_barcodes is not None:
         method_name = cr_constants.FILTER_BARCODES_MANUAL
