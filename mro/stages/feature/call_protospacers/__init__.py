@@ -21,6 +21,8 @@ stage CALL_PROTOSPACERS(
     out csv    protospacer_calls_per_cell,
     out json   protospacer_call_metrics_json,
     out json   cells_per_protospacer,
+    out json   umi_thresholds_json,
+    out csv    umi_thresholds_csv,
     src py     "stages/feature/call_protospacers",
 ) using (
     mem_gb = 6,
@@ -47,13 +49,15 @@ def main(args, outs):
 
     """Protospacer calling"""
     (perturbation_calls_table, presence_calls,
-        cells_with_ps, ps_calls_summary)  = crispr_analysis.get_ps_calls_and_summary(filtered_guide_counts_matrix,
+        cells_with_ps, ps_calls_summary, umi_thresholds)  = crispr_analysis.get_ps_calls_and_summary(filtered_guide_counts_matrix,
                                                                                         feature_map,)
     protospacer_call_metrics.update(crispr_analysis.get_protospacer_call_metrics(ps_calls_summary, num_gex_cbs, report_prefix))
 
     perturbation_calls_table.to_csv(outs.protospacer_calls_per_cell)
     ps_calls_summary.to_csv(outs.protospacer_calls_summary)
     feature_utils.write_json_from_dict(cells_with_ps, outs.cells_per_protospacer)
+    feature_utils.write_json_from_dict(umi_thresholds, outs.umi_thresholds_json)
+    feature_utils.write_csv_from_dict(umi_thresholds, outs.umi_thresholds_csv, "Protospacer, UMI threshold\n")
     feature_utils.write_json_from_dict(protospacer_call_metrics, outs.protospacer_call_metrics_json)
 
 

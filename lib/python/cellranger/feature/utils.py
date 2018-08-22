@@ -45,6 +45,14 @@ def write_json_from_dict(input_dict, out_file_name):
     with open(out_file_name, 'w') as f:
         json.dump(tk_safe_json.json_sanitize(input_dict), f, indent=4, sort_keys=True)
 
+def write_csv_from_dict(input_dict, out_file_name, header=None):
+    with open(out_file_name, 'w') as f:
+        if header is not None:
+            f.write(header)
+        for (key, value) in input_dict.iteritems():
+            line = str(key) + ',' + str(value)  + '\n'
+            f.write(line)
+
 def get_depth_string(num_reads_per_cell):
     return str(np.round(float(num_reads_per_cell)/1000,1)) + "k"
 

@@ -147,13 +147,13 @@ def get_ps_calls_and_summary(filtered_guide_counts_matrix, f_map):
     """
     if filtered_guide_counts_matrix is None:
         return (None, None, None, None)
-    (ps_calls_table, presence_calls, cells_with_ps)  = get_perturbation_calls(filtered_guide_counts_matrix,
+    (ps_calls_table, presence_calls, cells_with_ps, umi_thresholds)  = get_perturbation_calls(filtered_guide_counts_matrix,
                                                                                 f_map,)
 
     ps_calls_table.sort_values(by=['feature_call'], inplace=True, kind='mergesort')
     ps_calls_summary = get_ps_calls_summary(ps_calls_table, len(filtered_guide_counts_matrix.bcs))
 
-    return (ps_calls_table, presence_calls, cells_with_ps, ps_calls_summary)
+    return (ps_calls_table, presence_calls, cells_with_ps, ps_calls_summary, umi_thresholds)
 
 def get_perturbation_efficiency(  feature_ref_table,
                                     protospacers_per_cell,
@@ -662,6 +662,7 @@ def get_perturbation_calls(filtered_guide_counts_matrix, feature_map):
         return (None, None, None)
 
     filtered_bcs = filtered_guide_counts_matrix.bcs
+    umi_thresholds = {}
 
     for feature_id in sorted(feature_map.keys()):
         feature_id_int = filtered_guide_counts_matrix.feature_id_to_int(feature_id)
@@ -672,9 +673,11 @@ def get_perturbation_calls(filtered_guide_counts_matrix, feature_map):
         presence_calls[feature_id] = in_high_umi_component
         cells_with_ps[feature_id] = [filtered_bcs[i] for i in np.flatnonzero(np.array(in_high_umi_component))]
 
+        umi_thresholds[feature_id] = np.amin(umi_counts[in_high_umi_component])
+
     calls_per_cell = _get_calls_per_cell(cells_with_ps)
     calls_df = _get_cell_calls_df(calls_per_cell, filtered_guide_counts_matrix)
-    return (calls_df, presence_calls, cells_with_ps)
+    return (calls_df, presence_calls, cells_with_ps, umi_thresholds)
 
 def get_ps_calls_summary(ps_calls_table, num_gex_cbs):
     # assumes input is sorted by feature_call

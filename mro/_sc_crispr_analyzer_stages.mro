@@ -17,6 +17,8 @@ stage CALL_PROTOSPACERS(
     out csv    protospacer_calls_per_cell,
     out json   protospacer_call_metrics_json,
     out json   cells_per_protospacer,
+    out json   umi_thresholds_json,
+    out csv    umi_thresholds_csv,
     src py     "stages/feature/call_protospacers",
 ) using (
     mem_gb = 16,
