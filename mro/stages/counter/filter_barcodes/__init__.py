@@ -18,8 +18,7 @@ import cellranger.library_constants as lib_constants
 import cellranger.rna.matrix as rna_matrix
 import cellranger.rna.report_matrix as rna_report_mat
 import cellranger.utils as cr_utils
-import puppy.phenotype.antibody.antibody_utils as ab_utils
-import puppy.phenotype.antibody.high_umi_correction as high_umi_correction_utils
+import cellranger.feature.antibody.analysis as ab_utils
 
 FILTER_BARCODES_MIN_MEM_GB = 2.0
 
@@ -77,7 +76,7 @@ def remove_bcs_with_high_umi_corrected_reads(correction_data, matrix):
         detect all barcodes with unusually high fraction of corrected reads (proobably aggregates),
         and remove them from the CoutMatrix """
 
-    bcs_to_remove, reads_lost, removed_bcs_df = high_umi_correction_utils.detect_aggregate_bcs(correction_data)
+    bcs_to_remove, reads_lost, removed_bcs_df = ab_utils.detect_aggregate_bcs(correction_data)
     filtered_bcs = ab_utils.remove_keys_from_dict(matrix.bcs_map, bcs_to_remove)
     cleaned_matrix = matrix.select_barcodes_by_seq(filtered_bcs)
 
