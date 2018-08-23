@@ -28,6 +28,7 @@ import cellranger.utils as cr_utils
 
 __MRO__  = """
 stage NORMALIZE_DEPTH(
+    in  map    gem_group_index,
     in  h5     molecules,
     in  map    detect_cells_gg_metrics,
     in  string normalization_mode,
@@ -343,10 +344,13 @@ def join(args, outs, chunk_defs, chunk_outs):
         summary[k] = mol_metrics[k]
     print json.dumps(mol_metrics, indent=4, sort_keys=True)
 
+    # track original library/gem info
+    library_map = cr_matrix.make_library_map_aggr(args.gem_group_index)
+
     # Merge raw matrix
     raw_chunks = [co.raw_matrix_h5 for co in chunk_outs]
     raw_matrix = cr_matrix.merge_matrices(raw_chunks)
-    raw_matrix.save_h5_file(outs.raw_matrices_h5)
+    raw_matrix.save_h5_file(outs.raw_matrices_h5, extra_attrs=library_map)
 
     genomes = raw_matrix.get_genomes()
 
@@ -363,7 +367,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     # Merge filtered matrix
     filt_chunks = [co.filtered_matrix_h5 for co in chunk_outs]
     filt_mat = cr_matrix.merge_matrices(filt_chunks)
-    filt_mat.save_h5_file(outs.filtered_matrices_h5)
+    filt_mat.save_h5_file(outs.filtered_matrices_h5, extra_attrs=library_map)
 
 
     # Summarize the matrix across library types and genomes

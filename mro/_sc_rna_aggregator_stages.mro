@@ -54,6 +54,7 @@ stage MERGE_MOLECULES(
 )
 
 stage NORMALIZE_DEPTH(
+    in  map     gem_group_index,
     in  h5      molecules,
     in  string  normalization_mode,
     in  map     gem_group_barcode_ranges,
