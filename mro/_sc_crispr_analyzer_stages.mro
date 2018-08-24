@@ -31,6 +31,7 @@ stage MEASURE_PERTURBATIONS(
     in  bool by_feature,
     in  bool ignore_multiples,
     out csv  perturbation_efficiencies,
+    out path transcriptome_analysis_csv,
     src py   "stages/feature/measure_perturbations",
 ) using (
     mem_gb  = 12,

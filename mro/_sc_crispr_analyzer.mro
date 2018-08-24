@@ -24,6 +24,8 @@ pipeline _CRISPR_ANALYZER(
     out csv    umi_thresholds_csv,
     out csv    perturbations_by_feature,
     out csv    perturbations_by_target,
+    out path   transcriptome_analysis_by_feature,
+    out path   transcriptome_analysis_by_target,
 )
 {
     call CALL_PROTOSPACERS(
@@ -58,6 +60,8 @@ pipeline _CRISPR_ANALYZER(
         perturbations_by_target      = _PERTURBATIONS_BY_TARGET.perturbation_efficiencies,
         crispr_analysis_metrics_json = CALL_PROTOSPACERS.protospacer_call_metrics_json,
         cells_per_protospacer        = CALL_PROTOSPACERS.cells_per_protospacer,
+        transcriptome_analysis_by_feature = _PERTURBATIONS_BY_FEATURE.transcriptome_analysis_csv,
+        transcriptome_analysis_by_target = _PERTURBATIONS_BY_TARGET.transcriptome_analysis_csv,
         umi_thresholds_csv           = CALL_PROTOSPACERS.umi_thresholds_csv,
         umi_thresholds_json          = CALL_PROTOSPACERS.umi_thresholds_json,
     )

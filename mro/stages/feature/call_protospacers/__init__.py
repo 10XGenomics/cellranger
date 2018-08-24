@@ -2,7 +2,7 @@
 #
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved
 #
-import cellranger.feature.crispr.analysis as crispr_analysis
+import cellranger.feature.crispr.protospacer_calling as protospacer_calling
 import os
 import cellranger.feature.utils as feature_utils
 import cellranger.rna.library as rna_library
@@ -49,9 +49,9 @@ def main(args, outs):
 
     """Protospacer calling"""
     (perturbation_calls_table, presence_calls,
-        cells_with_ps, ps_calls_summary, umi_thresholds)  = crispr_analysis.get_ps_calls_and_summary(filtered_guide_counts_matrix,
+        cells_with_ps, ps_calls_summary, umi_thresholds)  = protospacer_calling.get_ps_calls_and_summary(filtered_guide_counts_matrix,
                                                                                         feature_map,)
-    protospacer_call_metrics.update(crispr_analysis.get_protospacer_call_metrics(ps_calls_summary, num_gex_cbs, report_prefix))
+    protospacer_call_metrics.update(protospacer_calling.get_protospacer_call_metrics(ps_calls_summary, num_gex_cbs, report_prefix))
 
     perturbation_calls_table.to_csv(outs.protospacer_calls_per_cell)
     ps_calls_summary.to_csv(outs.protospacer_calls_summary)

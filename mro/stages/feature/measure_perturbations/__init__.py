@@ -2,12 +2,12 @@
 #
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved
 #
-import cellranger.feature.crispr.analysis as crispr_analysis
+import cellranger.feature.crispr.measure_perturbations as measure_perturbations
 import pandas as pd
 pd.set_option("compute.use_numexpr", False)
-import os
 import cellranger.matrix as cr_matrix
 import sys
+import cellranger.feature.utils as feature_utils
 
 __MRO__ = """
 stage MEASURE_PERTURBATIONS_PD(
@@ -17,6 +17,7 @@ stage MEASURE_PERTURBATIONS_PD(
     in  bool by_feature,
     in  bool ignore_multiples,
     out csv perturbation_efficiencies,
+    out path transcriptome_analysis_csv,
     src py  "stages/feature_pd/measure_perturbations_pd",
 ) using (
     mem_gb = 6,
@@ -24,9 +25,8 @@ stage MEASURE_PERTURBATIONS_PD(
 """
 
 def main(args, outs):
-    if not(os.path.isfile(args.protospacer_calls_per_cell) and
-           os.path.isfile(args.filtered_feature_counts_matrix)
-          ):
+    list_file_paths = [args.protospacer_calls_per_cell, args.filtered_feature_counts_matrix, args.feature_reference]
+    if not(feature_utils.all_files_present(list_file_paths)):
         outs.perturbation_efficiencies = None
         return
 
@@ -46,18 +46,20 @@ def main(args, outs):
         return
 
     (log2_fold_change, log2_fold_change_ci,
-        num_cells_per_perturbation) = crispr_analysis.get_perturbation_efficiency(
-                                                    feature_ref_table,
-                                                    protospacers_per_cell,
-                                                    feature_count_matrix,
-                                                    args.by_feature,
-                                                    args.ignore_multiples,
-                                                    )
+        num_cells_per_perturbation,
+        results_all_perturbations, results_per_perturbation) = measure_perturbations.get_perturbation_efficiency(
+                                                                            feature_ref_table,
+                                                                            protospacers_per_cell,
+                                                                            feature_count_matrix,
+                                                                            args.by_feature,
+                                                                            args.ignore_multiples,
+                                                                            )
 
     if (log2_fold_change is None) or (log2_fold_change_ci is None):
         outs.perturbation_efficiencies = None
         return
-    summary_df = crispr_analysis.construct_df(log2_fold_change, log2_fold_change_ci,
+    summary_df = measure_perturbations.construct_df(log2_fold_change, log2_fold_change_ci,
                                                     num_cells_per_perturbation, args.by_feature)
     summary_df.to_csv(outs.perturbation_efficiencies, index=False)
+    measure_perturbations.save_transcriptome_analysis_csv(outs.transcriptome_analysis_csv, results_per_perturbation)
 

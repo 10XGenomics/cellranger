@@ -68,8 +68,9 @@ def split(args):
     # one for reading, and one for writing
     matrix_mem_gb = 2 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.filtered_gene_bc_matrices_h5)
     chunks = [{
-        '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
+        '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB, 6)
     }]
+    # Hack to increase min memgb - not sure why we need it
     return {'chunks': chunks, 'join': {'__mem_gb': 1}}
 
 def join(args, outs, chunk_defs, chunk_outs):

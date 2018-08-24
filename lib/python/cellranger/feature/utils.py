@@ -56,3 +56,17 @@ def write_csv_from_dict(input_dict, out_file_name, header=None):
 def get_depth_string(num_reads_per_cell):
     return str(np.round(float(num_reads_per_cell)/1000,1)) + "k"
 
+def all_files_present(list_file_paths):
+    if list_file_paths is None:
+        return False
+
+    files_none = [fpath is None for fpath in list_file_paths]
+    if any(files_none):
+        return False
+
+    files_present = [os.path.isfile(fpath) for fpath in list_file_paths]
+
+    if not(all(files_present)):
+        return False
+
+    return True
