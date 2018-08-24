@@ -195,6 +195,69 @@ class CountMatrix(object):
         matrix = sp_sparse.lil_matrix((len(feature_ref.feature_defs), len(bcs)), dtype=dtype)
         return cls(feature_ref=feature_ref, bcs=bcs, matrix=matrix)
 
+    @classmethod
+    def from_legacy_h5(cls, h5_file):
+        """Create a CountMatrix from a legacy h5py.File"""
+
+        genome_arrays = []
+        gene_id_arrays = []
+        gene_name_arrays = []
+        barcode_arrays = []
+        ind_arrays = []
+        indptr_arrays = []
+        data_arrays = []
+
+        # Construct a genome-concatenated matrix and FeatureReference
+        n_genomes = len(h5_file.keys())
+
+        for genome_idx, genome in enumerate(h5_file.keys()):
+            g = h5_file[genome]
+
+            n_genes = sum(len(x) for x in gene_id_arrays)
+            n_nz = sum(len(x) for x in data_arrays)
+
+            # Offset the row (gene) indices by the number of genes seen so far
+            ind_arrays.append(g['indices'][:] + n_genes)
+
+            # Offset the col (barcode) indices by the number of nonzero elements seen so far
+            if genome_idx < (n_genomes-1):
+                indptr_arrays.append(g['indptr'][:-1] + n_nz)
+            else:
+                # Keep the final pointer if this is the last genome
+                indptr_arrays.append(g['indptr'][:] + n_nz)
+
+            data_arrays.append(g['data'][:])
+
+            gene_id_arrays.append(g['genes'][:])
+            gene_name_arrays.append(g['gene_names'][:])
+            genome_arrays.append(np.repeat(genome, len(g['genes'])))
+
+            barcode_arrays.append(g['barcodes'][:])
+
+        genomes = np.concatenate(genome_arrays)
+        gene_ids = np.concatenate(gene_id_arrays)
+        gene_names = np.concatenate(gene_name_arrays)
+
+        # Construct FeatureReference
+        feature_defs = []
+        for (gene_id, gene_name, genome) in itertools.izip(gene_ids, gene_names, genomes):
+            feature_defs.append(FeatureDef(index=len(feature_defs),
+                                           id=gene_id,
+                                           name=gene_name,
+                                           feature_type=lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
+                                           tags={'genome': genome}))
+        feature_ref = FeatureReference(feature_defs, ['genome'])
+
+        barcodes = np.concatenate(barcode_arrays)
+
+        indices = np.concatenate(ind_arrays)
+        indptr = np.concatenate(indptr_arrays)
+        data = np.concatenate(data_arrays)
+        matrix = sp_sparse.csc_matrix((data, indices, indptr), shape=(len(gene_ids), len(barcodes)))
+
+        return CountMatrix(feature_ref, barcodes, matrix)
+
+
     def feature_id_to_int(self, feature_id):
         if feature_id not in self.feature_ids_map:
             raise KeyError("Specified feature ID not found in matrix: %s" % feature_id)
@@ -331,51 +394,6 @@ class CountMatrix(object):
         assert np.all(np.diff(indptr)>=0)
 
         matrix = sp_sparse.csc_matrix((data, indices, indptr), shape=shape)
-
-        return cls(feature_ref=feature_ref, bcs=bcs, matrix=matrix)
-
-    @classmethod
-    def load_chunk(cls, group, col_start, col_end):
-        '''Load a submatrix from a CountMatrix HDF5 group
-
-        Load a submatrix specified by the given column (barcode) range from an h5 group
-        Args:
-            group (h5py.Group): Group to load from.
-            col_start (int): 0-based starting column index.
-            col_end (int) - Exclusive ending column index.
-        Returns:
-            scipy.sparse.csc_matrix
-        '''
-
-        # Check bounds
-        shape = getattr(group, h5_constants.H5_MATRIX_SHAPE_ATTR).read()
-        assert col_start >= 0 and col_start < shape[1]
-        assert col_end >= 0 and col_end <= shape[1]
-
-        # Load features and barcodes
-        feature_ref = CountMatrix.load_feature_ref_from_h5_group(group)
-        bcs = CountMatrix.load_bcs_from_h5_group(group)[col_start:col_end]
-
-        # Get views into full matrix
-        data = getattr(group, h5_constants.H5_MATRIX_DATA_ATTR)
-        indices = getattr(group, h5_constants.H5_MATRIX_INDICES_ATTR)
-        indptr = getattr(group, h5_constants.H5_MATRIX_INDPTR_ATTR)
-
-        # Determine extents of selected columns
-        ind_start = indptr[col_start]
-        if col_end < len(indptr)-1:
-            # Last index (end-exclusive) is the start of the next column
-            ind_end = indptr[col_end]
-        else:
-            # Last index is the last index in the matrix
-            ind_end = len(data)
-
-        chunk_data = data[ind_start:ind_end]
-        chunk_indices = indices[ind_start:ind_end]
-        chunk_indptr = np.append(indptr[col_start:col_end], ind_end) - ind_start
-        chunk_shape = (shape[0], col_end - col_start)
-
-        matrix = sp_sparse.csc_matrix((chunk_data, chunk_indices, chunk_indptr), shape=chunk_shape)
 
         return cls(feature_ref=feature_ref, bcs=bcs, matrix=matrix)
 
@@ -594,7 +612,8 @@ class CountMatrix(object):
             if version > MATRIX_H5_VERSION:
                 raise ValueError('Matrix HDF5 file format version (%d) is a newer version that is not supported by this version of the software.' % version)
             if version < MATRIX_H5_VERSION:
-                raise ValueError('Matrix HDF5 file format version (%d) is an older version that is no longer supported.' % version)
+                #raise ValueError('Matrix HDF5 file format version (%d) is an older version that is no longer supported.' % version)
+                return CountMatrix.from_legacy_h5(f)
 
             if 'matrix' not in f.keys():
                 raise ValueError('Could not find the "matrix" group inside the matrix HDF5 file.')
