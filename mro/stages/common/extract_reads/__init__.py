@@ -61,14 +61,21 @@ COMPRESSION = 'lz4'
 def split(args):
     chunks = []
     for chunk in args.chunks:
-        # TODO: quick fix to thread error in EXTRACT_READS (CR-210-06), need to fix it before release
+        # FIXME: thread request is 2 due to python slowness + gzip subprocesses (CELLRANGER-1394)
         chunk['__threads'] = 2
         chunk['__mem_gb'] = 4
 
         if args.initial_reads is None:
-            chunk['initial_reads'] = None
+            chunk['chunk_initial_reads'] = None
         else:
-            chunk['initial_reads'] = args.initial_reads / len(args.chunks)
+            chunk['chunk_initial_reads'] = args.initial_reads / len(args.chunks)
+
+        # Combine the per-chunk subsample rates with the toplevel rate
+        chunk['chunk_subsample_rate'] = chunk.pop('subsample_rate') * args.subsample_rate
+
+        # NOTE: Here we implicitly convert SETUP_CHUNKS' output to Martian "chunk" definitions.
+        #   Keys coming from SETUP_CHUNKS can override the stage-level args and are not
+        #   explicitly typed by Martian. This is bad.
 
         chunks.append(chunk)
     join = {
@@ -256,9 +263,9 @@ def main(args, outs):
 
     reporter.extract_reads_init()
 
-    for extractions in itertools.islice(all_read_iter, args.initial_reads):
+    for extractions in itertools.islice(all_read_iter, args.chunk_initial_reads):
         # Downsample
-        if random.random() > args.subsample_rate:
+        if random.random() > args.chunk_subsample_rate:
             continue
 
         rna_extraction, rna2_extraction, bc_extraction, si_extraction, umi_extraction, feature_extraction = extractions

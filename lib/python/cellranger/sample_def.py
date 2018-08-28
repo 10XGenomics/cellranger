@@ -9,6 +9,9 @@ import cellranger.library_constants as lib_constants
 def get_library_type(sample_def):
     return sample_def.get('library_type')
 
+def get_subsample_rate(sample_def):
+    return sample_def.get('subsample_rate', 1.0)
+
 def get_gem_group(sample_def):
     """ Get the GEM group from a sample def.
 

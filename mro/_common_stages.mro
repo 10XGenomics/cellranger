@@ -108,6 +108,8 @@ stage EXTRACT_READS(
     in  map      read_chunks,
     in  bool     reads_interleaved,
     in  bool     barcode_rc,
+    in  int      chunk_initial_reads,
+    in  float    chunk_subsample_rate,
 ) using (
     mem_gb = 2,
 )

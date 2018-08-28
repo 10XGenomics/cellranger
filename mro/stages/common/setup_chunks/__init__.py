@@ -53,7 +53,8 @@ def validate_fastq_lists(filename_lists):
 
 def construct_chunks(filename_lists,
                      sample_id, gem_group, library_id,
-                     reads_interleaved, chemistry, library_type):
+                     reads_interleaved, chemistry, library_type,
+                     subsample_rate):
     """ filename_lists (list of dict<str,list>) """
     chunks = []
 
@@ -65,6 +66,7 @@ def construct_chunks(filename_lists,
             'reads_interleaved': reads_interleaved,
             'read_chunks': {},
             'chemistry': chemistry,
+            'subsample_rate': subsample_rate,
         }
 
         for read_type in cr_constants.FASTQ_READ_TYPES.keys():
@@ -93,7 +95,7 @@ def fill_in_missing_reads(filename_lists):
             filename_lists[read_type] = [None] * max_filenames
 
 def setup_chunks(sample_id, fq_spec, gem_group, library_id,
-                 chemistry, library_type):
+                 chemistry, library_type, subsample_rate):
     """ Build chunks for a single sample def """
     chunks = []
 
@@ -117,7 +119,8 @@ def setup_chunks(sample_id, fq_spec, gem_group, library_id,
                                        library_id=library_id,
                                        reads_interleaved=group_spec.interleaved,
                                        chemistry=chemistry,
-                                       library_type=library_type)
+                                       library_type=library_type,
+                                       subsample_rate=subsample_rate)
 
     return chunks
 
@@ -146,13 +149,15 @@ def main(args, outs):
         fq_spec = cr_fastq.FastqSpec.from_sample_def(sample_def)
         gem_group = cr_sample_def.get_gem_group(sample_def)
         library_type = cr_sample_def.get_library_type(sample_def) or default_lib_type
+        subsample_rate = cr_sample_def.get_subsample_rate(sample_def)
 
         chunks = setup_chunks(args.sample_id,
                               fq_spec,
                               gem_group,
                               library_id,
                               chemistry,
-                              library_type)
+                              library_type,
+                              subsample_rate)
 
         if len(chunks) == 0:
             # No FASTQs found for a sample def
