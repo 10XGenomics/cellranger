@@ -29,6 +29,19 @@ def _get_conf_mapped_reads(summary, genomes, library_type):
     total_reads = _get_total_reads(summary, library_type)
     return sum(float(summary.get(metric, 0)) * float(total_reads) for metric in conf_mapped_metrics)
 
+def _get_barcode_summary_h5_indices(summary_h5, barcodes):
+    """Get the indices into a barcode summary HDF5 file for the given barcodes.
+
+    Does NOT preserve order of the barcodes argument.
+    Args:
+      summary_h5 (h5py.File): HDF5 file with datasets
+      barcodes (iterable of str): List of barcode strings (e.g., "ACGT-1") to get.
+    Returns:
+      np.array(int): List of indices into the HDF5 arrays
+    """
+    max_len = max(len(bc) for bc in barcodes)
+    bc_arr = np.fromiter(barcodes, count=len(barcodes), dtype='S%d' % max_len)
+    return np.flatnonzero(np.isin(summary_h5['bc_sequence'][:], bc_arr))
 
 def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
                                     cell_bc_seqs,
@@ -101,11 +114,12 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
 
     for genome, g_mat in genome_matrices.iteritems():
         h5_key = '%s_%s_%s_%s_reads' % (library_prefix, genome, cr_constants.TRANSCRIPTOME_REGION,
-                                     cr_constants.CONF_MAPPED_BC_READ_TYPE)
-        cmb_reads = barcode_summary_h5[h5_key]
-        cell_bc_indices = g_mat.bcs_to_ints(cell_bcs_union)
-        total_conf_mapped_reads_in_cells += cmb_reads[list(cell_bc_indices)].sum() if cell_bc_indices else 0
-        total_conf_mapped_barcoded_reads += cmb_reads[()].sum()
+                                        cr_constants.CONF_MAPPED_BC_READ_TYPE)
+        cmb_reads = barcode_summary_h5[h5_key][:]
+        cell_bc_indices = _get_barcode_summary_h5_indices(barcode_summary_h5,
+                                                          cell_bcs_union)
+        total_conf_mapped_reads_in_cells += cmb_reads[cell_bc_indices].sum()
+        total_conf_mapped_barcoded_reads += cmb_reads.sum()
     d['multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac'] = tk_stats.robust_divide(total_conf_mapped_reads_in_cells, total_conf_mapped_barcoded_reads)
 
 
@@ -153,7 +167,7 @@ def _report(matrix, genome, barcode_summary_h5, recovered_cells, cell_bc_seqs,
 
     filtered_mat = matrix.select_barcodes_by_seq(cell_bc_seqs)
     filtered_mat_shape = filtered_mat.get_shape()
-    cell_bc_indices = matrix.bcs_to_ints(cell_bc_seqs)
+    cell_bc_indices = _get_barcode_summary_h5_indices(barcode_summary_h5, cell_bc_seqs)
     n_cell_bcs = len(cell_bc_seqs)
 
     # Don't compute metrics if no cells detected
@@ -212,7 +226,7 @@ def _report(matrix, genome, barcode_summary_h5, recovered_cells, cell_bc_seqs,
                                                                    cr_constants.TRANSCRIPTOME_REGION,
                                                                    cr_constants.CONF_MAPPED_BC_READ_TYPE)
     if dupe_candidate_h5_key in barcode_summary_h5:
-        n_reads = barcode_summary_h5[dupe_candidate_h5_key][list(cell_bc_indices)].sum()
+        n_reads = barcode_summary_h5[dupe_candidate_h5_key][:][cell_bc_indices].sum()
         n_deduped_reads = filt_total_umis
     else:
         n_reads = 0
@@ -236,8 +250,9 @@ def _report(matrix, genome, barcode_summary_h5, recovered_cells, cell_bc_seqs,
                                                             cr_constants.TRANSCRIPTOME_REGION,
                                                             read_type)
             if h5_key in barcode_summary_h5:
-                n_reads = barcode_summary_h5[h5_key][list(cell_bc_indices)].sum()
-                n_all_reads = barcode_summary_h5[h5_key][()].sum()
+                counts = barcode_summary_h5[h5_key][:]
+                n_reads = counts[cell_bc_indices].sum()
+                n_all_reads = counts.sum()
             else:
                 n_reads = 0
                 n_all_reads = 0
