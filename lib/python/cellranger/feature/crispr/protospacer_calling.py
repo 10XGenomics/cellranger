@@ -97,7 +97,8 @@ def get_perturbation_calls(filtered_guide_counts_matrix, feature_map):
         presence_calls[feature_id] = in_high_umi_component
         cells_with_ps[feature_id] = [filtered_bcs[i] for i in np.flatnonzero(np.array(in_high_umi_component))]
 
-        umi_thresholds[feature_id] = np.amin(umi_counts[in_high_umi_component])
+        if np.any(in_high_umi_component):
+            umi_thresholds[feature_id] = np.amin(umi_counts[in_high_umi_component])
 
     calls_per_cell = _get_calls_per_cell(cells_with_ps)
     calls_df = _get_cell_calls_df(calls_per_cell, filtered_guide_counts_matrix)
