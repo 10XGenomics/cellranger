@@ -6,8 +6,11 @@ import cellranger.feature.crispr.measure_perturbations as measure_perturbations
 import pandas as pd
 pd.set_option("compute.use_numexpr", False)
 import cellranger.matrix as cr_matrix
+import cellranger.analysis.diffexp as cr_diffexp
+import cellranger.library_constants as lib_constants
 import sys
 import cellranger.feature.utils as feature_utils
+SUMMARY_FILE_NAME = "transcriptome_analysis"
 
 __MRO__ = """
 stage MEASURE_PERTURBATIONS_PD(
@@ -31,6 +34,7 @@ def main(args, outs):
         return
 
     feature_count_matrix = cr_matrix.CountMatrix.load_h5_file(args.filtered_feature_counts_matrix)
+    gex_count_matrix = feature_count_matrix.select_features_by_type(lib_constants.GENE_EXPRESSION_LIBRARY_TYPE)
     feature_ref_table = pd.read_csv(args.feature_reference)
 
     protospacers_per_cell = pd.read_csv(args.protospacer_calls_per_cell, index_col = 0, na_filter = False)
@@ -47,19 +51,23 @@ def main(args, outs):
 
     (log2_fold_change, log2_fold_change_ci,
         num_cells_per_perturbation,
-        results_all_perturbations, results_per_perturbation) = measure_perturbations.get_perturbation_efficiency(
+        results_per_perturbation, results_all_perturbations) = measure_perturbations.get_perturbation_efficiency(
                                                                             feature_ref_table,
                                                                             protospacers_per_cell,
                                                                             feature_count_matrix,
                                                                             args.by_feature,
                                                                             args.ignore_multiples,
                                                                             )
+        # results_all_perturbations is an OrderedDict. The call to save_differential_expression_csv below assumes this when it assigns cluster_names from the keys of the dict
 
     if (log2_fold_change is None) or (log2_fold_change_ci is None):
         outs.perturbation_efficiencies = None
         return
-    summary_df = measure_perturbations.construct_df(log2_fold_change, log2_fold_change_ci,
+    perturbation_efficiency_summary = measure_perturbations.construct_perturbation_efficiency_summary(log2_fold_change, log2_fold_change_ci,
                                                     num_cells_per_perturbation, args.by_feature)
-    summary_df.to_csv(outs.perturbation_efficiencies, index=False)
-    measure_perturbations.save_transcriptome_analysis_csv(outs.transcriptome_analysis_csv, results_per_perturbation)
+    perturbation_efficiency_summary.to_csv(outs.perturbation_efficiencies, index=False)
+    measure_perturbations.save_top_perturbed_genes(outs.transcriptome_analysis_csv, results_per_perturbation)
+    cr_diffexp.save_differential_expression_csv(None, results_all_perturbations, gex_count_matrix, outs.transcriptome_analysis_csv,
+                                                     cluster_names = results_per_perturbation.keys(), file_name = SUMMARY_FILE_NAME)
+    # this call assumes that results_all_perturbations is an OrderedDict, hence can get ordered names from keys()
 

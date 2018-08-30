@@ -3,14 +3,14 @@ import numpy as np
 import pandas as pd
 pd.set_option("compute.use_numexpr", False)
 import tenkit.stats as tk_stats
-import collections
 import sys
 import cellranger.analysis.diffexp as cr_diffexp
 import cellranger.library_constants as lib_constants
-from collections import OrderedDict
 import os
 import cellranger.io as cr_io
+import collections
 
+DIFFERENTIAL_EXPRESSION = collections.namedtuple('DIFFERENTIAL_EXPRESSION', ['data'])
 NUM_BOOTSTRAPS = 500 # number of bootstrap draws to do for calculating
                      # empirical confidence intervals for perturbation efficiencies
 CI_LOWER_BOUND = 5.0   # CI lower bound (ie percentile value) for perturbation efficiencies
@@ -25,37 +25,37 @@ MIN_COUNTS_CONTROL = 5
 UMI_NUM_TRIES = 10 # Number of initial points to try for GMM-fitting
 UMI_MIX_INIT_SD = 0.25 # Intial standard deviation for GMM components
 
-COLUMNS_DIFFEXP = OrderedDict({
-       'sum_perturbation': 'sum_a',
-       'sum_control': 'sum_b',
-       'norm_mean_perturbation': 'norm_mean_a',
-       'norm_mean_control': 'norm_mean_b',
-       'p_value': 'p_value',
-       'adjusted_p_value': 'adjusted_p_value',
-       'log2_fold_change': 'log2_fold_change',
-})
+PERTURBATION_EFFICIENCY_SUMMARY_COLUMNS = ['Perturbation',
+                                                'target_string',
+                                                'Log2 Fold Change',
+                                                'p Value',
+                                                'Log2 Fold Change Lower Bound',
+                                                'Log2 Fold Change Upper Bound',
+                                                'Cells with Perturbation',
+                                                'Mean UMI Count Among Cells with Perturbation',
+                                                'Cells with Non-Targeting Guides',
+                                                'Mean UMI Count Among Cells with Non-Targeting Guides',
+                                              ]
 
-def construct_df(f_change, f_change_ci, num_cells_per_perturbation, by_feature):
+TOP_GENES_SUMMARY_MAP = collections.OrderedDict([
+                                ('Gene Name', 'Gene Name'),
+                                ('Gene ID', 'Gene ID'),
+                                ('log2_fold_change', 'Log2 Fold Change'),
+                                ('adjusted_p_value', 'Adjusted p-value'),
+                                ])
+NUM_TOP_GENES = 10
+
+def construct_perturbation_efficiency_summary(f_change, f_change_ci, num_cells_per_perturbation, by_feature,
+                                                summary_columns = PERTURBATION_EFFICIENCY_SUMMARY_COLUMNS):
     if (f_change is None) or (f_change_ci is None):
         return None
 
     if by_feature:
-        target_string = 'Target Guide'
+        summary_columns[1] = 'Target Guide'
     else:
-        target_string = 'Target Gene'
+        summary_columns[1] = 'Target Gene'
 
-    column_list = ['Perturbation',
-                    target_string,
-                    'Log2 Fold Change',
-                    'p Value',
-                    'Log2 Fold Change Lower Bound',
-                    'Log2 Fold Change Upper Bound',
-                    'Cells with Perturbation',
-                    'Mean UMI Count Among Cells with Perturbation',
-                    'Cells with Non-Targeting Guides',
-                    'Mean UMI Count Among Cells with Non-Targeting Guides',
-                  ]
-    this_df = pd.DataFrame(columns = column_list)
+    this_df = pd.DataFrame(columns = summary_columns)
     counter = 0
     control_num_cells = num_cells_per_perturbation['Non-Targeting']
     for key in sorted(f_change.keys()):
@@ -84,29 +84,47 @@ def construct_df(f_change, f_change_ci, num_cells_per_perturbation, by_feature):
     this_df.sort_values(by=['Log2 Fold Change'], ascending = True, inplace = True)
     return this_df
 
-def save_transcriptome_analysis_csv(base_dir, results_per_perturbation):
+def save_top_perturbed_genes(base_dir, results_per_perturbation,
+        column_map = TOP_GENES_SUMMARY_MAP, num_genes_to_keep = NUM_TOP_GENES):
     if results_per_perturbation is None or results_per_perturbation=={}:
         return
     cr_io.makedirs(base_dir, allow_existing=True)
+    fn = os.path.join(base_dir + '/', 'top_perturbed_genes.csv')
 
+    list_df_results = []
+    summary_df_columns = []
     for perturbation in results_per_perturbation:
-        fn = os.path.join(base_dir + '/', perturbation + '.csv')
-        this_results = results_per_perturbation.get(perturbation)
+        this_results = sanitize_perturbation_results(results_per_perturbation.get(perturbation))
 
-        this_results = this_results[this_results['sum_b'] > 0]
+        if this_results is None:
+            continue
+
+        this_results = this_results[column_map.keys()]
+        this_results = this_results[0:num_genes_to_keep]
+        this_results.reset_index(drop=True, inplace=True)
+        list_df_results.append(this_results)
+        summary_df_columns += ['Perturbation: ' +  perturbation + ', ' + s for s in column_map.values()]
+
+    summary_df = pd.concat(list_df_results, ignore_index = True, axis = 1)
+    summary_df.columns = summary_df_columns
+    summary_df.to_csv(fn, index = False)
+
+def sanitize_perturbation_results(res_table):
+    if res_table is None or res_table.empty:
+        return None
+
+    res_table = res_table[res_table['sum_b'] > 0]
         # at least 1 count amongst all the control cells
-        this_results = this_results[
-                            (this_results['sum_a'] >= MIN_COUNTS_PERTURBATION) | (this_results['sum_b'] >= MIN_COUNTS_CONTROL)
+    res_table = res_table[
+                 (res_table['sum_a'] >= MIN_COUNTS_PERTURBATION) | (res_table['sum_b'] >= MIN_COUNTS_CONTROL)
                                     ]
         # at least the minimum number of counts in either category (perturbation or control)
 
-        this_results['abs_log2_fold_change'] = np.abs(this_results['log2_fold_change'])
-        this_results.sort_values(by=['abs_log2_fold_change', 'p_value', 'Gene ID'],
-                                        ascending = [False, True, True], inplace=True)
-        # sort by abs log2 fold change
-
-        if this_results is not None:
-            this_results.to_csv(fn)
+    res_table['abs_log2_fold_change'] = np.abs(res_table['log2_fold_change'])
+    res_table.sort_values(by=['abs_log2_fold_change', 'adjusted_p_value', 'Gene Name'],
+                                    ascending = [False, True, True], inplace=True)
+        # sort by abs log2 fold change, adjusted_p_value, Gene Name, in that order
+    return res_table
 
 def _add_bcs_without_ps_calls(bc_targets_dict, bcs):
     bcs_without_ps_calls = list(set(bcs).difference(set(bc_targets_dict.keys())))
@@ -265,7 +283,7 @@ def get_perturbation_efficiency(  feature_ref_table,
     log2_fold_change_CIs = diff_exp_results['log2_fold_change_CIs']
     log2_fold_change = diff_exp_results['log2_fold_change']
 
-    return (log2_fold_change, log2_fold_change_CIs, num_cells_per_perturbation, results_all_perturbations, results_per_perturbation)
+    return (log2_fold_change, log2_fold_change_CIs, num_cells_per_perturbation, results_per_perturbation, results_all_perturbations)
 
 def _analyze_transcriptome(matrix, target_id_name_map,
                                     target_calls,
@@ -276,7 +294,6 @@ def _analyze_transcriptome(matrix, target_id_name_map,
                                     num_bootstraps,
                                     ci_lower, ci_upper,
                                     filter_list = FILTER_LIST,
-                                    diff_exp_columns = COLUMNS_DIFFEXP,
                                     ):
 
     """ Compute differential expression for each perturbation vs non-targeting control
@@ -296,17 +313,16 @@ def _analyze_transcriptome(matrix, target_id_name_map,
                     }
     """
 
-    DIFFERENTIAL_EXPRESSION = collections.namedtuple('DIFFERENTIAL_EXPRESSION', ['data'])
-    results_per_perturbation = {}
-    n_clusters = len(perturbation_keys.keys())
+    results_per_perturbation = collections.OrderedDict()
+    # MEASURE_PERTURBATIONS assumes this dict to be ordered
     filter_cluster_indices = [x for x in perturbation_keys if perturbation_keys[x] in filter_list]
+    n_clusters = len(perturbation_keys)
     n_effective_clusters = n_clusters - len(filter_cluster_indices)
 
-    # Create a numpy array with 3*k columns, where k is the number of perturbations
+     # Create a numpy array with 3*k columns, where k is the number of perturbations
     # k = n_clusters - 2 since we don't need to report results for ignore and non-targeting
     # each group of 3 columns is mean, log2, pvalue for cluster i
-    num_col_keys = len(diff_exp_columns)
-    all_de_results = np.zeros((matrix.features_dim, num_col_keys*n_effective_clusters))
+    all_de_results = np.zeros((matrix.features_dim, 3*n_effective_clusters))
 
     nt_indices = [x for x in perturbation_keys if perturbation_keys[x]=='Non-Targeting']
     if (nt_indices is None) or (nt_indices==[]):
@@ -314,13 +330,14 @@ def _analyze_transcriptome(matrix, target_id_name_map,
     nt_index = nt_indices[0]
 
     in_control_cluster = target_calls == nt_index
-    column_counter = 0
     feature_defs = matrix.feature_ref.feature_defs
     gene_ids = [feature_def.id for feature_def in feature_defs]
     gene_names = [feature_def.name for feature_def in feature_defs]
 
     log2_fold_change_CIs = {}
     log2_fold_change = {}
+    cluster_counter = 1
+    column_counter = 0
     for cluster in perturbation_keys:
         perturbation_name = perturbation_keys.get(cluster)
         if (cluster in filter_cluster_indices) or _should_filter(perturbation_name,
@@ -350,11 +367,10 @@ def _analyze_transcriptome(matrix, target_id_name_map,
         de_result['Gene Name'] = gene_names
         results_per_perturbation[perturbation_name] = de_result
 
-        col_key_ctr = 0
-        for (col_key, col_val) in diff_exp_columns.iteritems():
-            all_de_results[:, col_key_ctr + num_col_keys*(column_counter)] = de_result[col_val]
-        column_counter += 1
-
+        all_de_results[:, 0 + 3 * (cluster_counter - 1)] = de_result['sum_a']/len(group_a)
+        all_de_results[:, 1 + 3 * (cluster_counter - 1)] = de_result['log2_fold_change']
+        all_de_results[:, 2 + 3 * (cluster_counter - 1)] = de_result['adjusted_p_value']
+        column_counter += 3
 
         (this_log2_fc, this_log2_cis)   = _get_log2_fold_change(perturbation_name,
                                                                 de_result,
@@ -367,8 +383,12 @@ def _analyze_transcriptome(matrix, target_id_name_map,
         log2_fold_change[perturbation_name] = this_log2_fc
         log2_fold_change_CIs[perturbation_name] = this_log2_cis
 
-    return {'results_all_perturbations':DIFFERENTIAL_EXPRESSION(all_de_results),
-            'results_per_perturbation':results_per_perturbation,
+        cluster_counter += 1
+
+    all_de_results = all_de_results[:, 0:column_counter]
+
+    return {'results_per_perturbation':results_per_perturbation,
+            'results_all_perturbations':DIFFERENTIAL_EXPRESSION(all_de_results),
             'log2_fold_change_CIs': log2_fold_change_CIs,
             'log2_fold_change': log2_fold_change,
            }

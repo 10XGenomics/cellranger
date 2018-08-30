@@ -314,18 +314,28 @@ def run_differential_expression(matrix, clusters, sseq_params=None):
 
     return DIFFERENTIAL_EXPRESSION(all_de_results)
 
-def save_differential_expression_csv(clustering_key, de, matrix, base_dir):
-    out_dir = os.path.join(base_dir, clustering_key)
+def save_differential_expression_csv(clustering_key, de, matrix, base_dir,
+                                        cluster_names = None,
+                                        file_name = 'differential_expression'):
+    out_dir = base_dir
+    if clustering_key is not None:
+        out_dir = os.path.join(base_dir, clustering_key)
     cr_io.makedirs(out_dir, allow_existing=True)
 
-    diff_expression_fn = os.path.join(out_dir, 'differential_expression.csv')
+    diff_expression_fn = os.path.join(out_dir, file_name + '.csv')
     diff_expression_header = ['Feature ID', 'Feature Name']
 
     n_clusters = de.data.shape[1] / 3
     for i in xrange(n_clusters):
-        diff_expression_header += ['Cluster %d Mean Counts' % (i + 1),
-                                   'Cluster %d Log2 fold change' % (i + 1),
-                                   'Cluster %d Adjusted p value' % (i + 1), ]
+        if cluster_names is None:
+            diff_expression_header += ['Cluster %d Mean Counts' % (i + 1),
+                                       'Cluster %d Log2 fold change' % (i + 1),
+                                       'Cluster %d Adjusted p value' % (i + 1), ]
+        else:
+            diff_expression_header += ['Perturbation %s, Mean Counts' % cluster_names[i],
+                                       'Perturbation %s, Log2 fold change' % cluster_names[i],
+                                       'Perturbation %s, Adjusted p value' % cluster_names[i], ]
+
 
     diff_expression_prefixes = [(f.id, f.name) for f in matrix.feature_ref.feature_defs]
     analysis_io.save_matrix_csv(diff_expression_fn,
