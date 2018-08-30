@@ -21,11 +21,3 @@ stage CLOUPE_PREPROCESS(
     src py     "stages/cloupe/cloupe_preprocess",
 ) split (
 )
-
-stage CLOUPE_CONVERTER(
-    in  string pipestance_type,
-    in  string sample_id,
-    in  path   pipestance_path,
-    out cloupe output_for_cloupe,
-    src py     "stages/cloupe/cloupe_converter",
-)

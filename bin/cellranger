@@ -12,7 +12,6 @@ SUBCMDS=(
     count
     aggr
     reanalyze
-    mkloupe
     mat2csv
     --
     mkgtf
