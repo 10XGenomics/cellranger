@@ -78,7 +78,7 @@ def remove_bcs_with_high_umi_corrected_reads(correction_data, matrix):
 
     bcs_to_remove, reads_lost, removed_bcs_df = ab_utils.detect_aggregate_bcs(correction_data)
     filtered_bcs = ab_utils.remove_keys_from_dict(matrix.bcs_map, bcs_to_remove)
-    filtered_bcs = filtered_bcs.keys().sort()
+    filtered_bcs.keys().sort()
     cleaned_matrix = matrix.select_barcodes_by_seq(filtered_bcs)
 
     ### report how many aggregates were found, and the fraction of reads those accounted for
@@ -99,7 +99,9 @@ def filter_barcodes(args, outs):
     	### report all idenitified aggregate barcodes, together with their reads, umi corrected reads, fraction of corrected reads, and fraction of total reads
     	removed_bcs_df.to_csv(outs.aggregate_barcodes)
     	summary = metrics_to_report
-    else: summary = {}
+    else:
+        matrix = raw_matrix
+        summary = {}
 
     if args.cell_barcodes is not None:
         method_name = cr_constants.FILTER_BARCODES_MANUAL
