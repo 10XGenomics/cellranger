@@ -396,25 +396,31 @@ CRISPR_SEQUENCING_METRICS = [
         'format': 'integer',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_valid_barcodes',
+        'name': REPORT_PREFIX_CRISPR + 'reads_per_cell',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Mean Reads per Cell',
+        'description': 'The total number of sequenced reads divided by the number of barcodes associated with cell-containing partitions.',
+        'format': 'integer',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'good_bc_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Valid Barcodes',
         'description': 'Fraction of reads with a barcode found in or corrected to one that is found in the whitelist',
         'format': 'percent',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_corrected_barcodes',
+        'name': REPORT_PREFIX_CRISPR + 'corrected_bc_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Barcodes Corrected',
         'description': 'Fraction of reads with a barcode corrected to one in the whitelist',
         'format': 'percent',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_valid_umis',
+        'name': REPORT_PREFIX_CRISPR + 'good_umi_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Valid UMIs',
         'description': 'Fraction of reads with a UMI that does not contain unknown bases or homopolymers',
         'format': 'percent',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_reads_umi_corrected',
+        'name': REPORT_PREFIX_CRISPR + 'corrected_umi_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads that have Corrected UMIs',
         'description': 'Fraction of reads with a UMI that has been corrected',
         'format': 'percent',
@@ -423,13 +429,13 @@ CRISPR_SEQUENCING_METRICS = [
 
 CRISPR_APPLICATION_METRICS = [
      {
-        'name': REPORT_PREFIX_CRISPR + 'frac_raw_feature',
+        'name': REPORT_PREFIX_CRISPR + 'feature_bc_extracted_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads with Putative Protospacer Sequence',
         'description': 'Fraction of reads from which a putative protospacer sequence could be extracted',
         'format': 'percent',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_feature_reads',
+        'name': REPORT_PREFIX_CRISPR + 'multi_transcriptome_conf_mapped_reads_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Guide Reads',
         'description': 'Fraction of reads with a recognized protospacer sequence',
         'format': 'percent',
@@ -447,19 +453,19 @@ CRISPR_APPLICATION_METRICS = [
         'format': '%.0f',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_reads_feature_unknown',
+        'name': REPORT_PREFIX_CRISPR + 'unrecognized_feature_bc_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Protospacer Not Recognized',
         'description': 'Among all reads with a putative protospacer sequence, the fraction with a protospacer sequence that was not recognized',
         'format': 'percent',
     },
   {
-        'name': REPORT_PREFIX_CRISPR + 'frac_reads_feature_corrected',
+        'name': REPORT_PREFIX_CRISPR + 'corrected_feature_bc_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Protospacer Corrected',
         'description': 'Among all reads with a putative protospacer sequence, the fraction whose protospacer sequence was corrected to a recognized one',
         'format': 'percent',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'frac_reads_chimeras',
+        'name': REPORT_PREFIX_CRISPR + 'low_support_umi_reads_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads with Low Support UMI',
         'description': 'Fraction of reads associated with UMIs that have low read-support',
         'format': 'percent',
@@ -483,7 +489,7 @@ CRISPR_APPLICATION_METRICS = [
         'format': 'percent',
     },
     {
-        'name': REPORT_PREFIX_CRISPR + 'median_umis_per_cell',
+        'name': REPORT_PREFIX_CRISPR + 'multi_filtered_bcs_median_counts',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Median UMIs per Cell (summed over all recognized protospacers)',
         'description': 'Median UMIs per Cell (summed over all recognized protospacers)',
         'format': '%.2f',

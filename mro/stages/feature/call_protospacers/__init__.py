@@ -3,6 +3,7 @@
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved
 #
 import cellranger.feature.crispr.protospacer_calling as protospacer_calling
+import json
 import os
 import cellranger.feature.utils as feature_utils
 import cellranger.rna.library as rna_library
@@ -34,7 +35,8 @@ def main(args, outs):
         (outs.protospacer_calls_summary, outs.protospacer_calls_per_cell,
             outs.protospacer_call_metrics_json) = (None, None, None, None)
         return
-    protospacer_call_metrics = feature_utils.translate_feature_metrics_json_keys(args.counter_metrics_json, args.feature_type)
+    with open(args.counter_metrics_json) as f:
+        protospacer_call_metrics = json.load(f)
     report_prefix = feature_constants.PREFIX_FROM_FEATURE_TYPE.get(args.feature_type, 'FEATURE') + '_'
 
     filtered_feature_counts_matrix = cr_matrix.CountMatrix.load_h5_file(args.filtered_feature_counts_matrix)
@@ -59,11 +61,3 @@ def main(args, outs):
     feature_utils.write_json_from_dict(umi_thresholds, outs.umi_thresholds_json)
     feature_utils.write_csv_from_dict(umi_thresholds, outs.umi_thresholds_csv, "Protospacer, UMI threshold\n")
     feature_utils.write_json_from_dict(protospacer_call_metrics, outs.protospacer_call_metrics_json)
-
-
-
-
-
-
-
-

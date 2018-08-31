@@ -65,7 +65,11 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
     d['%s_filtered_bcs' % lib_constants.MULTI_REFS_PREFIX] = n_cell_bcs_union
 
     # Report reads/cell across all genomes
-    d['%s_%s_total_raw_reads_per_filtered_bc' % (lib_constants.MULTI_REFS_PREFIX, cr_constants.TRANSCRIPTOME_REGION)] = tk_stats.robust_divide(total_reads, n_cell_bcs_union)
+    mean_reads_per_cell = tk_stats.robust_divide(total_reads, n_cell_bcs_union)
+    d['%s_%s_total_raw_reads_per_filtered_bc' % (lib_constants.MULTI_REFS_PREFIX, cr_constants.TRANSCRIPTOME_REGION)] = mean_reads_per_cell
+    # Create a feature-barcode dual whose name makes sense
+    d['reads_per_cell'] = mean_reads_per_cell
+
     d['%s_%s_total_conf_mapped_reads_per_filtered_bc' % (lib_constants.MULTI_REFS_PREFIX, cr_constants.TRANSCRIPTOME_REGION)] = tk_stats.robust_divide(total_conf_mapped_reads, n_cell_bcs_union)
 
     # Split the matrix by genome
@@ -120,7 +124,10 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
                                                           cell_bcs_union)
         total_conf_mapped_reads_in_cells += cmb_reads[cell_bc_indices].sum()
         total_conf_mapped_barcoded_reads += cmb_reads.sum()
-    d['multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac'] = tk_stats.robust_divide(total_conf_mapped_reads_in_cells, total_conf_mapped_barcoded_reads)
+    frac_reads_in_cells = tk_stats.robust_divide(total_conf_mapped_reads_in_cells, total_conf_mapped_barcoded_reads)
+    d['multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac'] = frac_reads_in_cells
+    # Create a feature-barcode dual whose name makes sense
+    d['feature_reads_in_cells'] = frac_reads_in_cells
 
 
     # Compute fraction of reads usable (conf mapped, barcoded, filtered barcode)
@@ -144,10 +151,17 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
 
     # Fraction reads usable
     d['%s_transcriptome_usable_reads_frac' % lib_constants.MULTI_REFS_PREFIX] = tk_stats.robust_divide(usable_reads, total_reads)
+    # Create a feature barcoding dual whose name makes sense
+    d['frac_feature_reads_usable'] = tk_stats.robust_divide(usable_reads, total_reads)
+
     # Usable reads
     d['%s_usable_reads' % lib_constants.MULTI_REFS_PREFIX] = usable_reads
+
     # Usable reads per cell
-    d['%s_usable_reads_per_filtered_bc' % lib_constants.MULTI_REFS_PREFIX] = tk_stats.robust_divide(usable_reads, n_cell_bcs_union)
+    reads_usable_per_cell = tk_stats.robust_divide(usable_reads, n_cell_bcs_union)
+    d['%s_usable_reads_per_filtered_bc' % lib_constants.MULTI_REFS_PREFIX] = reads_usable_per_cell
+    # Create a feature barcoding dual whose name makes sense
+    d['feature_reads_usable_per_cell'] = reads_usable_per_cell
 
 
     # Compute matrix density

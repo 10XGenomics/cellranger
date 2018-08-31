@@ -219,7 +219,11 @@ impl MetricGroup for RegionMetrics {
     fn report(&self) -> BTreeMap<String, Value> {
         let mut results = BTreeMap::new();
         results.insert("mapped_reads_frac".into(), self.mapped_reads.report());
+
         results.insert("conf_mapped_reads_frac".into(), self.conf_mapped_reads.report());
+        // Duplicate this metric so that it has a "feature barcode" dual whose name makes sense.
+        results.insert("frac_feature_reads".into(), self.conf_mapped_reads.report());
+
         results.insert("conf_mapped_barcoded_reads_frac".into(), self.conf_mapped_bc_reads.report());
         return results
     }
