@@ -99,9 +99,11 @@ def main(args, outs):
                               barcode_info=barcode_info)
 
     # Initialize per-library metrics
-    lib_metrics = defaultdict(lambda: {
-        cr_mol_counter.USABLE_READS_METRIC: 0
-    })
+    lib_metrics = {}
+    for lib_idx in xrange(len(library_info)):
+        lib_metrics[str(lib_idx)] = {}
+        lib_metrics[str(lib_idx)][cr_mol_counter.USABLE_READS_METRIC] = 0
+
 
     # Record read-counts per molecule. Note that UMIs are not contiguous
     # in the input because no sorting was done after UMI correction.
