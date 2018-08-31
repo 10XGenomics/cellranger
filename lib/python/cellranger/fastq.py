@@ -73,7 +73,7 @@ def infer_barcode_reverse_complement(barcode_whitelist, read_iter):
     if reg_valid_count:
         return rc_valid_count >= ((rc_valid_count + reg_valid_count) *
                                   cr_constants.REVCOMP_BARCODE_THRESHOLD)
-    return True
+    return False
 
 class BarcodeCounter:
     def __init__(self, barcode_whitelist, out_counts, gem_groups=None):

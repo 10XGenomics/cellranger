@@ -110,29 +110,32 @@ fn load_barcode_dist(bc_counts_json: &str,
                      bc_whitelist_txt: &str,
                      gem_group: &u8,
                      proportions: bool,
-                     library_type: &str) -> HashMap<String, f64> {
-    // TODO untangle this mess and handle errors
-    let bc_counts: Vec<f64> = utils::read_json(bc_counts_json)
+                     library_type: &str) -> (u64, HashMap<String, f64>) {
+    // Returns total_counts (incl. pseudocounts) and the distribution
+    let bc_counts: Vec<u64> = utils::read_json(bc_counts_json)
         .get(library_type)
         .expect(&format!("Failed to find library type {} in barcode counts JSON", library_type))
         .as_array()
         .expect("Failed to load barcode counts JSON data as array")
-        .to_vec().iter().map(|elt| elt.as_f64().unwrap()).collect();
+        .to_vec().iter().map(|elt| elt.as_u64().unwrap()).collect();
+
     let bc_whitelist: Vec<String> = utils::load_txt_maybe_gz(bc_whitelist_txt);
     let start_idx = (gem_group - 1) as usize * bc_whitelist.len();
     let end_idx = *gem_group as usize * bc_whitelist.len();
     let mut bc_dist = HashMap::new();
-    let mut total_counts = 0_f64;
+    let mut total_counts = 0u64;
     for (bc, value) in bc_whitelist.iter().zip(bc_counts[start_idx..end_idx].iter()) {
         total_counts += *value;
-        bc_dist.insert(bc.clone(), *value);
+        bc_dist.insert(bc.clone(), *value as f64);
     }
     if proportions {
         for val in bc_dist.values_mut() {
-            *val /= total_counts;
+            // Add pseudocounts
+            *val += 1.0;
+            *val /= (total_counts + bc_whitelist.len() as u64) as f64;
         }
     }
-    return bc_dist;
+    return (total_counts + bc_whitelist.len() as u64, bc_dist);
 }
 
 fn load_barcode_whitelist(bc_whitelist_txt: &str) -> HashSet<String> {
@@ -188,6 +191,8 @@ pub struct BarcodeUmiChecker {
     barcode_translation: Option<HashMap<String, String>>,
     barcode_dist: HashMap<String, f64>,
     barcodes_checkable: bool,
+    // Includes pseudocounts
+    total_barcode_count: u64,
 }
 
 impl BarcodeUmiChecker {
@@ -200,21 +205,27 @@ impl BarcodeUmiChecker {
         let mut barcode_whitelist = HashSet::new();
         let mut barcode_translation = None;
         let mut barcode_dist = HashMap::new();
+        let mut total_barcode_count = 0;
+
         if bc_whitelist_txt != "null" {
             barcodes_checkable = true;
             barcode_whitelist = load_barcode_whitelist(bc_whitelist_txt);
+
             if translate {
                 barcode_translation = load_barcode_translation(bc_whitelist_txt,
                                                                &barcode_whitelist);
             }
-            barcode_dist = load_barcode_dist(bc_counts_json, bc_whitelist_txt,
-                                             &gem_group, true, library_type);
+            let r = load_barcode_dist(bc_counts_json, bc_whitelist_txt,
+                                      &gem_group, true, library_type);
+            total_barcode_count = r.0;
+            barcode_dist = r.1;
         }
         return BarcodeUmiChecker {
             barcode_whitelist: barcode_whitelist,
             barcode_translation: barcode_translation,
             barcode_dist: barcode_dist,
             barcodes_checkable: barcodes_checkable,
+            total_barcode_count: total_barcode_count,
         }
     }
 
@@ -235,14 +246,28 @@ impl BarcodeUmiChecker {
                 if *base != orig_base {
                     test_seq[i] = *base;
                     let test_str = str::from_utf8(&test_seq).unwrap().to_string();
-                    match self.barcode_dist.get(&test_str) {
+
+                    let maybe_prior =
+                        // Observed frequency if observed
+                        self.barcode_dist.get(&test_str).cloned()
+                        // Approximate pseudocount if unobserved but on whitelist
+                        .or_else(||
+                                 if self.barcode_whitelist.contains(&test_str) {
+                                     Some(1.0/(self.total_barcode_count as f64))
+                                 } else {
+                                     None
+                                 }
+                        );
+
+
+                    match maybe_prior {
                         Some(p_whitelist) => {
                             let qv = cmp::min(qual[i] - ILLUMINA_QUAL_OFFSET, BC_MAX_QV) as f64;
                             let p_edit = 10.0_f64.powf(-qv / 10.0);
                             let likelihood = p_whitelist * p_edit;
                             whitelist_likelihoods.insert(test_str.clone(), likelihood);
                             likelihood_sum += likelihood;
-                        }
+                        },
                         None => (),
                     }
                 }
