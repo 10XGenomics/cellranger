@@ -32,10 +32,14 @@ pipeline SC_RNA_AGGREGATOR_CS(
         matrix_h5       = null,
     )
 
+    call CHECK_MOLECULE_INFO_VERSION(
+        sample_defs = PARSE_CSV.sample_defs,
+    )
+
     call SC_RNA_AGGREGATOR(
         sample_id             = self.sample_id,
         sample_desc           = self.sample_desc,
-        sample_defs           = PARSE_CSV.sample_defs,
+        sample_defs           = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
         normalization_mode    = self.normalization_mode,
         no_secondary_analysis = self.no_secondary_analysis,
         num_analysis_bcs      = null,

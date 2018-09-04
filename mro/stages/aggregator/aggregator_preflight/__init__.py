@@ -3,11 +3,8 @@
 # Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 #
 import martian
-import os
-
 import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mol_counter
-import cellranger.io as cr_io
 
 __MRO__ = """
 stage AGGREGATOR_PREFLIGHT(
@@ -27,7 +24,6 @@ def main(args, outs):
     # TODO make assertions about the required metrics!
 
     # check that all molecule files conform to spec
-    files_seen = set()
     libraries_seen = set()
     for sample in args.sample_defs:
         library_id = sample[cr_constants.AGG_ID_FIELD]
@@ -41,26 +37,7 @@ def main(args, outs):
 
         mol_h5 = sample[cr_constants.AGG_H5_FIELD]
 
-        if not os.path.exists(mol_h5):
-            martian.exit("Input molecule file does not exist: %s" % mol_h5)
-
-        if not os.access(mol_h5, os.R_OK):
-            martian.exit("Input molecule file is not readable, please check file permissions: %s" % mol_h5)
-
-        h5_filetype = cr_io.get_h5_filetype(mol_h5)
-        if h5_filetype and h5_filetype != cr_mol_counter.MOLECULE_H5_FILETYPE:
-            martian.exit("Input is a %s file, but a molecule file is required" % h5_filetype)
-
-        if mol_h5 in files_seen:
-            martian.exit("Same molecule file is specified in multiple sample definitions: %s" % mol_h5)
-        else:
-            files_seen.add(mol_h5)
-
         with cr_mol_counter.MoleculeCounter.open(mol_h5, 'r') as counter:
-
-            mol_file_version = counter.file_version
-            if mol_file_version < 2:
-                martian.exit("Molecule file is out of date (format version must be >= 2) %s" % mol_h5)
 
             mol_cr_version = counter.get_metric('cellranger_version')
             if not mol_cr_version:

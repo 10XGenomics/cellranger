@@ -42,7 +42,7 @@ def main(args, outs):
 
         for lib_idx, old_lib in enumerate(old_libraries):
             # Remap gem groups
-            old_gg = old_lib['gem_group']
+            old_gg = int(old_lib['gem_group'])
 
             # Increment gem group if this is a new one from the same input sample
             if old_gg not in seen_ggs:

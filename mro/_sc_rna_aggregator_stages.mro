@@ -27,6 +27,16 @@ stage PARSE_CSV(
     src py    "stages/aggregator/parse_csv",
 )
 
+stage CHECK_MOLECULE_INFO_VERSION(
+    in  map[] sample_defs,
+    out map[] updated_sample_defs,
+    src py    "stages/aggregator/check_molecule_info_version",
+) split (
+    in  int   mol_h5_version,
+    in  map   sample_def,
+    out map   updated_sample_def,
+)
+
 stage SETUP_SAMPLES(
     in  map[] sample_defs,
     out map   gem_group_index,

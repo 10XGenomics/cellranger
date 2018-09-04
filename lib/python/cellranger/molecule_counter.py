@@ -5,15 +5,19 @@
 from collections import defaultdict, OrderedDict, namedtuple
 import cPickle
 import h5py
+import tables
 import itertools
 import json
 import math
 import numpy as np
-from cellranger.feature_ref import FeatureReference
+from cellranger.feature_ref import FeatureReference, FeatureDef
 import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
+import cellranger.stats as cr_stats
 import cellranger.h5_constants as h5_constants
+import cellranger.library_constants as lib_constants
 import cellranger.io as cr_io
+import tenkit.seq as tk_seq
 
 MOLECULE_H5_FILETYPE = 'molecule'
 
@@ -460,14 +464,14 @@ class MoleculeCounter:
 
         feature_ids = [f.id for f in feature_ref.feature_defs]
 
-        print 'Merging barcode info'
+        # print 'Merging barcode info'
         bc_infos = []
         for filename in in_filenames:
             with MoleculeCounter.open(filename, 'r') as mc:
                 bc_infos.append(mc.get_barcode_info())
         merged_bc_info = MoleculeCounter.merge_barcode_infos(bc_infos)
 
-        print 'Concatenating molecule info files'
+        # print 'Concatenating molecule info files'
         out_mc = MoleculeCounter.open(out_filename, mode='w',
                                       feature_ref=feature_ref,
                                       barcodes=barcodes,
@@ -503,9 +507,12 @@ class MoleculeCounter:
         return num_rows - 1
 
     def bisect(self, query, key_func):
+        return MoleculeCounter.bisect_static(self.nrows(), query, key_func)
+
+    @staticmethod
+    def bisect_static(num_rows, query, key_func):
         """ Performs a binary search to find the leftmost insertion point of query.
         Takes a key function, where key_func(i) = the value to compare to at index i."""
-        num_rows = self.nrows()
         lo = 0
         hi = num_rows
         exists = True
@@ -532,12 +539,16 @@ class MoleculeCounter:
         return 0
 
     def get_chunks_from_partition(self, values, key_func):
+        return MoleculeCounter.get_chunks_from_partition_static(self.nrows(), values, key_func)
+
+    @staticmethod
+    def get_chunks_from_partition_static(num_rows, values, key_func):
         """ Get chunks by partitioning on the specified values."""
-        starts = [0] + [self.bisect(val, key_func) for val in values[1:]]
+        starts = [0] + [MoleculeCounter.bisect_static(num_rows, val, key_func) for val in values[1:]]
         n = len(starts)
         for i in xrange(n):
             chunk_start = starts[i]
-            chunk_end = starts[i+1] if i+1 < n else self.nrows()
+            chunk_end = starts[i+1] if i+1 < n else num_rows
             yield (chunk_start, chunk_end - chunk_start)
 
     def get_chunks(self, target_chunk_len, preserve_boundaries=True):
@@ -679,3 +690,171 @@ class MoleculeCounter:
                     continue
                 total_mapped_reads += reads
         queue.put(total_mapped_reads)
+
+    @staticmethod
+    def convert_v2_to_v3(v2_mole_info_h5, out_v3_mole_info_h5):
+        """
+        Given the input v2 molecule info h5 file, convert it into v3 file.
+        """
+        def get_v2_metrics(h5_file):
+            group = tables.open_file(h5_file, 'r').get_node('/metrics')
+            attrset = group._v_attrs
+            return {k: attrset[k] for k in attrset._f_list()}
+
+        def decompress_barcode_seq(x, barcode_length, bits=64):
+            x = np.uint64(x)
+            assert barcode_length <= (bits/2 - 1)
+            if x & (1L << (bits-1)):
+                return 'N' * barcode_length
+            result = bytearray(barcode_length)
+            for i in xrange(barcode_length):
+                result[(barcode_length-1)-i] = tk_seq.NUCS[x & np.uint64(0b11)]
+                x = x >> np.uint64(2)
+            return str(result)
+        
+        def build_feature_ref(gene_ids, gene_names, genome_index):
+            feature_defs = []
+            if len(genome_index) == 1:
+                genome = genome_index.keys()[0]
+                for idx, (gene_id, gene_name) in enumerate(zip(gene_ids, gene_names)):
+                    feature_defs.append(FeatureDef(index=idx,
+                                                   id=gene_id,
+                                                   name=gene_name,
+                                                   feature_type=lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
+                                                   tags={'genome': genome}))
+            else:
+                for idx, (gene_id, gene_name) in enumerate(zip(gene_ids, gene_names)):
+                    genome = gene_id.split('_')[0]
+                    feature_defs.append(FeatureDef(index=idx,
+                                                   id=gene_id,
+                                                   name=gene_name,
+                                                   feature_type=lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
+                                                   tags={'genome': genome}))
+
+            return FeatureReference(feature_defs, ['genome'])
+        
+        def get_chunks_by_gem_group(gem_group_arr):
+            """ Return exactly one chunk per gem group."""
+            # verify gem groups are sorted
+            assert np.all(np.diff(gem_group_arr)>=0)
+            num_rows = gem_group_arr.shape[0]
+            unique_ggs = np.unique(gem_group_arr)
+            gg_key = lambda i: gem_group_arr[i]
+            chunk_iter = MoleculeCounter.get_chunks_from_partition_static(num_rows, unique_ggs, gg_key)
+            for (gg, chunk) in zip(unique_ggs, chunk_iter):
+                yield (gg, chunk[0], chunk[1])
+        
+        v2_mc_in = h5py.File(v2_mole_info_h5, 'r')
+        v2_metrics = get_v2_metrics(v2_mole_info_h5)
+
+        v2_genome_ids = v2_mc_in['genome_ids']
+        v2_genome_name_to_index = {g:i for i, g in enumerate(v2_genome_ids)}
+        
+        # Feature Ref
+        new_feature_ref = build_feature_ref(v2_mc_in['gene_ids'], v2_mc_in['gene_names'], v2_genome_name_to_index)
+        
+        # barcode whitelist
+        barcode_length = v2_metrics[BC_LENGTH_METRIC]
+        barcode_whitelist = cr_utils.load_barcode_whitelist(v2_metrics[BC_WHITELIST_METRIC])
+        barcode_to_idx = OrderedDict((k, i) for i,k in enumerate(barcode_whitelist))
+        gg_total_diversity = len(barcode_whitelist)
+        
+        v2_genomes = np.asarray(v2_mc_in['genome'], dtype=np.uint8)  # <-> genome information goes into feature_idx in v3
+        v2_gene = np.asarray(v2_mc_in['gene'], dtype=MOLECULE_INFO_COLUMNS['feature_idx'])# <-> feature_idx in v3
+        v2_conf_mapped_reads = np.asarray(v2_mc_in['reads'], dtype=MOLECULE_INFO_COLUMNS['count']) # <-> count in v3
+        v2_barcodes = np.asarray(v2_mc_in['barcode'], dtype=np.uint64) # <-> transit into barcode_idx in v3
+        v2_umis = np.asarray(v2_mc_in['umi'], dtype=MOLECULE_INFO_COLUMNS['umi']) # <-> umi in v3
+        v2_gem_groups = np.asarray(v2_mc_in['gem_group'], dtype=MOLECULE_INFO_COLUMNS['gem_group']) # <-> gem_group in v3 
+
+        library_info = []
+        barcode_info_genomes, barcode_info_pass_filter = [], []
+        barcode_idx_list, feature_idx_list, library_idx_list = [], [], [] 
+        gem_group_list, count_list, umi_list = [], [], []
+
+        v2_metrics[LIBRARIES_METRIC] = {}
+        # each gem_group is a library
+        for lib_idx, (gem_group, chunk_start, chunk_len) in enumerate(get_chunks_by_gem_group(v2_gem_groups)):
+            library_info.append({
+                'gem_group': int(gem_group), 
+                'library_id': str(lib_idx), 
+                'library_type': lib_constants.GENE_EXPRESSION_LIBRARY_TYPE
+            })
+
+            # per library, raw_read_pairs and usable_read_pairs info
+            v2_metrics[LIBRARIES_METRIC][str(lib_idx)] = {
+                USABLE_READS_METRIC : v2_metrics[GEM_GROUPS_METRIC][gem_group]['conf_mapped_filtered_bc_reads'], 
+                TOTAL_READS_METRIC : v2_metrics[GEM_GROUPS_METRIC][gem_group]['total_reads']
+            }
+
+            recovered_cells = v2_metrics[GEM_GROUPS_METRIC][gem_group].get(GG_RECOVERED_CELLS_METRIC, None)
+            force_cells = v2_metrics[GEM_GROUPS_METRIC][gem_group].get(GG_FORCE_CELLS_METRIC, None)
+
+            chunk_end = chunk_start + chunk_len
+            genomes_for_gem_group = v2_genomes[chunk_start:chunk_end]
+            bcs_for_gem_group = v2_barcodes[chunk_start:chunk_end]
+            reads_for_gem_group = v2_conf_mapped_reads[chunk_start:chunk_end]
+            gene_for_gem_group = v2_gene[chunk_start:chunk_end]
+            umis_for_gem_group = v2_umis[chunk_start:chunk_end]
+            
+            for genome_id in v2_genome_ids:
+                g_idx = v2_genome_name_to_index[genome_id]
+                genome_indices = genomes_for_gem_group == g_idx
+
+                if genome_indices.sum() == 0:
+                    # edge case - there's no data for this genome (e.g. empty sample, false barnyard sample, or nothing confidently mapped)
+                    continue
+
+                bcs_for_genome = bcs_for_gem_group[genome_indices]
+                reads_for_genome = reads_for_gem_group[genome_indices]
+                gene_for_genome = gene_for_gem_group[genome_indices]
+                umis_for_genome = umis_for_gem_group[genome_indices]
+
+                # only count UMIs with at least one conf mapped read
+                umi_conf_mapped_to_genome = reads_for_genome > 0
+                bc_breaks = bcs_for_genome[1:] - bcs_for_genome[:-1]
+                bc_breaks = np.concatenate(([1], bc_breaks)) # first row is always a break
+                bc_break_indices = np.nonzero(bc_breaks)[0]
+                unique_bcs = bcs_for_genome[bc_break_indices]
+                umis_per_bc = np.add.reduceat(umi_conf_mapped_to_genome, bc_break_indices)
+                
+                if force_cells is not None:
+                    top_bc_indices, _, _ = cr_stats.filter_cellular_barcodes_fixed_cutoff(umis_per_bc, force_cells)
+                else:
+                    top_bc_indices, _, _ = cr_stats.filter_cellular_barcodes_ordmag(umis_per_bc, recovered_cells, gg_total_diversity)
+                
+                # barcode info
+                barcode_seq_to_idx = {b:barcode_to_idx[decompress_barcode_seq(b, barcode_length)] for b in unique_bcs}
+
+                barcode_info_genomes.append(genome_id)
+                for b in unique_bcs[top_bc_indices]:
+                    barcode_info_pass_filter.append((barcode_seq_to_idx[b], lib_idx, g_idx))  
+
+                # data
+                barcode_idx_list.append(np.vectorize(barcode_seq_to_idx.get)(bcs_for_genome))
+                count_list.append(reads_for_genome)
+                gem_group_list.append(np.full(reads_for_genome.shape[0], gem_group, dtype=MOLECULE_INFO_COLUMNS['gem_group']))
+                library_idx_list.append(np.full(reads_for_genome.shape[0], lib_idx, dtype=MOLECULE_INFO_COLUMNS['library_idx']))
+                feature_idx_list.append(gene_for_genome)
+                umi_list.append(umis_for_genome)
+        
+        new_barcode_info = BarcodeInfo(
+            pass_filter=np.array(barcode_info_pass_filter, dtype=BARCODE_INFO_DTYPES['pass_filter']),
+            genomes=barcode_info_genomes,
+        )
+
+        with MoleculeCounter.open(out_v3_mole_info_h5, 'w',
+                                  feature_ref=new_feature_ref,
+                                  barcodes=barcode_whitelist,
+                                  library_info=library_info,
+                                  barcode_info=new_barcode_info,
+        ) as out_mc:
+            out_mc.append_column('barcode_idx', np.concatenate(barcode_idx_list))
+            out_mc.append_column('count', np.concatenate(count_list))
+            out_mc.append_column('feature_idx', np.concatenate(feature_idx_list))
+            out_mc.append_column('gem_group', np.concatenate(gem_group_list))
+            out_mc.append_column('umi', np.concatenate(umi_list))
+            # library_idx is the same as gem_group_list 
+            out_mc.append_column('library_idx', np.concatenate(library_idx_list))
+            out_mc.set_all_metrics(v2_metrics)
+        
+        return
