@@ -16,16 +16,8 @@ pipeline _CRISPR_ANALYZER(
     in  csv    feature_reference,
     in  string feature_type,
     in  json   counter_metrics_json,
-    out csv    protospacer_calls_summary,
-    out csv    protospacer_calls_per_cell,
     out json   crispr_analysis_metrics_json,
-    out json   cells_per_protospacer,
-    out json   umi_thresholds_json,
-    out csv    umi_thresholds_csv,
-    out csv    perturbations_by_feature,
-    out csv    perturbations_by_target,
-    out path   transcriptome_analysis_by_feature,
-    out path   transcriptome_analysis_by_target,
+    out path   crispr_analysis,
 )
 {
     call CALL_PROTOSPACERS(
@@ -53,16 +45,20 @@ pipeline _CRISPR_ANALYZER(
         ignore_multiples           = false,
     )
 
+    call SUMMARIZE_CRISPR_ANALYSIS(
+        protospacer_calls_summary  = CALL_PROTOSPACERS.protospacer_calls_summary,
+        protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
+        cells_per_protospacer      = CALL_PROTOSPACERS.cells_per_protospacer,
+        protospacer_umi_thresholds_csv = CALL_PROTOSPACERS.protospacer_umi_thresholds_csv,
+        protospacer_umi_thresholds_json = CALL_PROTOSPACERS.protospacer_umi_thresholds_json,
+        perturbation_efficiencies_by_feature = _PERTURBATIONS_BY_FEATURE.perturbation_efficiencies,
+        perturbations_efficiencies_by_target = _PERTURBATIONS_BY_TARGET.perturbation_efficiencies,
+        perturbation_effects_by_feature = _PERTURBATIONS_BY_FEATURE.perturbation_effects_path,
+        perturbation_effects_by_target = _PERTURBATIONS_BY_TARGET.perturbation_effects_path,
+    )
+
     return (
-        protospacer_calls_summary    = CALL_PROTOSPACERS.protospacer_calls_summary,
-        protospacer_calls_per_cell   = CALL_PROTOSPACERS.protospacer_calls_per_cell,
-        perturbations_by_feature     = _PERTURBATIONS_BY_FEATURE.perturbation_efficiencies,
-        perturbations_by_target      = _PERTURBATIONS_BY_TARGET.perturbation_efficiencies,
         crispr_analysis_metrics_json = CALL_PROTOSPACERS.protospacer_call_metrics_json,
-        cells_per_protospacer        = CALL_PROTOSPACERS.cells_per_protospacer,
-        transcriptome_analysis_by_feature = _PERTURBATIONS_BY_FEATURE.transcriptome_analysis_csv,
-        transcriptome_analysis_by_target = _PERTURBATIONS_BY_TARGET.transcriptome_analysis_csv,
-        umi_thresholds_csv           = CALL_PROTOSPACERS.umi_thresholds_csv,
-        umi_thresholds_json          = CALL_PROTOSPACERS.umi_thresholds_json,
+        crispr_analysis              = SUMMARIZE_CRISPR_ANALYSIS.crispr_analysis,
     )
 }

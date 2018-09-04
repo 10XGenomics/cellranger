@@ -22,8 +22,8 @@ stage CALL_PROTOSPACERS(
     out csv    protospacer_calls_per_cell,
     out json   protospacer_call_metrics_json,
     out json   cells_per_protospacer,
-    out json   umi_thresholds_json,
-    out csv    umi_thresholds_csv,
+    out json   protospacer_umi_thresholds_json,
+    out csv    protospacer_umi_thresholds_csv,
     src py     "stages/feature/call_protospacers",
 ) using (
     mem_gb = 6,
@@ -58,6 +58,6 @@ def main(args, outs):
     perturbation_calls_table.to_csv(outs.protospacer_calls_per_cell)
     ps_calls_summary.to_csv(outs.protospacer_calls_summary)
     feature_utils.write_json_from_dict(cells_with_ps, outs.cells_per_protospacer)
-    feature_utils.write_json_from_dict(umi_thresholds, outs.umi_thresholds_json)
-    feature_utils.write_csv_from_dict(umi_thresholds, outs.umi_thresholds_csv, "Protospacer, UMI threshold\n")
+    feature_utils.write_json_from_dict(umi_thresholds, outs.protospacer_umi_thresholds_json)
+    feature_utils.write_csv_from_dict(umi_thresholds, outs.protospacer_umi_thresholds_csv, "Protospacer, UMI threshold\n")
     feature_utils.write_json_from_dict(protospacer_call_metrics, outs.protospacer_call_metrics_json)

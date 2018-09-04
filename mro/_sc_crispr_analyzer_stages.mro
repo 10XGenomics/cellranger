@@ -17,8 +17,8 @@ stage CALL_PROTOSPACERS(
     out csv    protospacer_calls_per_cell,
     out json   protospacer_call_metrics_json,
     out json   cells_per_protospacer,
-    out json   umi_thresholds_json,
-    out csv    umi_thresholds_csv,
+    out json   protospacer_umi_thresholds_json,
+    out csv    protospacer_umi_thresholds_csv,
     src py     "stages/feature/call_protospacers",
 ) using (
     mem_gb = 16,
@@ -31,9 +31,25 @@ stage MEASURE_PERTURBATIONS(
     in  bool by_feature,
     in  bool ignore_multiples,
     out csv  perturbation_efficiencies,
-    out path transcriptome_analysis_csv,
+    out path perturbation_effects_path,
     src py   "stages/feature/measure_perturbations",
 ) using (
     mem_gb  = 12,
     threads = 2,
+)
+
+stage SUMMARIZE_CRISPR_ANALYSIS(
+    in  csv  protospacer_calls_summary,
+    in  csv  protospacer_calls_per_cell,
+    in  json cells_per_protospacer,
+    in  csv  protospacer_umi_thresholds_csv,
+    in  json protospacer_umi_thresholds_json,
+    in  csv  perturbation_efficiencies_by_feature,
+    in  csv  perturbations_efficiencies_by_target,
+    in  path perturbation_effects_by_feature,
+    in  path perturbation_effects_by_target,
+    out path crispr_analysis,
+    src py   "stages/feature/summarize_crispr_analysis",
+) using (
+    mem_gb = 4,
 )

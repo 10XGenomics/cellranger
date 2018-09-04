@@ -9,6 +9,10 @@ import cellranger.stats as cr_stats
 UMI_NUM_TRIES = 10 # Number of initial points to try for GMM-fitting
 UMI_MIX_INIT_SD = 0.25 # Intial standard deviation for GMM components
 
+CRISPR_ANALYSIS_FILE_NAMES =  ["protospacer_calls_summary.csv", "protospacer_calls_per_cell.csv", "cells_per_protospacer.json",
+                                    "protospacer_umi_thresholds_csv.csv", "protospacer_umi_thresholds_json.json",
+                                    "perturbation_efficiencies_by_feature.csv", "perturbation_efficiencies_by_target.csv"]
+
 def get_protospacer_call_metrics(ps_calls_summary, num_gex_cbs, report_prefix):
     metrics_dict = {}
     num_cells_with_multiple_protospacers = ps_calls_summary.loc['> 1 protospacer expressed', '# Cells']

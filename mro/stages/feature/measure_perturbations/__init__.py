@@ -20,7 +20,7 @@ stage MEASURE_PERTURBATIONS_PD(
     in  bool by_feature,
     in  bool ignore_multiples,
     out csv perturbation_efficiencies,
-    out path transcriptome_analysis_csv,
+    out path perturbation_effects_path,
     src py  "stages/feature_pd/measure_perturbations_pd",
 ) using (
     mem_gb = 6,
@@ -66,8 +66,8 @@ def main(args, outs):
     perturbation_efficiency_summary = measure_perturbations.construct_perturbation_efficiency_summary(log2_fold_change, log2_fold_change_ci,
                                                     num_cells_per_perturbation, args.by_feature)
     perturbation_efficiency_summary.to_csv(outs.perturbation_efficiencies, index=False)
-    measure_perturbations.save_top_perturbed_genes(outs.transcriptome_analysis_csv, results_per_perturbation)
-    cr_diffexp.save_differential_expression_csv(None, results_all_perturbations, gex_count_matrix, outs.transcriptome_analysis_csv,
+    measure_perturbations.save_top_perturbed_genes(outs.perturbation_effects_path, results_per_perturbation)
+    cr_diffexp.save_differential_expression_csv(None, results_all_perturbations, gex_count_matrix, outs.perturbation_effects_path,
                                                      cluster_names = results_per_perturbation.keys(), file_name = SUMMARY_FILE_NAME)
     # this call assumes that results_all_perturbations is an OrderedDict, hence can get ordered names from keys()
 
