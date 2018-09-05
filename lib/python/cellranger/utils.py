@@ -141,10 +141,14 @@ def remove_genome_from_str(s, genomes):
     if len(genomes) == 1:
         return s
 
+    # Gene names/ids/chroms are padded with N underscores to achieve the same prefix length
+    #   for all genomes, e.g., GRCh38_* and mm10___*
+    max_len = max(len(g) for g in genomes)
+
     for genome in genomes:
         if s.startswith(genome):
-            # Strip genome and subsequent underscore
-            return s[(1 + len(genome)):]
+            # Strip genome and subsequent underscores
+            return s[(1 + max_len):]
 
     raise Exception('%s does not have valid associated genome' % s)
 
