@@ -49,12 +49,18 @@ def split(args):
         else:
             files_seen.add(mol_h5)
 
+        mc_h5 = h5py.File(sample_def[cr_constants.AGG_H5_FIELD], 'r')
         try:
-            mol_h5_version = h5py.File(sample_def[cr_constants.AGG_H5_FIELD], 'r').attrs[cr_mol_counter.FILE_VERSION_KEY]
+            mol_h5_version = mc_h5.attrs[cr_mol_counter.FILE_VERSION_KEY]
         except AttributeError:
             martian.exit("The molecule info HDF5 file (version %d) was produced by an older version of Cell Ranger. Reading these files is unsupported." % mol_h5_version)
 
-        mem_gb = 8 if mol_h5_version == 2 else 1
+        if mol_h5_version == 2:
+            nrows = mc_h5['barcode'].shape[0]
+            mem_gb = cr_mol_counter.MoleculeCounter.estimate_mem_gb(nrows, scale=4)
+        else: 
+            mem_gb = 1
+
         chunks.append({
             'sample_def': sample_def,
             'mol_h5_version': mol_h5_version,
@@ -68,7 +74,8 @@ def main(args, outs):
 
     if args.mol_h5_version == 2:
         v2_mole_info_h5 = args.sample_def[cr_constants.AGG_H5_FIELD]
-        v3_filename = '{x[0]}_v3_{x[2]}{x[1]}'.format(x=list(os.path.splitext(v2_mole_info_h5))+[datetime.datetime.now().isoformat()])
+        v2_file_basename = os.path.basename(v2_mole_info_h5)
+        v3_filename = '{x[0]}_v3_{x[2]}{x[1]}'.format(x=list(os.path.splitext(v2_file_basename))+[datetime.datetime.now().isoformat()])
         out_v3_mole_info_h5 = martian.make_path(v3_filename)
 
         cr_mol_counter.MoleculeCounter.convert_v2_to_v3(v2_mole_info_h5, out_v3_mole_info_h5)
