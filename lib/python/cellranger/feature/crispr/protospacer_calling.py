@@ -9,6 +9,7 @@ import cellranger.stats as cr_stats
 UMI_NUM_TRIES = 10 # Number of initial points to try for GMM-fitting
 UMI_MIX_INIT_SD = 0.25 # Intial standard deviation for GMM components
 
+ESSENTIAL_CRISPR_FILES = ["cells_per_protospacer.json", "protospacer_calls_summary.csv", "protospacer_umi_thresholds_json.json"]
 CRISPR_ANALYSIS_FILE_NAMES =  ["protospacer_calls_summary.csv", "protospacer_calls_per_cell.csv", "cells_per_protospacer.json",
                                     "protospacer_umi_thresholds_csv.csv", "protospacer_umi_thresholds_json.json",
                                     "perturbation_efficiencies_by_feature.csv", "perturbation_efficiencies_by_target.csv"]
@@ -65,7 +66,7 @@ def get_ps_calls_and_summary(filtered_guide_counts_matrix, f_map):
                                                                                 f_map,)
 
     ps_calls_table.sort_values(by=['feature_call'], inplace=True, kind='mergesort')
-    ps_calls_summary = get_ps_calls_summary(ps_calls_table, len(filtered_guide_counts_matrix.bcs))
+    ps_calls_summary = get_ps_calls_summary(ps_calls_table, filtered_guide_counts_matrix)
 
     return (ps_calls_table, presence_calls, cells_with_ps, ps_calls_summary, umi_thresholds)
 
@@ -108,16 +109,28 @@ def get_perturbation_calls(filtered_guide_counts_matrix, feature_map):
     calls_df = _get_cell_calls_df(calls_per_cell, filtered_guide_counts_matrix)
     return (calls_df, presence_calls, cells_with_ps, umi_thresholds)
 
-def get_ps_calls_summary(ps_calls_table, num_gex_cbs):
-    # assumes input is sorted by feature_call
+def _get_num_cells_without_guide_umis(guide_counts_matrix):
+    counts_per_bc = guide_counts_matrix.get_counts_per_bc()
+    return np.sum(counts_per_bc==0)
+
+def get_ps_calls_summary(ps_calls_table, guide_counts_matrix):
+    # assumes ps_calls_table is sorted by feature_call
+    num_gex_cbs = len(guide_counts_matrix.bcs)
     num_cells_with_ps_calls = len(set(ps_calls_table.index))
     num_cells_without_ps_calls = num_gex_cbs - num_cells_with_ps_calls
-    frac_cells_without_ps_calls = tk_stats.robust_divide(num_cells_without_ps_calls, num_gex_cbs)
     assert num_cells_without_ps_calls >= 0
+    frac_cells_without_ps_calls = tk_stats.robust_divide(num_cells_without_ps_calls, num_gex_cbs)
+
+    num_cells_without_guide_umis = _get_num_cells_without_guide_umis(guide_counts_matrix)
+    frac_cells_without_guide_umis = tk_stats.robust_divide(num_cells_without_guide_umis, num_gex_cbs)
 
     column_titles = ['# Cells', '% Cells', 'Median UMIs', 'Std. Dev UMIs']
     ps_summary = pd.DataFrame(columns = column_titles)
 
+    ps_summary.loc['No guide molecules'] = (num_cells_without_guide_umis,
+                                                    100*frac_cells_without_guide_umis,
+                                                    'N/A',
+                                                    'N/A')
     ps_summary.loc['No confident call'] = (num_cells_without_ps_calls,
                                                     100*frac_cells_without_ps_calls,
                                                     'N/A',

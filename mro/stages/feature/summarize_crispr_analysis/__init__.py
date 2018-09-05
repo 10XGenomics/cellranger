@@ -36,10 +36,12 @@ def main(args, outs):
             continue
         cr_io.copy(file_path, os.path.join(outs.crispr_analysis, file_name))
 
-    perturbation_effects_by_feature_dir = os.path.join(outs.crispr_analysis, 'perturbation_effects_by_feature')
-    cr_io.makedirs(perturbation_effects_by_feature_dir, allow_existing=True)
-    cr_io.copytree(args.perturbation_effects_by_feature, perturbation_effects_by_feature_dir, allow_existing=True)
+    if os.path.isdir(args.perturbation_effects_by_feature):
+        perturbation_effects_by_feature_dir = os.path.join(outs.crispr_analysis, 'perturbation_effects_by_feature')
+        cr_io.makedirs(perturbation_effects_by_feature_dir, allow_existing=True)
+        cr_io.copytree(args.perturbation_effects_by_feature, perturbation_effects_by_feature_dir, allow_existing=True)
 
-    perturbation_effects_by_target_dir = os.path.join(outs.crispr_analysis, 'perturbation_effects_by_target')
-    cr_io.makedirs(perturbation_effects_by_target_dir, allow_existing=True)
-    cr_io.copytree(args.perturbation_effects_by_target, perturbation_effects_by_target_dir, allow_existing=True)
+    if os.path.isdir(args.perturbation_effects_by_target):
+        perturbation_effects_by_target_dir = os.path.join(outs.crispr_analysis, 'perturbation_effects_by_target')
+        cr_io.makedirs(perturbation_effects_by_target_dir, allow_existing=True)
+        cr_io.copytree(args.perturbation_effects_by_target, perturbation_effects_by_target_dir, allow_existing=True)
