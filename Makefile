@@ -6,6 +6,7 @@
 SHELL := /bin/bash -O extglob
 
 VERSION=$(shell git describe --tags --always --dirty)
+export ROOT_DIR=$(shell pwd)
 
 ### Rust
 RUST_SRC_PATH=$(shell pwd)/lib/rust
@@ -17,10 +18,10 @@ RUST_BINS=vdj_asm chunk_reads annotate_reads detect_chemistry cr_stage cr_stage_
 #
 # Targets for development builds.
 #
-all: $(RUST_BINS) louvain   cython
+all: $(RUST_BINS) louvain   cython bamtofastq
 	make -C tenkit all
 
-clean: rust-clean  louvain-clean cython-clean
+clean: rust-clean  louvain-clean clean-cython clean-bamtofastq
 	make -C tenkit clean
 
 #
@@ -65,7 +66,7 @@ clean-cython:
 
 
 rust-clean:
-	rm -Rf lib/rust/.cargo
+	rm -Rf $(CARGO_HOME)
 	$(foreach dir, $(RUST_BINS), \
 	    pushd $(RUST_SRC_PATH)/$(dir) >/dev/null && \
 	    cargo clean; \
@@ -91,4 +92,14 @@ $(RUST_BINS): lib/bin
 	cargo build --release; \
 	cp target/release/$@ ../bin/; \
 	popd > /dev/null
+
+bamtofastq: lib/bin
+	cd lib/bamtofastq; cargo build --release
+	cp lib/bamtofastq/target/release/bamtofastq lib/bin
+
+clean-bamtofastq:
+	rm -Rf $(CARGO_HOME)
+	rm -Rf lib/bin/bamtofastq
+	rm -Rf lib/bamtofastq/target
+
 
