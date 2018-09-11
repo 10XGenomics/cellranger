@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+
 import json
 import martian
 import tables
@@ -14,6 +15,7 @@ import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.data as cr_webshim_data
 from cellranger.webshim.constants.gex import ReanalyzeSampleProperties
 from cellranger.webshim.constants.shared import PIPELINE_REANALYZE
+import tenkit.safe_json as tk_json
 
 __MRO__ = """
 stage SUMMARIZE_REANALYSIS(
@@ -45,12 +47,12 @@ def split(args):
     }
 
 def main(args, outs):
-    genomes = cr_matrix.GeneBCMatrices.load_genomes_from_h5(args.filtered_matrices)
-    chemistry = cr_matrix.GeneBCMatrices.load_chemistry_from_h5(args.filtered_matrices)
-    total_cells = cr_matrix.GeneBCMatrices.count_cells_from_h5(args.filtered_matrices)
+    genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices)
+    chemistry = cr_matrix.CountMatrix.load_chemistry_from_h5(args.filtered_matrices)
+    total_cells = cr_matrix.CountMatrix.count_cells_from_h5(args.filtered_matrices)
     summary = {'chemistry_description': chemistry, 'filtered_bcs_transcriptome_union': total_cells}
     with open(outs.summary, 'w') as f:
-        json.dump(summary, f, indent=4, sort_keys=True)
+        json.dump(tk_json.json_sanitize(summary), f, indent=4, sort_keys=True)
 
     sample_properties = ReanalyzeSampleProperties(sample_id=args.sample_id,
                                                   sample_desc=args.sample_desc,

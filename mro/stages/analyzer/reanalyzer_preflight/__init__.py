@@ -25,7 +25,7 @@ def main(args, outs):
     if h5_filetype and h5_filetype != cr_matrix.MATRIX_H5_FILETYPE:
         martian.exit("Input is a %s file, but a matrix file is required" % h5_filetype)
 
-    flt_genomes = cr_matrix.GeneBCMatrices.load_genomes_from_h5(args.filtered_matrices_h5)
+    flt_genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices_h5)
 
     if len(flt_genomes) != 1:
         martian.exit("Reanalyzer only supports matrices with one genome. This matrix has: %s" % flt_genomes)
