@@ -198,6 +198,10 @@ class ReferenceBuilder(GtfParser):
         fasta_hash = cr_io.compute_hash_of_file(new_genome_fasta)
         print "...done\n"
 
+        print "Indexing genome FASTA file..."
+        subprocess.check_call(["samtools", "faidx", new_genome_fasta])
+        print "...done\n"
+
         print "Writing genes GTF file into reference folder..."
         new_gene_gtf = os.path.join(self.out_dir, cr_constants.REFERENCE_GENES_GTF_PATH)
         os.mkdir(os.path.dirname(new_gene_gtf))
