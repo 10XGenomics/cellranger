@@ -522,7 +522,7 @@ class STAR:
             '--outSAMmultNmax', str(max_report_alignments_per_read),
             '--runThreadN', str(threads),
             '--readNameSeparator', 'space',
-            '--outSAMunmapped', 'Within',
+            '--outSAMunmapped', 'Within', 'KeepPairs',
             '--outSAMtype', 'SAM',
             '--outStd', 'SAM',
             '--outSAMorder', 'PairedKeepInputOrder',
