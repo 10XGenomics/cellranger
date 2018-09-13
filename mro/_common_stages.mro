@@ -8,6 +8,15 @@ filetype fastq;
 filetype json;
 filetype pickle;
 
+# Convert sample_def = { "libraries_csv": "/path/to/libraries.csv" } into a
+# standard sample_def map used by the rest of the pipeline. Only used by the
+# CS pipeline to handle the --libraries cmd-line argument.
+stage EXPAND_SAMPLE_DEF(
+    in  map[]  raw_sample_def,
+    out map[]  sample_def,
+    src py     "stages/common/expand_sample_def",
+)
+
 stage CELLRANGER_PREFLIGHT(
     in  map[]    sample_def,
     in  string   chemistry_name,

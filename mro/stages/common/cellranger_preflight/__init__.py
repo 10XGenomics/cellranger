@@ -4,6 +4,7 @@
 #
 import martian
 import cellranger.preflight as cr_preflight
+from cellranger.constants import GENE_EXPRESSION_LIBRARY_TYPE
 
 __MRO__ = """
 stage CELLRANGER_PREFLIGHT_LOCAL(
@@ -25,6 +26,12 @@ def run_preflight_checks(args):
 
     print "Checking reference..."
     cr_preflight.check_refdata(args.reference_path)
+
+
+    # If any non "Gene Expression" libraries are present then the feature-ref is required.
+    if any((x.get("library_type") != None and x.get("library_type") != GENE_EXPRESSION_LIBRARY_TYPE) for x in args.sample_def):
+        if args.feature_reference is None:
+            raise cr_preflight.PreflightException("You must specify --feature-ref when using Cell Ranger with feature barcoding libraries.")
 
     if args.feature_reference is not None:
         print "Checking feature definition file..."

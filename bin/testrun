@@ -83,6 +83,7 @@ call SC_RNA_COUNTER_CS(
     chemistry = $chemistry,
     r1_length = null,
     r2_length = null,
+    feature_reference = null,
 )
 EOF
 }

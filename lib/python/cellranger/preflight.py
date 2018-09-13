@@ -10,6 +10,8 @@ import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
 from cellranger.feature_ref import FeatureDefException
 import cellranger.rna.feature_ref as rna_feature_ref
+import itertools
+import csv
 
 class PreflightException(Exception):
     def __init__(self, msg):
@@ -81,6 +83,40 @@ def check_refdata(reference_path):
         p = os.path.join(reference_path, cr_constants.REFERENCE_STAR_PATH, filename)
         if not os.path.exists(p):
             raise PreflightException("Your reference doesn't appear to be indexed. Please run the mkreference tool")
+
+def expand_libraries_csv(csv_path):
+
+    if not os.path.isfile(csv_path):
+        raise PreflightException("Could not find the libraries csv file %s" % csv_path)
+
+    with open(csv_path, 'rU') as f:
+
+        rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
+        reader = csv.DictReader(rows)
+        required_cols = set(cr_constants.LIBRARIES_CSV_FIELDS)
+
+        libraries = []
+
+        for row in reader:
+            print row.keys()
+            if not set(row.keys()).issuperset(required_cols):
+                raise PreflightException('Libraries csv file must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
+            for key in row.iterkeys():
+                row[key] = row[key].strip()
+
+            library = {
+                "fastq_mode": "ILMN_BCL2FASTQ",
+                "gem_group": None,
+                "lanes": None,
+                "read_path": row["fastqs"],
+                "sample_names": [row["sample"]],
+                "library_type": row["library_type"],
+                "sample_indices": ["any"],
+            }
+
+            libraries.append(library)
+
+    return libraries
 
 
 def check_chemistry(name, custom_def, allowed_chems):

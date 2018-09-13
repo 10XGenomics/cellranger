@@ -15,6 +15,7 @@ pipeline SC_RNA_COUNTER_CS(
     in  string  chemistry,
     in  int     r1_length,
     in  int     r2_length,
+    in  csv     feature_reference,
     out html    web_summary                   "Run summary HTML",
     out csv     metrics_summary               "Run summary CSV",
     out bam     possorted_genome_bam          "BAM"                      "possorted_genome_bam.bam",
@@ -28,9 +29,16 @@ pipeline SC_RNA_COUNTER_CS(
     out cloupe  cloupe                        "Loupe Cell Browser file",
 )
 {
+
+    call EXPAND_SAMPLE_DEF(
+        raw_sample_def = self.sample_def,
+    ) using (
+        local = true,
+    )
+
     call SC_RNA_COUNTER(
         sample_id                    = self.sample_id,
-        sample_def                   = self.sample_def,
+        sample_def                   = EXPAND_SAMPLE_DEF.sample_def,
         chemistry_name               = self.chemistry,
         custom_chemistry_def         = null,
         sample_desc                  = self.sample_desc,
@@ -93,7 +101,7 @@ pipeline SC_RNA_COUNTER_CS(
             "SC5P-R2",
             "SC5P-R1",
         ],
-        feature_reference            = null,
+        feature_reference            = self.feature_reference,
         num_reads_to_check_barcode   = null,
         barcode_compatibility_cutoff = null,
     )

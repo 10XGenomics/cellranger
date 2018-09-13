@@ -12,6 +12,7 @@ import tenkit.log_subprocess as tk_subproc
 import tenkit.stats as tk_stats
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+import cellranger.library_constants as cr_libraries
 import cellranger.fastq as cr_fastq
 import cellranger.preflight as cr_preflight
 import cellranger.io as cr_io
@@ -253,8 +254,8 @@ def infer_sc3p_or_sc5p(chunks, kmer_idx_path, vdj_idx_path):
         report += "This library is likely to be a Single Cell 3' gene expression library (v1)."
 
     elif r2_state == ReadState.SENSE_MAPPED:
-        chemistry_name = 'SC3Pv2'
-        report += "This library is likely to be a Single Cell 3' gene expression library (v2)."
+        chemistry_name = 'SC3P_auto'
+        report += "This library is likely to be a Single Cell 3' gene expression library (v2 or v3)."
 
     elif (r1_state == ReadState.SENSE_MAPPED) and (r2_state == ReadState.ABSENT):
         chemistry_name = 'SC5P-R1'
@@ -312,7 +313,10 @@ def main(args, outs):
         martian.exit(e.msg)
 
     ## Find the input fastqs
-    chunks = find_fastqs(args.sample_def)
+    detect_library_types = [cr_libraries.GENE_EXPRESSION_LIBRARY_TYPE, cr_libraries.VDJ_LIBRARY_TYPE]
+    gex_or_vdj_defs = [x for x in args.sample_def if x["library_type"] in detect_library_types]
+
+    chunks = find_fastqs(gex_or_vdj_defs)
 
     chemistry_name = args.chemistry_name_spec
     report = ''
@@ -322,9 +326,13 @@ def main(args, outs):
         (txome_idx, vdj_idx) = prepare_transcriptome_indexes(args.reference_path, args.vdj_reference_path)
 
         auto_chemistries = {}
-        for (idx, sd) in enumerate(args.sample_def):
+        for (idx, sd) in enumerate(gex_or_vdj_defs):
             chunks = find_fastqs([sd])
-            chemistry_name, report, metrics = infer_sc3p_or_sc5p(chunks, txome_idx, vdj_idx)
+
+            sd_report = "\nDetect Report -- %s (%s):\n" % (sd["read_path"], sd.get("library_type"))
+            chemistry_name, _report, metrics = infer_sc3p_or_sc5p(chunks, txome_idx, vdj_idx)
+            sd_report += _report
+            report += sd_report
             auto_chemistries[idx] = chemistry_name
 
         if len(set(auto_chemistries.itervalues())) > 1:
@@ -352,7 +360,7 @@ def main(args, outs):
         group_chem = {}
         group_exception = {}
 
-        for sd_idx, sd in enumerate(args.sample_def):
+        for sd_idx, sd in enumerate(gex_or_vdj_defs):
             fq_spec = cr_fastq.FastqSpec.from_sample_def(sd)
 
             # Infer chemistry for each sample index/name (aka fastq group)
