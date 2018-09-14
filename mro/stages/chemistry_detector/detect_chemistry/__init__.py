@@ -313,8 +313,10 @@ def main(args, outs):
         martian.exit(e.msg)
 
     ## Find the input fastqs
-    detect_library_types = [cr_libraries.GENE_EXPRESSION_LIBRARY_TYPE, cr_libraries.VDJ_LIBRARY_TYPE]
-    gex_or_vdj_defs = [x for x in args.sample_def if x["library_type"] in detect_library_types]
+    # 'count' requires library_type to be set. 'vdj' doesn't require a library_type, but only supports VDJ libraries, so let any sample_def entries
+    # that don't have library_type set into the detection loop.
+    detect_library_types = [cr_libraries.GENE_EXPRESSION_LIBRARY_TYPE, cr_libraries.VDJ_LIBRARY_TYPE, None]
+    gex_or_vdj_defs = [x for x in args.sample_def if x.get("library_type") in detect_library_types]
 
     chunks = find_fastqs(gex_or_vdj_defs)
 
