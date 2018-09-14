@@ -227,6 +227,7 @@ stage FILTER_BARCODES(
     out csv    aggregate_barcodes,
     out h5     filtered_matrices_h5,
     out path   filtered_matrices_mex,
+    out csv    nonambient_calls,
     src py     "stages/counter/filter_barcodes",
 ) split (
 ) using (

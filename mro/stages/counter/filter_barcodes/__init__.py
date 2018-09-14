@@ -2,14 +2,16 @@
 #
 # Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
 #
-import collections
+from collections import OrderedDict, defaultdict
 import csv
+import enum
 import json
 import numpy as np
 import pandas as pd
 import random
 import martian
 import tenkit.safe_json as tk_safe_json
+import cellranger.cell_calling as cr_cell
 import cellranger.chemistry as cr_chem
 import cellranger.matrix as cr_matrix
 import cellranger.stats as cr_stats
@@ -41,13 +43,38 @@ stage FILTER_BARCODES(
     out csv    aggregate_barcodes,
     out h5     filtered_matrices_h5,
     out path   filtered_matrices_mex,
+    out csv    nonambient_calls,
     src py     "stages/counter/filter_barcodes",
 ) split using (
 )
 """
 
+class FilterMethod(enum.Enum):
+    # Caller-provided list of barcodes
+    MANUAL = 0
+    # Take the top N barcodes by count
+    TOP_N_BARCODES = 1
+    # Take barcodes within an order of magnitude of the max by count
+    ORDMAG = 2
+    # The above, then find barcodes that differ from the ambient profile
+    ORDMAG_NONAMBIENT = 3
+
+def get_filter_method_name(fm):
+    if fm == FilterMethod.MANUAL:
+        return 'manual'
+    elif fm == FilterMethod.TOP_N_BARCODES:
+        return 'topn'
+    elif fm == FilterMethod.ORDMAG:
+        return 'ordmag'
+    elif fm == FilterMethod.ORDMAG_NONAMBIENT:
+        return 'ordmag_nonambient'
+    else:
+        raise ValueError('Unsupported filter method value %d' % fm)
+
+
 def split(args):
-    mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
+    # We need to store one full copy of the matrix.
+    mem_gb = 2 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
     mem_gb = max(mem_gb, FILTER_BARCODES_MIN_MEM_GB)
 
     return {
@@ -104,14 +131,14 @@ def filter_barcodes(args, outs):
         summary = {}
 
     if args.cell_barcodes is not None:
-        method_name = cr_constants.FILTER_BARCODES_MANUAL
+        method = FilterMethod.MANUAL
     elif args.force_cells is not None:
-        method_name = cr_constants.FILTER_BARCODES_FIXED_CUTOFF
+        method = FilterMethod.TOP_N_BARCODES
     else:
-        method_name = cr_constants.FILTER_BARCODES_ORDMAG
+        method = FilterMethod.ORDMAG_NONAMBIENT
 
     summary['total_diversity'] = matrix.bcs_dim
-    summary['filter_barcodes_method'] = method_name
+    summary['filter_barcodes_method'] = get_filter_method_name(method)
 
     # Get unique gem groups
     unique_gem_groups = sorted(list(set(args.gem_groups)))
@@ -125,70 +152,144 @@ def filter_barcodes(args, outs):
     if args.force_cells is not None:
         gg_force_cells = int(float(args.force_cells) / float(len(unique_gem_groups)))
 
-    filtered_metrics = []
-    filtered_bcs = []
-
-    # Track filtered barcodes for each genome
-    genome_filtered_bcs = collections.defaultdict(list)
-
-    # Track all filtered_bcs
-    filtered_bcs = []
-
     # Only use gene expression matrix for cell calling
     gex_matrix = matrix.view().select_features_by_type(lib_constants.GENE_EXPRESSION_LIBRARY_TYPE)
 
-    # Call cells for each genome separately
+    # Make initial cell calls for each genome separately
     genomes = gex_matrix.get_genomes()
 
-    for genome in genomes:
-        filtered_metrics = []
+    # (gem_group, genome) => dict
+    filtered_metrics_groups = OrderedDict()
+    # (gem_group, genome) => list of barcode strings
+    filtered_bcs_groups = OrderedDict()
 
+    for genome in genomes:
         genome_matrix = gex_matrix.select_features_by_genome(genome)
 
-        # Call cells for each gem group individually
+        # Make initial cell calls for each gem group individually
         for gem_group in unique_gem_groups:
 
             gg_matrix = genome_matrix.select_barcodes_by_gem_group(gem_group)
 
-            if method_name == cr_constants.FILTER_BARCODES_ORDMAG:
+            if method == FilterMethod.ORDMAG or \
+               method == FilterMethod.ORDMAG_NONAMBIENT:
                 gg_total_diversity = gg_matrix.bcs_dim
                 gg_bc_counts = gg_matrix.get_counts_per_bc()
                 gg_filtered_indices, gg_filtered_metrics, msg = cr_stats.filter_cellular_barcodes_ordmag(
                     gg_bc_counts, gg_recovered_cells, gg_total_diversity)
                 gg_filtered_bcs = gg_matrix.ints_to_bcs(gg_filtered_indices)
 
-            elif method_name == cr_constants.FILTER_BARCODES_MANUAL:
+            elif method == FilterMethod.MANUAL:
                 with(open(args.cell_barcodes)) as f:
                     cell_barcodes = json.load(f)
                 gg_filtered_bcs, gg_filtered_metrics, msg = cr_stats.filter_cellular_barcodes_manual(
                     gg_matrix, cell_barcodes)
 
-            elif method_name == cr_constants.FILTER_BARCODES_FIXED_CUTOFF:
+            elif method == FilterMethod.TOP_N_BARCODES:
                 gg_bc_counts = gg_matrix.get_counts_per_bc()
                 gg_filtered_indices, gg_filtered_metrics, msg = cr_stats.filter_cellular_barcodes_fixed_cutoff(
                     gg_bc_counts, gg_force_cells)
                 gg_filtered_bcs = gg_matrix.ints_to_bcs(gg_filtered_indices)
 
             else:
-                martian.exit("Unsupported BC filtering method: %s" % method_name)
+                martian.exit("Unsupported BC filtering method: %s" % method)
 
             if msg is not None:
                 martian.log_info(msg)
 
-            filtered_metrics.append(gg_filtered_metrics)
+            filtered_metrics_groups[(gem_group, genome)] = gg_filtered_metrics
+            filtered_bcs_groups[(gem_group, genome)] = gg_filtered_bcs
 
-            genome_filtered_bcs[genome].extend(gg_filtered_bcs)
-            filtered_bcs.extend(gg_filtered_bcs)
+    # Do additional cell calling
+    outs.nonambient_calls = None
 
-        # Merge metrics over all gem groups
-        txome_summary = cr_stats.merge_filtered_metrics(filtered_metrics)
+    if method == FilterMethod.ORDMAG_NONAMBIENT:
+        # We need the full gene expression matrix instead of just a view
+        full_gex_matrix = matrix.select_features_by_type(lib_constants.GENE_EXPRESSION_LIBRARY_TYPE)
+
+        # Track these for recordkeeping
+        eval_bcs_arrays = []
+        umis_per_bc_arrays = []
+        loglk_arrays = []
+        pvalue_arrays = []
+        pvalue_adj_arrays = []
+        nonambient_arrays = []
+        genome_call_arrays = []
+
+        # Do it by gem group, but agnostic to genome
+        for gg in unique_gem_groups:
+            gg_matrix = full_gex_matrix.select_barcodes_by_gem_group(gg)
+
+            # Take union of initial cell calls across genomes
+            gg_bcs = sorted(list(reduce(set.union,
+                                        [set(bcs) for group, bcs in filtered_bcs_groups.iteritems() if group[0] == gg])))
+
+            result = cr_cell.find_nonambient_barcodes(full_gex_matrix,
+                                                      gg_bcs)
+            if result is None:
+                print 'Failed at attempt to call non-ambient barcodes in GEM group %s' % gg
+                continue
+
+            # Assign a genome to the cell calls by argmax genome counts
+            genome_counts = []
+            for genome in genomes:
+                genome_counts.append(gg_matrix.view() \
+                                     .select_features_by_genome(genome) \
+                                     .select_barcodes(result.eval_bcs) \
+                                     .get_counts_per_bc())
+            genome_counts = np.column_stack(genome_counts)
+            genome_calls = np.array(genomes)[np.argmax(genome_counts, axis=1)]
+
+            umis_per_bc = gg_matrix.get_counts_per_bc()
+
+            eval_bcs_arrays.append(np.array(gg_matrix.bcs)[result.eval_bcs])
+            umis_per_bc_arrays.append(umis_per_bc[result.eval_bcs])
+            loglk_arrays.append(result.log_likelihood)
+            pvalue_arrays.append(result.pvalues)
+            pvalue_adj_arrays.append(result.pvalues_adj)
+            nonambient_arrays.append(result.is_nonambient)
+            genome_call_arrays.append(genome_calls)
+
+            # Update the lists of cell-associated barcodes
+            for genome in genomes:
+                eval_bc_strs = np.array(gg_matrix.bcs)[result.eval_bcs]
+                filtered_bcs_groups[(gg, genome)].extend(eval_bc_strs[(genome_calls == genome) & (result.is_nonambient)])
+
+        if len(eval_bcs_arrays) > 0:
+            nonambient_summary = pd.DataFrame(OrderedDict([
+                ('barcode', np.concatenate(eval_bcs_arrays)),
+                ('umis', np.concatenate(umis_per_bc_arrays)),
+                ('ambient_loglk', np.concatenate(loglk_arrays)),
+                ('pvalue', np.concatenate(pvalue_arrays)),
+                ('pvalue_adj', np.concatenate(pvalue_adj_arrays)),
+                ('nonambient', np.concatenate(nonambient_arrays)),
+                ('genome', np.concatenate(genome_call_arrays)),
+            ]))
+            nonambient_summary.to_csv(outs.nonambient_calls)
+
+    # Record all filtered barcodes
+    genome_filtered_bcs = defaultdict(set)
+    filtered_bcs = set()
+    for (gem_group, genome), bcs in filtered_bcs_groups.iteritems():
+        genome_filtered_bcs[genome].update(bcs)
+        filtered_bcs.update(bcs)
+
+    # Combine initial-cell-calling metrics
+    for genome in genomes:
+        # Merge metrics over all gem groups for this genome
+        txome_metrics = [v for k,v in filtered_metrics_groups.iteritems() if k[1] == genome]
+        txome_summary = cr_stats.merge_filtered_metrics(txome_metrics)
 
         # Append method name to metrics
         summary.update({
-            ('%s_%s_%s' % (genome, key, method_name)): txome_summary[key] \
+            ('%s_%s_%s' % (genome,
+                           key,
+                           get_filter_method_name(method))): txome_summary[key] \
             for (key,_) in txome_summary.iteritems()})
 
-        summary['%s_filtered_bcs' % genome] = txome_summary['filtered_bcs']
+        summary['%s_filtered_bcs' % genome] = len(genome_filtered_bcs[genome])
+
+        # NOTE: This metric only applies to the initial cell calls
         summary['%s_filtered_bcs_cv' % genome] = txome_summary['filtered_bcs_cv']
 
     # Deduplicate and sort filtered barcode sequences

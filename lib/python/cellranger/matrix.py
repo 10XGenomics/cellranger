@@ -196,43 +196,64 @@ class CountMatrix(object):
         return cls(feature_ref=feature_ref, bcs=bcs, matrix=matrix)
 
     @classmethod
-    def from_legacy_h5(cls, h5_file):
-        """Create a CountMatrix from a legacy h5py.File"""
+    def from_legacy_v1_h5(cls, h5_file):
+        """Create a CountMatrix from a legacy h5py.File (format version 1)"""
 
         genome_arrays = []
         gene_id_arrays = []
         gene_name_arrays = []
-        barcode_arrays = []
-        ind_arrays = []
-        indptr_arrays = []
+        bc_idx_arrays = []
+        feat_idx_arrays = []
         data_arrays = []
 
-        # Construct a genome-concatenated matrix and FeatureReference
-        n_genomes = len(h5_file.keys())
+        # Map barcode string to column index in new matrix
+        barcode_map = OrderedDict()
 
+        # Construct a genome-concatenated matrix and FeatureReference
         for genome_idx, genome in enumerate(h5_file.keys()):
             g = h5_file[genome]
 
             n_genes = sum(len(x) for x in gene_id_arrays)
-            n_nz = sum(len(x) for x in data_arrays)
 
             # Offset the row (gene) indices by the number of genes seen so far
-            ind_arrays.append(g['indices'][:] + n_genes)
+            feat_idx_arrays.append(g['indices'][:] + n_genes)
 
             # Offset the col (barcode) indices by the number of nonzero elements seen so far
-            if genome_idx < (n_genomes-1):
-                indptr_arrays.append(g['indptr'][:-1] + n_nz)
-            else:
-                # Keep the final pointer if this is the last genome
-                indptr_arrays.append(g['indptr'][:] + n_nz)
 
+            # Map barcode (column) indices to a single unique barcode space
+            barcodes = g['barcodes'][:]
+            for bc in barcodes:
+                if bc not in barcode_map:
+                    barcode_map[bc] = len(barcode_map)
+
+            remapped_col_inds = np.fromiter((barcode_map[bc] for bc in barcodes),
+                                            count=len(barcodes),
+                                            dtype='uint64',)
+
+            indptr = g['indptr'][:]
+            assert len(indptr) == 1 + len(remapped_col_inds)
+
+            if genome_idx == 0:
+                # For the first set of barcodes encountered, there should
+                # be no change in their new indices.
+                assert np.array_equal(remapped_col_inds, np.arange(len(indptr) - 1))
+
+            # Convert from CSC to COO by expanding the indptr array out
+
+
+            nz_elems_per_bc = np.diff(indptr)
+            assert len(nz_elems_per_bc) == len(g['barcodes'])
+
+            bc_idx = np.repeat(remapped_col_inds, nz_elems_per_bc)
+            assert len(bc_idx) == len(g['indices'])
+            assert len(bc_idx) == len(g['data'])
+
+            bc_idx_arrays.append(bc_idx)
             data_arrays.append(g['data'][:])
 
             gene_id_arrays.append(g['genes'][:])
             gene_name_arrays.append(g['gene_names'][:])
             genome_arrays.append(np.repeat(genome, len(g['genes'])))
-
-            barcode_arrays.append(g['barcodes'][:])
 
         genomes = np.concatenate(genome_arrays)
         gene_ids = np.concatenate(gene_id_arrays)
@@ -248,12 +269,14 @@ class CountMatrix(object):
                                            tags={'genome': genome}))
         feature_ref = FeatureReference(feature_defs, ['genome'])
 
-        barcodes = np.concatenate(barcode_arrays)
-
-        indices = np.concatenate(ind_arrays)
-        indptr = np.concatenate(indptr_arrays)
+        i = np.concatenate(feat_idx_arrays)
+        j = np.concatenate(bc_idx_arrays)
         data = np.concatenate(data_arrays)
-        matrix = sp_sparse.csc_matrix((data, indices, indptr), shape=(len(gene_ids), len(barcodes)))
+
+        assert(type(barcode_map) == OrderedDict)
+        barcodes = barcode_map.keys()
+
+        matrix = sp_sparse.csc_matrix((data, (i, j)), shape=(len(gene_ids), len(barcodes)))
 
         return CountMatrix(feature_ref, barcodes, matrix)
 
@@ -613,7 +636,7 @@ class CountMatrix(object):
                 raise ValueError('Matrix HDF5 file format version (%d) is a newer version that is not supported by this version of the software.' % version)
             if version < MATRIX_H5_VERSION:
                 #raise ValueError('Matrix HDF5 file format version (%d) is an older version that is no longer supported.' % version)
-                return CountMatrix.from_legacy_h5(f)
+                return CountMatrix.from_legacy_v1_h5(f)
 
             if 'matrix' not in f.keys():
                 raise ValueError('Could not find the "matrix" group inside the matrix HDF5 file.')

@@ -292,7 +292,7 @@ MULTIPLET_RATE_UB_METRIC = {
 MEAN_COUNT_PURITY_METRIC = {
     'name': 'multi_filtered_bcs_mean_count_purity',
     'display_name': 'Mean UMI Count Purity',
-    'description': 'Among single-cell GEM barcodes, the mean fraction of UMI counts coming from the transcriptome of the cell inferred to be in the GEM, as opposed to a transcriptome that should not be present in the cell.',
+    'description': 'Among single-cell GEM barcodes, the total fraction of UMI counts coming from the transcriptome of the cell inferred to be in the GEM, as opposed to a transcriptome that should not be present in the cell.',
     'format': 'percent',
 }
 

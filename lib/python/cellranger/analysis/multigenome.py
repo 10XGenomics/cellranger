@@ -59,8 +59,8 @@ class MultiGenomeAnalysis:
         # Assumes that most of the GEMs are single-cell; model counts independently
         thresh0, thresh1 = [analysis_constants.DEFAULT_MULTIPLET_THRESHOLD] * 2
         if sum(counts0 > counts1) >= 1 and sum(counts1 > counts0) >= 1:
-            thresh0 = np.percentile(counts0[counts0 > counts1], analysis_constants.MULTIPLET_PROB_THRESHOLD)
-            thresh1 = np.percentile(counts1[counts1 > counts0], analysis_constants.MULTIPLET_PROB_THRESHOLD)
+            thresh0 = np.percentile(counts0[counts0 > counts1], analysis_constants.MULTIPLET_PROB_THRESHOLD*100.0)
+            thresh1 = np.percentile(counts1[counts1 > counts0], analysis_constants.MULTIPLET_PROB_THRESHOLD*100.0)
 
         doublet = np.logical_and(counts0 >= thresh0, counts1 >= thresh1)
         dtype = np.dtype('|S%d' % max(len(cls) for cls in analysis_constants.GEM_CLASSES))
@@ -91,9 +91,9 @@ class MultiGenomeAnalysis:
         frac0 = counts0.astype(float) / (counts0 + counts1).astype(float)
         purity0 = frac0[gem_occupancy == analysis_constants.GEM_CLASS_GENOME0]
         purity1 = 1 - frac0[gem_occupancy == analysis_constants.GEM_CLASS_GENOME1]
-        overall_purity = np.concatenate([purity0, purity1])
 
-        # Compute number of purity outliers
+        # Compute number of purity outliers.
+        # Note: This is not used for any important metrics, just for diagnostics.
         threshold0, threshold1 = 1.0, 1.0
         fit_purity0 = purity0[np.logical_and(purity0 > 0, purity0 < 1)]
         fit_purity1 = purity1[np.logical_and(purity1 > 0, purity1 < 1)]
@@ -120,7 +120,23 @@ class MultiGenomeAnalysis:
         frac_outlier1 = tk_stats.robust_divide(n_outlier1, len(purity1))
         is_outlier = np.logical_or(outlier0, outlier1).astype(int)
 
-        return (purity0.mean(), purity1.mean(), overall_purity.mean(),
+        # Let the UMI count purity be the total fraction of counts that don't belong,
+        #   for all barcodes classified as non-multiplets.
+        gems0 = gem_occupancy == analysis_constants.GEM_CLASS_GENOME0
+        mean_purity0 = tk_stats.robust_divide(counts0[gems0].sum(),
+                                              (counts0[gems0] + counts1[gems0]).sum())
+
+        gems1 = gem_occupancy == analysis_constants.GEM_CLASS_GENOME1
+        mean_purity1 = tk_stats.robust_divide(counts1[gems1].sum(),
+                                              (counts0[gems1] + counts1[gems1]).sum())
+
+        single_cell = (gem_occupancy == analysis_constants.GEM_CLASS_GENOME0) | \
+                      (gem_occupancy == analysis_constants.GEM_CLASS_GENOME1)
+        mean_overall_purity = tk_stats.robust_divide(np.maximum(counts0[single_cell],
+                                                                counts1[single_cell]).sum(),
+                                                     (counts0+counts1)[single_cell].sum())
+
+        return (mean_purity0, mean_purity1, mean_overall_purity,
                 n_outlier0, n_outlier1, frac_outlier0, frac_outlier1,
                 is_outlier)
 
