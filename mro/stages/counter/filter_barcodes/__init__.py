@@ -224,8 +224,7 @@ def filter_barcodes(args, outs):
             gg_bcs = sorted(list(reduce(set.union,
                                         [set(bcs) for group, bcs in filtered_bcs_groups.iteritems() if group[0] == gg])))
 
-            result = cr_cell.find_nonambient_barcodes(full_gex_matrix,
-                                                      gg_bcs)
+            result = cr_cell.find_nonambient_barcodes(gg_matrix, gg_bcs)
             if result is None:
                 print 'Failed at attempt to call non-ambient barcodes in GEM group %s' % gg
                 continue
