@@ -46,12 +46,11 @@ def orthog(Y, X):
 def invcheck(x):
     eps2 = 2 * np.finfo(np.float).eps
     if(x > eps2):
-        x = 1 / x
+        return 1.0 / x
     else:
-        x = 0
         warnings.warn(
             "Ill-conditioning encountered, result accuracy may be poor")
-    return(x)
+        return 0.0
 
 def irlb(A, n, tol=0.0001, maxit=50, center=None, scale=None, random_state=0):
     """Estimate a few of the largest singular values and corresponding singular
@@ -79,22 +78,31 @@ def irlb(A, n, tol=0.0001, maxit=50, center=None, scale=None, random_state=0):
     """
     np.random.seed(random_state)
 
+    # Numpy routines do undesirable things if these come in as N x 1 matrices instead of size N arrays
+    if center is not None and not isinstance(center, np.ndarray):
+        raise TypeError("center must be a numpy.ndarray")
+    if scale is not None and not isinstance(scale, np.ndarray):
+        raise TypeError("scale must be a numpy.ndarray")
+
     nu = n
     m = A.shape[0]
     n = A.shape[1]
     if(min(m, n) < 2):
         raise Exception("The input matrix must be at least 2x2.")
-    m_b = min((nu + 20, 3 * nu, n))  # Working dimension size
+    # TODO: More efficient to have a path that performs a standard SVD
+    # if over half the eigenvectors are requested
+    m_b = min((nu + 20, 3 * nu, min(A.shape)))  # Working dimension size
+    # m_b = nu + 7 # uncomment this line to check for similar results with R package
     mprod = 0
     it = 0
     j = 0
     k = nu
     smax = 1
 
-    V = np.zeros((n, m_b))
-    W = np.zeros((m, m_b))
-    F = np.zeros((n, 1))
-    B = np.zeros((m_b, m_b))
+    V = np.zeros((n, m_b)) # Approximate right vectors
+    W = np.zeros((m, m_b)) # Approximate left vectors
+    F = np.zeros((n, 1)) # Residual vector
+    B = np.zeros((m_b, m_b)) #Bidiagonal approximation
 
     V[:, 0] = np.random.randn(n)  # Initial vector
     V[:, 0] = V[:, 0] / np.linalg.norm(V)
@@ -132,9 +140,13 @@ def irlb(A, n, tol=0.0001, maxit=50, center=None, scale=None, random_state=0):
             # apply scaling
             if scale is not None:
                 F = F / scale
-
+            # apply centering, note for cases where center is the column
+            # mean, this correction is often equivalent to a no-op as
+            # np.sum(W[:, j]) is often close to zero
+            if center is not None:
+                F = F - np.sum(W[:, j]) * center
             F = F - s * V[:, j]
-            F = orthog(F, V[:, 0:j + 1])
+            F = orthog(F, V[:, 0:(j + 1)])
             fn = np.linalg.norm(F)
             fninv = invcheck(fn)
             F = fninv * F
@@ -152,8 +164,7 @@ def irlb(A, n, tol=0.0001, maxit=50, center=None, scale=None, random_state=0):
                 mprod += 1
 
                 # apply centering
-                # R code: W[, jp1_w] <- W[, jp1_w] - ds * drop(cross(dv, VJP1))
-                # * du
+                # R code: W[, jp1_w] <- W[, jp1_w] - ds * drop(cross(dv, VJP1)) * du
                 if center is not None:
                     W[:, j + 1] = W[:, j + 1] - np.dot(center, VJp1)
 
