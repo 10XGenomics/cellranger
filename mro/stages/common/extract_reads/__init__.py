@@ -128,6 +128,8 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.chunked_reporter = None
     reporter_groups = defaultdict(list)
     for chunk_def, chunk_out in zip(chunk_defs, chunk_outs):
+        if not chunk_out.reads:
+            continue
         chunk_lib_types = set(lt for lt in chunk_out.library_types)
         assert len(chunk_lib_types) == 1
         lib_type = list(chunk_lib_types)[0]
