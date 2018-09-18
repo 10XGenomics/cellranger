@@ -134,7 +134,8 @@ def split(args):
     return {
         'chunks': chunks,
         'join': {
-            '__mem_gb': join_mem_gb
+            '__mem_gb': join_mem_gb,
+            '__threads': 2
         }
     }
 
