@@ -362,7 +362,7 @@ def main(args, outs):
         group_chem = {}
         group_exception = {}
 
-        for sd_idx, sd in enumerate(gex_or_vdj_defs):
+        for sd_idx, sd in enumerate(args.sample_def):
             fq_spec = cr_fastq.FastqSpec.from_sample_def(sd)
 
             # Infer chemistry for each sample index/name (aka fastq group)
@@ -397,10 +397,16 @@ def main(args, outs):
 
         # Check for multiple chemistry types
         if len(set(found_chemistries)) > 1:
-            c = ', '.join(map(str, sorted(list(set(group_chem.itervalues())))))
+            detected_chemistries = map(str, sorted(list(set(group_chem.itervalues()))))
+            c = ', '.join(detected_chemistries)
             s = ', '.join("Sample def %d/%s: %s" % (i,g,v) for ((i,g),v) in sorted(group_chem.iteritems()))
 
             any_failed = any(c is None for c in group_chem.itervalues())
+
+            if set(detected_chemistries) == set(["SC5P-PE", "SC5P-R2"]):
+                msg = "'cellranger count' doesn't support a mixture of 5' paired end (SC5P-PE) and 5' R2 (SC5P-R2) read types. "
+                msg += "To process this combination of data, you will need to use 5' single-end mode. Specify '--chemistry SC5P-R2' on the 'cellranger count' command line."
+                martian.exit(msg)
 
             if not any_failed:
                 martian.exit("Detected conflicting chemistry types (%s). Please run these data separately. %s" % (c, s))
