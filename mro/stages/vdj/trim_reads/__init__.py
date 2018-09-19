@@ -99,7 +99,7 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout)
         single_read = cr_chem.get_rna_read_def(chemistry_def).read_type
         assert single_read in ('R1', 'R2')
 
-    out_r1_file = cr_io.open_maybe_gzip(out_read1s, 'w')
+    out_r1_file = cr_io.open_maybe_gzip_subprocess(out_read1s, 'w')
 
     # Note: The complexity of forcing cutadapt to output a compressed file
     #       means we'll have to give up on that for now.
@@ -110,7 +110,7 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout)
 
     out_r2_file = None
     if paired_end:
-        out_r2_file = cr_io.open_maybe_gzip(out_read2s, 'w')
+        out_r2_file = cr_io.open_maybe_gzip_subprocess(out_read2s, 'w')
         cmd.extend(['-p', '/proc/%d/fd/%d' % (os.getpid(), out_r2_file.fileno())])
 
     primers = {anno['name']:anno['seq'] for anno in args.primers}
@@ -141,12 +141,12 @@ def run_cutadapt(args, out_read1s, out_read2s, chemistry_def, stdout=sys.stdout)
                 cmd.extend([flag, '%s=%s' % (name, primers[name])])
 
 
-    read1_file = cr_io.open_maybe_gzip(args.read1s_chunk)
+    read1_file = cr_io.open_maybe_gzip_subprocess(args.read1s_chunk)
     cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read1_file.fileno())])
 
     read2_file = None
     if paired_end:
-        read2_file = cr_io.open_maybe_gzip(args.read2s_chunk)
+        read2_file = cr_io.open_maybe_gzip_subprocess(args.read2s_chunk)
         cmd.extend(['/proc/%d/fd/%d' % (os.getpid(), read2_file.fileno())])
 
     print cmd

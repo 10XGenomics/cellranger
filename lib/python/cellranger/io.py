@@ -65,6 +65,71 @@ def write_h5(filename, data):
         for key, value in data.iteritems():
             f[key] = value
 
+class SubprocessStream(object):
+    """ Wrap a subprocess that we stream from or stream to """
+    def __init__(self, *args, **kwargs):
+        mode = kwargs.pop('mode', 'r')
+        if mode == 'r':
+            kwargs['stdout'] = subprocess.PIPE
+        elif mode == 'w':
+            kwargs['stdin'] = subprocess.PIPE
+        else:
+            raise ValueError('mode %s unsupported' % self.mode)
+
+        kwargs['bufsize'] = 65536  # 64K of buffering in the pipe
+        kwargs['preexec_fn'] = os.setsid
+        print args[0]
+        sys.stdout.flush()
+        self.proc = tk_subproc.Popen(*args, **kwargs)
+
+        if mode == 'r':
+            self.pipe = self.proc.stdout
+        elif mode == 'w':
+            self.pipe = self.proc.stdin
+        self._read = mode == 'r'
+    def __enter__(self):
+        return self
+    def __iter__(self):
+        return self
+    def next(self):
+        return self.pipe.next()
+    def fileno(self):
+        return self.pipe.fileno()
+    def write(self, x):
+        self.pipe.write(x)
+    def close(self):
+        self.pipe.close()
+        if self._read:
+            # Just in case the job is stuck waiting for its pipe to get flushed,
+            # kill it, since there's nothing listening on the other end of the pipe.
+            try:
+                self.proc.kill()
+            except:
+                pass
+        self.proc.wait()
+    def __exit__(self, tp, val, tb):
+        self.close()
+
+def open_maybe_gzip_subprocess(filename, mode='r'):
+    compressor = None
+
+    if filename.endswith(h5_constants.GZIP_SUFFIX):
+        compressor = 'gzip'
+    elif filename.endswith(h5_constants.LZ4_SUFFIX):
+        compressor = 'lz4'
+    else:
+        return open(filename, mode)
+
+    assert compressor is not None
+
+    if mode == 'r':
+        return SubprocessStream([compressor, '-c', '-d', filename], mode='r')
+    elif mode == 'w':
+        f = open(filename, 'w')
+        return SubprocessStream([compressor, '-c'], stdout=f, mode='w')
+    else:
+        raise ValueError("Unsupported mode for compression: %s" % mode)
+
 def open_maybe_gzip(filename, mode='r'):
     # this _must_ be a str
     filename = str(filename)
