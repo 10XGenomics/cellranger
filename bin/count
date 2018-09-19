@@ -37,9 +37,12 @@ Options:
                             analysis.
     --chemistry=CHEM    Assay configuration. One of: 'auto' for autodetection,
                             'threeprime' for Single Cell 3', 'fiveprime' for
-                            Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3' 
-                            for Single Cell 3' v1/v2/v3, 'SC5P-PE' or 'SC5P-R2' 
+                            Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3'
+                            for Single Cell 3' v1/v2/v3, 'SC5P-PE' or 'SC5P-R2'
                             for Single Cell 5' paired-end/R2-only. Default: auto.
+    --no-libraries      Proceed with processing using a --feature-ref but no
+                            feature-barcoding data specified with the
+                            --libraries flag.
     $DOCOPT_OPTIONS_FASTQS
 
 # Martian Runtime
@@ -67,6 +70,25 @@ function implement_process_options {
 
     if [ -n "$feature_ref" ]; then
         feature_reference=\"$(abspath $feature_ref)\"
+
+	# If the feature reference is supplied, then the user generally is in feature-barcode mode
+        # and needs to use --libraries to specify the input fastqs and their associated library types
+        # Make sure they're doing that. They can override the warning in the (rarer) case that they're
+        # need to supply the feature ref to make aggr happy, but don't actually have those any FB data.
+        if [ -z "$libraries"]; then
+		if [ "$no_libraries" == "false" ]; then
+			msg="$(cat <<EOF
+You specified --feature-ref, but not --libraries.
+Did you mean to input feature barcoding libraries?
+If you do have 1 or more feature barcoding libraries:
+  use --libraries to specify your input FASTQs and the associated library types.
+If you want to proceed with a feature barcoding reference, but no feature barcoding data:
+  add the --no-libraries flag.
+EOF
+)"
+			error "$msg"
+		fi
+	fi
     else
         feature_reference=null
     fi
