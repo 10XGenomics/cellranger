@@ -61,8 +61,7 @@ COMPRESSION = 'lz4'
 def split(args):
     chunks = []
     for chunk in args.chunks:
-        # FIXME: thread request is 2 due to python slowness + gzip subprocesses (CELLRANGER-1394)
-        chunk['__threads'] = 2
+        chunk['__threads'] = 1
         chunk['__mem_gb'] = 4
 
         if args.initial_reads is None:

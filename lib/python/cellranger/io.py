@@ -15,6 +15,9 @@ import six
 import subprocess
 import sys
 import tables
+import gzip
+import lz4.frame as lz4
+import _io as io  # this is necessary b/c this module is named 'io' ... :(
 import tenkit.log_subprocess as tk_subproc
 import cellranger.h5_constants as h5_constants
 import cellranger.constants as cr_constants
@@ -62,67 +65,21 @@ def write_h5(filename, data):
         for key, value in data.iteritems():
             f[key] = value
 
-class SubprocessStream(object):
-    """ Wrap a subprocess that we stream from or stream to """
-    def __init__(self, *args, **kwargs):
-        mode = kwargs.pop('mode', 'r')
-        if mode == 'r':
-            kwargs['stdout'] = subprocess.PIPE
-        elif mode == 'w':
-            kwargs['stdin'] = subprocess.PIPE
-        else:
-            raise ValueError('mode %s unsupported' % self.mode)
-
-        kwargs['preexec_fn'] = os.setsid
-        print args[0]
-        sys.stdout.flush()
-        self.proc = tk_subproc.Popen(*args, **kwargs)
-
-        if mode == 'r':
-            self.pipe = self.proc.stdout
-        elif mode == 'w':
-            self.pipe = self.proc.stdin
-        self._read = mode == 'r'
-    def __enter__(self):
-        return self
-    def __iter__(self):
-        return self
-    def next(self):
-        return self.pipe.next()
-    def fileno(self):
-        return self.pipe.fileno()
-    def write(self, x):
-        self.pipe.write(x)
-    def close(self):
-        self.pipe.close()
-        if self._read:
-            # Just in case the job is stuck waiting for its pipe to get flushed,
-            # kill it, since there's nothing listening on the other end of the pipe.
-            try:
-                self.proc.kill()
-            except:
-                pass
-        self.proc.wait()
-    def __exit__(self, tp, val, tb):
-        self.close()
-
 def open_maybe_gzip(filename, mode='r'):
-    compressor = None
-
+    # this _must_ be a str
+    filename = str(filename)
     if filename.endswith(h5_constants.GZIP_SUFFIX):
-        compressor = 'gzip'
+        raw = gzip.open(filename, mode + 'b')
     elif filename.endswith(h5_constants.LZ4_SUFFIX):
-        compressor = 'lz4'
+        raw = lz4.open(filename, mode + 'b')
     else:
         return open(filename, mode)
 
-    assert compressor is not None
-
+    bufsize = 1024*1024  # 1MB of buffering
     if mode == 'r':
-        return SubprocessStream([compressor, '-c', '-d', filename], mode='r')
+        return io.BufferedReader(raw, buffer_size=bufsize)
     elif mode == 'w':
-        f = open(filename, 'w')
-        return SubprocessStream([compressor, '-c'], stdout=f, mode='w')
+        return io.BufferedWriter(raw, buffer_size=bufsize)
     else:
         raise ValueError("Unsupported mode for compression: %s" % mode)
 
