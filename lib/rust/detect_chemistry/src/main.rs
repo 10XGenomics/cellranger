@@ -2,6 +2,11 @@
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
 
+use std::alloc::System;
+
+#[global_allocator]
+static A: System = System;
+
 extern crate docopt;
 #[macro_use] extern crate serde;
 extern crate regex;

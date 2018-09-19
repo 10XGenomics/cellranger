@@ -1,9 +1,13 @@
 //
 // Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
 //
-
 #![crate_name = "vdj_asm"]
 #![allow(dead_code)]
+
+use std::alloc::System;
+
+#[global_allocator]
+static A: System = System;
 
 extern crate bio;
 extern crate debruijn;

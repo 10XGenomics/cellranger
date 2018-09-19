@@ -2,6 +2,11 @@
 // Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 //
 
+use std::alloc::System;
+
+#[global_allocator]
+static A: System = System;
+
 extern crate log;
 extern crate env_logger;
 extern crate serde;
