@@ -17,6 +17,7 @@ import cellranger.vdj.constants as vdj_constants
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
 import cellranger.vdj.reference as vdj_ref
+import math
 
 __MRO__ = """
 stage REPORT_CONTIGS(
@@ -45,7 +46,7 @@ def split(args):
     mem_gb_annot = vdj_utils.get_mem_gb_from_annotations_json(args.annotations)
 
     umi_summary_bytes = os.path.getsize(args.umi_summary) if args.umi_summary else 0
-    mem_gb_umi = MEM_GB_PER_UMI_SUMMARY_GB * float(umi_summary_bytes)/1e9
+    mem_gb_umi = int(math.ceil(MEM_GB_PER_UMI_SUMMARY_GB * float(umi_summary_bytes)/1e9))
 
     mem_gb = max(mem_gb_annot, mem_gb_umi)
 
