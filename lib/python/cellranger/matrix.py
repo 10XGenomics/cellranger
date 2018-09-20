@@ -456,8 +456,9 @@ class CountMatrix(object):
         if type(self.m) is not sp_sparse.csc_matrix:
             self.m = self.m.tocsc()
 
-    def select_nonzero_axes(self):
-        '''Select axes with nonzero sums.
+
+    def select_axes_above_threshold(self, threshold=0):
+        '''Select axes with sums greater than the threshold value.
 
         Returns:
             (CountMatrix, np.array of int, np.array of int):
@@ -466,15 +467,24 @@ class CountMatrix(object):
 
         new_mat = copy.deepcopy(self)
 
-        nonzero_bcs = np.flatnonzero(new_mat.get_counts_per_bc())
+        nonzero_bcs = np.flatnonzero(new_mat.get_counts_per_bc() > threshold)
         if self.bcs_dim > len(nonzero_bcs):
             new_mat = new_mat.select_barcodes(nonzero_bcs)
 
-        nonzero_features = np.flatnonzero(new_mat.get_counts_per_feature())
+        nonzero_features = np.flatnonzero(new_mat.get_counts_per_feature() > threshold)
         if new_mat.features_dim > len(nonzero_features):
             new_mat = new_mat.select_features(nonzero_features)
 
         return new_mat, nonzero_bcs, nonzero_features
+
+    def select_nonzero_axes(self):
+        '''Select axes with nonzero sums.
+
+        Returns:
+            (CountMatrix, np.array of int, np.array of int):
+                New count matrix, non-zero bc indices, feat indices
+        '''
+        return self.select_axes_above_threshold(0)
 
     def select_barcodes(self, indices):
         '''Select a subset of barcodes and return the resulting CountMatrix.'''

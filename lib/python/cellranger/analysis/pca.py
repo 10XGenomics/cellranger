@@ -19,7 +19,7 @@ from sklearn.utils import sparsefuncs
 
 PCA = collections.namedtuple('PCA', ['transformed_pca_matrix', 'components', 'variance_explained', 'dispersion', 'features_selected'])
 
-def run_pca(matrix, pca_features=None, pca_bcs=None, n_pca_components=None, random_state=None):
+def run_pca(matrix, pca_features=None, pca_bcs=None, n_pca_components=None, random_state=None, min_count_threshold=0):
     if pca_features is None:
         pca_features = matrix.features_dim
     if pca_bcs is None:
@@ -51,12 +51,12 @@ def run_pca(matrix, pca_features=None, pca_bcs=None, n_pca_components=None, rand
     if pca_bcs < matrix.bcs_dim:
         pca_bc_indices = np.sort(np.random.choice(np.arange(matrix.bcs_dim), size=pca_bcs, replace=False))
 
-    pca_mat, _, pca_features_nonzero = matrix.select_barcodes(pca_bc_indices).select_features(pca_feature_indices).select_nonzero_axes()
+    pca_mat, _, pca_features_nonzero = matrix.select_barcodes(pca_bc_indices).select_features(pca_feature_indices).select_axes_above_threshold(min_count_threshold)
     pca_feature_nonzero_indices = pca_feature_indices[pca_features_nonzero]
 
     if pca_mat.features_dim < 2 or pca_mat.bcs_dim < 2:
         print "Matrix is too small for further downsampling - num_pca_bcs and num_pca_features will be ignored."
-        pca_mat, _, pca_features_nonzero = matrix.select_nonzero_axes()
+        pca_mat, _, pca_features_nonzero = matrix.select_axes_above_threshold(min_count_threshold)
         pca_feature_nonzero_indices = pca_features_nonzero
 
     (pca_norm_mat, pca_center, pca_scale) = normalize_and_transpose(pca_mat)

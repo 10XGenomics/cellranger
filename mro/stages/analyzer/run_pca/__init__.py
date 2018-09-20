@@ -55,7 +55,8 @@ def main(args, outs):
 
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
     pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
-                         n_pca_components=args.num_pcs, random_state=args.random_seed)
+                         n_pca_components=args.num_pcs, random_state=args.random_seed,
+                         min_count_threshold=2)
     pca_key = args.num_pcs if args.num_pcs is not None else analysis_constants.PCA_N_COMPONENTS_DEFAULT
     pca_map = {pca_key: pca}
 
