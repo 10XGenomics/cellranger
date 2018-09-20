@@ -33,7 +33,9 @@ def main(args, outs):
     # Each batch will have a distinct batch_id, which is an increasing integer. 
     batch_name_to_id = {}
 
-    for sample_def in args.sample_defs:
+    sample_defs = [] if args.sample_defs is None else args.sample_defs
+    
+    for sample_def in sample_defs:
         seen_ggs = set()
 
         aggr_id = sample_def[cr_constants.AGG_ID_FIELD]
