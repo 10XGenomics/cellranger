@@ -9,6 +9,7 @@ import cellranger.io as cr_io
 
 import h5py as h5
 import os
+import json
 import tables
 
 __MRO__ = """
@@ -26,6 +27,9 @@ stage SUMMARIZE_ANALYSIS(
     in  path multi_genome_csv,
     in  path multi_genome_json,
     in  bool is_multi_genome,
+    in  bool batch_alignment,
+    in  float batch_score_before_alignment,
+    in  float batch_score_after_alignment,
     in  bool skip,
     out path analysis,
     out path analysis_csv,
@@ -93,7 +97,18 @@ def join(args, outs, chunk_defs, chunk_outs):
     cr_io.copytree(chunk_out.analysis, outs.analysis)
     cr_io.copytree(chunk_out.analysis_csv, outs.analysis_csv)
 
+    # batch alignment summary
+    summary = {
+        'batch_alignment': args.batch_alignment,
+        'batch_effect_score': [args.batch_score_before_alignment, args.batch_score_after_alignment],
+    }
+
     if args.is_multi_genome:
-        cr_io.copy(args.multi_genome_summary, outs.summary)
+        with open(args.multi_genome_summary) as reader:
+            multi_genome_summary = json.load(reader)
+        summary.update(multi_genome_summary)
     else:
-        outs.summary = None
+        summary = summary
+
+    with open(outs.summary, 'w') as f:
+        json.dump(summary, f, indent=4, sort_keys=True)

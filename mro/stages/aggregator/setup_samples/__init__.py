@@ -7,12 +7,15 @@ import copy
 import cellranger.constants as cr_constants
 from cellranger.molecule_counter import MoleculeCounter
 import json
+import martian
 
 __MRO__ = '''
 stage SETUP_SAMPLES(
     in  map[] sample_defs,
     out map   gem_group_index,
     out json  gem_group_index_json,
+    out map[] libraries,
+    out bool  batch_alignment,
     src py    "stages/aggregator/setup_samples",
 )
 '''
@@ -21,11 +24,12 @@ def main(args, outs):
     new_gg = 0
     gg_index = {}
     libraries = []
+    batch_alignment = False
 
     ### Batch info
     # If a column 'batch' is given in sample_defs (read from input csv), that
-    # column will be used as batch identifier, otherwise, aggr_id will be 
-    # used as batch identifier.
+    # column will be used as batch identifier and batch_alignment will be turned on.
+    # otherwise, aggr_id will be used as batch identifier.
     # Each batch will have a distinct batch_id, which is an increasing integer. 
     batch_name_to_id = {}
 
@@ -33,7 +37,13 @@ def main(args, outs):
         seen_ggs = set()
 
         aggr_id = sample_def[cr_constants.AGG_ID_FIELD]
-        batch_name = sample_def.get(cr_constants.AGG_BATCH_FIELD, aggr_id)
+
+        if cr_constants.AGG_BATCH_FIELD in sample_def:
+            batch_alignment = True 
+            batch_name = sample_def[cr_constants.AGG_BATCH_FIELD]
+        else:
+            batch_name =  aggr_id
+
         if batch_name not in batch_name_to_id:
             batch_name_to_id[batch_name] = len(batch_name_to_id) 
 
@@ -66,8 +76,13 @@ def main(args, outs):
             # Track gem groups
             seen_ggs.add(old_gg)
 
+    if batch_alignment is True and len(batch_name_to_id) <= 1:
+        batch_alignment = False
+        martian.log_info('Warning: only one batch sepecified in the input csv, batch_alignment is disabled.')
+
     outs.libraries = libraries
     outs.gem_group_index = gg_index
+    outs.batch_alignment = batch_alignment
 
     # Write the "gem group index" (a legacy structure) for Loupe
     with open(outs.gem_group_index_json, 'w') as outfile:

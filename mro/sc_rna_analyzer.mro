@@ -6,6 +6,7 @@
 pipeline SC_RNA_ANALYZER(
     in  h5    raw_matrices_h5,
     in  h5    filtered_matrices_h5,
+    in  map[] aggr_library_info,
     in  bool  no_secondary_analysis,
     in  csv   use_genes,
     in  csv   exclude_genes,
@@ -15,6 +16,11 @@ pipeline SC_RNA_ANALYZER(
     in  int   num_pca_bcs,
     in  int   num_pca_genes,
     in  int   num_principal_comps,
+    in  bool  batch_alignment,
+    in  int   alignment_knn,
+    in  float alignment_alpha,
+    in  float alignment_sigma,
+    in  bool  alignment_realign_panorama,
     in  int   max_clusters,
     in  int   graphclust_neighbors,
     in  float neighbor_a,
@@ -34,29 +40,33 @@ pipeline SC_RNA_ANALYZER(
 )
 {
     call ANALYZER_PREFLIGHT(
-        skip                 = self.no_secondary_analysis,
-        raw_matrices_h5      = self.raw_matrices_h5,
-        filtered_matrices_h5 = self.filtered_matrices_h5,
-        use_genes            = self.use_genes,
-        exclude_genes        = self.exclude_genes,
-        use_bcs              = self.use_bcs,
-        num_analysis_bcs     = self.num_analysis_bcs,
-        force_cells          = self.force_cells,
-        random_seed          = self.random_seed,
-        num_pca_bcs          = self.num_pca_bcs,
-        num_pca_genes        = self.num_pca_genes,
-        num_principal_comps  = self.num_principal_comps,
-        max_clusters         = self.max_clusters,
-        graphclust_neighbors = self.graphclust_neighbors,
-        neighbor_a           = self.neighbor_a,
-        neighbor_b           = self.neighbor_b,
-        tsne_perplexity      = self.tsne_perplexity,
-        tsne_input_pcs       = self.tsne_input_pcs,
-        tsne_max_dims        = self.tsne_max_dims,
-        tsne_max_iter        = self.tsne_max_iter,
-        tsne_stop_lying_iter = self.tsne_stop_lying_iter,
-        tsne_mom_switch_iter = self.tsne_mom_switch_iter,
-        tsne_theta           = self.tsne_theta,
+        skip                       = self.no_secondary_analysis,
+        raw_matrices_h5            = self.raw_matrices_h5,
+        filtered_matrices_h5       = self.filtered_matrices_h5,
+        use_genes                  = self.use_genes,
+        exclude_genes              = self.exclude_genes,
+        use_bcs                    = self.use_bcs,
+        num_analysis_bcs           = self.num_analysis_bcs,
+        force_cells                = self.force_cells,
+        random_seed                = self.random_seed,
+        num_pca_bcs                = self.num_pca_bcs,
+        num_pca_genes              = self.num_pca_genes,
+        num_principal_comps        = self.num_principal_comps,
+        alignment_knn              = self.alignment_knn,
+        alignment_alpha            = self.alignment_alpha,
+        alignment_sigma            = self.alignment_sigma,
+        alignment_realign_panorama = self.alignment_realign_panorama,
+        max_clusters               = self.max_clusters,
+        graphclust_neighbors       = self.graphclust_neighbors,
+        neighbor_a                 = self.neighbor_a,
+        neighbor_b                 = self.neighbor_b,
+        tsne_perplexity            = self.tsne_perplexity,
+        tsne_input_pcs             = self.tsne_input_pcs,
+        tsne_max_dims              = self.tsne_max_dims,
+        tsne_max_iter              = self.tsne_max_iter,
+        tsne_stop_lying_iter       = self.tsne_stop_lying_iter,
+        tsne_mom_switch_iter       = self.tsne_mom_switch_iter,
+        tsne_theta                 = self.tsne_theta,
     ) using (
         volatile = true,
     )
@@ -83,6 +93,12 @@ pipeline SC_RNA_ANALYZER(
         volatile = true,
     )
 
+    call CHOOSE_DIMENSION_REDUCTION(
+        batch_alignment = self.batch_alignment,
+    ) using (
+        local = true,
+    )
+
     call RUN_PCA(
         matrix_h5   = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         random_seed = self.random_seed,
@@ -91,12 +107,38 @@ pipeline SC_RNA_ANALYZER(
         num_pcs     = self.num_principal_comps,
         skip        = ANALYZER_PREFLIGHT.skip,
     ) using (
+        disabled = CHOOSE_DIMENSION_REDUCTION.disable_run_pca,
         volatile = true,
+    )
+
+    call ALIGN_BATCH(
+        matrix_h5                  = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        library_info               = self.aggr_library_info,
+        num_pcs                    = self.num_principal_comps,
+        alignment_knn              = self.alignment_knn,
+        alignment_alpha            = self.alignment_alpha,
+        alignment_sigma            = self.alignment_sigma,
+        alignment_realign_panorama = self.alignment_realign_panorama,
+        skip                       = ANALYZER_PREFLIGHT.skip,
+    ) using (
+        disabled = CHOOSE_DIMENSION_REDUCTION.disable_align_batch,
+        volatile = true,
+    )
+
+    call CHOOSE_DIMENSION_REDUCTION_OUTPUT(
+        pca_h5_list  = [
+            RUN_PCA.pca_h5,
+            ALIGN_BATCH.aligned_pca_h5,
+        ],
+        pca_csv_list = [
+            RUN_PCA.pca_csv,
+            ALIGN_BATCH.aligned_pca_csv,
+        ],
     )
 
     call RUN_KMEANS(
         matrix_h5    = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5       = RUN_PCA.pca_h5,
+        pca_h5       = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
         random_seed  = self.random_seed,
         max_clusters = self.max_clusters,
         skip         = ANALYZER_PREFLIGHT.skip,
@@ -108,7 +150,7 @@ pipeline SC_RNA_ANALYZER(
 
     call RUN_GRAPH_CLUSTERING(
         matrix_h5          = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5             = RUN_PCA.pca_h5,
+        pca_h5             = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
         num_neighbors      = self.graphclust_neighbors,
         neighbor_a         = self.neighbor_a,
         neighbor_b         = self.neighbor_b,
@@ -123,7 +165,7 @@ pipeline SC_RNA_ANALYZER(
 
     call MERGE_CLUSTERS(
         matrix_h5   = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5      = RUN_PCA.pca_h5,
+        pca_h5      = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
         clusters_h5 = RUN_GRAPH_CLUSTERING.clusters_h5,
         skip        = ANALYZER_PREFLIGHT.skip,
     ) using (
@@ -152,7 +194,7 @@ pipeline SC_RNA_ANALYZER(
 
     call RUN_TSNE(
         matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5          = RUN_PCA.pca_h5,
+        pca_h5          = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
         random_seed     = self.random_seed,
         perplexity      = self.tsne_perplexity,
         input_pcs       = self.tsne_input_pcs,
@@ -167,20 +209,23 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call SUMMARIZE_ANALYSIS(
-        matrix_h5            = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5               = RUN_PCA.pca_h5,
-        clustering_h5        = COMBINE_CLUSTERING.clustering_h5,
-        diffexp_h5           = RUN_DIFFERENTIAL_EXPRESSION.diffexp_h5,
-        tsne_h5              = RUN_TSNE.tsne_h5,
-        pca_csv              = RUN_PCA.pca_csv,
-        clustering_csv       = COMBINE_CLUSTERING.clustering_csv,
-        diffexp_csv          = RUN_DIFFERENTIAL_EXPRESSION.diffexp_csv,
-        tsne_csv             = RUN_TSNE.tsne_csv,
-        multi_genome_summary = RUN_MULTIGENOME_ANALYSIS.multi_genome_summary,
-        multi_genome_csv     = RUN_MULTIGENOME_ANALYSIS.multi_genome_csv,
-        multi_genome_json    = RUN_MULTIGENOME_ANALYSIS.multi_genome_json,
-        is_multi_genome      = PREPROCESS_MATRIX.is_multi_genome,
-        skip                 = ANALYZER_PREFLIGHT.skip,
+        matrix_h5                    = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5                       = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
+        clustering_h5                = COMBINE_CLUSTERING.clustering_h5,
+        diffexp_h5                   = RUN_DIFFERENTIAL_EXPRESSION.diffexp_h5,
+        tsne_h5                      = RUN_TSNE.tsne_h5,
+        pca_csv                      = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_csv,
+        clustering_csv               = COMBINE_CLUSTERING.clustering_csv,
+        diffexp_csv                  = RUN_DIFFERENTIAL_EXPRESSION.diffexp_csv,
+        tsne_csv                     = RUN_TSNE.tsne_csv,
+        multi_genome_summary         = RUN_MULTIGENOME_ANALYSIS.multi_genome_summary,
+        multi_genome_csv             = RUN_MULTIGENOME_ANALYSIS.multi_genome_csv,
+        multi_genome_json            = RUN_MULTIGENOME_ANALYSIS.multi_genome_json,
+        is_multi_genome              = PREPROCESS_MATRIX.is_multi_genome,
+        batch_alignment              = self.batch_alignment,
+        batch_score_before_alignment = ALIGN_BATCH.batch_score_before_alignment,
+        batch_score_after_alignment  = ALIGN_BATCH.batch_score_after_alignment,
+        skip                         = ANALYZER_PREFLIGHT.skip,
     )
 
     return (

@@ -40,32 +40,44 @@ pipeline SC_RNA_REANALYZER_CS(
         matrix_h5       = self.filtered_matrices_h5,
     )
 
+    call SETUP_SAMPLES(
+        sample_defs = PARSE_CSV.sample_defs,
+    ) using (
+        volatile = true,
+    )
+
     call SC_RNA_ANALYZER(
         # don't support barnyard re-analysis (but see note below)
-        raw_matrices_h5       = null,
+        raw_matrices_h5            = null,
         # NOTE: if using force_cells, this might actually be the raw matrix
-        filtered_matrices_h5  = self.filtered_matrices_h5,
-        no_secondary_analysis = false,
-        use_genes             = self.genes_csv,
-        exclude_genes         = self.exclude_genes_csv,
-        use_bcs               = self.barcodes_csv,
-        num_analysis_bcs      = PARSE_PARAM_CSV.num_analysis_bcs,
-        random_seed           = PARSE_PARAM_CSV.random_seed,
-        num_pca_bcs           = PARSE_PARAM_CSV.num_pca_bcs,
-        num_pca_genes         = PARSE_PARAM_CSV.num_pca_genes,
-        num_principal_comps   = PARSE_PARAM_CSV.num_principal_comps,
-        max_clusters          = PARSE_PARAM_CSV.max_clusters,
-        graphclust_neighbors  = PARSE_PARAM_CSV.graphclust_neighbors,
-        neighbor_a            = PARSE_PARAM_CSV.neighbor_a,
-        neighbor_b            = PARSE_PARAM_CSV.neighbor_b,
-        tsne_perplexity       = PARSE_PARAM_CSV.tsne_perplexity,
-        tsne_input_pcs        = PARSE_PARAM_CSV.tsne_input_pcs,
-        tsne_max_dims         = PARSE_PARAM_CSV.tsne_max_dims,
-        tsne_max_iter         = PARSE_PARAM_CSV.tsne_max_iter,
-        tsne_stop_lying_iter  = PARSE_PARAM_CSV.tsne_stop_lying_iter,
-        tsne_mom_switch_iter  = PARSE_PARAM_CSV.tsne_mom_switch_iter,
-        tsne_theta            = PARSE_PARAM_CSV.tsne_theta,
-        force_cells           = self.force_cells,
+        filtered_matrices_h5       = self.filtered_matrices_h5,
+        no_secondary_analysis      = false,
+        aggr_library_info          = SETUP_SAMPLES.libraries,
+        use_genes                  = self.genes_csv,
+        exclude_genes              = self.exclude_genes_csv,
+        use_bcs                    = self.barcodes_csv,
+        num_analysis_bcs           = PARSE_PARAM_CSV.num_analysis_bcs,
+        random_seed                = PARSE_PARAM_CSV.random_seed,
+        num_pca_bcs                = PARSE_PARAM_CSV.num_pca_bcs,
+        num_pca_genes              = PARSE_PARAM_CSV.num_pca_genes,
+        num_principal_comps        = PARSE_PARAM_CSV.num_principal_comps,
+        batch_alignment            = SETUP_SAMPLES.batch_alignment,
+        alignment_knn              = PARSE_PARAM_CSV.alignment_knn,
+        alignment_alpha            = PARSE_PARAM_CSV.alignment_alpha,
+        alignment_sigma            = PARSE_PARAM_CSV.alignment_sigma,
+        alignment_realign_panorama = PARSE_PARAM_CSV.alignment_realign_panorama,
+        max_clusters               = PARSE_PARAM_CSV.max_clusters,
+        graphclust_neighbors       = PARSE_PARAM_CSV.graphclust_neighbors,
+        neighbor_a                 = PARSE_PARAM_CSV.neighbor_a,
+        neighbor_b                 = PARSE_PARAM_CSV.neighbor_b,
+        tsne_perplexity            = PARSE_PARAM_CSV.tsne_perplexity,
+        tsne_input_pcs             = PARSE_PARAM_CSV.tsne_input_pcs,
+        tsne_max_dims              = PARSE_PARAM_CSV.tsne_max_dims,
+        tsne_max_iter              = PARSE_PARAM_CSV.tsne_max_iter,
+        tsne_stop_lying_iter       = PARSE_PARAM_CSV.tsne_stop_lying_iter,
+        tsne_mom_switch_iter       = PARSE_PARAM_CSV.tsne_mom_switch_iter,
+        tsne_theta                 = PARSE_PARAM_CSV.tsne_theta,
+        force_cells                = self.force_cells,
     )
 
     call SUMMARIZE_REANALYSIS(

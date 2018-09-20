@@ -42,6 +42,7 @@ stage SETUP_SAMPLES(
     out map   gem_group_index,
     out map[] libraries,
     out json  gem_group_index_json,
+    out bool  batch_alignment,
     src py    "stages/aggregator/setup_samples",
 )
 

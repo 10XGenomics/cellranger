@@ -20,6 +20,10 @@ stage ANALYZER_PREFLIGHT(
     in  int   num_pca_bcs,
     in  int   num_pca_genes,
     in  int   num_principal_comps,
+    in  int   alignment_knn,
+    in  float alignment_alpha,
+    in  float alignment_sigma,
+    in  bool  alignment_realign_panorama,
     in  int   max_clusters,
     in  int   graphclust_neighbors,
     in  float neighbor_a,
@@ -197,24 +201,27 @@ stage RUN_TSNE(
 )
 
 stage SUMMARIZE_ANALYSIS(
-    in  h5   matrix_h5,
-    in  h5   pca_h5,
-    in  h5   clustering_h5,
-    in  h5   diffexp_h5,
-    in  h5   tsne_h5,
-    in  path pca_csv,
-    in  path clustering_csv,
-    in  path diffexp_csv,
-    in  path tsne_csv,
-    in  json multi_genome_summary,
-    in  path multi_genome_csv,
-    in  path multi_genome_json,
-    in  bool is_multi_genome,
-    in  bool skip,
-    out path analysis,
-    out path analysis_csv,
-    out json summary,
-    src py   "stages/analyzer/summarize_analysis",
+    in  h5    matrix_h5,
+    in  h5    pca_h5,
+    in  h5    clustering_h5,
+    in  h5    diffexp_h5,
+    in  h5    tsne_h5,
+    in  path  pca_csv,
+    in  path  clustering_csv,
+    in  path  diffexp_csv,
+    in  path  tsne_csv,
+    in  json  multi_genome_summary,
+    in  path  multi_genome_csv,
+    in  path  multi_genome_json,
+    in  bool  is_multi_genome,
+    in  bool  batch_alignment,
+    in  float batch_score_before_alignment,
+    in  float batch_score_after_alignment,
+    in  bool  skip,
+    out path  analysis,
+    out path  analysis_csv,
+    out json  summary,
+    src py    "stages/analyzer/summarize_analysis",
 ) split (
 ) using (
     volatile = strict,
@@ -228,6 +235,10 @@ stage PARSE_PARAM_CSV(
     out int   num_pca_bcs,
     out int   num_pca_genes,
     out int   num_principal_comps,
+    out int   alignment_knn,
+    out float alignment_alpha,
+    out float alignment_sigma,
+    out bool  alignment_realign_panorama,
     out int   max_clusters,
     out int   graphclust_neighbors,
     out float neighbor_a,
@@ -255,4 +266,43 @@ stage SUMMARIZE_REANALYSIS(
 ) split (
 ) using (
     volatile = strict,
+)
+
+stage ALIGN_BATCH(
+    in  h5     matrix_h5,
+    in  map[]  library_info,
+    in  int    num_pcs,
+    in  int    alignment_knn,
+    in  float  alignment_alpha,
+    in  float  alignment_sigma,
+    in  bool   alignment_realign_panorama,
+    in  bool   skip,
+    out float  batch_score_before_alignment,
+    out float  batch_score_after_alignment,
+    out h5     aligned_pca_h5,
+    out path   aligned_pca_csv,
+    src py     "stages/analyzer/align_batch",
+) split (
+    in  int    batch_id,
+    in  map    batch_to_bc_indices,
+    in  pickle dimred_matrix,
+    in  pickle idx_to_batch_id,
+    in  bool   need_reorder_barcode,
+    in  pickle barcode_reorder_index,
+    out pickle batch_nearest_neighbor,
+)
+
+stage CHOOSE_DIMENSION_REDUCTION(
+    in  bool batch_alignment,
+    out bool disable_run_pca,
+    out bool disable_align_batch,
+    src py   "stages/analyzer/choose_dimension_reduction",
+)
+
+stage CHOOSE_DIMENSION_REDUCTION_OUTPUT(
+    in  h5[]   pca_h5_list,
+    in  path[] pca_csv_list,
+    out h5     pca_h5,
+    out path   pca_csv,
+    src py     "stages/analyzer/choose_dimension_reduction_output",
 )
