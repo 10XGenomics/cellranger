@@ -5,6 +5,7 @@
 
 import cellranger.analysis.pca as cr_pca
 import cellranger.h5_constants as h5_constants
+from cellranger.library_constants import GENE_EXPRESSION_LIBRARY_TYPE
 import cellranger.analysis.constants as analysis_constants
 import cellranger.matrix as cr_matrix
 import cellranger.io as cr_io
@@ -54,6 +55,7 @@ def main(args, outs):
         return
 
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
+    matrix = matrix.select_features_by_type(GENE_EXPRESSION_LIBRARY_TYPE)
     pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
                          n_pca_components=args.num_pcs, random_state=args.random_seed,
                          min_count_threshold=2)
