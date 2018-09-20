@@ -104,9 +104,10 @@ def remove_bcs_with_high_umi_corrected_reads(correction_data, matrix):
         and remove them from the CoutMatrix """
 
     bcs_to_remove, reads_lost, removed_bcs_df = ab_utils.detect_aggregate_bcs(correction_data)
-    filtered_bcs = ab_utils.remove_keys_from_dict(matrix.bcs_map, bcs_to_remove)
-    filtered_bcs.keys().sort()
-    cleaned_matrix = matrix.select_barcodes_by_seq(filtered_bcs)
+    bcs_to_remove = set(matrix.bc_to_int(bc) for bc in bcs_to_remove)
+    # make sure filtered_bcs is in deterministic order or any later bootstrap sampling will not be deterministic
+    filtered_bcs = [i for i in xrange(matrix.bcs_dim) if i not in bcs_to_remove]
+    cleaned_matrix = matrix.select_barcodes(filtered_bcs)
 
     ### report how many aggregates were found, and the fraction of reads those accounted for
     metrics_to_report = {}

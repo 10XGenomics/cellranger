@@ -339,8 +339,9 @@ def create_hdf5_string_dataset(group, name, data, **kwargs):
         group.create_dataset(name, dtype='S1')
         return
 
-    assert isinstance(data, list) and \
-        all(x is None or isinstance(x, six.string_types) for x in data)
+    assert (isinstance(data, np.ndarray) and data.dtype.char == 'S') or \
+            (isinstance(data, list) and \
+            all(x is None or isinstance(x, six.string_types) for x in data))
 
     # Convert Nones to empty strings and use XML encoding
     data = map(lambda x: x.encode('ascii', 'xmlcharrefreplace') if x is not None else '', data)

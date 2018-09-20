@@ -22,6 +22,7 @@ from cellranger.feature_ref import FeatureReference
 import cellranger.utils as cr_utils
 import cellranger.io as cr_io
 import cellranger.sparse as cr_sparse
+import cellranger.bisect as cr_bisect
 
 HDF5_COMPRESSION = 'gzip'
 # Number of elements per chunk. Here, 1 MiB / (12 bytes)
@@ -179,9 +180,13 @@ class CountMatrix(object):
         self.feature_ids_map = { f.id: f.index for f in feature_ref.feature_defs }
 
         # Cell barcodes
-        self.bcs = list(bcs)
-        self.bcs_dim = len(self.bcs)
-        self.bcs_map = {bc:i for i, bc in enumerate(self.bcs)}
+        bcs = np.array(bcs, dtype='S', copy=False)
+        bcs.flags.writeable = False
+        self.bcs = bcs
+        self.bcs_dim, = self.bcs.shape
+        bcs_idx = np.argsort(self.bcs).astype(np.int32)
+        bcs_idx.flags.writeable = False
+        self.bcs_idx = bcs_idx
 
         self.m = matrix
 
@@ -300,9 +305,10 @@ class CountMatrix(object):
         return self.feature_ref.feature_defs[i].name
 
     def bc_to_int(self, bc):
-        if bc not in self.bcs_map:
+        j = cr_bisect.bisect_left(self.bcs_idx, bc, self.bcs)
+        if j >= self.bcs_dim or self.bcs[j] != bc:
             raise KeyError("Specified barcode not found in matrix: %s" % bc)
-        return self.bcs_map[bc]
+        return j
 
     def bcs_to_ints(self, bcs):
         return sorted([self.bc_to_int(bc) for bc in bcs])

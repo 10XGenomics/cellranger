@@ -277,8 +277,10 @@ def main(args, outs):
         for gg in gem_groups:
             idx_start = gg_barcode_idx_start[gg]
             idx_end = idx_start + gg_barcode_idx_len[gg]
-            gg_bcs = [cr_utils.format_barcode_seq(bc, gg) for bc in barcode_seqs[idx_start:idx_end]]
-            barcodes.extend(gg_bcs)
+            gg_bcs = np.array([cr_utils.format_barcode_seq(bc, gg) for bc in barcode_seqs[idx_start:idx_end]])
+            barcodes.append(gg_bcs)
+        barcodes = np.concatenate(barcodes)
+        barcodes.flags.writeable = False
 
         print 'created barcode strings'
         LogPerf.mem()
