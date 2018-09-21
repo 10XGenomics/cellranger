@@ -18,18 +18,18 @@ pipeline SC_RNA_COUNTER_CS(
     in  csv     feature_reference,
     out html    web_summary                   "Run summary HTML",
     out csv     metrics_summary               "Run summary CSV",
-    out bam     possorted_genome_bam          "BAM"                      "possorted_genome_bam.bam",
-    out bam.bai possorted_genome_bam_index    "BAM index"                "possorted_genome_bam.bam.bai",
+    out bam     possorted_genome_bam          "BAM"                       "possorted_genome_bam.bam",
+    out bam.bai possorted_genome_bam_index    "BAM index"                 "possorted_genome_bam.bam.bai",
     out path    filtered_gene_bc_matrices     "Filtered gene-barcode matrices MEX",
     out h5      filtered_gene_bc_matrices_h5  "Filtered gene-barcode matrices HDF5",
     out path    raw_gene_bc_matrices          "Unfiltered gene-barcode matrices MEX",
     out h5      raw_gene_bc_matrices_h5       "Unfiltered gene-barcode matrices HDF5",
     out path    analysis                      "Secondary analysis output CSV",
     out h5      molecule_info                 "Per-molecule read information",
+    out path    crispr_analysis               "CRISPR-specific analysis",
     out cloupe  cloupe                        "Loupe Cell Browser file",
 )
 {
-
     call EXPAND_SAMPLE_DEF(
         raw_sample_def = self.sample_def,
     ) using (
@@ -129,6 +129,7 @@ pipeline SC_RNA_COUNTER_CS(
         filtered_gene_bc_matrices_h5 = SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
         analysis                     = SC_RNA_COUNTER.analysis_csv,
         molecule_info                = SC_RNA_COUNTER.molecule_info,
+        crispr_analysis              = SC_RNA_COUNTER.crispr_analysis,
         cloupe                       = CLOUPE_PREPROCESS.output_for_cloupe,
     )
 }
