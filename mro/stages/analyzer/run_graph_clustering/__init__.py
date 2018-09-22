@@ -46,7 +46,7 @@ NN_QUERIES_PER_CHUNK = 15000
 DEFAULT_BALLTREE_LEAFSIZE = 40
 
 # Memory usage in join, empirically determined
-NN_ENTRIES_PER_MEM_GB = 10000000
+NN_ENTRIES_PER_MEM_GB = 5000000
 
 # Unweighted nearest neighbor (boolean: is-nearest-neighbor)
 NN_SIMILARITY = 'nn'
