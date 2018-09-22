@@ -5,6 +5,8 @@
 # Run SC_RNA_COUNTER_CS with mrp.
 #
 
+export FASTQS_OPTIONAL=1
+
 source $TENX_SCRIPTDIR/common/_includes
 
 # Add pipeline-specific required args
@@ -42,7 +44,7 @@ Options:
                             for Single Cell 5' paired-end/R2-only. Default: auto.
     --no-libraries      Proceed with processing using a --feature-ref but no
                             feature-barcoding data specified with the
-                            --libraries flag.
+                            'libraries' flag.
     $DOCOPT_OPTIONS_FASTQS
 
 # Martian Runtime
@@ -75,7 +77,7 @@ function implement_process_options {
         # and needs to use --libraries to specify the input fastqs and their associated library types
         # Make sure they're doing that. They can override the warning in the (rarer) case that they're
         # need to supply the feature ref to make aggr happy, but don't actually have those any FB data.
-        if [ -z "$libraries"]; then
+        if [ -z "$libraries" ]; then
 		if [ "$no_libraries" == "false" ]; then
 			msg="$(cat <<EOF
 You specified --feature-ref, but not --libraries.
