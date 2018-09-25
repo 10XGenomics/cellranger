@@ -52,7 +52,7 @@ def split(args):
     # 8*N bytes to store the sort indices
     # (8+8+8)*N bytes to load, concatenate, and index into a 64-bit data column
     mol_info_mem_gb = int(math.ceil((32 * mol_info_rows)/5e8))
-    mem_gb = min(MAX_MEM_GB, max(h5_constants.MIN_MEM_GB, mol_info_mem_gb))
+    mem_gb = min(MAX_MEM_GB, max(h5_constants.MIN_MEM_GB*2, mol_info_mem_gb))
 
     chunks = []
     for chunk_input in args.inputs:
