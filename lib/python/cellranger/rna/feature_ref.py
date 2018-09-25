@@ -329,6 +329,12 @@ def parse_feature_def_file(filename, index_offset=0):
                 raise FeatureDefException('Found duplicated ID in feature definition file: "%s"' % row['id'])
             seen_ids.add(row['id'])
 
+            if "\t" in row['name']:
+                raise FeatureDefException("Feature name field cannot contain tabs: '%s'" % row['name'])
+
+            if ' ' in row['id'] or "\t" in row['id']:
+                raise FeatureDefException("Feature id field cannot contain whitespace: '%s'" % row['id'])
+
             # Additional columns become key-value pairs
             # Maintain input order
             tag_cols = [c for c in reader.fieldnames if c not in BASE_FEATURE_FIELDS and c in row]
