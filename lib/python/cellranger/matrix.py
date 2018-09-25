@@ -53,6 +53,9 @@ MATRIX_H5_FILETYPE = u'matrix'
 MATRIX_H5_VERSION_KEY = u'version'
 MATRIX_H5_VERSION = 2
 
+class NullAxisMatrixError(Exception):
+    pass
+
 class CountMatrixView(object):
     """Supports summing a sliced CountMatrix w/o copying the whole thing"""
     def __init__(self, matrix, feature_indices=None, bc_indices=None):
@@ -456,7 +459,6 @@ class CountMatrix(object):
         if type(self.m) is not sp_sparse.csc_matrix:
             self.m = self.m.tocsc()
 
-
     def select_axes_above_threshold(self, threshold=0):
         '''Select axes with sums greater than the threshold value.
 
@@ -474,6 +476,9 @@ class CountMatrix(object):
         nonzero_features = np.flatnonzero(new_mat.get_counts_per_feature() > threshold)
         if new_mat.features_dim > len(nonzero_features):
             new_mat = new_mat.select_features(nonzero_features)
+
+        if len(nonzero_bcs) == 0 or len(nonzero_features) == 0:
+            raise NullAxisMatrixError()
 
         return new_mat, nonzero_bcs, nonzero_features
 

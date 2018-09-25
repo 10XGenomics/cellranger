@@ -10,6 +10,7 @@ import cellranger.analysis.constants as analysis_constants
 import cellranger.matrix as cr_matrix
 import cellranger.io as cr_io
 import tables
+import martian
 
 __MRO__ = """
 stage RUN_PCA(
@@ -56,9 +57,15 @@ def main(args, outs):
 
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
     matrix = matrix.select_features_by_type(GENE_EXPRESSION_LIBRARY_TYPE)
-    pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
-                         n_pca_components=args.num_pcs, random_state=args.random_seed,
-                         min_count_threshold=2)
+    try:
+        pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
+                             n_pca_components=args.num_pcs, random_state=args.random_seed,
+                             min_count_threshold=2)
+    except cr_matrix.NullAxisMatrixError:
+        martian.log_warn("insufficient counts for min_count_threshold=2, downgrading to min_count_threshold=0")
+        pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
+                             n_pca_components=args.num_pcs, random_state=args.random_seed,
+                             min_count_threshold=0)
     pca_key = args.num_pcs if args.num_pcs is not None else analysis_constants.PCA_N_COMPONENTS_DEFAULT
     pca_map = {pca_key: pca}
 
