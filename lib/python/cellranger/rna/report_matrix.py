@@ -17,7 +17,7 @@ import tenkit.stats as tk_stats
 
 def _get_total_reads(summary, library_type):
     prefix = rna_library.get_library_type_metric_prefix(library_type)
-    return int(summary[prefix + 'total_reads'])
+    return int(summary.get(prefix + 'total_reads', 0))
 
 def _get_conf_mapped_reads(summary, genomes, library_type):
     prefix = rna_library.get_library_type_metric_prefix(library_type)
@@ -63,6 +63,11 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
     # Get number of cell bcs across all genomes
     cell_bcs_union = reduce(lambda a,x: a | set(x), cell_bc_seqs.itervalues(), set())
     n_cell_bcs_union = len(cell_bcs_union)
+
+    # if no detected cells, don't compute metrics
+    if n_cell_bcs_union == 0:
+        return d
+
     d['filtered_bcs_transcriptome_union'] = n_cell_bcs_union
     d['%s_filtered_bcs' % lib_constants.MULTI_REFS_PREFIX] = n_cell_bcs_union
 
@@ -289,7 +294,9 @@ def report_genomes(matrix, reads_summary, barcode_summary_h5_path, recovered_cel
     feature_types = sorted(list(set(f.feature_type for f in matrix.feature_ref.feature_defs)))
     for ftype in feature_types:
         total_reads = _get_total_reads(reads_summary, ftype)
-
+        if total_reads == 0:
+            continue
+    
         genomes = matrix.get_genomes()
         conf_mapped_reads = _get_conf_mapped_reads(reads_summary, genomes, ftype)
 

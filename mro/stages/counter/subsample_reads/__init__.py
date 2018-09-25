@@ -4,6 +4,7 @@
 #
 import cPickle
 from collections import defaultdict
+from itertools import izip
 import json
 import numpy as np
 import cellranger.constants as cr_constants
@@ -191,8 +192,23 @@ def main(args, outs):
 
     # Give each genome an integer index
     genome_to_int = {g: i for i, g in enumerate(genomes)}
-    feature_int_to_genome_int = np.array([genome_to_int[f.tags.get('genome', '')] for f in mc.feature_reference.feature_defs], dtype=int)
+    feature_int_to_genome_int = np.fromiter((genome_to_int[f.tags.get('genome', '')] for f in mc.feature_reference.feature_defs),
+                                            dtype=int)
     mol_genome_idx = feature_int_to_genome_int[mol_feature_idx]
+
+
+    # determine which (library type, genome) pairs have any associated reads
+    lib_types = sorted(set(lib['library_type'] for lib in mc.library_info))
+    lib_type_to_int = {l: i for i, l in enumerate(lib_types)}
+    lib_idx_to_lib_type_idx = np.fromiter((lib_type_to_int[lib['library_type']] for lib in mc.library_info),
+                                          dtype=np.int)
+
+    lib_type_genome_any_reads = np.zeros((len(lib_types), len(genomes)), dtype=np.bool)
+    lib_genome_idx_pairs = set(izip(mol_library_idx[mol_read_pairs > 0],
+                                    mol_genome_idx[mol_read_pairs > 0]))
+    for (lib_idx, genome_idx) in lib_genome_idx_pairs:
+       lib_type_idx = lib_idx_to_lib_type_idx[lib_idx]
+       lib_type_genome_any_reads[lib_type_idx, genome_idx] = True
 
 
     # Run each subsampling task on this chunk of data
@@ -229,6 +245,7 @@ def main(args, outs):
 
             for this_genome_idx in xrange(len(genomes)):
                 umis = np.flatnonzero((read_pairs > 0) & (genome_idx == this_genome_idx))
+                this_genome_read_pairs = np.sum(read_pairs[genome_idx == this_genome_idx])
 
                 # Tally UMIs and median features detected
                 if barcode in cell_bcs_by_genome[genomes[this_genome_idx]]:
@@ -237,7 +254,7 @@ def main(args, outs):
                     features_det_per_bc[task_idx, this_genome_idx, cell_idx] = np.count_nonzero(np.bincount(feature_idx[umis]))
 
                 # Tally numbers for duplicate fraction
-                read_pairs_per_task[task_idx, this_genome_idx] += np.sum(read_pairs)
+                read_pairs_per_task[task_idx, this_genome_idx] += np.sum(this_genome_read_pairs)
                 umis_per_task[task_idx, this_genome_idx] += len(umis)
 
     with open(outs.metrics, 'w') as f:
@@ -246,6 +263,7 @@ def main(args, outs):
             'features_det_per_bc': features_det_per_bc,
             'read_pairs': read_pairs_per_task,
             'umis': umis_per_task,
+            'lib_type_genome_any_reads': lib_type_genome_any_reads,
         }
         cPickle.dump(data, f, protocol = cPickle.HIGHEST_PROTOCOL)
 
@@ -274,6 +292,8 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     with MoleculeCounter.open(args.molecule_info, 'r') as mc:
         genomes = sorted(set(f.tags.get('genome', '') for f in mc.feature_reference.feature_defs))
+        lib_types = sorted(set(lib['library_type'] for lib in mc.library_info))
+        lib_type_map = dict((lt, idx) for (idx, lt) in enumerate(lib_types))
     cell_bcs_by_genome = get_cell_associated_barcodes(genomes, args.filtered_barcodes)
 
     # Give each cell-associated barcode an integer index
@@ -284,6 +304,7 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     for i, task in enumerate(subsample_info):
         lib_type = task['library_type']
+        lib_type_idx = lib_type_map[lib_type]
         ss_type = task['subsample_type']
         ss_depth = task['target_read_pairs_per_cell']
 
@@ -294,6 +315,8 @@ def join(args, outs, chunk_defs, chunk_outs):
 
         # Per-genome metrics
         for g in genome_ints:
+            if not data['lib_type_genome_any_reads'][lib_type_idx, g]:
+                continue
             genome = genomes[g]
 
             # Only compute on cell-associated barcodes for this genome.
