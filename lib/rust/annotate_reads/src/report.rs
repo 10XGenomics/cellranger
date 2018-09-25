@@ -518,7 +518,16 @@ fn map_chroms_to_genomes(chroms: &[String], genomes: &[String]) -> HashMap<Strin
         if genomes.len() == 1 {
             mapping.insert(chrom.clone(), genomes[0].clone());
         } else {
-            let genome = chrom.split("_").next().unwrap();
+            let genomes: HashSet<&String> = HashSet::from_iter(genomes.iter());
+            let mut parts = chrom.split("_");
+            let mut genome = parts.next().unwrap().to_owned();
+            while !genomes.contains(&genome) {
+                if let Some(part) = parts.next() {
+                    genome = format!("{}_{}", genome, part);
+                } else {
+                    panic!("cannot recover genome from chromosome name!");
+                }
+            }
             mapping.insert(chrom.clone(), genome.to_owned());
         }
     }
