@@ -100,7 +100,8 @@ def join(args, outs, chunk_defs, chunk_outs):
     # batch alignment summary
     summary = {
         'batch_alignment': args.batch_alignment,
-        'batch_effect_score': [args.batch_score_before_alignment, args.batch_score_after_alignment],
+        'batch_effect_score_before_alignment': args.batch_score_before_alignment, 
+        'batch_effect_score_after_alignment': args.batch_score_after_alignment,        
     }
 
     if args.is_multi_genome:
