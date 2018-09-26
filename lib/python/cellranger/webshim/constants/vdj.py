@@ -23,7 +23,7 @@ def vdj_gene_pair_format(gene_pair_str):
 # NOTE: Q30 metrics are currently shared with count.
 #       However, RNA Read is renamed to RNA Read 1 here.
 TOTAL_READ_PAIRS_METRIC = {
-    'name': 'total_read_pairs',
+    'name': 'VDJ_total_read_pairs',
     'display_name': 'Number of Read Pairs',
     'description': 'Total number of read pairs that were assigned to this library in demultiplexing.',
     'format': 'integer',
@@ -31,31 +31,31 @@ TOTAL_READ_PAIRS_METRIC = {
 
 Q30_METRICS = [
     {
-        'name': 'bc_bases_with_q30_frac',
+        'name': 'VDJ_bc_bases_with_q30_frac',
         'display_name': 'Q30 Bases in Barcode',
         'description': 'Fraction of cell barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
         'format': 'percent',
     },
     {
-        'name': 'read_bases_with_q30_frac',
+        'name': 'VDJ_read_bases_with_q30_frac',
         'display_name': 'Q30 Bases in RNA Read 1',
         'description': 'Fraction of RNA read 1 bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
         'format': 'percent',
     },
     {
-        'name': 'read2_bases_with_q30_frac',
+        'name': 'VDJ_read2_bases_with_q30_frac',
         'display_name': 'Q30 Bases in RNA Read 2',
         'description': 'Fraction of RNA read 2 bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
         'format': 'percent',
     },
     {
-        'name': 'sample_index_bases_with_q30_frac',
+        'name': 'VDJ_sample_index_bases_with_q30_frac',
         'display_name': 'Q30 Bases in Sample Index',
         'description': 'Fraction of sample index bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
         'format': 'percent',
     },
     {
-        'name': 'umi_bases_with_q30_frac',
+        'name': 'VDJ_umi_bases_with_q30_frac',
         'display_name': 'Q30 Bases in UMI',
         'description': 'Fraction of UMI bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
         'format': 'percent',
