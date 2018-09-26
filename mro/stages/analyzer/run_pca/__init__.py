@@ -61,7 +61,7 @@ def main(args, outs):
         pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
                              n_pca_components=args.num_pcs, random_state=args.random_seed,
                              min_count_threshold=2)
-    except cr_matrix.NullAxisMatrixError:
+    except:
         martian.log_warn("insufficient counts for min_count_threshold=2, downgrading to min_count_threshold=0")
         pca = cr_pca.run_pca(matrix, pca_features=args.num_genes, pca_bcs=args.num_bcs,
                              n_pca_components=args.num_pcs, random_state=args.random_seed,
