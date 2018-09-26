@@ -6,6 +6,7 @@ import cellranger.io as cr_io
 
 __MRO__ = """
 stage CHOOSE_DIMENSION_REDUCTION_OUTPUT(
+    in  bool   skip,
     in  []     pca_h5_list,
     in  []     pca_csv_list,
     out h5     pca_h5,
@@ -15,6 +16,9 @@ stage CHOOSE_DIMENSION_REDUCTION_OUTPUT(
 """
 
 def main(args, outs):
+    if args.skip:
+        return
+        
     for h5, csv in zip(args.pca_h5_list, args.pca_csv_list):
         if h5 is not None and csv is not None:
             cr_io.copy(h5, outs.pca_h5)

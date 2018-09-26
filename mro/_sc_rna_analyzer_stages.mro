@@ -300,6 +300,7 @@ stage CHOOSE_DIMENSION_REDUCTION(
 )
 
 stage CHOOSE_DIMENSION_REDUCTION_OUTPUT(
+    in  bool   skip,
     in  h5[]   pca_h5_list,
     in  path[] pca_csv_list,
     out h5     pca_h5,

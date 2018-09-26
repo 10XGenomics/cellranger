@@ -126,6 +126,7 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call CHOOSE_DIMENSION_REDUCTION_OUTPUT(
+        skip         = ANALYZER_PREFLIGHT.skip,
         pca_h5_list  = [
             RUN_PCA.pca_h5,
             ALIGN_BATCH.aligned_pca_h5,
