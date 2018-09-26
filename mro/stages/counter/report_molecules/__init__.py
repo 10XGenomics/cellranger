@@ -8,7 +8,6 @@ import math
 import numpy as np
 import tenkit.bam as tk_bam
 import cellranger.constants as cr_constants
-import cellranger.h5_constants as h5_constants
 import cellranger.molecule_counter as cr_mol_counter
 from cellranger.molecule_counter import MoleculeCounter
 import cellranger.report as cr_report
@@ -51,8 +50,8 @@ def split(args):
     # N = total number of rows
     # 8*N bytes to store the sort indices
     # (8+8+8)*N bytes to load, concatenate, and index into a 64-bit data column
-    mol_info_mem_gb = int(math.ceil((32 * mol_info_rows)/5e8))
-    mem_gb = min(MAX_MEM_GB, max(h5_constants.MIN_MEM_GB*2, mol_info_mem_gb))
+    mol_info_mem_gb = int(math.ceil((32 * mol_info_rows)/2.5e8))
+    mem_gb = min(MAX_MEM_GB, max(4, mol_info_mem_gb))
 
     chunks = []
     for chunk_input in args.inputs:
