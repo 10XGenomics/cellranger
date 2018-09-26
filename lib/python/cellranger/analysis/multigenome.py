@@ -81,7 +81,13 @@ class MultiGenomeAnalysis:
         p_obs_multiplet = 2 * (float(n_cells0) / float(n_cells0 + n_cells1)) * (float(n_cells1) / float(n_cells0 + n_cells1))
 
         # Analytical MOM/MLE of binomial N given p, k
-        return float(n_obs_multiplets) / p_obs_multiplet
+        mle = float(n_obs_multiplets) / p_obs_multiplet
+        # In some (artificial) datasets, the mle can be higher than the total number of cells
+        # observed.  This occurs when n_obs_multiplets > n_cells0|1. The right way to fix that would be to
+        # do inference in a full model that didn't fix some parameters.  In practice, multigenomes
+        # are a rare analysis and most data isn't artificial, so we are implementing
+        # a small hack instead.
+        return min(mle, float(n_obs_multiplets + n_cells0 + n_cells1))
 
     @staticmethod
     def _compute_count_purity(counts0, counts1):
