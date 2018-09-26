@@ -3,12 +3,12 @@
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 from collections import OrderedDict
-from cellranger.feature_ref import FeatureDef
 import copy
 import h5py as h5
 import itertools
 import json
 import numpy as np
+import scipy.io as sp_io
 import os
 import pandas as pd
 pd.set_option("compute.use_numexpr", False)
@@ -18,7 +18,7 @@ import scipy.sparse as sp_sparse
 import tenkit.safe_json as tk_safe_json
 import cellranger.h5_constants as h5_constants
 import cellranger.library_constants as lib_constants
-from cellranger.feature_ref import FeatureReference
+from cellranger.feature_ref import FeatureReference, FeatureDef
 import cellranger.utils as cr_utils
 import cellranger.io as cr_io
 import cellranger.sparse as cr_sparse
@@ -74,6 +74,9 @@ class CountMatrixView(object):
 
     @property
     def bcs_dim(self): return np.count_nonzero(self.bc_mask)
+
+    @property
+    def features_dim(self): return np.count_nonzero(self.feature_mask)
 
     def _copy(self):
         """Return a copy of this view"""
@@ -193,6 +196,11 @@ class CountMatrix(object):
 
         self.m = matrix
 
+
+    def get_num_nonzero(self):
+        """Return the number of nonzero entries in the sliced matrix"""
+        return self.m.nnz
+
     def view(self):
         """Return a view on this matrix"""
         return CountMatrixView(self)
@@ -288,6 +296,59 @@ class CountMatrix(object):
 
         return CountMatrix(feature_ref, barcodes, matrix)
 
+
+    @staticmethod
+    def from_legacy_mtx(genome_dir):
+        barcodes_tsv = os.path.join(genome_dir, "barcodes.tsv")
+        genes_tsv = os.path.join(genome_dir, "genes.tsv")
+        matrix_mtx = os.path.join(genome_dir, "matrix.mtx")
+        for filepath in [barcodes_tsv, genes_tsv, matrix_mtx]:
+            if not os.path.exists(filepath):
+                raise IOError("Required file not found: %s" % filepath)
+        barcodes = pd.read_csv(barcodes_tsv, delimiter='\t', header=None, usecols=[0]).values.squeeze()
+        genes = pd.read_csv(genes_tsv, delimiter='\t', header=None, usecols=[0]).values.squeeze()
+        feature_defs = [FeatureDef(idx, gene_id, None, "Gene Expression", []) for (idx, gene_id) in enumerate(genes)]
+        feature_ref = FeatureReference(feature_defs, [])
+
+        matrix = sp_io.mmread(matrix_mtx)
+        mat = CountMatrix(feature_ref, barcodes, matrix)
+        return mat
+
+    @staticmethod
+    def from_v3_mtx(genome_dir):
+        barcodes_tsv = os.path.join(genome_dir, "barcodes.tsv.gz")
+        features_tsv = os.path.join(genome_dir, "features.tsv.gz")
+        matrix_mtx = os.path.join(genome_dir, "matrix.mtx.gz")
+        for filepath in [barcodes_tsv, features_tsv, matrix_mtx]:
+            if not os.path.exists(filepath):
+                raise IOError("Required file not found: %s" % filepath)
+        barcodes = pd.read_csv(barcodes_tsv, delimiter='\t', header=None, usecols=[0]).values.squeeze()
+        features = pd.read_csv(features_tsv, delimiter='\t', header=None)
+
+        feature_defs = []
+        for (idx, (_, r)) in enumerate(features.iterrows()):
+            fd = FeatureDef(idx, r[0], r[1], r[2], [])
+            feature_defs.append(fd)
+
+        feature_ref = FeatureReference(feature_defs, [])
+
+        matrix = sp_io.mmread(matrix_mtx)
+        mat = CountMatrix(feature_ref, barcodes, matrix)
+        return mat
+
+
+    @staticmethod
+    def load_mtx(mtx_dir):
+        legacy_fn = os.path.join(mtx_dir, "genes.tsv")
+        v3_fn = os.path.join(mtx_dir, "features.tsv.gz")
+
+        if os.path.exists(legacy_fn):
+            return CountMatrix.from_legacy_mtx(mtx_dir)
+
+        if os.path.exists(v3_fn):
+            return CountMatrix.from_v3_mtx(mtx_dir)
+
+        raise IOError("Not a valid path to a feature-barcode mtx directory: '%s'" % str(mtx_dir))
 
     def feature_id_to_int(self, feature_id):
         if feature_id not in self.feature_ids_map:
