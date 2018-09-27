@@ -30,11 +30,20 @@ stage CALL_PROTOSPACERS(
 )
 """
 
+def set_empty(outs):
+    outs.protospacer_calls_per_cell = None
+    outs.protospacer_calls_summary = None
+    outs.cells_per_protospacer = None
+    outs.protospacer_umi_thresholds_json = None
+    outs.protospacer_umi_thresholds_csv = None
+    outs.protospacer_call_metrics_json = None
+
 def main(args, outs):
+
     if not(os.path.isfile(args.molecule_info) and os.path.isfile(args.filtered_feature_counts_matrix)):
-        (outs.protospacer_calls_summary, outs.protospacer_calls_per_cell,
-            outs.protospacer_call_metrics_json) = (None, None, None, None)
+        set_empty(outs)
         return
+
     with open(args.counter_metrics_json) as f:
         protospacer_call_metrics = json.load(f)
     report_prefix = feature_constants.PREFIX_FROM_FEATURE_TYPE.get(args.feature_type, 'FEATURE') + '_'
@@ -43,7 +52,8 @@ def main(args, outs):
     filtered_guide_counts_matrix = filtered_feature_counts_matrix.select_features_by_type(rna_library.CRISPR_LIBRARY_TYPE)
     num_gex_cbs = len(filtered_feature_counts_matrix.bcs)
 
-    if filtered_guide_counts_matrix is None:
+    if feature_utils.check_if_none_or_empty(filtered_guide_counts_matrix):
+        set_empty(outs)
         return
 
     feature_defs = filtered_guide_counts_matrix.feature_ref.feature_defs

@@ -124,14 +124,18 @@ def find_nonambient_barcodes(matrix, orig_cell_bcs,
     orig_cells = np.flatnonzero(np.fromiter((bc in orig_cell_bc_set for bc in matrix.bcs),
                                             count=len(matrix.bcs), dtype=bool))
 
+    # No good incoming cell calls
+    if orig_cells.sum() == 0:
+        return None
+
     # Look at non-cell barcodes above a minimum UMI count
     eval_bcs = np.ma.array(np.arange(matrix.bcs_dim))
     eval_bcs[orig_cells] = ma.masked
 
     median_initial_umis = np.median(umis_per_bc[orig_cells])
     min_umis = int(max(MIN_UMIS, round(np.ceil(median_initial_umis * min_umi_frac_of_median))))
-    print 'Median UMIs of initial cell calls: %d' % median_initial_umis
-    print 'Min UMIs: %d' % min_umis
+    print('Median UMIs of initial cell calls: {}'.format(median_initial_umis))
+    print('Min UMIs: {}'.format(min_umis))
 
     eval_bcs[umis_per_bc < min_umis] = ma.masked
     n_unmasked_bcs = len(eval_bcs) - eval_bcs.mask.sum()
@@ -143,8 +147,8 @@ def find_nonambient_barcodes(matrix, orig_cell_bcs,
         return None
 
     assert not np.any(np.isin(eval_bcs, orig_cells))
-    print 'Number of candidate bcs: %d' % len(eval_bcs)
-    print 'Range candidate bc umis: %d, %d' % (umis_per_bc[eval_bcs].min(), umis_per_bc[eval_bcs].max())
+    print('Number of candidate bcs: {}'.format(len(eval_bcs)))
+    print('Range candidate bc umis: {}, {}'.format(umis_per_bc[eval_bcs].min(), umis_per_bc[eval_bcs].max()))
 
     eval_mat = matrix.m[eval_features, :][:, eval_bcs]
 

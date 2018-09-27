@@ -4,6 +4,7 @@ import pandas as pd
 pd.set_option("compute.use_numexpr", False)
 import tenkit.stats as tk_stats
 import sys
+import cellranger.feature.utils as feature_utils
 import cellranger.stats as cr_stats
 
 UMI_NUM_TRIES = 10 # Number of initial points to try for GMM-fitting
@@ -60,8 +61,8 @@ def get_ps_calls_and_summary(filtered_guide_counts_matrix, f_map):
         the dataset, along with some overall summary statistics about the mulitplicty of infection
 
     """
-    if filtered_guide_counts_matrix is None:
-        return (None, None, None, None)
+    if feature_utils.check_if_none_or_empty(filtered_guide_counts_matrix):
+        return (None, None, None, None, None)
     (ps_calls_table, presence_calls, cells_with_ps, umi_thresholds)  = get_perturbation_calls(filtered_guide_counts_matrix,
                                                                                 f_map,)
 
@@ -87,8 +88,8 @@ def get_perturbation_calls(filtered_guide_counts_matrix, feature_map):
     """
     presence_calls = {}
     cells_with_ps = {}
-    if filtered_guide_counts_matrix is None:
-        return (None, None, None)
+    if feature_utils.check_if_none_or_empty(filtered_guide_counts_matrix):
+        return (None, None, None, None)
 
     filtered_bcs = filtered_guide_counts_matrix.bcs
     umi_thresholds = {}

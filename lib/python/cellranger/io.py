@@ -335,7 +335,7 @@ def create_hdf5_string_dataset(group, name, data, **kwargs):
                             serialized to empty strings.
     """
 
-    if data is None or isinstance(data, list) and len(data) == 0:
+    if data is None or hasattr(data, '__len__') and  len(data) == 0:
         group.create_dataset(name, dtype='S1')
         return
 

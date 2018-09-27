@@ -9,6 +9,13 @@ import os
 import json
 import tenkit.safe_json as tk_safe_json
 
+
+def check_if_none_or_empty(matrix):
+    if matrix is None or matrix.get_shape()[0] == 0 or matrix.get_shape()[1] == 0:
+        return True
+    else:
+        return False
+
 def write_json_from_dict(input_dict, out_file_name):
     with open(out_file_name, 'w') as f:
         json.dump(tk_safe_json.json_sanitize(input_dict), f, indent=4, sort_keys=True)

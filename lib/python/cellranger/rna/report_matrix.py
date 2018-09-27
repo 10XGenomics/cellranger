@@ -64,12 +64,9 @@ def _report_genome_agnostic_metrics(matrix, barcode_summary_h5, recovered_cells,
     cell_bcs_union = reduce(lambda a,x: a | set(x), cell_bc_seqs.itervalues(), set())
     n_cell_bcs_union = len(cell_bcs_union)
 
-    # if no detected cells, don't compute metrics
-    if n_cell_bcs_union == 0:
-        return d
-
     d['filtered_bcs_transcriptome_union'] = n_cell_bcs_union
     d['%s_filtered_bcs' % lib_constants.MULTI_REFS_PREFIX] = n_cell_bcs_union
+
 
     # Report reads/cell across all genomes
     mean_reads_per_cell = tk_stats.robust_divide(total_reads, n_cell_bcs_union)

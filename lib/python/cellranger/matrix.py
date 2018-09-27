@@ -196,6 +196,9 @@ class CountMatrix(object):
 
         self.m = matrix
 
+    def get_shape(self):
+        """Return the shape of the sliced matrix"""
+        return self.m.shape
 
     def get_num_nonzero(self):
         """Return the number of nonzero entries in the sliced matrix"""
