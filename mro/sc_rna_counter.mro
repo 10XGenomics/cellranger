@@ -7,7 +7,7 @@
 @include "_basic_sc_rna_counter.mro"
 @include "_basic_sc_rna_counter_stages.mro"
 @include "_sc_rna_counter_stages.mro"
-@include "_sc_crispr_analyzer.mro"
+@include "_crispr_analyzer.mro"
 
 pipeline SC_RNA_COUNTER(
     in  string   sample_id,
