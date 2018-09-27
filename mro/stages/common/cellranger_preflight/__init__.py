@@ -29,9 +29,9 @@ def run_preflight_checks(args):
         if args.feature_reference is None:
             raise cr_preflight.PreflightException("You must specify --feature-ref when using Cell Ranger with feature barcoding libraries.")
 
-    # At least on "Gene Expression" library is required.
+    # At least one "Gene Expression" library is required.
     # Treat an empty library_type as GENE_EXPRESSION
-    if not any(x.get("library_type", GENE_EXPRESSION_LIBRARY_TYPE) == GENE_EXPRESSION_LIBRARY_TYPE for x in args.sample_def):
+    if not any(x.get("library_type") == GENE_EXPRESSION_LIBRARY_TYPE or x.get("library_type") == None for x in args.sample_def):
         raise cr_preflight.PreflightException("You must specify >= 1 input library with library_type == '%s' to run 'cellranger count'" % GENE_EXPRESSION_LIBRARY_TYPE)
 
     print "Checking reference..."
