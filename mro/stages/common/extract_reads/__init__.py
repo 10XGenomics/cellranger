@@ -95,6 +95,8 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.library_ids += [li for li in chunk_out.library_ids]
         outs.read_groups += [read_group for read_group in chunk_out.read_groups]
 
+    # Ensure that we have non-zero reads
+    assert outs.reads, "No reads found. Check the input fastqs and/or the chemistry defintion"
     # Ensure consistency of BAM comments
     assert all(chunk_out.bam_comments == chunk_outs[0].bam_comments for chunk_out in chunk_outs)
     outs.bam_comments = chunk_outs[0].bam_comments
