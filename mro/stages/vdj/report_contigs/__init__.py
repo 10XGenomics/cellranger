@@ -18,6 +18,7 @@ import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
 import cellranger.vdj.reference as vdj_ref
 import math
+from cellranger.library_constants import MULTI_REFS_PREFIX
 
 __MRO__ = """
 stage REPORT_CONTIGS(
@@ -59,6 +60,11 @@ def split(args):
 
 def main(args, outs):
     reporter = vdj_report.VdjReporter()
+
+    # Set a default value of 0 for number of paired cells so that it will be
+    # present in the metric summary csv even when there are no paired cells
+    # or in denovo mode
+    reporter._get_metric_attr('vdj_assembly_contig_pair_productive_full_len_bc_count', MULTI_REFS_PREFIX).set_value(0)
 
     barcode_contigs = defaultdict(list)
     contig_annotations = {}
