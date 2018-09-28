@@ -22,7 +22,7 @@ N_PARTITIONS=90000
 MAX_OCCUPIED_PARTITIONS_FRAC = 0.5
 
 # Minimum number of UMIS per barcode to consider after the initial cell calling
-MIN_UMIS = 100
+MIN_UMIS = 500
 
 # Minimum ratio of UMIs to the median (initial cell call UMI) to consider after the initial cell calling
 MIN_UMI_FRAC_OF_MEDIAN = 0.01
@@ -86,6 +86,7 @@ NonAmbientBarcodeResult = namedtuple('NonAmbientBarcodeResult',
 
 def find_nonambient_barcodes(matrix, orig_cell_bcs,
                              min_umi_frac_of_median=MIN_UMI_FRAC_OF_MEDIAN,
+                             min_umis_nonambient=MIN_UMIS,
                              max_adj_pvalue=MAX_ADJ_PVALUE,):
     """ Call barcodes as being sufficiently distinct from the ambient profile
 
@@ -133,7 +134,7 @@ def find_nonambient_barcodes(matrix, orig_cell_bcs,
     eval_bcs[orig_cells] = ma.masked
 
     median_initial_umis = np.median(umis_per_bc[orig_cells])
-    min_umis = int(max(MIN_UMIS, round(np.ceil(median_initial_umis * min_umi_frac_of_median))))
+    min_umis = int(max(min_umis_nonambient, round(np.ceil(median_initial_umis * min_umi_frac_of_median))))
     print('Median UMIs of initial cell calls: {}'.format(median_initial_umis))
     print('Min UMIs: {}'.format(min_umis))
 
