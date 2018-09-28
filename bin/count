@@ -95,8 +95,10 @@ EOF
         feature_reference=null
     fi
 
-    # NOTE: docopt automatically converts dashes to underscores (e.g. force-cells becomes force_cells)
+    # regex for validating a numeric argument
+    int_re='^[0-9]+$'
 
+    # NOTE: docopt automatically converts dashes to underscores (e.g. force-cells becomes force_cells)
     # --expect_cells
     if [ -z "$expect_cells" ]; then
         if [ -n "$cells" ]; then
@@ -104,21 +106,38 @@ EOF
         else
             expect_cells=null
         fi
+    else
+	if ! [[ $expect_cells =~ $int_re ]] ; then
+	   error "--expect-cells must be a number"
+	fi
     fi
 
     # --force_cells
     if [ -z "$force_cells" ]; then
         force_cells=null
+    else
+	if ! [[ $force_cells =~ $int_re ]] ; then
+	   error "--force-cells must be a number"
+	fi
     fi
+
 
     # --r1-length
     if [ -z "$r1_length" ]; then
         r1_length=null
+    else
+	if ! [[ $r1_length =~ $int_re ]] ; then
+	   error "--r1_length must be a number"
+	fi
     fi
 
     # --r2-length
     if [ -z "$r2_length" ]; then
         r2_length=null
+    else
+	if ! [[ $r2_length =~ $int_re ]] ; then
+	   error "--r2_length must be a number"
+	fi
     fi
 }
 
