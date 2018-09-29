@@ -111,10 +111,20 @@ pipeline SC_RNA_ANALYZER(
         volatile = true,
     )
 
+    call RUN_FBPCA(
+        matrix_h5    = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        library_info = self.aggr_library_info,
+        num_pcs      = self.num_principal_comps,
+        skip         = ANALYZER_PREFLIGHT.skip,
+    ) using (
+        disabled = CHOOSE_DIMENSION_REDUCTION.disable_align_batch,
+        volatile = true,
+    )
+
     call ALIGN_BATCH(
         matrix_h5                  = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        dimred_matrix              = RUN_FBPCA.dimred_matrix,
         library_info               = self.aggr_library_info,
-        num_pcs                    = self.num_principal_comps,
         alignment_knn              = self.alignment_knn,
         alignment_alpha            = self.alignment_alpha,
         alignment_sigma            = self.alignment_sigma,

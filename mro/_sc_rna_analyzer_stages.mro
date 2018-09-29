@@ -268,10 +268,20 @@ stage SUMMARIZE_REANALYSIS(
     volatile = strict,
 )
 
-stage ALIGN_BATCH(
+stage RUN_FBPCA(
     in  h5     matrix_h5,
     in  map[]  library_info,
     in  int    num_pcs,
+    in  bool   skip,
+    out pickle dimred_matrix,
+    src py     "stages/analyzer/run_fbpca",
+) split (
+)
+
+stage ALIGN_BATCH(
+    in  h5     matrix_h5,
+    in  pickle dimred_matrix,
+    in  map[]  library_info,
     in  int    alignment_knn,
     in  float  alignment_alpha,
     in  float  alignment_sigma,
@@ -290,6 +300,8 @@ stage ALIGN_BATCH(
     in  bool   need_reorder_barcode,
     in  pickle barcode_reorder_index,
     out pickle batch_nearest_neighbor,
+) using (
+    mem_gb = 4,
 )
 
 stage CHOOSE_DIMENSION_REDUCTION(

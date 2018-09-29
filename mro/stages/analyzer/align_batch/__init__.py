@@ -6,11 +6,11 @@ import numpy as np
 import cPickle
 import martian
 
-import sklearn.preprocessing as sk_preprocessing
 import sklearn.neighbors as sk_neighbors
 from sklearn.metrics.pairwise import rbf_kernel
 from collections import defaultdict, OrderedDict, Counter
 import tables
+import h5py
 
 import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_util
@@ -18,13 +18,11 @@ import cellranger.analysis.pca as cr_pca
 import cellranger.h5_constants as h5_constants
 import cellranger.analysis.constants as analysis_constants
 
-from fbpca import pca
-
 __MRO__  = """
 stage ALIGN_BATCH(
     in  h5     matrix_h5,
+    in  pickle dimred_matrix,
     in  map[]  library_info,
-    in  int    num_pcs,
     in  int    alignment_knn,
     in  float  alignment_alpha,
     in  float  alignment_sigma,
@@ -45,6 +43,9 @@ stage ALIGN_BATCH(
     out pickle batch_nearest_neighbor,
 )
 """
+
+MAX_MEM_GB = 64
+NUM_ENTRIES_PER_MEM_GB = 2000000
 
 def option(arg, default):
     return arg if arg is not None else default
@@ -77,13 +78,6 @@ def batch_effect_score(dimred_matrix, batch_ids, knn=100, subsample=0.1):
 
     return np.mean(same_batch_ratio)
 
-def fbpca_reduce_dimension(matrix, dimred):
-    """ Fast Randomized PCA """
-    X = matrix.m.T
-    k = min((dimred, X.shape[0], X.shape[1]))
-    U, s, Vt = pca(X, k=k) # Automatically centers.
-    return U[:, range(k)] * s[range(k)]
-
 def split(args):
     if args.skip:
         return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
@@ -94,28 +88,15 @@ def split(args):
         gg_id_to_batch_id[lib['gem_group']] = lib['batch_id']
         batch_id_to_name[lib['batch_id']] = lib['batch_name']
 
-    matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
-    batch_ids = np.array([gg_id_to_batch_id[cr_util.split_barcode_seq(bc)[1]] for bc in matrix.bcs])
+    # load just the barcodes from a matrix h5
+    with h5py.File(args.matrix_h5, 'r') as f:
+        group_name = f.keys()[0]
+        bcs = cr_matrix.CountMatrix.load_bcs_from_h5_group(f[group_name])
 
-    # filter feature and barcodes with zero count
-    feature_mask = np.ones(matrix.features_dim)
-    for b_id in batch_id_to_name:
-        batch_bc_indices = np.where(batch_ids == b_id)[0]
-        matrix_view = cr_matrix.CountMatrixView(matrix, bc_indices=batch_bc_indices)
-        feature_mask = np.logical_and(feature_mask, matrix_view.sum(axis=1))
+    batch_ids = np.array([gg_id_to_batch_id[cr_util.split_barcode_seq(bc)[1]] for bc in bcs])
 
-    matrix = matrix.select_features(np.flatnonzero(feature_mask))
-
-    # filter out barcode may cause discrepancy with output of cellranger analysis
-    # bc_indices = np.flatnonzero(matrix.get_counts_per_bc())
-    # matrix = matrix.select_barcodes(bc_indices)
-    # batch_ids = batch_ids[bc_indices]
-
-    # l2 norm
-    matrix.m = sk_preprocessing.normalize(matrix.m, axis=0)
-
-    dimred_matrix = fbpca_reduce_dimension(matrix,
-        option(args.num_pcs, analysis_constants.BATCH_ALIGNMENT_N_COMPONENTS_DEFAULT))
+    with open(args.dimred_matrix) as fp:
+        dimred_matrix = cPickle.load(fp)
 
     # re-order matrix such that barcodes from same batch are grouped together
     new_bc_indices = None
@@ -153,10 +134,13 @@ def split(args):
     with open(idx_to_batch_id_file, 'wb') as fp:
         cPickle.dump(idx_to_batch_id, fp, cPickle.HIGHEST_PROTOCOL)
 
+    matrix_mem_gb = float(dimred_matrix.shape[0] * dimred_matrix.shape[1]) / NUM_ENTRIES_PER_MEM_GB
+    mem_gb = min(MAX_MEM_GB, max(int(matrix_mem_gb), h5_constants.MIN_MEM_GB))
+
     chunks = []
     for batch_id, (start_idx, end_idx) in batch_to_bc_indices.items():
         chunks.append({
-            '__mem_gb': 4,
+            '__mem_gb': mem_gb,
             'batch_id': str(batch_id),
             'batch_to_bc_indices': batch_to_bc_indices,
             'dimred_matrix': dimred_matrix_file,
@@ -165,7 +149,10 @@ def split(args):
             'barcode_reorder_index': barcode_reorder_index_file,
         })
 
-    return {'chunks': chunks, 'join': {'__mem_gb': 8}}
+    return {
+        'chunks': chunks, 
+        'join': {'__mem_gb': MAX_MEM_GB}
+    }
 
 def find_knn(curr_matrix, ref_matrix, knn):
     """
@@ -184,15 +171,16 @@ def main(args, outs):
     with open(args.dimred_matrix) as fp:
         dimred_matrix = cPickle.load(fp)
 
-    with open(args.idx_to_batch_id) as fp:
-        idx_to_batch_id = cPickle.load(fp)
-
     alignment_knn = option(args.alignment_knn, analysis_constants.ALIGNMENT_KNN)
 
     batch_to_bc_indices = args.batch_to_bc_indices
     batch_start_idx  = batch_to_bc_indices[args.batch_id][0]
     batch_end_idx = batch_to_bc_indices[args.batch_id][1]
     cur_matrix = dimred_matrix[batch_start_idx:batch_end_idx,:]
+
+    # nearest neighbor pair: stores the nearest neighbors from match_i to match_j
+    # key = (batch_i, batch_j), values = set((idx_i, idx_j), ...), the index here is the global index
+    batch_nearest_neighbor = defaultdict(set)
 
     from_idx, to_idx = None, None
     # Batch balanced KNN
@@ -210,11 +198,8 @@ def main(args, outs):
         from_idx = nn_idx_left if from_idx is None else np.concatenate([from_idx, nn_idx_left])
         to_idx = nn_idx_right if to_idx is None else np.concatenate([to_idx, nn_idx_right])
 
-    # nearest neighbor pair: stores the nearest neighbors from match_i to match_j
-    # key = (batch_i, batch_j), values = set((idx_i, idx_j), ...), the index here is the global index
-    batch_nearest_neighbor = defaultdict(set)
-    for i, j in zip(from_idx, to_idx):
-        batch_nearest_neighbor[(args.batch_id, idx_to_batch_id[j])].add((i,j))
+        for i, j in zip(from_idx, to_idx):
+            batch_nearest_neighbor[(args.batch_id, batch)].add((i,j))
 
     outs.batch_nearest_neighbor = martian.make_path('batch_nearest_neighbor.pickle')
     with open(outs.batch_nearest_neighbor, 'wb') as fp:
@@ -256,7 +241,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     for chunk_out in chunk_outs:
         with open(chunk_out.batch_nearest_neighbor) as fp:
             batch_nearest_neighbor = cPickle.load(fp)
-        for k,v in batch_nearest_neighbor:
+        for k,v in batch_nearest_neighbor.items():
             nn_pairs[k] = v
 
     mutual_nn = {} # mnn between batches
