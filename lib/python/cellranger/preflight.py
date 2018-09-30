@@ -126,7 +126,7 @@ def check_chemistry(name, custom_def, allowed_chems):
     if name == cr_chem.CUSTOM_CHEMISTRY_NAME:
         check(cr_chem.check_chemistry_def(custom_def))
 
-def check_feature_ref(transcriptome_ref_path, feature_ref_path):
+def check_feature_ref(transcriptome_ref_path, feature_ref_path, sample_def):
     if not os.path.isfile(feature_ref_path):
         raise PreflightException("Could not find the feature definition file %s" % feature_ref_path)
 
@@ -134,6 +134,17 @@ def check_feature_ref(transcriptome_ref_path, feature_ref_path):
         feature_ref = rna_feature_ref.from_transcriptome_and_csv(
             transcriptome_ref_path,
             feature_ref_path)
+
+        # Check that there is >=1 feature defined for each library_type in the sample_def
+        for sd in sample_def:
+            library_type = sd.get("library_type", None)
+            if library_type is None or library_type == cr_constants.GENE_EXPRESSION_LIBRARY_TYPE:
+                continue
+
+            if not any(x.feature_type == library_type for x in feature_ref.feature_defs):
+                msg = "You declared a library with library_type = '%s', but there are no features declared with that feature_type in the feature reference." % library_type
+                msg += "\nCheck that the 'library_type' field in the libraries csv matches at least 1 entry in the 'feature_type' field in the feature reference csv"
+                raise PreflightException(msg)
 
         rna_feature_ref.FeatureExtractor(feature_ref)
 

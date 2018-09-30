@@ -39,7 +39,7 @@ def run_preflight_checks(args):
 
     if args.feature_reference is not None:
         print "Checking feature definition file..."
-        cr_preflight.check_feature_ref(args.reference_path, args.feature_reference)
+        cr_preflight.check_feature_ref(args.reference_path, args.feature_reference, args.sample_def)
 
     print "Checking chemistry..."
     cr_preflight.check_chemistry(args.chemistry_name, args.custom_chemistry_def,
