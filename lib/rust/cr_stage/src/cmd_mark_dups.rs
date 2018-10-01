@@ -329,10 +329,10 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
             let mut new_record = record.clone();
             let mut new_flags = utils::get_read_extra_flags(&new_record);
 
-            let is_secondary = record.is_secondary();
+            let is_primary = !record.is_secondary();
             let is_dup_candidate = utils::is_read_dup_candidate(&record);
 
-            if !is_secondary {
+            if is_primary {
                 metrics[lib_idx].total_reads += 1;
                 barcode_summary.reads += 1
             }
@@ -342,7 +342,7 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
             if let (Some(umi), Some(gene)) = (maybe_umi.as_ref(), maybe_gene.as_ref()) {
                 let key = (umi.clone(), gene.clone());
 
-                if !record.is_secondary() && low_support_umigenes.contains(&key) {
+                if is_primary && low_support_umigenes.contains(&key) {
                     // Low support (UMI, gene). Mark as low support.
                     // - Only consider primary alignments for this flag.
                     // - Do not correct the UMI.
@@ -359,8 +359,11 @@ fn process_barcode(bc_group: &mut Vec<bam::Record>,
 
                     // Correct the UMI tag
                     if is_corrected {
-                        metrics[lib_idx].umi_corrected_reads += 1;
-                        barcode_summary.umi_corrected_reads += 1;
+                        // Only tabulate metrics on primary alignments
+                        if is_primary {
+                            metrics[lib_idx].umi_corrected_reads += 1;
+                            barcode_summary.umi_corrected_reads += 1;
+                        }
 
                         new_record.remove_aux(utils::PROC_UMI_SEQ_TAG);
                         let _ = new_record.push_aux(utils::PROC_UMI_SEQ_TAG,
