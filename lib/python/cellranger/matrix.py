@@ -496,7 +496,7 @@ class CountMatrix(object):
     @staticmethod
     def load_bcs_from_h5_group(group):
         '''Load just the barcode sequences from an h5.'''
-        return cr_io.read_hdf5_string_dataset(group[h5_constants.H5_BCS_ATTR])
+        return list(group[h5_constants.H5_BCS_ATTR][:])
 
     @staticmethod
     def load_feature_ref_from_h5_group(group):
