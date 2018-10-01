@@ -37,11 +37,15 @@ Options:
                             analysis.
     --r2-length=NUM     Hard trim the input Read 2 to this length before
                             analysis.
-    --chemistry=CHEM    Assay configuration. One of: 'auto' for autodetection,
-                            'threeprime' for Single Cell 3', 'fiveprime' for
-                            Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3'
-                            for Single Cell 3' v1/v2/v3, 'SC5P-PE' or 'SC5P-R2'
-                            for Single Cell 5' paired-end/R2-only. Default: auto.
+    --chemistry=CHEM    Assay configuration. NOTE: by default the assay
+                            configuration is detected automatically, which
+                            is the recommened mode. You usually will not need
+                            to specify a chemistry. Options are: 'auto' for
+                            autodetection, 'threeprime' for Single Cell 3',
+                            'fiveprime' for  Single Cell 5', 'SC3Pv1' or
+                            'SC3Pv2' or 'SC3Pv3' for Single Cell 3' v1/v2/v3,
+                            'SC5P-PE' or 'SC5P-R2' for Single Cell 5'.
+                            paired-end/R2-only. Default: auto.
     --no-libraries      Proceed with processing using a --feature-ref but no
                             feature-barcoding data specified with the
                             'libraries' flag.

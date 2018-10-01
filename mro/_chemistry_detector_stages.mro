@@ -9,6 +9,8 @@ stage DETECT_CHEMISTRY(
     in  path     vdj_reference_path,
     in  string   chemistry_name_spec  "Specified chemistry name",
     in  string[] allowed_chems        "Restricted set of chem names",
+    in  int      r1_length,
+    in  int      r2_length,
     out json     summary,
     out string   chemistry_type,
     out txt      report,

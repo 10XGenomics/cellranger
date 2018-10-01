@@ -126,7 +126,33 @@ def check_chemistry(name, custom_def, allowed_chems):
     if name == cr_chem.CUSTOM_CHEMISTRY_NAME:
         check(cr_chem.check_chemistry_def(custom_def))
 
+def check_read_lengths_vs_chemistry(name, allowed_chems, r1_length, r2_length):
+    if name == cr_chem.CUSTOM_CHEMISTRY_NAME:
+        return
+    else:
+        chem = cr_chem.get_chemistry(name)
+
+    sets = [("R1", "--r1-length", r1_length), ("R2", "--r2-length", r2_length)]
+
+    for (read_type, flag, user_value) in sets:
+        if user_value is not None:
+            read_def = None
+            if cr_chem.get_rna_read_def(chem).read_type == read_type:
+                read_def = cr_chem.get_rna_read_def(chem)
+            elif cr_chem.get_rna_read2_def(chem).read_type == read_type:
+                read_def = cr_chem.get_rna_read2_def(chem)
+
+            min_rna_len = cr_constants.MINIMUM_TRIMMED_READ_LENGTH_PREFLIGHT
+            # Check that alignable sequence after bc/umi removal and hard-trimming is long enough
+            if read_def is not None and read_def.offset + min_rna_len > user_value:
+                msg = "You selected %s %d. In the selected chemistry is '%s', the RNA read on %s starts at position %d, leaving %d bp of alignable sequence after trimming.  At least %d bp of alignable sequence are required." % \
+                (flag, user_value, name, read_type, read_def.offset, max(0, user_value - read_def.offset), cr_constants.MINIMUM_TRIMMED_READ_LENGTH_PREFLIGHT)
+                msg += "\n"
+                msg += "Please check your %s setting" % flag
+                return msg
+
 def check_feature_ref(transcriptome_ref_path, feature_ref_path, sample_def):
+
     if not os.path.isfile(feature_ref_path):
         raise PreflightException("Could not find the feature definition file %s" % feature_ref_path)
 

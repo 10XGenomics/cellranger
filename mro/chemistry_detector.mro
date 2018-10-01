@@ -7,6 +7,8 @@ pipeline CHEMISTRY_DETECTOR(
     in  path     vdj_reference_path,
     in  string   chemistry_name_spec,
     in  string[] allowed_chems,
+    in  int      r1_length,
+    in  int      r2_length,
     out json     summary,
     out txt      report,
     out string   chemistry_type,
@@ -19,6 +21,8 @@ pipeline CHEMISTRY_DETECTOR(
         sample_def          = self.sample_def,
         chemistry_name_spec = self.chemistry_name_spec,
         allowed_chems       = self.allowed_chems,
+        r1_length           = self.r1_length,
+        r2_length           = self.r2_length,
     )
 
     return (

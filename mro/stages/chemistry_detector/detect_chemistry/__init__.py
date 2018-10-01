@@ -28,6 +28,8 @@ stage DETECT_CHEMISTRY(
     in  path   vdj_reference_path,
     in  string chemistry_name_spec,
     in  string[] allowed_chems,
+    in  int    r1_length,
+    in  int    r2_length,
     out json   summary,
     out string chemistry_type,
     out txt    report,
@@ -429,6 +431,14 @@ def main(args, outs):
     metrics['chemistry'] = chemistry_name
     with open(outs.summary, 'w') as f:
         json.dump(metrics, f)
+
+    # Check the read-length arguments to make sure they're compatible with the selected chemistry.
+    msg = cr_preflight.check_read_lengths_vs_chemistry(chemistry_name,
+                                                 args.allowed_chems, 
+                                                 args.r1_length,
+                                                 args.r2_length)
+    if msg is not None:
+        martian.exit(msg)
 
 def join(args, outs, chunk_defs, chunk_outs):
     cr_io.copy(chunk_outs[0].summary, outs.summary)

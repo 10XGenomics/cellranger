@@ -101,6 +101,8 @@ pipeline SC_RNA_COUNTER(
         vdj_reference_path  = null,
         chemistry_name_spec = self.chemistry_name,
         allowed_chems       = self.allowed_chems,
+        r1_length           = self.r1_length,
+        r2_length           = self.r2_length,
     )
 
     call DISABLE_FEATURE_STAGES(

@@ -122,6 +122,8 @@ pipeline SC_VDJ_ASSEMBLER(
             "SCVDJ-R2",
             "SCVDJ-R1"
         ],
+        r1_length           = self.r1_length,
+        r2_length           = self.r2_length,
     )
 
     call local volatile SETUP_CHUNKS(
