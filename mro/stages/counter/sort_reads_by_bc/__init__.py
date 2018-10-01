@@ -77,7 +77,7 @@ def merge_by_key(bam_filenames, key_func, bam_out):
 
 def join(args, outs, chunk_defs, chunk_outs):
     chunks = zip(chunk_defs, chunk_outs)
-    chunks.sort(key=lambda chunk: chunk[0].prefix)
+    chunks.sort(key=lambda chunk: cr_utils.split_barcode_seq(chunk[0].prefix)[::-1])
 
     buckets = []
     outs.total_reads = 0

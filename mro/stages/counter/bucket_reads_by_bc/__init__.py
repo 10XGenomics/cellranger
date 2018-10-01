@@ -96,7 +96,7 @@ def main(args, outs):
     prefixes = cr_utils.get_seqs(args.nbases)
     for gg in gem_groups:
         for prefix in prefixes:
-            bucket_names.append('%d-%s' % (gg, prefix))
+            bucket_names.append('%s-%d' % (prefix, gg))
     bucket_names.append('')
 
     # Read all records
@@ -121,7 +121,7 @@ def main(args, outs):
         else:
             barcode_seq, gem_group = cr_utils.split_barcode_seq(barcode)
             prefix = barcode_seq[:args.nbases]
-            bucket_name = '%d-%s' % (gem_group, prefix)
+            bucket_name = '%s-%d' % (prefix, gem_group)
         buckets[bucket_name].append(r)
 
     for bucket_name, bucket in buckets.iteritems():
