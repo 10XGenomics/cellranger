@@ -35,7 +35,7 @@ pipeline SC_RNA_ANALYZER(
     in  int   force_cells,
     out path  analysis,
     out path  analysis_csv,
-    out h5    reanalyzed_matrix_h5,
+    out h5    cloupe_matrix_h5,
     out json  summary,
 )
 {
@@ -240,9 +240,9 @@ pipeline SC_RNA_ANALYZER(
     )
 
     return (
-        analysis             = SUMMARIZE_ANALYSIS.analysis,
-        analysis_csv         = SUMMARIZE_ANALYSIS.analysis_csv,
-        reanalyzed_matrix_h5 = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        summary              = SUMMARIZE_ANALYSIS.summary,
+        analysis         = SUMMARIZE_ANALYSIS.analysis,
+        analysis_csv     = SUMMARIZE_ANALYSIS.analysis_csv,
+        cloupe_matrix_h5 = PREPROCESS_MATRIX.cloupe_matrix_h5,
+        summary          = SUMMARIZE_ANALYSIS.summary,
     )
 }

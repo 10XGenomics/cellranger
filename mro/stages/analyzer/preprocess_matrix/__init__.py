@@ -19,6 +19,7 @@ stage PREPROCESS_MATRIX(
     in  csv  use_bcs,
     in  int  num_bcs,
     in  int  force_cells,
+    out h5   cloupe_matrix_h5,
     out h5   preprocessed_matrix_h5,
     out bool is_multi_genome,
     src py   "stages/analyzer/preprocess_matrix",
@@ -26,8 +27,8 @@ stage PREPROCESS_MATRIX(
 )
 """
 
-def preprocess_matrix(matrix, num_bcs=None, use_bcs=None, use_genes=None,
-                      exclude_genes=None, force_cells=None):
+def select_barcodes_and_features(matrix, num_bcs=None, use_bcs=None, use_genes=None,
+    exclude_genes=None, force_cells=None):
         if force_cells is not None:
             bc_counts = matrix.get_counts_per_bc()
             bc_indices, _, _ = cr_stats.filter_cellular_barcodes_fixed_cutoff(bc_counts, force_cells)
@@ -53,10 +54,8 @@ def preprocess_matrix(matrix, num_bcs=None, use_bcs=None, use_genes=None,
             exclude_indices = matrix.feature_ids_to_ints(exclude_ids)
 
         gene_indices = np.array(sorted(list(set(include_indices) - set(exclude_indices))), dtype=int)
-
         matrix = matrix.select_features(gene_indices)
 
-        matrix, _, _ = matrix.select_nonzero_axes()
         return matrix
 
 
@@ -85,16 +84,21 @@ def main(args, outs):
         outs.is_multi_genome = False
 
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
-    matrix = preprocess_matrix(matrix,
-                               num_bcs=args.num_bcs,
-                               use_bcs=args.use_bcs,
-                               use_genes=args.use_genes,
-                               exclude_genes=args.exclude_genes,
-                               force_cells=args.force_cells)
+    matrix = select_barcodes_and_features(matrix,
+        num_bcs=args.num_bcs,
+        use_bcs=args.use_bcs,
+        use_genes=args.use_genes,
+        exclude_genes=args.exclude_genes,
+        force_cells=args.force_cells)
 
     # Preserve original matrix attributes
     matrix_attrs = cr_matrix.get_matrix_attrs(args.matrix_h5)
 
+    # matrix h5 for cloupe (gene with zero count preserved)
+    # this will only be used in reanalyzer, where user could include/exclude genes
+    matrix.save_h5_file(outs.cloupe_matrix_h5, extra_attrs=matrix_attrs)
+    
+    matrix, _, _ = matrix.select_nonzero_axes()
     matrix.save_h5_file(outs.preprocessed_matrix_h5, extra_attrs=matrix_attrs)
 
 def join(args, outs, chunk_defs, chunk_outs):
@@ -102,5 +106,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         return
 
     chunk_out = chunk_outs[0]
+    cr_io.copy(chunk_out.cloupe_matrix_h5, outs.cloupe_matrix_h5)
     cr_io.copy(chunk_out.preprocessed_matrix_h5, outs.preprocessed_matrix_h5)
     outs.is_multi_genome = chunk_out.is_multi_genome

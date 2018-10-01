@@ -57,6 +57,7 @@ stage PREPROCESS_MATRIX(
     in  csv  use_bcs,
     in  int  num_bcs,
     in  int  force_cells,
+    out h5   cloupe_matrix_h5,
     out h5   preprocessed_matrix_h5,
     out bool is_multi_genome,
     src py   "stages/analyzer/preprocess_matrix",

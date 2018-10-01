@@ -92,7 +92,7 @@ pipeline SC_RNA_REANALYZER_CS(
         sample_id                    = self.sample_id,
         sample_desc                  = self.sample_desc,
         analysis                     = SC_RNA_ANALYZER.analysis,
-        filtered_gene_bc_matrices_h5 = SC_RNA_ANALYZER.reanalyzed_matrix_h5,
+        filtered_gene_bc_matrices_h5 = SC_RNA_ANALYZER.cloupe_matrix_h5,
         metrics_json                 = null,
         aggregation_csv              = self.aggregation_csv,
         gem_group_index_json         = null,
