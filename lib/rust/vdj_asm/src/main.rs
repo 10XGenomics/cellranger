@@ -547,7 +547,7 @@ fn get_assembly_contig_header(seqs: &Vec<String>, pref: &str) -> (bam::header::H
 
     if seqs.is_empty() {
         println!("isempty");
-        bam_utils::add_ref_to_bam_header(&mut header, &DUMMY_CONTIG_NAME.to_string(), 0);
+        // bam_utils::add_ref_to_bam_header(&mut header, &DUMMY_CONTIG_NAME.to_string(), 0);
     } else {
         println!("notisempty");
         for (idx, ref seq) in seqs.iter().enumerate() {
