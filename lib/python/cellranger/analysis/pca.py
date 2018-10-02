@@ -109,7 +109,9 @@ def save_pca_csv(pca_map, matrix, base_dir):
         cr_io.makedirs(n_components_dir, allow_existing=True)
 
         matrix_fn = os.path.join(n_components_dir, 'projection.csv')
-        matrix_header = ['Barcode'] + ['PC-%d' % (i+1) for i in xrange(n_components)]
+        n_columns = pca.transformed_pca_matrix.shape[1]
+        assert n_columns <= n_components
+        matrix_header = ['Barcode'] + ['PC-%d' % (i+1) for i in xrange(n_columns)]
         analysis_io.save_matrix_csv(matrix_fn, pca.transformed_pca_matrix, matrix_header,
                               matrix.bcs)
 
@@ -129,6 +131,7 @@ def save_pca_csv(pca_map, matrix, base_dir):
                               [f.id for f in matrix.feature_ref.feature_defs])
 
         features_fn = os.path.join(n_components_dir, 'features_selected.csv')
+        # TODO: there are two columns here, but only 1 entry in the header...BAD
         features_header = ['Feature']
         analysis_io.save_matrix_csv(features_fn, pca.features_selected, features_header, range(1, len(pca.features_selected)+1))
 
