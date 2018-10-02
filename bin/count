@@ -131,7 +131,7 @@ EOF
         r1_length=null
     else
 	if ! [[ $r1_length =~ $int_re ]] ; then
-	   error "--r1_length must be a number"
+	   error "--r1-length must be a positive number"
 	fi
     fi
 
@@ -140,7 +140,7 @@ EOF
         r2_length=null
     else
 	if ! [[ $r2_length =~ $int_re ]] ; then
-	   error "--r2_length must be a number"
+	   error "--r2-length must be a positive number"
 	fi
     fi
 }
