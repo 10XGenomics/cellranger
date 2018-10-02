@@ -207,7 +207,7 @@ def main(args, outs):
 
     return
 
-def correction_vector(mnn_cur, mnn_ref, cur_submatrix, sigma):
+def correction_vector(dimred_matrix, cur_submatrix_idx, mnn_cur_idx, mnn_ref_idx, sigma):
     """
     Compute the batch-correction vector
 
@@ -218,9 +218,35 @@ def correction_vector(mnn_cur, mnn_ref, cur_submatrix, sigma):
     as a weighted average of these pair-specific vectors, as computed with a
     Gaussian kernel.
     """
-    bias = mnn_ref - mnn_cur
-    weights = rbf_kernel(cur_submatrix, mnn_cur, gamma=0.5*sigma)
-    return np.dot(weights, bias) / np.tile(np.sum(weights, axis=1), (cur_submatrix.shape[1], 1)).T
+    num_pcs = dimred_matrix.shape[1]
+    corr_vector = np.zeros((0, num_pcs))
+
+    # the number of mnn and submatrix dim might be very large, process by chunk to save memory
+    cur_submatrix_size = len(cur_submatrix_idx)
+    mnn_size = len(mnn_cur_idx)
+    # based on empirical testing
+    cur_submatrix_chunk_size = int(1e6/num_pcs) 
+    mnn_chunk_size = int(2e7/num_pcs) 
+
+    for i in range(0, cur_submatrix_size, cur_submatrix_chunk_size):
+        cur_submatrix_chunk = cur_submatrix_idx[i:i + cur_submatrix_chunk_size]
+        cur_submatrix = dimred_matrix[cur_submatrix_chunk]
+
+        weighted_sum, weights_sum = np.zeros(cur_submatrix.shape), np.zeros(cur_submatrix.shape)
+
+        for j in range(0, mnn_size, mnn_chunk_size):
+            mnn_cur_chunk = mnn_cur_idx[j:j + mnn_chunk_size]
+            mnn_ref_chunk = mnn_ref_idx[j:j + mnn_chunk_size]
+
+            mnn_cur = dimred_matrix[mnn_cur_chunk]
+            weights = rbf_kernel(cur_submatrix, mnn_cur, gamma=0.5*sigma)
+            bias = dimred_matrix[mnn_ref_chunk] - mnn_cur
+            weighted_sum += np.dot(weights, bias)
+            weights_sum += np.tile(np.sum(weights, axis=1), (num_pcs, 1)).T
+
+        corr_vector = np.vstack((corr_vector, weighted_sum/weights_sum))
+
+    return corr_vector
 
 def join(args, outs, chunk_defs, chunk_outs):
     if args.skip:
@@ -319,7 +345,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         batches_in_panorama_j = sorted(list(panoramas[panorama_idx_j]))
         cur_submatrix_idx = np.concatenate([np.arange(batch_to_bc_indices[b][0], batch_to_bc_indices[b][1])
                                             for b in batches_in_panorama_j])
-        cur_submatrix = aligned_dimred_matrix[cur_submatrix_idx]
 
         matches = []
         for ref in panoramas[panorama_idx_i]:
@@ -329,17 +354,17 @@ def join(args, outs, chunk_defs, chunk_outs):
                 if ref > cur and (cur, ref) in mutual_nn:
                     matches.extend(mutual_nn[(cur, ref)])
 
-        mnn_cur = aligned_dimred_matrix[[a for a, _ in matches], :]
-        mnn_ref = aligned_dimred_matrix[[b for _, b in matches], :]
+        mnn_cur_idx = [a for a, _ in matches]
+        mnn_ref_idx = [b for _, b in matches]
 
-        corr_vector = correction_vector(mnn_cur, mnn_ref, cur_submatrix, alignment_sigma)
-        assert(corr_vector.shape == cur_submatrix.shape)
-        cur_submatrix += corr_vector
+        corr_vector = correction_vector(aligned_dimred_matrix, cur_submatrix_idx, mnn_cur_idx, mnn_ref_idx, alignment_sigma)
+        assert(corr_vector.shape[0] == cur_submatrix_idx.shape[0])
+        assert(corr_vector.shape[1] == aligned_dimred_matrix.shape[1])
 
         base = 0
         for b in batches_in_panorama_j:
             batch_size = batch_to_bc_indices[b][1] - batch_to_bc_indices[b][0]
-            aligned_dimred_matrix[batch_to_bc_indices[b][0]:batch_to_bc_indices[b][1], :] = cur_submatrix[base:(base + batch_size), :]
+            aligned_dimred_matrix[batch_to_bc_indices[b][0]:batch_to_bc_indices[b][1], :] += corr_vector[base:(base + batch_size), :]
             base += batch_size
 
         # merge panoramas and delete panorama j
