@@ -86,6 +86,14 @@ stage NORMALIZE_DEPTH(
     out h5      filtered_matrix_h5,
 )
 
+stage CHECK_INVARIANTS(
+    in  map[] input_sample_defs,
+    in  h5    merged_raw_gene_bc_matrices_h5,
+    out json  summary,
+    src py    "stages/aggregator/check_invariants",
+) split (
+)
+
 stage SUMMARIZE_AGGREGATED_REPORTS(
     in  string sample_id,
     in  string sample_desc,

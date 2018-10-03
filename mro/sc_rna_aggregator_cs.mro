@@ -64,6 +64,11 @@ pipeline SC_RNA_AGGREGATOR_CS(
         tsne_mom_switch_iter       = null,
     )
 
+    call CHECK_INVARIANTS(
+        input_sample_defs = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+        merged_raw_gene_bc_matrices_h5 = SC_RNA_AGGREGATOR.raw_gene_bc_matrices_h5,
+    )
+
     call CLOUPE_PREPROCESS(
         pipestance_type              = "SC_RNA_AGGREGATOR_CS",
         sample_id                    = self.sample_id,
