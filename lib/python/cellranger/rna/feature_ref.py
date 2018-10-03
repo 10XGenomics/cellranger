@@ -13,6 +13,7 @@ import cellranger.library_constants as lib_constants
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
 from cellranger.feature_ref import FeatureReference, FeatureDef, FeatureDefException
+import string
 
 # These feature tag keys are reserved for internal use.
 RESERVED_TAGS = ['genome']
@@ -331,7 +332,6 @@ def parse_feature_def_file(filename, index_offset=0):
             # Strip flanking whitespace from values
             for key in row.iterkeys():
                 row[key] = row[key].strip()
-
             # Check ID uniqueness
             if row['id'] in seen_ids:
                 raise FeatureDefException('Found duplicated ID in feature definition file: "%s"' % row['id'])
@@ -340,8 +340,16 @@ def parse_feature_def_file(filename, index_offset=0):
             if "\t" in row['name']:
                 raise FeatureDefException("Feature name field cannot contain tabs: '%s'" % row['name'])
 
-            if ' ' in row['id'] or "\t" in row['id']:
-                raise FeatureDefException("Feature id field cannot contain whitespace: '%s'" % row['id'])
+            allowed_id_chars = set(string.printable) - set(string.whitespace) - set('/,\'"\\`')
+
+            for (idx, c) in enumerate(row['id']):
+                if not c in allowed_id_chars:
+                    if c in string.whitespace:
+                        raise FeatureDefException(u"Feature id field cannot contain whitespace: '%s'" % row['id'])
+                    else:
+                        msg = "Feature id field contains an illegal character at position %d: '%s'" % (idx, row['id'])
+                        msg += "\nFeature IDs may only ASCII characters, and must not use whitespace slash, quote or comma characters."
+                        raise FeatureDefException(msg)
 
             # Additional columns become key-value pairs
             # Maintain input order
