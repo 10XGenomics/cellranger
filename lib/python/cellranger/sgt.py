@@ -106,6 +106,10 @@ def sgt_proportions(frequencies):
     assert freqfreqs[0] == 0
     use_freqs = np.flatnonzero(freqfreqs)
 
+    if len(use_freqs) < 10:
+        raise SimpleGoodTuringError("Too few non-zero frequency items (%d). Aborting SGT." % len(use_freqs))
+
+
     rstar, p0 = simple_good_turing(use_freqs, freqfreqs[use_freqs])
 
     # rstar contains the smoothed frequencies.
