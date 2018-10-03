@@ -40,6 +40,12 @@ class FeatureReference(object):
 
         self.id_map = id_map
 
+    def __eq__(self, other):
+        return self.feature_defs == other.feature_defs
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
     @staticmethod
     def addtags(feature_ref, new_tags, new_labels=None):
         '''Add new tags and corresponding labels to existing feature_ref

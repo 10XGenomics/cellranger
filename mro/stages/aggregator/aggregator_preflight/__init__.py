@@ -13,12 +13,20 @@ stage AGGREGATOR_PREFLIGHT(
     src py     "stages/aggregator/aggregator_preflight",
 )
 """
+
+def incompat_msg(reason):
+    return ("The datasets you are trying to aggregate were created with different {reason}s, "
+            "but 'cellranger aggr' requires identical {reason}s in order to combine datasets. "
+            "Please re-run 'cellranger count' with uniform {reason} in order to aggregate "
+            "these data.").format(reason=reason)
+
 def main(args, outs):
     if args.normalization_mode is not None and args.normalization_mode not in cr_constants.NORM_MODES:
         martian.exit("Normalization mode must be one of: %s" % ', '.join(cr_constants.NORM_MODES))
 
     global_fasta_hash = None
     global_gtf_hash = None
+    global_feature_ref = None
     chemistries = set()
 
     # TODO make assertions about the required metrics!
@@ -47,15 +55,20 @@ def main(args, outs):
             if global_fasta_hash is None:
                 global_fasta_hash = mol_fasta_hash
             elif global_fasta_hash != mol_fasta_hash:
-                martian.exit("Molecules were produced using different genome references (%s, %s)" % (global_fasta_hash, mol_fasta_hash))
+                martian.exit("{} (hashes: {} != {})".format(incompat_msg("genome reference"), global_fasta_hash, mol_fasta_hash))
 
             mol_gtf_hash = counter.get_metric('reference_gtf_hash')
             if global_gtf_hash is None:
                 global_gtf_hash = mol_gtf_hash
             elif global_gtf_hash != mol_gtf_hash:
-                martian.exit("Molecules were produced using different annotation GTFs (%s, %s)" % (global_gtf_hash, mol_gtf_hash))
+                martian.exit("{} (hashes: {} != {})".format(incompat_msg("annotation GTF"), global_gtf_hash, mol_gtf_hash))
 
-            # TODO: Check feature refs
+            mol_feature_ref = counter.feature_reference
+            if global_feature_ref is None:
+                global_feature_ref = mol_feature_ref
+            elif global_feature_ref != mol_feature_ref:
+                martian.exit(incompat_msg("feature reference"))
+
             chemistry = counter.get_metric('chemistry_name')
             chemistries.add(chemistry)
 
