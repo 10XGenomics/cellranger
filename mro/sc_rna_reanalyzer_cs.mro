@@ -18,8 +18,8 @@ pipeline SC_RNA_REANALYZER_CS(
     in  int    force_cells,
     out path   analysis              "Secondary analysis output CSV",
     out html   web_summary           "Secondary analysis web summary",
-    out csv    params_csv            "Copy of the input parameter CSV",
-    out csv    aggregation_csv       "Copy of the input aggregation CSV",
+    out csv    params                "Copy of the input parameter CSV",
+    out csv    aggregation           "Copy of the input aggregation CSV",
     out cloupe cloupe                "Loupe Cell Browser file",
 )
 {
@@ -102,8 +102,8 @@ pipeline SC_RNA_REANALYZER_CS(
     return (
         analysis        = SC_RNA_ANALYZER.analysis_csv,
         web_summary     = SUMMARIZE_REANALYSIS.web_summary,
-        params_csv      = PARSE_PARAM_CSV.params_csv,
-        aggregation_csv = PARSE_CSV.aggregation_csv,
+        params          = PARSE_PARAM_CSV.params_csv,
+        aggregation     = PARSE_CSV.aggregation_csv,
         cloupe          = CLOUPE_PREPROCESS.output_for_cloupe,
     )
 }
