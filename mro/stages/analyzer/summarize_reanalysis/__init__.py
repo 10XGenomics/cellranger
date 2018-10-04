@@ -23,6 +23,7 @@ stage SUMMARIZE_REANALYSIS(
     in  string sample_desc,
     in  h5     filtered_matrices,
     in  path   analysis,
+    in  json   analyze_matrices_summary,
     out html   web_summary,
     out json   summary,
     src py     "stages/analyzer/summarize_reanalysis",
@@ -50,7 +51,13 @@ def main(args, outs):
     genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices)
     chemistry = cr_matrix.CountMatrix.load_chemistry_from_h5(args.filtered_matrices)
     total_cells = cr_matrix.CountMatrix.count_cells_from_h5(args.filtered_matrices)
+
     summary = {'chemistry_description': chemistry, 'filtered_bcs_transcriptome_union': total_cells}
+    if args.analyze_matrices_summary:
+        with open(args.analyze_matrices_summary) as reader:
+            analysis_summary = json.load(reader)
+        summary.update(analysis_summary)
+
     with open(outs.summary, 'w') as f:
         json.dump(tk_json.json_sanitize(summary), f, indent=4, sort_keys=True)
 

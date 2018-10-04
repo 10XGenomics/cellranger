@@ -261,6 +261,7 @@ stage SUMMARIZE_REANALYSIS(
     in  string sample_desc,
     in  h5     filtered_matrices,
     in  path   analysis,
+    in  json   analyze_matrices_summary,
     out html   web_summary,
     out json   summary,
     src py     "stages/analyzer/summarize_reanalysis",

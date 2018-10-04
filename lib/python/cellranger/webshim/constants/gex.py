@@ -580,6 +580,22 @@ AGGREGATION_METRICS = [
     },
 ]
 
+# Note: these metrics only apply when batch alignment is enabled
+BATCH_ALIGNMENT_METRICS = [
+    {
+        'name': 'batch_effect_score_before_alignment',
+        'display_name': 'Batch Effect Score before Alignment',
+        'description': 'Before batch alignment, the average fraction of 100 nearest neighbors belonging to the same batch, normalized by the expected value without batch effect.',
+        'format': '%.2f',
+    },
+    {
+        'name': 'batch_effect_score_after_alignment',
+        'display_name': 'Batch Effect Score after Alignment',
+        'description': 'After batch alignment, the average fraction of 100 nearest neighbors belonging to the same batch, normalized by the expected value without batch effect.',
+        'format': '%.2f',
+    },
+]
+
 METRICS = [
     {
         'name': 'Summary',
@@ -612,6 +628,10 @@ METRICS = [
     {
         'name': 'Aggregation',
         'metrics': AGGREGATION_METRICS,
+    },
+    {
+        'name': 'Batch Alignment',
+        'metrics': BATCH_ALIGNMENT_METRICS,
     },
 ]
 

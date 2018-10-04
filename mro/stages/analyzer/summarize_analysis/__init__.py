@@ -97,12 +97,12 @@ def join(args, outs, chunk_defs, chunk_outs):
     cr_io.copytree(chunk_out.analysis, outs.analysis)
     cr_io.copytree(chunk_out.analysis_csv, outs.analysis_csv)
 
+    summary = {}
+
     # batch alignment summary
-    summary = {
-        'batch_alignment': args.batch_alignment,
-        'batch_effect_score_before_alignment': args.batch_score_before_alignment, 
-        'batch_effect_score_after_alignment': args.batch_score_after_alignment,        
-    }
+    if args.batch_alignment is True:
+        summary['batch_effect_score_before_alignment'] = args.batch_score_before_alignment
+        summary['batch_effect_score_after_alignment'] = args.batch_score_after_alignment    
 
     if args.is_multi_genome:
         with open(args.multi_genome_summary) as reader:

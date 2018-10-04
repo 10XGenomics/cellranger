@@ -24,8 +24,8 @@ stage PARSE_CSV(
 def main(args, outs):
     if args.reanalyze and not args.aggregation_csv:
         return # CSV not required for reanalyze
-    check_paths = not args.reanalyze
-    outs.sample_defs = parse_sample_sheet(args.pipestance_root, args.aggregation_csv, check_paths=check_paths)
+
+    outs.sample_defs = parse_sample_sheet(args.pipestance_root, args.aggregation_csv)
     if args.reanalyze and args.matrix_h5:
         library_map = cr_matrix.get_gem_group_index(args.matrix_h5)
         matrix_library_ids = set([library_id for library_id, gem_group in library_map.values()])
@@ -40,7 +40,7 @@ def copy_csv(in_csv, out_csv):
     with open(in_csv, 'r') as reader, open(out_csv, 'w') as writer:
         writer.write(reader.read().replace('\r', '\n'))
 
-def parse_sample_sheet(piperoot, filename, check_paths=True):
+def parse_sample_sheet(piperoot, filename):
     if not os.path.exists(filename):
         martian.exit("Sample sheet does not exist: %s" % filename)
 
@@ -77,19 +77,15 @@ def parse_sample_sheet(piperoot, filename, check_paths=True):
                 if len(row[field]) == 0:
                     martian.exit("Row %d has an empty value for field: %s." % (i, field))
 
-            if check_paths:
-                # get H5 path and check that it exists
-                input_h5 = expand(row[cr_constants.AGG_H5_FIELD])
+            # get H5 path and check that it exists
+            input_h5 = expand(row[cr_constants.AGG_H5_FIELD])
 
-                if not os.path.isabs(input_h5):
-                    # assume path is relative to pipestance root
-                    input_h5 = os.path.abspath(expand(os.path.join(piperoot, input_h5)))
+            if not os.path.isabs(input_h5):
+                # assume path is relative to pipestance root
+                input_h5 = os.path.abspath(expand(os.path.join(piperoot, input_h5)))
 
-                if not os.path.exists(input_h5):
-                    martian.exit("Specified %s file does not exist: %s" % (cr_constants.AGG_H5_FIELD, input_h5))
-
-            else:
-                input_h5 = None
+            if not os.path.exists(input_h5):
+                martian.exit("Specified %s file does not exist: %s" % (cr_constants.AGG_H5_FIELD, input_h5))
 
             row[cr_constants.AGG_H5_FIELD] = input_h5
 

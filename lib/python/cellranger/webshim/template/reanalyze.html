@@ -2,8 +2,17 @@
 {% import 'utils.html' as utils %}
 {% block summary %}
 <div class="summary">
-  <!-- Sample Info Card -->
-  [[ utils.sample_info_card(data) ]]
+  <div class="summary_card_column">
+    <!-- Sample Info Card -->
+    [[ utils.sample_info_card(data) ]]
+  </div>
+  <div class="summary_card_gutter">&nbsp;</div>
+  <!-- Right Summary Column -->
+  <div class="summary_card_column">
+    <!-- Batch Alignment Card -->
+    {% if data.tables|selectattr("name", "equalto", "Batch Alignment")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Batch Alignment") | first) ]]
+    {% endif %}
   </div>
 </div>
 {% endblock %}

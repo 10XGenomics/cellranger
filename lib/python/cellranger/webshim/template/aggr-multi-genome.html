@@ -13,6 +13,10 @@
     [[ utils.summary_card(data.tables[3]) ]]
      <!-- Aggregation Card -->
     [[ utils.summary_card(data.tables[4]) ]]
+    <!-- Batch Alignment Card -->
+    {% if data.tables|selectattr("name", "equalto", "Batch Alignment")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Batch Alignment") | first) ]]
+    {% endif %}
  </div>
   <div class="summary_card_gutter">&nbsp;</div>
   <!-- Right Summary Column -->

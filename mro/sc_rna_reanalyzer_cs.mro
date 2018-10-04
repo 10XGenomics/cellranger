@@ -81,10 +81,11 @@ pipeline SC_RNA_REANALYZER_CS(
     )
 
     call SUMMARIZE_REANALYSIS(
-        sample_id         = self.sample_id,
-        sample_desc       = self.sample_desc,
-        filtered_matrices = self.filtered_matrices_h5,
-        analysis          = SC_RNA_ANALYZER.analysis,
+        sample_id                = self.sample_id,
+        sample_desc              = self.sample_desc,
+        filtered_matrices        = self.filtered_matrices_h5,
+        analysis                 = SC_RNA_ANALYZER.analysis,
+        analyze_matrices_summary = SC_RNA_ANALYZER.summary,
     )
 
     call CLOUPE_PREPROCESS(
