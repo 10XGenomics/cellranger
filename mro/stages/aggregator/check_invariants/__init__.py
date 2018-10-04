@@ -27,10 +27,7 @@ def split(args):
     join_args = {
         '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB),
     }
-    return {'chunks': [{}], 'join': join_args}
-
-def main(args, outs):
-    return
+    return {'chunks': [], 'join': join_args}
 
 def join(args, outs, chunk_defs, chunk_outs):
     # compute invariants on input data
