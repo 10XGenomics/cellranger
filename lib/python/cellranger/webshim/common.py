@@ -860,6 +860,20 @@ def get_constants_for_pipeline(pipeline, sample_properties):
     return metrics, alarms, charts, metric_prefixes
 
 
+def get_custom_features(sample_data):
+    """Infer the set of distinct custom feature types present in a dataset"""
+    # Add the "custom feature type" prefix using the sample data
+    analysis = sample_data.get_analysis(SingleGenomeAnalysis)
+
+    # Adding a dummy value here suppresses extraneous web summary dashboards
+    custom_features = ['dummy']
+
+    if analysis:
+        feature_ref = analysis.matrix.feature_ref
+        feature_types = set(f.feature_type for f in feature_ref.feature_defs)
+        custom_features.extend(sorted(list(feature_types - set(rna_library.RECOGNIZED_FEATURE_TYPES))))
+    return custom_features
+
 def build_web_summary_json(sample_properties, sample_data, pipeline):
     """ sample_properties - dict
         sample_data - *SampleData class
@@ -867,6 +881,8 @@ def build_web_summary_json(sample_properties, sample_data, pipeline):
     view = copy.deepcopy(sample_properties)
 
     metrics, alarms, charts, all_prefixes = get_constants_for_pipeline(pipeline, sample_properties)
+
+    all_prefixes['custom_features'] = get_custom_features(sample_data)
 
     tables, alarms = build_tables(sample_properties, metrics, alarms, sample_data, all_prefixes=all_prefixes)
     if tables:
@@ -954,6 +970,8 @@ def build_web_summary_html(filename, sample_properties, sample_data, pipeline,
 
 def build_metrics_summary_csv(filename, sample_properties, sample_data, pipeline):
     metrics, alarms, charts, all_prefixes = get_constants_for_pipeline(pipeline, sample_properties)
+
+    all_prefixes['custom_features'] = get_custom_features(sample_data)
 
     tables, _ = build_tables(sample_properties, metrics, alarms, sample_data, all_prefixes=all_prefixes)
     if not tables:

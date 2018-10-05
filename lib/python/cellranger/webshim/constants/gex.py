@@ -10,6 +10,9 @@ import cellranger.feature.constants as feature_constants
 REPORT_PREFIX_CRISPR = feature_constants.REPORT_PREFIX_CRISPR + '_'
 DISPLAY_PREFIX_CRISPR = feature_constants.DISPLAY_PREFIX_CRISPR + ' '
 
+REPORT_PREFIX_ANTIBODY = feature_constants.REPORT_PREFIX_ANTIBODY + '_'
+DISPLAY_PREFIX_ANTIBODY = feature_constants.DISPLAY_PREFIX_ANTIBODY + ' '
+
 # These define information about the sample required to generate a web summary
 CountSampleProperties = namedtuple('CountSampleProperties',
                                    ['sample_id', 'sample_desc', 'genomes', 'version'])
@@ -391,7 +394,7 @@ CRISPR_Q30_METRICS = [
 CRISPR_SEQUENCING_METRICS = [
     {
         'name': REPORT_PREFIX_CRISPR + 'total_reads',
-        'display_name': DISPLAY_PREFIX_CRISPR + 'Total Reads',
+        'display_name': DISPLAY_PREFIX_CRISPR + 'Number of Reads',
         'description': 'Total number of reads',
         'format': 'integer',
     },
@@ -405,24 +408,6 @@ CRISPR_SEQUENCING_METRICS = [
         'name': REPORT_PREFIX_CRISPR + 'good_bc_frac',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Valid Barcodes',
         'description': 'Fraction of reads with a barcode found in or corrected to one that is found in the whitelist',
-        'format': 'percent',
-    },
-    {
-        'name': REPORT_PREFIX_CRISPR + 'corrected_bc_frac',
-        'display_name': DISPLAY_PREFIX_CRISPR + 'Barcodes Corrected',
-        'description': 'Fraction of reads with a barcode corrected to one in the whitelist',
-        'format': 'percent',
-    },
-    {
-        'name': REPORT_PREFIX_CRISPR + 'good_umi_frac',
-        'display_name': DISPLAY_PREFIX_CRISPR + 'Valid UMIs',
-        'description': 'Fraction of reads with a UMI that does not contain unknown bases or homopolymers',
-        'format': 'percent',
-    },
-    {
-        'name': REPORT_PREFIX_CRISPR + 'corrected_umi_frac',
-        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads that have Corrected UMIs',
-        'description': 'Fraction of reads with a UMI that has been corrected',
         'format': 'percent',
     },
     ] + CRISPR_Q30_METRICS
@@ -458,18 +443,6 @@ CRISPR_APPLICATION_METRICS = [
         'description': 'Among all reads with a putative protospacer sequence, the fraction with a protospacer sequence that was not recognized',
         'format': 'percent',
     },
-  {
-        'name': REPORT_PREFIX_CRISPR + 'corrected_feature_bc_frac',
-        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Protospacer Corrected',
-        'description': 'Among all reads with a putative protospacer sequence, the fraction whose protospacer sequence was corrected to a recognized one',
-        'format': 'percent',
-    },
-    {
-        'name': REPORT_PREFIX_CRISPR + 'low_support_umi_reads_frac',
-        'display_name': DISPLAY_PREFIX_CRISPR + 'Fraction Reads with Low Support UMI',
-        'description': 'Fraction of reads associated with UMIs that have low read-support',
-        'format': 'percent',
-    },
     {
         'name': REPORT_PREFIX_CRISPR + 'feature_reads_in_cells',
         'display_name': DISPLAY_PREFIX_CRISPR + 'Guide Reads in Cells',
@@ -493,6 +466,214 @@ CRISPR_APPLICATION_METRICS = [
         'display_name': DISPLAY_PREFIX_CRISPR + 'Median UMIs per Cell (summed over all recognized protospacers)',
         'description': 'Median UMIs per Cell (summed over all recognized protospacers)',
         'format': '%.2f',
+    },
+]
+
+ANTIBODY_Q30_METRICS = [
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'bc_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Q30 Bases in Barcode',
+        'description': 'Fraction of cell barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'read_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Q30 Bases in Antibody Read',
+        'description': 'Fraction of ANTIBODY read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3\' v2 chemistry.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'read2_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Q30 Bases in ANTIBODY Read 2',
+        'description': 'Fraction of ANTIBODY read 2 bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'sample_index_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Q30 Bases in Sample Index',
+        'description': 'Fraction of sample index bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'umi_bases_with_q30_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Q30 Bases in UMI',
+        'description': 'Fraction of UMI bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+    },
+    ]
+
+
+ANTIBODY_SEQUENCING_METRICS = [
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'total_reads',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Number of Reads',
+        'description': 'Total number of reads',
+        'format': 'integer',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'reads_per_cell',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Mean Reads per Cell',
+        'description': 'The total number of sequenced reads divided by the number of barcodes associated with cell-containing partitions.',
+        'format': 'integer',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'good_bc_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Valid Barcodes',
+        'description': 'Fraction of reads with a barcode found in or corrected to one that is found in the whitelist',
+        'format': 'percent',
+    },
+    {
+     	'name': REPORT_PREFIX_ANTIBODY + 'reads_lost_to_highly_corrected_GEMs',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Fraction Reads in Barcodes with High UMI Correction Rate',
+        'description': 'Fraction of reads that was lost after removing barcodes with high UMI corrrection rates',
+        'format': 'percent',
+    },
+    ] + ANTIBODY_Q30_METRICS
+
+ANTIBODY_APPLICATION_METRICS = [
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'multi_transcriptome_conf_mapped_reads_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Fraction Antibody Reads',
+        'description': 'Fraction of reads that contain a recognized antibody barcode',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'frac_feature_reads_usable',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Fraction Antibody Reads Usable',
+        'description': 'Fraction of reads that contain a recognized antibody barcode, a valid UMI, and a cell-associated barcode',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'feature_reads_usable_per_cell',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Antibody Reads Usable per Cell',
+        'description': 'Number of antibody reads usable divided by the number of cell-associated barcodes',
+        'format': '%.0f',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'unrecognized_feature_bc_frac',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Fraction Unrecognized Antibody',
+        'description': 'Among all reads, the fraction with an unrecognizable antibody barcode',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'feature_reads_in_cells',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Antibody Reads in Cells',
+        'description': 'Among reads with a recognized antibody barcode, a valid UMI, and a valid barcode, the fraction associated with cell-containing partitions',
+        'format': 'percent',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'multi_filtered_bcs_median_counts',
+        'display_name': DISPLAY_PREFIX_ANTIBODY + 'Median UMIs per Cell (summed over all recognized antibody barcodes)',
+        'description': 'Median UMIs per Cell (summed over all recognized antibody barcodes)',
+        'format': '%.2f',
+    },
+]
+
+CUSTOM_FEATURE_Q30_METRICS = [
+    {
+        'name': 'bc_bases_with_q30_frac',
+        'display_name': '%s: Q30 Bases in Barcode',
+        'description': 'Fraction of cell barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'read_bases_with_q30_frac',
+        'display_name': '%s: Q30 Bases in Feature Read',
+        'description': 'Fraction of feature read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3\' v2 chemistry.',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'read2_bases_with_q30_frac',
+        'display_name': '%s: Q30 Bases in Feature Read 2',
+        'description': 'Fraction of feature read 2 bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'sample_index_bases_with_q30_frac',
+        'display_name': '%s: Q30 Bases in Sample Index',
+        'description': 'Fraction of sample index bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'umi_bases_with_q30_frac',
+        'display_name': '%s: Q30 Bases in UMI',
+        'description': 'Fraction of UMI bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator.',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    ]
+
+
+CUSTOM_FEATURE_SEQUENCING_METRICS = [
+    {
+        'name': 'total_reads',
+        'display_name': '%s: Number of Reads',
+        'description': 'Total number of reads',
+        'format': 'integer',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'reads_per_cell',
+        'display_name': '%s: Mean Reads per Cell',
+        'description': 'The total number of sequenced reads divided by the number of barcodes associated with cell-containing partitions.',
+        'format': 'integer',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'good_bc_frac',
+        'display_name': '%s: Valid Barcodes',
+        'description': 'Fraction of reads with a barcode found in or corrected to one that is found in the whitelist',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    ] + CUSTOM_FEATURE_Q30_METRICS
+
+CUSTOM_FEATURE_APPLICATION_METRICS = [
+    {
+        'name': 'multi_transcriptome_conf_mapped_reads_frac',
+        'display_name': '%s: Fraction Feature Reads',
+        'description': 'Fraction of reads that contain a recognized feature barcode',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'frac_feature_reads_usable',
+        'display_name': '%s: Fraction Feature Reads Usable',
+        'description': 'Fraction of reads that contain a recognized feature barcode, a valid UMI, and a cell-associated barcode',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'feature_reads_usable_per_cell',
+        'display_name': '%s: Feature Reads Usable per Cell',
+        'description': 'Number of feature reads usable divided by the number of cell-associated barcodes',
+        'format': '%.0f',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'unrecognized_feature_bc_frac',
+        'display_name': '%s: Fraction Unrecognized Feature',
+        'description': 'Among all reads, the fraction with an unrecognizable feature barcode',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'feature_reads_in_cells',
+        'display_name': '%s: Feature Reads in Cells',
+        'description': 'Among reads with a recognized feature barcode, a valid UMI, and a valid barcode, the fraction associated with cell-containing partitions',
+        'format': 'percent',
+        'prefix': 'custom_features',
+    },
+    {
+        'name': 'multi_filtered_bcs_median_counts',
+        'display_name': '%s: Median UMIs per Cell (summed over all recognized feature barcodes)',
+        'description': 'Median UMIs per Cell (summed over all recognized feature barcodes)',
+        'format': '%.2f',
+        'prefix': 'custom_features',
     },
 ]
 
@@ -628,6 +809,23 @@ METRICS = [
     {
         'name': 'Aggregation',
         'metrics': AGGREGATION_METRICS,
+    },
+    {
+        'name': 'Antibody Sequencing',
+        'metrics': ANTIBODY_SEQUENCING_METRICS,
+    },
+    {
+        'name': 'Antibody Application',
+        'metrics': ANTIBODY_APPLICATION_METRICS,
+    },
+    # Non- (CRISPR or Antibody) feature metrics
+    {
+        'name': 'Feature Sequencing',
+        'metrics': CUSTOM_FEATURE_SEQUENCING_METRICS,
+    },
+    {
+        'name': 'Feature Application',
+        'metrics': CUSTOM_FEATURE_APPLICATION_METRICS,
     },
     {
         'name': 'Batch Alignment',

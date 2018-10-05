@@ -13,12 +13,37 @@
     [[ utils.summary_card(data.tables[2]) ]]
     <!-- GEMs Card -->
     [[ utils.summary_card(data.tables[4]) ]]
+    <!-- CRISPR Sequencing Card -->
+    {% if data.tables|selectattr("name", "equalto", "CRISPR Sequencing")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "CRISPR Sequencing") | first) ]]
+    {% endif %}
+    <!-- Antibody Sequencing Card -->
+    {% if data.tables|selectattr("name", "equalto", "Antibody Sequencing")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Antibody Sequencing") | first) ]]
+    {% endif %}
+    <!-- Custom Feature Sequencing Card -->
+    {% if data.tables|selectattr("name", "equalto", "Feature Sequencing")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Feature Sequencing") | first) ]]
+    {% endif %}
+
   </div>
   <div class="summary_card_gutter">&nbsp;</div>
   <!-- Right Summary Column -->
   <div class="summary_card_column">
     <!-- Cells Card -->
     [[ utils.summary_card(data.tables[3], chart="barcode_rank") ]]
+    <!-- CRISPR Application Card -->
+    {% if data.tables|selectattr("name", "equalto", "CRISPR Application")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "CRISPR Application") | first) ]]
+    {% endif %}
+    <!-- Antibody Application Card -->
+    {% if data.tables|selectattr("name", "equalto", "Antibody Application")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Antibody Application") | first) ]]
+    {% endif %}
+    <!-- Custom Feature Application Card -->
+    {% if data.tables|selectattr("name", "equalto", "Feature Application")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Feature Application") | first) ]]
+    {% endif %}
     <!-- Sample Info Card -->
     [[ utils.sample_info_card(data) ]]
   </div>

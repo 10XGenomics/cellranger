@@ -5,7 +5,7 @@
 import json
 import re
 import cellranger.constants as cr_constants
-
+import cellranger.library_constants as lib_constants
 # TODO: Move lib_constants here
 CRISPR_LIBRARY_TYPE = 'CRISPR Guide Capture'
 ANTIBODY_LIBRARY_TYPE = 'Antibody Capture'
@@ -16,6 +16,10 @@ FEATURE_LIBRARY_TYPE_MAP = {
 CRISPR_METRIC_PREFIX : CRISPR_LIBRARY_TYPE,
 ANTIBODY_METRIC_PREFIX : ANTIBODY_LIBRARY_TYPE,
 }
+RECOGNIZED_FEATURE_TYPES = [lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
+                            CRISPR_LIBRARY_TYPE,
+                            ANTIBODY_LIBRARY_TYPE,
+]
 
 def get_library_type_metric_prefix(lib_type):
     """Get the metric prefix for a given library type.
