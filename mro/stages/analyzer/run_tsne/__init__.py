@@ -57,8 +57,11 @@ def split(args):
         })
     return {'chunks': chunks, 'join': {'__mem_gb' : 1}}
 
+def lower_no_space(s):
+    return s.replace(" ", "_").lower()
+
 def get_tsne_name(feature_type, n_components):
-    return '%s, %d-d' % (feature_type, n_components)
+    return '%s_%d-d' % (lower_no_space(feature_type), n_components)
 
 def get_tsne_key(feature_type, n_components):
     if feature_type == lib_constants.DEFAULT_LIBRARY_TYPE:
@@ -66,7 +69,7 @@ def get_tsne_key(feature_type, n_components):
         #   where the CSV directory was named "2_components" and the HDF5 dataset was named "_2"
         return str(n_components)
     else:
-        return '%s_%d' % (feature_type, n_components)
+        return '%s_%d' % (lower_no_space(feature_type), n_components)
 
 def main(args, outs):
     if args.skip:
