@@ -8,10 +8,18 @@ import tenkit.log_subprocess as tk_subproc
 import tenkit.preflight as tk_preflight
 import cellranger.chemistry as cr_chem
 import cellranger.constants as cr_constants
+import cellranger.library_constants as lib_constants
+import cellranger.rna.library
 from cellranger.feature_ref import FeatureDefException
 import cellranger.rna.feature_ref as rna_feature_ref
 import itertools
 import csv
+
+ALLOWED_LIBRARY_TYPES = [
+    lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
+    cellranger.rna.library.CRISPR_LIBRARY_TYPE,
+    cellranger.rna.library.ANTIBODY_LIBRARY_TYPE, 
+]
 
 class PreflightException(Exception):
     def __init__(self, msg):
@@ -32,7 +40,7 @@ def is_int(s):
         return False
     return True
 
-def check_sample_def(sample_def):
+def check_sample_def(sample_def, feature_ref = None):
     hostname = socket.gethostname()
 
     check(tk_preflight.check_gem_groups(sample_def))
@@ -55,8 +63,38 @@ def check_sample_def(sample_def):
                 if not is_int(lane):
                     raise PreflightException("Lanes must be a comma-separated list of numbers.")
 
-        if sample_def.get('library_type') == '':
-            raise PreflightException("Library type may not be an empty string.")
+
+        options = ", ".join(("'%s'" % x for x in ALLOWED_LIBRARY_TYPES))
+        library_type = sample_def.get("library_type", None)
+
+        # Check for empty library_type
+        if library_type == '':
+            msg = ("library_type field may not be an empty string."
+                   "\nThe 'library_type' field in the libraries csv"
+                   " must be one of %s, or start with '%s'") % \
+                   (options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
+            raise PreflightException(msg)
+
+        # Check for a valid library_type
+        if not (library_type is None or library_type in ALLOWED_LIBRARY_TYPES or \
+            library_type.startswith(cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)):
+
+            msg = ("Unknown library_type: '%s'."
+                   "\nThe 'library_type' field in the libraries csv"
+                   " must be one of %s, or start with '%s'") % \
+                   (library_type, options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
+            raise PreflightException(msg)
+
+        # Check that the library_type exists in the feature_ref
+        if feature_ref is not None and \
+           library_type is not None and \
+           library_type != cr_constants.GENE_EXPRESSION_LIBRARY_TYPE:
+
+            if not any(x.feature_type == library_type for x in feature_ref.feature_defs):
+                msg = "You declared a library with library_type = '%s', but there are no features declared with that feature_type in the feature reference." % library_type
+                msg += "\nCheck that the 'library_type' field in the libraries csv matches at least 1 entry in the 'feature_type' field in the feature reference csv"
+                raise PreflightException(msg)
+
 
         check(tk_preflight.check_sample_indices(sample_def))
 
@@ -151,7 +189,7 @@ def check_read_lengths_vs_chemistry(name, allowed_chems, r1_length, r2_length):
                 msg += "Please check your %s setting" % flag
                 return msg
 
-def check_feature_ref(transcriptome_ref_path, feature_ref_path, sample_def):
+def check_feature_ref(transcriptome_ref_path, feature_ref_path):
 
     if not os.path.isfile(feature_ref_path):
         raise PreflightException("Could not find the feature definition file %s" % feature_ref_path)
@@ -161,18 +199,8 @@ def check_feature_ref(transcriptome_ref_path, feature_ref_path, sample_def):
             transcriptome_ref_path,
             feature_ref_path)
 
-        # Check that there is >=1 feature defined for each library_type in the sample_def
-        for sd in sample_def:
-            library_type = sd.get("library_type", None)
-            if library_type is None or library_type == cr_constants.GENE_EXPRESSION_LIBRARY_TYPE:
-                continue
-
-            if not any(x.feature_type == library_type for x in feature_ref.feature_defs):
-                msg = "You declared a library with library_type = '%s', but there are no features declared with that feature_type in the feature reference." % library_type
-                msg += "\nCheck that the 'library_type' field in the libraries csv matches at least 1 entry in the 'feature_type' field in the feature reference csv"
-                raise PreflightException(msg)
-
         rna_feature_ref.FeatureExtractor(feature_ref)
+        return feature_ref
 
     except FeatureDefException as e:
         raise PreflightException(str(e))

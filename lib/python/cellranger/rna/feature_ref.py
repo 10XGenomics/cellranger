@@ -10,6 +10,7 @@ import re
 import os
 import cellranger.io as cr_io
 import cellranger.library_constants as lib_constants
+import cellranger.rna.library
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
 from cellranger.feature_ref import FeatureReference, FeatureDef, FeatureDefException
@@ -23,6 +24,18 @@ BASE_FEATURE_FIELDS = ['id', 'name', 'feature_type']
 
 # These feature tag keys are required for feature barcode extraction
 REQUIRED_TAGS = ['read', 'pattern', 'sequence']
+
+ALLOWED_LIBRARY_TYPES = [
+    lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
+    cellranger.rna.library.CRISPR_LIBRARY_TYPE,
+    cellranger.rna.library.ANTIBODY_LIBRARY_TYPE, 
+]
+
+ALLOWED_FEATURE_TYPES = [
+    cellranger.rna.library.CRISPR_LIBRARY_TYPE,
+    cellranger.rna.library.ANTIBODY_LIBRARY_TYPE, 
+]
+
 
 PatternEntry = namedtuple('PatternEntry', ['read', 'regex_string', 'regex', 'barcode_dict'])
 
@@ -324,17 +337,37 @@ def parse_feature_def_file(filename, index_offset=0):
 
         all_tag_keys = [c for c in reader.fieldnames if c not in BASE_FEATURE_FIELDS]
 
-        for row in reader:
+        for (row_num, row) in enumerate(reader):
             # Check field presence
             if not set(row.keys()).issuperset(set(required_cols)):
-                raise FeatureDefException('The feature definition file header must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
+                raise FeatureDefException('The feature reference file header must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
 
+            # Check that there aren't extra columns, which you
+            for key in row.iterkeys():
+                if key is None:
+                    msg = "Your feature reference csv file contains more columns than the header on line %d. Please use a csv file with a header for each column." % (row_num+2)
+                    msg += "\nYou might have an comma character in a field. Commas are permitted in some fields, but fields containing commas must be enclosed in quotes."
+                    raise FeatureDefException(msg)
+            
             # Strip flanking whitespace from values
             for key in row.iterkeys():
                 row[key] = row[key].strip()
+           
+            # Check for a valid library_type
+            if not (row['feature_type'] in ALLOWED_FEATURE_TYPES or \
+               row['feature_type'].startswith(cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)):
+                
+                options = " or ".join(("'%s'" % x for x in ALLOWED_FEATURE_TYPES))
+                msg = ("Unknown feature_type: '%s'."
+                       "\nThe 'feature_type' field in the feature reference"
+                       " must be one of %s, or start with '%s'") % \
+                       (row['feature_type'], options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
+
+                raise FeatureDefException(msg)
+
             # Check ID uniqueness
             if row['id'] in seen_ids:
-                raise FeatureDefException('Found duplicated ID in feature definition file: "%s"' % row['id'])
+                raise FeatureDefException('Found duplicated ID in feature reference file: "%s"' % row['id'])
             seen_ids.add(row['id'])
 
             if "\t" in row['name']:

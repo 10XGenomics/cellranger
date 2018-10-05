@@ -9,6 +9,7 @@ import cellranger.constants as cr_constants
 # TODO: Move lib_constants here
 CRISPR_LIBRARY_TYPE = 'CRISPR Guide Capture'
 ANTIBODY_LIBRARY_TYPE = 'Antibody Capture'
+CUSTOM_LIBRARY_TYPE_PREFIX = "Custom"
 CRISPR_METRIC_PREFIX = 'CRISPR'
 ANTIBODY_METRIC_PREFIX = 'ANTIBODY'
 FEATURE_LIBRARY_TYPE_MAP = {

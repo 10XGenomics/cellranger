@@ -21,8 +21,15 @@ stage CELLRANGER_PREFLIGHT_LOCAL(
 """
 
 def run_preflight_checks(args):
+
+    if args.feature_reference is not None:
+        print "Checking feature definition file..."
+        feature_ref = cr_preflight.check_feature_ref(args.reference_path, args.feature_reference)
+    else:
+        feature_ref = None
+
     print "Checking sample info..."
-    cr_preflight.check_sample_def(args.sample_def)
+    cr_preflight.check_sample_def(args.sample_def, feature_ref)
 
     # If any non "Gene Expression" libraries are present then the feature-ref is required.
     if any((x.get("library_type") != None and x.get("library_type") != GENE_EXPRESSION_LIBRARY_TYPE) for x in args.sample_def):
@@ -37,9 +44,6 @@ def run_preflight_checks(args):
     print "Checking reference..."
     cr_preflight.check_refdata(args.reference_path)
 
-    if args.feature_reference is not None:
-        print "Checking feature definition file..."
-        cr_preflight.check_feature_ref(args.reference_path, args.feature_reference, args.sample_def)
 
     print "Checking chemistry..."
     cr_preflight.check_chemistry(args.chemistry_name, args.custom_chemistry_def,
