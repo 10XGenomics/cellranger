@@ -16,7 +16,7 @@ pipeline _CRISPR_ANALYZER(
     in  csv    feature_reference,
     in  string feature_type,
     in  json   counter_metrics_json,
-    out json   crispr_analysis_metrics_json,
+    out json   crispr_analysis_metrics,
     out path   crispr_analysis,
 )
 {
@@ -58,7 +58,7 @@ pipeline _CRISPR_ANALYZER(
     )
 
     return (
-        crispr_analysis_metrics_json = CALL_PROTOSPACERS.protospacer_call_metrics_json,
-        crispr_analysis              = SUMMARIZE_CRISPR_ANALYSIS.crispr_analysis,
+        crispr_analysis_metrics = CALL_PROTOSPACERS.protospacer_call_metrics_json,
+        crispr_analysis         = SUMMARIZE_CRISPR_ANALYSIS.crispr_analysis,
     )
 }

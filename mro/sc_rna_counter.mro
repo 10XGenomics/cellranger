@@ -204,7 +204,7 @@ pipeline SC_RNA_COUNTER(
         summaries                    = [
             _BASIC_SC_RNA_COUNTER.summary,
             SC_RNA_ANALYZER.summary,
-            _CRISPR_ANALYZER.crispr_analysis_metrics_json,
+            _CRISPR_ANALYZER.crispr_analysis_metrics,
         ],
         sample_id                    = self.sample_id,
         sample_desc                  = self.sample_desc,
