@@ -283,8 +283,10 @@ class MoleculeCounter:
             feature_ref.to_hdf5(fref_group)
 
             # Write barcodes
-            # NOTE: Assumes all barcodes are the same length.
-            mc.h5.create_dataset('barcodes', data=np.fromiter(barcodes, np.string_(barcodes[0]).dtype, count=len(barcodes)), compression=HDF5_COMPRESSION)
+            # If there are multiple barcode lengths, use the largest for the numpy dtype.
+            max_barcode_len = np.max(map(len, barcodes))
+            barcode_dtype = np.dtype('S%d' % max_barcode_len)
+            mc.h5.create_dataset('barcodes', data=np.fromiter(barcodes, barcode_dtype, count=len(barcodes)), compression=HDF5_COMPRESSION)
 
             # Write library info
             lib_info_json = json.dumps(library_info, indent=4, sort_keys=True)
