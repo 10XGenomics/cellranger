@@ -17,8 +17,8 @@ CRISPR_ANALYSIS_FILE_NAMES =  ["protospacer_calls_summary.csv", "protospacer_cal
 
 def get_protospacer_call_metrics(ps_calls_summary, num_gex_cbs, report_prefix):
     metrics_dict = {}
-    num_cells_with_multiple_protospacers = ps_calls_summary.loc['> 1 protospacer expressed', '# Cells']
-    num_cells_with_protospacer =  (ps_calls_summary.loc['1 protospacer expressed', '# Cells'] +
+    num_cells_with_multiple_protospacers = ps_calls_summary.loc['More than 1 protospacer expressed', 'num_cells']
+    num_cells_with_protospacer =  (ps_calls_summary.loc['1 protospacer expressed', 'num_cells'] +
                                         num_cells_with_multiple_protospacers)
 
     frac_cells_with_protospacer = tk_stats.robust_divide(num_cells_with_protospacer, num_gex_cbs)
@@ -125,17 +125,17 @@ def get_ps_calls_summary(ps_calls_table, guide_counts_matrix):
     num_cells_without_guide_umis = _get_num_cells_without_guide_umis(guide_counts_matrix)
     frac_cells_without_guide_umis = tk_stats.robust_divide(num_cells_without_guide_umis, num_gex_cbs)
 
-    column_titles = ['# Cells', '% Cells', 'Median UMIs', 'Std. Dev UMIs']
+    column_titles = ['num_cells', 'pct_cells', 'median_umis', 'stddev_umis']
     ps_summary = pd.DataFrame(columns = column_titles)
 
     ps_summary.loc['No guide molecules'] = (num_cells_without_guide_umis,
                                                     100*frac_cells_without_guide_umis,
-                                                    'N/A',
-                                                    'N/A')
+                                                    'None',
+                                                    'None')
     ps_summary.loc['No confident call'] = (num_cells_without_ps_calls,
                                                     100*frac_cells_without_ps_calls,
-                                                    'N/A',
-                                                    'N/A')
+                                                    'None',
+                                                    'None')
 
     singlets_table = ps_calls_table[ps_calls_table['num_features']==1]
     num_cells_with_singlets = len(set(singlets_table.index))
@@ -143,17 +143,17 @@ def get_ps_calls_summary(ps_calls_table, guide_counts_matrix):
 
     ps_summary.loc['1 protospacer expressed'] = (num_cells_with_singlets,
                                                         100*frac_cells_with_singlets,
-                                                        'N/A',
-                                                        'N/A')
+                                                        'None',
+                                                        'None')
 
     multiplets_table = ps_calls_table[ps_calls_table['num_features']>1]
     num_cells_with_multiplets = len(set(multiplets_table.index))
     frac_cells_with_multiplets = tk_stats.robust_divide(num_cells_with_multiplets, num_gex_cbs)
 
-    ps_summary.loc['> 1 protospacer expressed'] = (num_cells_with_multiplets,
+    ps_summary.loc['More than 1 protospacer expressed'] = (num_cells_with_multiplets,
                                                         100*frac_cells_with_multiplets,
-                                                        'N/A',
-                                                        'N/A')
+                                                        'None',
+                                                        'None')
 
     for f_call, table_iter in itertools.groupby(ps_calls_table.itertuples(), key = sort_by_feature_call):
         if f_call=='None':
@@ -174,7 +174,8 @@ def get_ps_calls_summary(ps_calls_table, guide_counts_matrix):
                                                 100*tk_stats.robust_divide(num_cells, num_gex_cbs),
                                                 np.median(umis_per_cell),
                                                 np.std(umis_per_cell)
-                                            )
+                                                )
+    ps_summary.index.name = 'protospacer_call'
     return ps_summary
 
 def sort_by_feature_call(row):
@@ -211,4 +212,5 @@ def _get_cell_calls_df(calls_per_cell, filtered_guide_counts_matrix):
                                            calls[0],
                                           str(filtered_guide_counts_matrix.get(calls[0], cell)))
 
+    calls_per_cell_df.index.name = 'cell_barcode'
     return calls_per_cell_df
