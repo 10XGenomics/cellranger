@@ -4,7 +4,6 @@
 #
 import json
 import re
-import cellranger.constants as cr_constants
 import cellranger.library_constants as lib_constants
 # TODO: Move lib_constants here
 CRISPR_LIBRARY_TYPE = 'CRISPR Guide Capture'
@@ -23,14 +22,13 @@ RECOGNIZED_FEATURE_TYPES = [lib_constants.GENE_EXPRESSION_LIBRARY_TYPE,
 
 def get_library_type_metric_prefix(lib_type):
     """Get the metric prefix for a given library type.
-       Some are hardcoded for historical reasons.
     """
-    if lib_type == 'Gene Expression':
+    if lib_type == lib_constants.GENE_EXPRESSION_LIBRARY_TYPE:
         return ''
-    elif lib_type == 'CRISPR Guide Capture':
-        return 'CRISPR_'
-    elif lib_type == 'Antibody Capture':
-        return 'ANTIBODY_'
+    elif lib_type == CRISPR_LIBRARY_TYPE:
+        return CRISPR_METRIC_PREFIX + '_'
+    elif lib_type == ANTIBODY_LIBRARY_TYPE:
+        return ANTIBODY_METRIC_PREFIX + '_'
     else:
         return '%s_' % lib_type
 
@@ -51,4 +49,4 @@ def get_bam_library_info(bam):
 
 def has_genomes(library_type):
     """Do genomes make sense for a library type"""
-    return library_type == cr_constants.GENE_EXPRESSION_LIBRARY_TYPE
+    return library_type == lib_constants.GENE_EXPRESSION_LIBRARY_TYPE

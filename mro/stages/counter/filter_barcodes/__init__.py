@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 from collections import OrderedDict, defaultdict
 import csv
@@ -18,6 +18,7 @@ import cellranger.stats as cr_stats
 import cellranger.constants as cr_constants
 import cellranger.library_constants as lib_constants
 import cellranger.rna.matrix as rna_matrix
+import cellranger.rna.library as rna_library
 import cellranger.rna.report_matrix as rna_report_mat
 import cellranger.utils as cr_utils
 import cellranger.feature.antibody.analysis as ab_utils
@@ -111,8 +112,9 @@ def remove_bcs_with_high_umi_corrected_reads(correction_data, matrix):
 
     ### report how many aggregates were found, and the fraction of reads those accounted for
     metrics_to_report = {}
-    metrics_to_report['ANTIBODY_number_highly_corrected_GEMs'] = len(bcs_to_remove)
-    metrics_to_report['ANTIBODY_reads_lost_to_highly_corrected_GEMs'] = reads_lost
+    report_prefix  = rna_library.get_library_type_metric_prefix(rna_library.ANTIBODY_LIBRARY_TYPE)
+    metrics_to_report[report_prefix + 'number_highly_corrected_GEMs'] = len(bcs_to_remove)
+    metrics_to_report[report_prefix + 'reads_lost_to_highly_corrected_GEMs'] = reads_lost
 
     return cleaned_matrix, metrics_to_report, removed_bcs_df
 
@@ -122,7 +124,7 @@ def filter_barcodes(args, outs):
 
     correction_data = pd.read_csv(args.barcode_correction_csv)
     raw_matrix = cr_matrix.CountMatrix.load_h5_file(args.matrices_h5)
-    if np.isin('Antibody Capture', correction_data.library_type):
+    if np.isin(rna_library.ANTIBODY_LIBRARY_TYPE, correction_data.library_type):
     	matrix, metrics_to_report, removed_bcs_df = remove_bcs_with_high_umi_corrected_reads(correction_data, raw_matrix)
     	### report all idenitified aggregate barcodes, together with their reads, umi corrected reads, fraction of corrected reads, and fraction of total reads
     	removed_bcs_df.to_csv(outs.aggregate_barcodes)

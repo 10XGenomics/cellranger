@@ -194,7 +194,6 @@ pipeline SC_RNA_COUNTER(
         filtered_feature_counts_matrix = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
         filtered_barcodes    = _BASIC_SC_RNA_COUNTER.filtered_barcodes,
         feature_reference    = self.feature_reference,
-        feature_type         = "CRISPR",
         counter_metrics_json = _BASIC_SC_RNA_COUNTER.summary,
     ) using (
         disabled = DISABLE_FEATURE_STAGES.disable_crispr,

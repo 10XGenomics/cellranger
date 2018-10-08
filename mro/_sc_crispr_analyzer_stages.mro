@@ -7,19 +7,18 @@ filetype h5;
 filetype json;
 
 stage CALL_PROTOSPACERS(
-    in  csv    filtered_barcodes,
-    in  h5     molecule_info,
-    in  h5     filtered_feature_counts_matrix,
-    in  string feature_type,
-    in  csv    feature_reference,
-    in  json   counter_metrics_json,
-    out csv    protospacer_calls_summary,
-    out csv    protospacer_calls_per_cell,
-    out json   protospacer_call_metrics_json,
-    out json   cells_per_protospacer,
-    out json   protospacer_umi_thresholds_json,
-    out csv    protospacer_umi_thresholds_csv,
-    src py     "stages/feature/call_protospacers",
+    in  csv  filtered_barcodes,
+    in  h5   molecule_info,
+    in  h5   filtered_feature_counts_matrix,
+    in  csv  feature_reference,
+    in  json counter_metrics_json,
+    out csv  protospacer_calls_summary,
+    out csv  protospacer_calls_per_cell,
+    out json protospacer_call_metrics_json,
+    out json cells_per_protospacer,
+    out json protospacer_umi_thresholds_json,
+    out csv  protospacer_umi_thresholds_csv,
+    src py   "stages/feature/call_protospacers",
 ) using (
     mem_gb = 16,
 )

@@ -10,21 +10,19 @@ filetype h5;
 filetype json;
 
 pipeline _CRISPR_ANALYZER(
-    in  h5     molecule_info,
-    in  h5     filtered_feature_counts_matrix,
-    in  csv    filtered_barcodes,
-    in  csv    feature_reference,
-    in  string feature_type,
-    in  json   counter_metrics_json,
-    out json   crispr_analysis_metrics,
-    out path   crispr_analysis,
+    in  h5   molecule_info,
+    in  h5   filtered_feature_counts_matrix,
+    in  csv  filtered_barcodes,
+    in  csv  feature_reference,
+    in  json counter_metrics_json,
+    out json crispr_analysis_metrics,
+    out path crispr_analysis,
 )
 {
     call CALL_PROTOSPACERS(
         filtered_barcodes    = self.filtered_barcodes,
         molecule_info        = self.molecule_info,
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        feature_type         = self.feature_type,
         feature_reference    = self.feature_reference,
         counter_metrics_json = self.counter_metrics_json,
     )

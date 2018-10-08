@@ -8,14 +8,12 @@ import os
 import cellranger.feature.utils as feature_utils
 import cellranger.rna.library as rna_library
 import cellranger.matrix as cr_matrix
-import cellranger.feature.constants as feature_constants
 
 __MRO__ = """
 stage CALL_PROTOSPACERS(
     in  csv    filtered_barcodes,
     in  h5     molecule_info,
     in  h5     filtered_feature_counts_matrix,
-    in  string feature_type,
     in  csv    feature_reference,
     in  json   counter_metrics_json,
     out csv    protospacer_calls_summary,
@@ -46,7 +44,7 @@ def main(args, outs):
 
     with open(args.counter_metrics_json) as f:
         protospacer_call_metrics = json.load(f)
-    report_prefix = feature_constants.PREFIX_FROM_FEATURE_TYPE.get(args.feature_type, 'FEATURE') + '_'
+    report_prefix = rna_library.get_library_type_metric_prefix(rna_library.CRISPR_LIBRARY_TYPE)
 
     filtered_feature_counts_matrix = cr_matrix.CountMatrix.load_h5_file(args.filtered_feature_counts_matrix)
     filtered_guide_counts_matrix = filtered_feature_counts_matrix.select_features_by_type(rna_library.CRISPR_LIBRARY_TYPE)
