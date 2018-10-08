@@ -5,7 +5,9 @@
 
 MATRIX_MEM_GB_MULTIPLIER = 2  # TODO reduce this once we're confident about the actual memory bounds
 NUM_MATRIX_ENTRIES_PER_MEM_GB = 50e6
-NUM_MATRIX_BARCODES_PER_MEM_GB = 5500000 # Empirical obs; list+dict of barcodes
+
+# Empirical obs: with new CountMatrix setup, take ~ 50 bytes/bc
+NUM_MATRIX_BARCODES_PER_MEM_GB = 2000000 
 MIN_MEM_GB = 3
 MIN_MEM_GB_NOWHITELIST = 64
 

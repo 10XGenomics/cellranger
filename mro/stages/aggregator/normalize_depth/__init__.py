@@ -4,10 +4,8 @@
 #
 from collections import defaultdict, OrderedDict
 import copy
-import h5py
 import itertools
 import json
-import martian
 import numpy as np
 import scipy.sparse as sp_sparse
 from cellranger.logperf import LogPerf
@@ -21,22 +19,21 @@ import cellranger.matrix as cr_matrix
 from cellranger.matrix import CountMatrix
 import cellranger.molecule_counter as cr_mol_counter
 from cellranger.molecule_counter import MoleculeCounter
-import cellranger.io as cr_io
-import cellranger.rna.matrix as rna_matrix
 import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 
 __MRO__  = """
 stage NORMALIZE_DEPTH(
-    in  map    gem_group_index,
-    in  h5     molecules,
-    in  map    detect_cells_gg_metrics,
-    in  string normalization_mode,
-    in  map    gem_group_barcode_ranges,
-    out h5     out_molecules,
-    out json   summary,
-    src py     "stages/aggregator/normalize_depth",
-) split using (
+    in  map     gem_group_index,
+    in  h5      molecules,
+    in  string  normalization_mode,
+    in  map     gem_group_barcode_ranges,
+    out h5[]    raw_matrices_h5,
+    out int     raw_nnz,
+    out h5[]    filtered_matrices_h5,
+    out int     filtered_nnz,
+    src py      "stages/aggregator/normalize_depth",
+) split (
     in  float[] frac_reads_kept,
     in  int[]   num_cells,
     in  int     chunk_start,
@@ -44,6 +41,8 @@ stage NORMALIZE_DEPTH(
     out json    chunk_summary,
     out h5      raw_matrix_h5,
     out h5      filtered_matrix_h5,
+    out int     raw_nnz,
+    out int     filtered_nnz,
 )
 """
 
@@ -96,7 +95,6 @@ def split(args):
     tgt_chunk_len = cr_constants.NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK
 
     chunks = []
-    join_mem_gb = 0
 
     # For memory request calculation
     num_gem_groups = len(set(lib['gem_group'] for lib in library_info))
@@ -104,11 +102,6 @@ def split(args):
     with MoleculeCounter.open(args.molecules, 'r') as mc:
         # Number of barcodes in the full matrix
         num_barcodes = mc.get_ref_column_lazy('barcodes').shape[0]
-
-        # Worst case number of nonzero elements in final matrix
-        num_nonzero = mc.nrows()
-        join_mem_gb = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes*num_gem_groups,
-                                                                       num_nonzero)
 
         for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
             mol_mem_gb = MoleculeCounter.estimate_mem_gb(chunk_len, scale=2.0, cap=False)
@@ -131,10 +124,12 @@ def split(args):
                 '__mem_gb': mem_gb,
             })
 
+    # Join is not loading the merged matrix, so it doesn't need much memory.
+    # WRITE_MATRICES will use the precise nnz counts to make an appropriate mem request.
     return {
         'chunks': chunks,
         'join': {
-            '__mem_gb': join_mem_gb,
+            '__mem_gb': 3,
             '__threads': 2
         }
     }
@@ -298,6 +293,7 @@ def main(args, outs):
         # Construct the raw UMI matrix
         raw_umi_matrix = CountMatrix(feature_ref, barcodes, umi_matrix)
         raw_umi_matrix.save_h5_file(outs.raw_matrix_h5)
+        outs.raw_nnz = raw_umi_matrix.m.nnz
 
         # Construct the filtered UMI matrix
         filtered_bcs = MoleculeCounter.get_filtered_barcodes(barcode_info,
@@ -305,6 +301,7 @@ def main(args, outs):
                                                              barcode_seqs)
         filtered_umi_matrix = raw_umi_matrix.select_barcodes_by_seq(filtered_bcs)
         filtered_umi_matrix.save_h5_file(outs.filtered_matrix_h5)
+        outs.filtered_nnz = filtered_umi_matrix.m.nnz
 
         print 'created filtered umi matrix'
         LogPerf.mem()
@@ -317,11 +314,21 @@ def main(args, outs):
         with open(outs.chunk_summary, 'w') as f:
             json.dump(tk_safe_json.json_sanitize(summary), f, indent=4, sort_keys=True)
 
+    # Don't write MEX from chunks.
+    outs.raw_matrices_mex = None
+    outs.filtered_matrices_mex = None
+
+
 def join(args, outs, chunk_defs, chunk_outs):
+
+    # Pass through the matrix chunks and nnz counts
+    outs.raw_matrices_h5 = [o.raw_matrix_h5 for o in chunk_outs]
+    outs.raw_nnz = sum(o.raw_nnz for o in chunk_outs)
+    outs.filtered_matrices_h5 = [o.filtered_matrix_h5 for o in chunk_outs]
+    outs.filted_nnz = sum(o.filtered_nnz for o in chunk_outs)
+
     with MoleculeCounter.open(args.molecules, 'r') as mc:
         library_info = mc.get_library_info()
-        barcode_info = mc.get_barcode_info()
-        barcode_seqs = mc.get_barcodes()
 
     lib_types = sorted(set(lib['library_type'] for lib in library_info))
 
@@ -346,88 +353,6 @@ def join(args, outs, chunk_defs, chunk_outs):
     for k in chem_keys:
         summary[k] = mol_metrics[k]
     print json.dumps(mol_metrics, indent=4, sort_keys=True)
-
-    # track original library/gem info
-    library_map = cr_matrix.make_library_map_aggr(args.gem_group_index)
-
-    # Merge raw matrix
-    raw_chunks = [co.raw_matrix_h5 for co in chunk_outs]
-    raw_matrix = cr_matrix.merge_matrices(raw_chunks)
-    raw_matrix.save_h5_file(outs.raw_matrices_h5, extra_attrs=library_map)
-
-    genomes = raw_matrix.get_genomes()
-
-    # Create barcode summary HDF5 file w/ GEX data for the barcode rank plot
-    with h5py.File(outs.barcode_summary_h5, 'w') as f:
-        cr_io.create_hdf5_string_dataset(f, cr_constants.H5_BC_SEQUENCE_COL, raw_matrix.bcs)
-
-        gex_bc_counts = raw_matrix.view().select_features_by_type(lib_constants.GENE_EXPRESSION_LIBRARY_TYPE).sum(axis=0).astype('uint64')
-        genome_key = genomes[0] if len(genomes) == 1 else lib_constants.MULTI_REFS_PREFIX
-        f.create_dataset('_%s_transcriptome_conf_mapped_deduped_barcoded_reads' % genome_key,
-                         data=gex_bc_counts)
-
-
-    # Merge filtered matrix
-    filt_chunks = [co.filtered_matrix_h5 for co in chunk_outs]
-    filt_mat = cr_matrix.merge_matrices(filt_chunks)
-    filt_mat.save_h5_file(outs.filtered_matrices_h5, extra_attrs=library_map)
-
-
-    # Summarize the matrix across library types and genomes
-    for lib_type in lib_types:
-        libtype_prefix = rna_library.get_library_type_metric_prefix(lib_type)
-
-        if rna_library.has_genomes(lib_type):
-            genomes = filt_mat.get_genomes()
-        else:
-            genomes = [None]
-
-        mat_lib = filt_mat.view().select_features_by_type(lib_type)
-
-        for genome in genomes:
-            if genome is None:
-                mat = mat_lib
-                genome_idx = None
-            else:
-                mat = mat_lib.select_features_by_genome(genome)
-                genome_idx = barcode_info.genomes.index(genome)
-
-            # Select barcodes passing filter for this (lib_type, genome)
-            filtered_bcs = MoleculeCounter.get_filtered_barcodes(barcode_info,
-                                                                 library_info,
-                                                                 barcode_seqs,
-                                                                 genome_idx=genome_idx,
-                                                                 library_type=lib_type)
-            mat = mat.select_barcodes_by_seq(filtered_bcs)
-
-            median_features = np.median(mat.count_ge(axis=0,
-                                                     threshold=cr_constants.MIN_COUNTS_PER_GENE))
-            median_counts = np.median(mat.sum(axis=0))
-            genome_prefix = genome if genome is not None else lib_constants.MULTI_REFS_PREFIX
-
-            prefixes = (libtype_prefix, genome_prefix)
-            if genome is not None:
-                flt_reads = summary['%s%s_flt_mapped_reads' % prefixes]
-                raw_reads = summary['%s%s_raw_mapped_reads' % prefixes]
-                frac_reads_in_cells = tk_stats.robust_divide(flt_reads, raw_reads)
-
-                summary['%s%s_filtered_bcs_conf_mapped_barcoded_reads_cum_frac' % prefixes] =  frac_reads_in_cells
-
-            summary.update({
-                '%s%s_filtered_bcs_median_counts' % prefixes: median_counts,
-                '%s%s_filtered_bcs_median_unique_genes_detected' % prefixes: median_features,
-            })
-
-        # Compute frac reads in cells across all genomes
-        prefixes = [(libtype_prefix, g) for g in genomes if g is not None]
-        if len(prefixes) == 0:
-            prefixes = [(libtype_prefix, lib_constants.MULTI_REFS_PREFIX)]
-        flt_reads = sum(summary['%s%s_flt_mapped_reads' % p] for p in prefixes)
-        raw_reads = sum(summary['%s%s_raw_mapped_reads' % p] for p in prefixes)
-
-        frac_reads_in_cells = tk_stats.robust_divide(flt_reads, raw_reads)
-        summary['%s%s_filtered_bcs_conf_mapped_barcoded_reads_cum_frac' % (
-            libtype_prefix, lib_constants.MULTI_REFS_PREFIX)] = frac_reads_in_cells
 
     # Report normalization metrics
     all_batches = OrderedDict()
@@ -489,15 +414,6 @@ def join(args, outs, chunk_defs, chunk_outs):
             '%spost_normalization_multi_transcriptome_total_raw_reads_per_filtered_bc' % p: ds_mean_rppc,
             '%slowest_frac_reads_kept' % p: min_frac_reads_kept[lib_type_idx],
         })
-
-    # Write MEX format (do it last because it converts the matrices to COO)
-    version = martian.get_pipelines_version()
-    rna_matrix.save_mex(raw_matrix,
-                        outs.raw_matrices_mex,
-                        version)
-    rna_matrix.save_mex(filt_mat,
-                        outs.filtered_matrices_mex,
-                        version)
 
     with open(outs.summary, 'w') as f:
         json.dump(tk_safe_json.json_sanitize(summary), f, indent=4, sort_keys=True)

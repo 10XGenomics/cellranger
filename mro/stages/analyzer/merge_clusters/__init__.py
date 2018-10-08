@@ -39,11 +39,11 @@ def split(args):
     if args.skip:
         return {'chunks': [{'__mem_gb': 1}]}
 
-    # matrix_mem_gb = CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
+    matrix_mem_gb = CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
     return {
         'chunks': [{'__mem_gb': 1}],
         'join': {
-            '__mem_gb': 4,
+            '__mem_gb': max(6, matrix_mem_gb),
         }
     }
 

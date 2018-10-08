@@ -69,11 +69,10 @@ stage NORMALIZE_DEPTH(
     in  h5      molecules,
     in  string  normalization_mode,
     in  map     gem_group_barcode_ranges,
-    out h5      raw_matrices_h5,
-    out h5      filtered_matrices_h5,
-    out h5      barcode_summary_h5,
-    out path    raw_matrices_mex,
-    out path    filtered_matrices_mex,
+    out h5[]    raw_matrices_h5,
+    out int     raw_nnz,
+    out h5[]    filtered_matrices_h5,
+    out int     filtered_nnz,
     out json    summary,
     src py      "stages/aggregator/normalize_depth",
 ) split (
@@ -85,6 +84,23 @@ stage NORMALIZE_DEPTH(
     out h5      raw_matrix_h5,
     out h5      filtered_matrix_h5,
 )
+
+stage WRITE_MATRICES(
+    in  map     gem_group_index,
+    in  h5      molecules,
+    in  h5[]    raw_matrices_h5,
+    in  int     raw_nnz,
+    in  h5[]    filtered_matrices_h5,
+    in  int     filtered_nnz,
+    in  json    summary,
+    out h5      raw_matrix_h5,
+    out path    raw_matrix_mex,
+    out h5      filtered_matrix_h5,
+    out path    filtered_matrix_mex,
+    out h5      barcode_summary_h5,
+    out json    summary,
+    src py      "stages/aggregator/write_matrices",
+) split ()
 
 stage CHECK_INVARIANTS(
     in  map[] input_sample_defs,

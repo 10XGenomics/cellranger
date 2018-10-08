@@ -134,7 +134,7 @@ def open_maybe_gzip(filename, mode='r'):
     # this _must_ be a str
     filename = str(filename)
     if filename.endswith(h5_constants.GZIP_SUFFIX):
-        raw = gzip.open(filename, mode + 'b')
+        raw = gzip.open(filename, mode + 'b', 2)
     elif filename.endswith(h5_constants.LZ4_SUFFIX):
         raw = lz4.open(filename, mode + 'b')
     else:

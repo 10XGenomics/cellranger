@@ -56,14 +56,14 @@ def compute_sseq_params(x, zeta_quantile=SSEQ_ZETA_QUANTILE):
     # Estimate size factors and normalize the matrix for quick mean/var calcs
     size_factors = estimate_size_factors(x)
     # Cast to float to prevent truncation of 1 -> 0 for size factors < 1
-    x_norm = x.copy().astype(np.float64)
+    x_norm = scipy.sparse.csc_matrix(x, dtype=np.float64, copy=True)
     sparsefuncs.inplace_column_scale(x_norm, 1.0 / size_factors)
 
     # Estimate featurewise mean, variance, and dispersion by the method of moments
     # assuming that each feature follows a negative-binomial distribution.
-    mean_g = np.squeeze(np.asarray(x_norm.mean(axis=1)))
+    mean_g = np.squeeze(np.asarray(x_norm.mean(axis=1, dtype=np.float64)))
     # V[X] = E[X^2] - E[X]^2
-    mean_sq_g = np.squeeze(np.asarray(x_norm.multiply(x_norm).mean(axis=1)))
+    mean_sq_g = np.squeeze(np.asarray(x_norm.multiply(x_norm).mean(axis=1, dtype=np.float64)))
     var_g = mean_sq_g - np.square(mean_g)
 
     # Method of moments estimate of feature-wise dispersion (phi)

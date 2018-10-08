@@ -36,11 +36,12 @@ def split(args):
 
     chunks = []
     # FIXME: Add one for reasons unknown
-    matrix_mem_gb = 1 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
-    chunk_mem_gb = max(matrix_mem_gb, h5_constants.MIN_MEM_GB)
+    matrix_mem_gb = 1.8 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
+    chunk_mem_gb = int(max(matrix_mem_gb, h5_constants.MIN_MEM_GB))
 
     # HACK - give big jobs more threads in order to avoid overloading a node
     threads = min(cr_io.get_thread_request_from_mem_gb(chunk_mem_gb), NUM_THREADS_MIN)
+    threads = 4
 
     for key in SingleGenomeAnalysis.load_clustering_keys_from_h5(args.clustering_h5):
         chunks.append({
