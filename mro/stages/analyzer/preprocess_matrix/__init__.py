@@ -87,6 +87,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.cloupe_matrix_h5 = None
         outs.preprocessed_matrix_h5 = None
         outs.is_multi_genome = False
+        return
 
     if args.random_seed is not None:
         np.random.seed(args.random_seed)
