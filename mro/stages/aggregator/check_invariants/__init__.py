@@ -111,7 +111,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         json.dump(tk_safe_json.json_sanitize(summary), f, indent=4, sort_keys=True)
 
 def mol_counter_genomes(mol_counter):
-    return (f.tags.get('genome', '') for f in mol_counter.feature_reference.feature_defs)
+    return cr_matrix.CountMatrix._get_genomes_from_feature_ref(mol_counter.feature_reference)
 
 def mol_counter_features_id_type(mol_counter):
     return ((f.id, f.feature_type) for f in mol_counter.feature_reference.feature_defs)
