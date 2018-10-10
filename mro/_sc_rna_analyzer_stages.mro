@@ -276,13 +276,14 @@ stage RUN_FBPCA(
     in  int    num_pcs,
     in  bool   skip,
     out pickle dimred_matrix,
+    out pickle matrix_barcode_feature_info,
     src py     "stages/analyzer/run_fbpca",
 ) split (
 )
 
 stage ALIGN_BATCH(
-    in  h5     matrix_h5,
     in  pickle dimred_matrix,
+    in  pickle matrix_barcode_feature_info,
     in  map[]  library_info,
     in  int    alignment_knn,
     in  float  alignment_alpha,

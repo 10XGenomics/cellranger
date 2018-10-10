@@ -104,6 +104,9 @@ def get_irlb_mem_gb_from_matrix_dim(nonzero_entries):
     return h5_constants.MATRIX_MEM_GB_MULTIPLIER * max(h5_constants.MIN_MEM_GB, irlba_mem_gb)
 
 def save_pca_csv(pca_map, matrix, base_dir):
+    save_pca_csv_with_bc_feature(pca_map, matrix.bcs, matrix.feature_ref.feature_defs, base_dir)
+
+def save_pca_csv_with_bc_feature(pca_map, barcodes, features, base_dir):
     for n_components, pca in pca_map.iteritems():
         n_components_dir = os.path.join(base_dir, '%d_components' % n_components)
         cr_io.makedirs(n_components_dir, allow_existing=True)
@@ -113,10 +116,10 @@ def save_pca_csv(pca_map, matrix, base_dir):
         assert n_columns <= n_components
         matrix_header = ['Barcode'] + ['PC-%d' % (i+1) for i in xrange(n_columns)]
         analysis_io.save_matrix_csv(matrix_fn, pca.transformed_pca_matrix, matrix_header,
-                              matrix.bcs)
+                              barcodes)
 
         components_fn = os.path.join(n_components_dir, 'components.csv')
-        components_header = ['PC'] + [f.id for f in matrix.feature_ref.feature_defs]
+        components_header = ['PC'] + [f.id for f in features]
         analysis_io.save_matrix_csv(components_fn, pca.components, components_header,
                               range(1, n_components+1))
 
@@ -128,7 +131,7 @@ def save_pca_csv(pca_map, matrix, base_dir):
         dispersion_fn = os.path.join(n_components_dir, 'dispersion.csv')
         dispersion_header = ['Feature','Normalized.Dispersion']
         analysis_io.save_matrix_csv(dispersion_fn, pca.dispersion, dispersion_header,
-                              [f.id for f in matrix.feature_ref.feature_defs])
+                              [f.id for f in features])
 
         features_fn = os.path.join(n_components_dir, 'features_selected.csv')
         # TODO: there are two columns here, but only 1 entry in the header...BAD

@@ -10,9 +10,7 @@ import sklearn.neighbors as sk_neighbors
 from sklearn.metrics.pairwise import rbf_kernel
 from collections import defaultdict, OrderedDict, Counter
 import tables
-import h5py
 
-import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_util
 import cellranger.analysis.pca as cr_pca
 import cellranger.h5_constants as h5_constants
@@ -20,8 +18,8 @@ import cellranger.analysis.constants as analysis_constants
 
 __MRO__  = """
 stage ALIGN_BATCH(
-    in  h5     matrix_h5,
     in  pickle dimred_matrix,
+    in  pickle matrix_barcode_feature_info,
     in  map[]  library_info,
     in  int    alignment_knn,
     in  float  alignment_alpha,
@@ -88,10 +86,10 @@ def split(args):
         gg_id_to_batch_id[lib['gem_group']] = lib['batch_id']
         batch_id_to_name[lib['batch_id']] = lib['batch_name']
 
-    # load just the barcodes from a matrix h5
-    with h5py.File(args.matrix_h5, 'r') as f:
-        group_name = f.keys()[0]
-        bcs = cr_matrix.CountMatrix.load_bcs_from_h5_group(f[group_name])
+    # load the barcodes
+    with open(args.matrix_barcode_feature_info) as fp:
+        bc_feature_info = cPickle.load(fp)
+        bcs = bc_feature_info.get('barcodes')
 
     batch_ids = np.array([gg_id_to_batch_id[cr_util.split_barcode_seq(bc)[1]] for bc in bcs])
 
@@ -387,5 +385,10 @@ def join(args, outs, chunk_defs, chunk_outs):
     with tables.open_file(outs.aligned_pca_h5, 'w', filters = filters) as h5_file:
         cr_pca.save_pca_h5(pca_map, h5_file)
 
-    matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
-    cr_pca.save_pca_csv(pca_map, matrix, outs.aligned_pca_csv)
+    # load the barcodes and feature info
+    with open(args.matrix_barcode_feature_info) as fp:
+        bc_feature_info = cPickle.load(fp)
+        bcs = bc_feature_info.get('barcodes')
+        features = bc_feature_info.get('features')
+
+    cr_pca.save_pca_csv_with_bc_feature(pca_map, bcs, features, outs.aligned_pca_csv)

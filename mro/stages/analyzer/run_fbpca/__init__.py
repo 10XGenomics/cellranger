@@ -10,6 +10,7 @@ import sklearn.preprocessing as sk_preprocessing
 import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_util
 import cellranger.h5_constants as h5_constants
+from cellranger.library_constants import GENE_EXPRESSION_LIBRARY_TYPE
 import cellranger.analysis.constants as analysis_constants
 
 from fbpca.fbpca import pca
@@ -21,6 +22,7 @@ stage RUN_FBPCA(
     in  int    num_pcs,
     in  bool   skip,
     out pickle dimred_matrix,
+    out pickle matrix_barcode_feature_info,
     src py     "stages/analyzer/run_fbpca",
 ) split (
 )
@@ -61,6 +63,8 @@ def join(args, outs, chunk_defs, chunk_outs):
         batch_id_to_name[lib['batch_id']] = lib['batch_name']
 
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
+    matrix = matrix.select_features_by_type(GENE_EXPRESSION_LIBRARY_TYPE)
+
     batch_ids = np.array([gg_id_to_batch_id[cr_util.split_barcode_seq(bc)[1]] for bc in matrix.bcs])
 
     # select intersect of non-zero feature in each batch
@@ -72,6 +76,10 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     matrix = matrix.select_features(np.flatnonzero(feature_mask))
 
+    # filter barcodes with zero count
+    bc_indices = np.flatnonzero(matrix.get_counts_per_bc())
+    matrix = matrix.select_barcodes(bc_indices)
+
     # l2 norm
     matrix.m = sk_preprocessing.normalize(matrix.m, axis=0)
 
@@ -81,3 +89,11 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.dimred_matrix = martian.make_path('dimred_matrix.pickle')
     with open(outs.dimred_matrix, 'wb') as fp:
         cPickle.dump(dimred_matrix, fp, cPickle.HIGHEST_PROTOCOL)
+
+    bc_feature_info = {
+        'barcodes' : matrix.bcs,
+        'features' : matrix.feature_ref.feature_defs,
+    }
+    outs.matrix_barcode_feature_info = martian.make_path('matrix_barcode_feature_info.pickle')
+    with open(outs.matrix_barcode_feature_info, 'wb') as fp:
+        cPickle.dump(bc_feature_info, fp, cPickle.HIGHEST_PROTOCOL)

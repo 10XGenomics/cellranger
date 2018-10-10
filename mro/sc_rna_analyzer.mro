@@ -122,14 +122,14 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call ALIGN_BATCH(
-        matrix_h5                  = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        dimred_matrix              = RUN_FBPCA.dimred_matrix,
-        library_info               = self.aggr_library_info,
-        alignment_knn              = self.alignment_knn,
-        alignment_alpha            = self.alignment_alpha,
-        alignment_sigma            = self.alignment_sigma,
-        alignment_realign_panorama = self.alignment_realign_panorama,
-        skip                       = ANALYZER_PREFLIGHT.skip,
+        dimred_matrix               = RUN_FBPCA.dimred_matrix,
+        matrix_barcode_feature_info = RUN_FBPCA.matrix_barcode_feature_info,
+        library_info                = self.aggr_library_info,
+        alignment_knn               = self.alignment_knn,
+        alignment_alpha             = self.alignment_alpha,
+        alignment_sigma             = self.alignment_sigma,
+        alignment_realign_panorama  = self.alignment_realign_panorama,
+        skip                        = ANALYZER_PREFLIGHT.skip,
     ) using (
         disabled = CHOOSE_DIMENSION_REDUCTION.disable_align_batch,
         volatile = true,
