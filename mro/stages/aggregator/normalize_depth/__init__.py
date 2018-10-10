@@ -389,13 +389,17 @@ def join(args, outs, chunk_defs, chunk_outs):
             pre_norm_raw_rppc = tk_stats.robust_divide(raw_read_pairs, n_cells)
             pre_norm_mapped_rppc = tk_stats.robust_divide(mapped_read_pairs, n_cells)
 
-            # Prefix with library type and batch
-            p = (rna_library.get_library_type_metric_prefix(lib_type),
-                 batch)
+            # Prefix with batch and library type
+            if lib_type.lower().startswith(rna_library.CUSTOM_LIBRARY_TYPE_PREFIX.lower()):
+                lib_prefix = rna_library.CUSTOM_LIBRARY_TYPE_PREFIX + '_'
+            else:
+                lib_prefix = rna_library.get_library_type_metric_prefix(lib_type)
+
+            p = (batch, lib_prefix)
             summary.update({
-                '%s%s_frac_reads_kept' % p: frac_reads_kept,
-                '%s%s_pre_normalization_raw_reads_per_filtered_bc' % p: pre_norm_raw_rppc,
-                '%s%s_pre_normalization_cmb_reads_per_filtered_bc' % p: pre_norm_mapped_rppc,
+                '%s_%sfrac_reads_kept' % p: frac_reads_kept,
+                '%s_%spre_normalization_raw_reads_per_filtered_bc' % p: pre_norm_raw_rppc,
+                '%s_%spre_normalization_cmb_reads_per_filtered_bc' % p: pre_norm_mapped_rppc,
             })
     summary['batches'] = all_batches.keys()
 

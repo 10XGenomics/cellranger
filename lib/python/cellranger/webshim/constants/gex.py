@@ -6,6 +6,7 @@ from collections import namedtuple
 import cellranger.analysis.constants as analysis_constants
 import cellranger.webshim.constants.shared as shared
 import cellranger.feature.constants as feature_constants
+import cellranger.rna.library as rna_library
 
 REPORT_PREFIX_CRISPR = feature_constants.REPORT_PREFIX_CRISPR + '_'
 DISPLAY_PREFIX_CRISPR = feature_constants.DISPLAY_PREFIX_CRISPR + ' '
@@ -761,6 +762,78 @@ AGGREGATION_METRICS = [
     },
 ]
 
+CRISPR_AGGREGATION_METRICS = [
+    {
+        'name': REPORT_PREFIX_CRISPR + 'frac_reads_kept',
+        'display_name': '%s Fraction of Reads Kept',
+        'description': 'The fraction of reads kept for this input sample, after normalizing depth across samples to reduce batch effects.',
+        'format': 'percent',
+        'prefix': 'agg_batches',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'pre_normalization_raw_reads_per_filtered_bc',
+        'display_name': '%s Pre-Normalization Total Reads per Cell',
+        'description': 'The mean number of total sequencing reads per cell in this input sample, prior to depth normalization.',
+        'format': 'integer',
+        'prefix': 'agg_batches',
+    },
+    {
+        'name': REPORT_PREFIX_CRISPR + 'pre_normalization_cmb_reads_per_filtered_bc',
+        'display_name': '%s Pre-Normalization Confidently Mapped Barcoded Reads per Cell',
+        'description': 'The mean number of confidently-mapped-to-transcriptome, valid-barcode reads per cell in this input sample, prior to depth normalization.',
+        'format': 'integer',
+        'prefix': 'agg_batches',
+    },
+]
+
+ANTIBODY_AGGREGATION_METRICS = [
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'frac_reads_kept',
+        'display_name': '%s Fraction of Reads Kept',
+        'description': 'The fraction of reads kept for this input sample, after normalizing depth across samples to reduce batch effects.',
+        'format': 'percent',
+        'prefix': 'agg_batches',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'pre_normalization_raw_reads_per_filtered_bc',
+        'display_name': '%s Pre-Normalization Total Reads per Cell',
+        'description': 'The mean number of total sequencing reads per cell in this input sample, prior to depth normalization.',
+        'format': 'integer',
+        'prefix': 'agg_batches',
+    },
+    {
+        'name': REPORT_PREFIX_ANTIBODY + 'pre_normalization_cmb_reads_per_filtered_bc',
+        'display_name': '%s Pre-Normalization Confidently Mapped Barcoded Reads per Cell',
+        'description': 'The mean number of confidently-mapped-to-transcriptome, valid-barcode reads per cell in this input sample, prior to depth normalization.',
+        'format': 'integer',
+        'prefix': 'agg_batches',
+    },
+]
+
+CUSTOM_FEATURE_AGGREGATION_METRICS = [
+    {
+        'name': rna_library.CUSTOM_LIBRARY_TYPE_PREFIX + '_frac_reads_kept',
+        'display_name': '%s Fraction of Reads Kept',
+        'description': 'The fraction of reads kept for this input sample, after normalizing depth across samples to reduce batch effects.',
+        'format': 'percent',
+        'prefix': 'agg_batches',
+    },
+    {
+        'name': rna_library.CUSTOM_LIBRARY_TYPE_PREFIX + '_pre_normalization_raw_reads_per_filtered_bc',
+        'display_name': '%s Pre-Normalization Total Reads per Cell',
+        'description': 'The mean number of total sequencing reads per cell in this input sample, prior to depth normalization.',
+        'format': 'integer',
+        'prefix': 'agg_batches',
+    },
+    {
+        'name': rna_library.CUSTOM_LIBRARY_TYPE_PREFIX + '_pre_normalization_cmb_reads_per_filtered_bc',
+        'display_name': '%s Pre-Normalization Confidently Mapped Barcoded Reads per Cell',
+        'description': 'The mean number of confidently-mapped-to-transcriptome, valid-barcode reads per cell in this input sample, prior to depth normalization.',
+        'format': 'integer',
+        'prefix': 'agg_batches',
+    },
+]
+
 # Note: these metrics only apply when batch alignment is enabled
 BATCH_ALIGNMENT_METRICS = [
     {
@@ -809,6 +882,18 @@ METRICS = [
     {
         'name': 'Aggregation',
         'metrics': AGGREGATION_METRICS,
+    },
+    {
+        'name': 'CRISPR Aggregation',
+        'metrics': CRISPR_AGGREGATION_METRICS,
+    },
+    {
+        'name': 'Antibody Aggregation',
+        'metrics': ANTIBODY_AGGREGATION_METRICS,
+    },
+    {
+        'name': 'Feature Aggregation',
+        'metrics': CUSTOM_FEATURE_AGGREGATION_METRICS,
     },
     {
         'name': 'Antibody Sequencing',
