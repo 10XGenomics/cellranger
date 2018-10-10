@@ -14,6 +14,7 @@ import cellranger.constants as cr_constants
 import cellranger.fastq as cr_fastq
 import cellranger.utils as cr_utils
 import cellranger.io as cr_io
+import array
 
 class NoInputFastqsException(Exception):
     pass
@@ -33,7 +34,7 @@ CHEMISTRY_SC3P_V1 = {
     'umi_read_length': 10,
     'rna_read_type': 'R1',
     'rna_read_offset': 0,
-    'rna_read_length': None, # To end of sequence
+    'rna_read_length': None,  # To end of sequence
     'rna_read2_type': None,
     'rna_read2_offset': 0,
     'rna_read2_length': None,
@@ -43,18 +44,18 @@ CHEMISTRY_SC3P_V1 = {
     'strandedness': '+',
     'endedness': cr_constants.THREE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': 'I2', # Index5
+        'I1': 'I1',  # Index7
+        'I2': 'I2',  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y98,Y14,I8,Y10
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R3', # Read2
-        'I1': 'R2', # Index7
-        'I2': 'I1', # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R3',  # Read2
+        'I1': 'R2',  # Index7
+        'I2': 'I1',  # Index5
     },
     'barcode_whitelist': '737K-april-2014_rc',
 }
@@ -80,18 +81,18 @@ CHEMISTRY_SC3P_V2 = {
     'strandedness': '+',
     'endedness': cr_constants.THREE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y26,I8,Y98
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '737K-august-2016',
 }
@@ -117,18 +118,18 @@ CHEMISTRY_SC3P_V3 = {
     'strandedness': '+',
     'endedness': cr_constants.THREE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
+        'I1': 'I1',  # Index7
         'I2': 'I2', 
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y26,I8,Y98
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '3M-february-2018',
 }
@@ -156,18 +157,18 @@ CHEMISTRY_SCVDJ = {
     'strandedness': '+',
     'endedness': cr_constants.FIVE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y150,I8,Y150
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '737K-august-2016',
 }
@@ -194,18 +195,18 @@ CHEMISTRY_SCVDJ_R2 = {
     'strandedness': '-',
     'endedness': cr_constants.FIVE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y26,I8,Y150
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '737K-august-2016',
 }
@@ -232,18 +233,18 @@ CHEMISTRY_SC5P_PE = {
     'strandedness': '+',
     'endedness': cr_constants.FIVE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y150,I8,Y150
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '737K-august-2016',
 }
@@ -270,18 +271,18 @@ CHEMISTRY_SC5P_R2 = {
     'strandedness': '-',
     'endedness': cr_constants.FIVE_PRIME,
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y26,I8,Y98
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '737K-august-2016',
 }
@@ -310,18 +311,18 @@ CHEMISTRY_SC5P_R1 = {
     'endedness': cr_constants.FIVE_PRIME,
     # NOTE: Interleaved input is not supported!
     'read_type_to_bcl_processor_filename': {
-        'R1': 'RA', # Read1, Read2 interleaved
+        'R1': 'RA',  # Read1, Read2 interleaved
         'R2': None,
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     # Valid for the following argument to bcl2fastq:
     # --use-bases-mask=Y137,I8
     'read_type_to_bcl2fastq_filename': {
-        'R1': 'R1', # Read1
-        'R2': 'R2', # Read2
-        'I1': 'I1', # Index7
-        'I2': None, # Index5
+        'R1': 'R1',  # Read1
+        'R2': 'R2',  # Read2
+        'I1': 'I1',  # Index7
+        'I2': None,  # Index5
     },
     'barcode_whitelist': '737K-august-2016',
 }
@@ -484,7 +485,7 @@ def get_chemistry_description_from_name(name):
         return get_chemistry(name)['description']
 
 
-def _compute_frac_barcodes_on_whitelist(fastqs, barcode_whitelist_set, reads_interleaved, read_def):
+def _compute_frac_barcodes_on_whitelist(fastqs, barcode_whitelist_set, reads_interleaved, read_def, tolerate_n=True):
     """ Compute fraction of observed barcodes on the barcode whitelist """
     num_reads = 0
     barcodes_on_whitelist = 0
@@ -504,6 +505,19 @@ def _compute_frac_barcodes_on_whitelist(fastqs, barcode_whitelist_set, reads_int
             num_reads += 1
             if barcode in barcode_whitelist_set:
                 barcodes_on_whitelist += 1
+            elif tolerate_n and 'N' in barcode:
+
+                # If there's a single N in the barcode, check if
+                # we can can replace the N with a valid base & get
+                # a whitelist hit. This makes us robust to N-cycles.
+                npos = barcode.find("N")
+                a = array.array('c', barcode)
+                for base in ['A', 'C', 'G', 'T']:
+                    a[npos] = base
+                    new_barcode = a.tostring()
+                    if new_barcode in barcode_whitelist_set:
+                        barcodes_on_whitelist += 1
+                        break
 
         if num_reads == cr_constants.DETECT_CHEMISTRY_INITIAL_READS:
             break
@@ -521,6 +535,7 @@ def _compute_r1_length(fastqs, reads_interleaved):
     def get_r1_noninterleaved(read_iter):
         for _, seq, _ in read_iter:
             yield seq
+
     def get_r1_interleaved(read_iter):
         for _, seq, _, _, _, _ in read_iter:
             yield seq
@@ -561,6 +576,44 @@ def infer_chemistry(chemistry_arg, fq_spec):
         assert chemistry_arg not in AUTO_CHEMISTRY_NAMES
         return chemistry_arg
 
+def check_whitelist_match(chemistry_name, fq_spec):
+    """ Infer the SC3P chemistry name.
+        fq_spec (FastqSpec) for a single sample index/name """
+    assert fq_spec.is_single_group()
+
+    chemistry = get_chemistry(chemistry_name)
+
+    n_fastqs = 0
+
+    # Get the FASTQs containing the barcode for this chemistry
+    barcode_read_def = get_barcode_read_def(chemistry)
+    read_type = get_read_type_map(chemistry, fq_spec.fastq_mode)[barcode_read_def.read_type]
+
+    fastqs = fq_spec.get_fastqs(read_type)
+    print fastqs
+    n_fastqs += len(fastqs)
+
+    whitelist = _get_barcode_whitelist_set(chemistry)
+
+    wl_frac = _compute_frac_barcodes_on_whitelist(fastqs,
+                                                  whitelist,
+                                                  reads_interleaved=fq_spec.interleaved,
+                                                  read_def=barcode_read_def)
+
+    if n_fastqs == 0:
+        raise NoInputFastqsException()
+
+    if wl_frac >= cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST:
+        return None
+    else:
+        msg = ("You selected chemistry '%s'. "
+               "In input data, an extremely low rate of correct barcodes was observed for this chemistry (%.2f %%).\n"
+               "Please check your input data and chemistry selection. Note: manual chemistry detection is not required in most cases.\n"
+               "Input: %s" %
+               (chemistry_name, 100.0 * wl_frac, fq_spec))
+
+        return msg
+
 
 def infer_sc3p_chemistry(fq_spec):
     """ Infer the SC3P chemistry name.
@@ -596,7 +649,7 @@ def infer_sc3p_chemistry(fq_spec):
         return best_chem
     else:
         raise NoChemistryFoundException('Fraction of barcodes on whitelist was at best %0.2f%%, while we expected at least %0.2f%% for one of the chemistries.' %
-                (100.0*best_frac, 100.0*cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST))
+                (100.0 * best_frac, 100.0 * cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST))
 
 
 def infer_sc5p_chemistry(fq_spec):
@@ -610,7 +663,6 @@ def infer_sc5p_chemistry(fq_spec):
         raise NoInputFastqsException()
 
     r1_len = _compute_r1_length(r1_fastqs, reads_interleaved=fq_spec.interleaved)
-
 
     if fq_spec.interleaved:
         # Single-end + interleaved is unsupported.
@@ -637,7 +689,6 @@ def infer_scvdj_chemistry(fq_spec):
         raise NoInputFastqsException()
 
     r1_len = _compute_r1_length(r1_fastqs, reads_interleaved=fq_spec.interleaved)
-
 
     if fq_spec.interleaved:
         # Single-end + interleaved is unsupported.
