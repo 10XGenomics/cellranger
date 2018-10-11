@@ -21,7 +21,7 @@ pipeline SC_RNA_COUNTER_CS(
     out bam     possorted_genome_bam           "BAM"                       "possorted_genome_bam.bam",
     out bam.bai possorted_genome_bam_index     "BAM index"                 "possorted_genome_bam.bam.bai",
     out path    filtered_feature_bc_matrix     "Filtered feature-barcode matrices MEX",
-    out h5      filtered_feature_bc_matrix_h5  "Filtered feature-barcode matrices HDF5"    "filtered_feature_bc_matrix.h5",
+    out h5      filtered_feature_bc_matrix_h5  "Filtered feature-barcode matrices HDF5"  "filtered_feature_bc_matrix.h5",
     out path    raw_feature_bc_matrix          "Unfiltered feature-barcode matrices MEX",
     out h5      raw_feature_bc_matrix_h5       "Unfiltered feature-barcode matrices HDF5"  "raw_feature_bc_matrix.h5",
     out path    analysis                       "Secondary analysis output CSV",

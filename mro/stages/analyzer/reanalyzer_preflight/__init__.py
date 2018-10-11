@@ -25,6 +25,16 @@ def main(args, outs):
     if h5_filetype and h5_filetype != cr_matrix.MATRIX_H5_FILETYPE:
         martian.exit("Input is a %s file, but a matrix file is required" % h5_filetype)
 
+    h5_version = cr_matrix.CountMatrix.get_format_version_from_h5(args.filtered_matrices_h5)
+    if h5_version > cr_matrix.MATRIX_H5_VERSION:
+        martian.exit("Filtered matrices file format version (%d) "
+                     "is newer than this version of the software." % h5_version)
+
+    if cr_matrix.get_gem_group_index(args.filtered_matrices_h5) is None:
+        martian.exit("Filtered matrices file was generated with an older version "
+                     "of cellranger that is incompatible with reanalyze. Please run "
+                     "cellranger count again to generate a new matrix.")
+
     flt_genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices_h5)
 
     if len(flt_genomes) != 1:

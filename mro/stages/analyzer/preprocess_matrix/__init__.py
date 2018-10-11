@@ -7,6 +7,7 @@ import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
 import cellranger.stats as cr_stats
 import cellranger.io as cr_io
+import cellranger.utils as cr_utils
 import numpy as np
 from cellranger.logperf import LogPerf
 
@@ -113,6 +114,17 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     # Preserve original matrix attributes
     matrix_attrs = cr_matrix.get_matrix_attrs(args.matrix_h5)
+
+    # gem groups are needed for cloupe, and older versions of cellranger count
+    # may not have added those to the matrix_attrs
+    if cr_matrix.get_gem_group_index(args.matrix_h5) is None:
+        chemistry = cr_matrix.CountMatrix.load_chemistry_from_h5(args.matrix_h5)
+
+        bcs = cr_matrix.CountMatrix.load_bcs_from_h5(args.matrix_h5)
+        gem_groups = list(set(cr_utils.split_barcode_seq(bc)[1] for bc in bcs))
+
+        count_attrs = cr_matrix.make_matrix_attrs_count(args.sample_id, gem_groups, chemistry)
+        matrix_attrs.update(count_attrs)
 
     # matrix h5 for cloupe (gene with zero count preserved)
     # this will only be used in reanalyzer, where user could include/exclude genes

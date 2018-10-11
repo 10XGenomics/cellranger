@@ -101,10 +101,10 @@ pipeline SC_RNA_REANALYZER_CS(
     )
 
     return (
-        analysis        = SC_RNA_ANALYZER.analysis_csv,
-        web_summary     = SUMMARIZE_REANALYSIS.web_summary,
-        params          = PARSE_PARAM_CSV.params_csv,
-        aggregation     = PARSE_CSV.aggregation_csv,
-        cloupe          = CLOUPE_PREPROCESS.output_for_cloupe,
+        analysis    = SC_RNA_ANALYZER.analysis_csv,
+        web_summary = SUMMARIZE_REANALYSIS.web_summary,
+        params      = PARSE_PARAM_CSV.params_csv,
+        aggregation = PARSE_CSV.aggregation_csv,
+        cloupe      = CLOUPE_PREPROCESS.output_for_cloupe,
     )
 }

@@ -33,12 +33,15 @@ stage CLOUPE_PREPROCESS(
 def get_gem_group_index_json(args, outs):
     if args.gem_group_index_json:
         cr_io.copy(args.gem_group_index_json, outs.gem_group_index_json)
+        return outs.gem_group_index_json
     else:
         generated_index = cr_matrix.get_gem_group_index(args.filtered_gene_bc_matrices_h5)
         if generated_index:
             with open(outs.gem_group_index_json, 'w') as outfile:
                 tk_json.dump_numpy({"gem_group_index": generated_index}, outfile)
-    return outs.gem_group_index_json
+            return outs.gem_group_index_json
+        else:
+            return None
 
 def get_analysis_h5_path(args):
     return os.path.join(args.analysis, "analysis.h5")
@@ -85,8 +88,6 @@ def main(args, outs):
         outs.output_for_cloupe = None
         return
 
-    gem_group_index_json = get_gem_group_index_json(args, outs)
-
     call = ["crconverter",
             args.sample_id,
             args.pipestance_type,
@@ -99,8 +100,13 @@ def main(args, outs):
         call.extend(["--metrics", args.metrics_json])
     if args.aggregation_csv:
         call.extend(["--aggregation", args.aggregation_csv])
+
+    gem_group_index_json = get_gem_group_index_json(args, outs)
     if gem_group_index_json:
         call.extend(["--gemgroups", gem_group_index_json])
+    else:
+        # required argument for crconverter
+        martian.exit("HDF5 matrix to be used for cloupe does not have GEM group information.")
 
     # the sample desc may be unicode, so send the whole
     # set of args str utf-8 to check_output

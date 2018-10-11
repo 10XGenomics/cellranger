@@ -86,21 +86,22 @@ stage NORMALIZE_DEPTH(
 )
 
 stage WRITE_MATRICES(
-    in  map     gem_group_index,
-    in  h5      molecules,
-    in  h5[]    raw_matrices_h5,
-    in  int     raw_nnz,
-    in  h5[]    filtered_matrices_h5,
-    in  int     filtered_nnz,
-    in  json    summary,
-    out h5      raw_matrix_h5,
-    out path    raw_matrix_mex,
-    out h5      filtered_matrix_h5,
-    out path    filtered_matrix_mex,
-    out h5      barcode_summary_h5,
-    out json    summary,
-    src py      "stages/aggregator/write_matrices",
-) split ()
+    in  map  gem_group_index,
+    in  h5   molecules,
+    in  h5[] raw_matrices_h5,
+    in  int  raw_nnz,
+    in  h5[] filtered_matrices_h5,
+    in  int  filtered_nnz,
+    in  json summary,
+    out h5   raw_matrix_h5,
+    out path raw_matrix_mex,
+    out h5   filtered_matrix_h5,
+    out path filtered_matrix_mex,
+    out h5   barcode_summary_h5,
+    out json summary,
+    src py   "stages/aggregator/write_matrices",
+) split (
+)
 
 stage CHECK_INVARIANTS(
     in  map[] input_sample_defs,

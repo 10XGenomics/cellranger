@@ -16,12 +16,12 @@ pipeline SC_RNA_AGGREGATOR_CS(
     out json   summary                        "Aggregation metrics summary JSON",
     out path   analysis                       "Secondary analysis output CSV",
     out path   filtered_feature_bc_matrix     "Filtered feature-barcode matrices MEX",
-    out h5     filtered_feature_bc_matrix_h5  "Filtered feature-barcode matrices HDF5"    "filtered_feature_bc_matrix.h5",
+    out h5     filtered_feature_bc_matrix_h5  "Filtered feature-barcode matrices HDF5"  "filtered_feature_bc_matrix.h5",
     out path   raw_feature_bc_matrix          "Unfiltered feature-barcode matrices MEX",
     out h5     raw_feature_bc_matrix_h5       "Unfiltered feature-barcode matrices HDF5"  "raw_feature_bc_matrix.h5",
     out h5     raw_molecules                  "Unfiltered molecule-level info",
     out csv    cell_barcodes                  "Barcodes of cell-containing partitions",
-    out csv    aggregation_csv                "Copy of the input aggregation CSV"          "aggregation.csv",
+    out csv    aggregation_csv                "Copy of the input aggregation CSV"  "aggregation.csv",
     out cloupe cloupe                         "Loupe Cell Browser file",
 )
 {

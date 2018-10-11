@@ -3,12 +3,11 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
+import h5py as h5
 import json
 import martian
-import tables
 import cellranger.analysis.io as analysis_io
 import cellranger.h5_constants as h5_constants
-import cellranger.analysis.constants as analysis_constants
 import cellranger.matrix as cr_matrix
 import cellranger.io as cr_io
 import cellranger.webshim.common as cr_webshim
@@ -31,11 +30,11 @@ stage SUMMARIZE_REANALYSIS(
 )
 """
 def split(args):
-    # Estimate memory usage from the matrix stored in the analysis h5
     if args.analysis:
-        with tables.open_file(analysis_io.h5_path(args.analysis), 'r') as f:
-            matrix = getattr(f.root, analysis_constants.ANALYSIS_H5_MATRIX_GROUP)
-            matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_group(matrix)
+        # Estimate memory usage from the matrix stored in the analysis h5
+        h5_path = analysis_io.h5_path(args.analysis)
+        with h5.File(h5_path, 'r') as f:
+            matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_group(f['matrix'])
     else:
         matrix_mem_gb = h5_constants.MIN_MEM_GB
 

@@ -450,8 +450,28 @@ class CountMatrix(object):
     @staticmethod
     def load_dims_from_h5(filename):
         '''Load the matrix shape from an HDF5 file'''
+        h5_version = CountMatrix.get_format_version_from_h5(filename)
+        if h5_version == 1:
+            return CountMatrix._load_dims_from_legacy_v1_h5(filename)
+        else:
+            with h5.File(filename, 'r') as f:
+                return CountMatrix.load_dims(f['matrix'])
+
+    @staticmethod
+    def _load_dims_from_legacy_v1_h5(filename):
+        '''Load the matrix shape from a legacy h5py.File (format version 1)'''
         with h5.File(filename, 'r') as f:
-            return CountMatrix.load_dims(f['matrix'])
+            # legacy format
+            genomes = f.keys()
+            num_nonzero_entries = 0
+            num_gene_ids = 0
+            barcodes = set()
+            for genome in genomes:
+                g = f[genome]
+                num_nonzero_entries += len(g['data'])
+                num_gene_ids += len(g['genes'])
+                barcodes.update(g['barcodes'])
+            return (num_gene_ids, len(barcodes), num_nonzero_entries)
 
     @staticmethod
     def get_mem_gb_from_matrix_dim(num_barcodes, nonzero_entries):
@@ -471,8 +491,18 @@ class CountMatrix(object):
     @staticmethod
     def get_mem_gb_from_matrix_h5(filename):
         '''Estimate memory usage from an HDF5 file.'''
-        with h5.File(filename, 'r') as f:
-            return CountMatrix.get_mem_gb_from_group(f['matrix'])
+        h5_version = CountMatrix.get_format_version_from_h5(filename)
+        if h5_version == 1:
+            return CountMatrix._get_mem_gb_from_legacy_v1_h5(filename)
+        else:
+            with h5.File(filename, 'r') as f:
+                return CountMatrix.get_mem_gb_from_group(f['matrix'])
+
+    @staticmethod
+    def _get_mem_gb_from_legacy_v1_h5(filename):
+        '''Estimate memory usage from a legacy h5py.File (format version 1)'''
+        _, num_bcs, nonzero_entries = CountMatrix._load_dims_from_legacy_v1_h5(filename)
+        return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries)
 
     @classmethod
     def load(cls, group):
@@ -495,8 +525,29 @@ class CountMatrix(object):
 
     @staticmethod
     def load_bcs_from_h5_group(group):
-        '''Load just the barcode sequences from an h5.'''
+        '''Load just the barcode sequences from an h5 group.'''
         return list(group[h5_constants.H5_BCS_ATTR][:])
+
+    @staticmethod
+    def load_bcs_from_h5(filename):
+        '''Load just the barcode sequences from an HDF5 group. '''
+        h5_version = CountMatrix.get_format_version_from_h5(filename)
+        if h5_version == 1:
+            return CountMatrix._load_bcs_from_legacy_v1_h5(filename)
+        else:
+            with h5.File(filename, 'r') as f:
+                return CountMatrix.load_bcs_from_h5_group(f['matrix'])
+
+    @staticmethod
+    def _load_bcs_from_legacy_v1_h5(filename):
+        '''Load just the barcode sequences from a legacy h5py.File (format version 1)'''
+        with h5.File(filename, 'r') as f:
+            genomes = f.keys()
+            barcodes = set()
+            for genome in genomes:
+                group = f[genome]
+                barcodes.update(group['barcodes'])
+            return list(barcodes)
 
     @staticmethod
     def load_feature_ref_from_h5_group(group):
@@ -625,9 +676,19 @@ class CountMatrix(object):
     @staticmethod
     def get_genomes_from_h5(filename):
         '''Get a list of the distinct genomes from a matrix HDF5 file'''
+        h5_version = CountMatrix.get_format_version_from_h5(filename)
+        if h5_version == 1:
+            return CountMatrix._get_genomes_from_legacy_v1_h5(filename)
+        else:
+            with h5.File(filename, 'r') as f:
+                feature_ref = CountMatrix.load_feature_ref_from_h5_group(f['matrix'])
+                return CountMatrix._get_genomes_from_feature_ref(feature_ref)
+
+    @staticmethod
+    def _get_genomes_from_legacy_v1_h5(filename):
+        '''Get a list of the distinct genomes from a legacy h5py.File (format version 1)'''
         with h5.File(filename, 'r') as f:
-            feature_ref = CountMatrix.load_feature_ref_from_h5_group(f['matrix'])
-            return CountMatrix._get_genomes_from_feature_ref(feature_ref)
+            return f.keys()
 
     def get_unique_features_per_bc(self):
         return sum_sparse_matrix(self.m[self.m > 0], axis=0)
@@ -706,6 +767,17 @@ class CountMatrix(object):
                 f.write(bc + '\n')
 
     @staticmethod
+    def get_format_version_from_h5(filename):
+        """ """
+        with h5.File(filename, 'r') as f:
+            if MATRIX_H5_VERSION_KEY in f.attrs:
+                version = f.attrs[MATRIX_H5_VERSION_KEY]
+            else:
+                version = 1
+
+            return version
+
+    @staticmethod
     def load_h5_file(filename):
         with h5.File(filename, 'r') as f:
             if h5_constants.H5_FILETYPE_KEY not in f.attrs or \
@@ -731,9 +803,8 @@ class CountMatrix(object):
     @staticmethod
     def count_cells_from_h5(filename):
         # NOTE - this double-counts doublets.
-        with h5.File(filename, 'r') as f:
-            _, bcs, _ = CountMatrix.load_dims(f['matrix'])
-            return bcs
+        _, bcs, _ = CountMatrix.load_dims_from_h5(filename)
+        return bcs
 
     @staticmethod
     def load_chemistry_from_h5(filename):

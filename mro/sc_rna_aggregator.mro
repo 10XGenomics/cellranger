@@ -69,13 +69,13 @@ pipeline SC_RNA_AGGREGATOR(
     )
 
     call WRITE_MATRICES(
-        gem_group_index          = SETUP_SAMPLES.gem_group_index,
-        molecules                = MERGE_MOLECULES.merged_molecules,
-        raw_matrices_h5          = NORMALIZE_DEPTH.raw_matrices_h5,
-        filtered_matrices_h5     = NORMALIZE_DEPTH.filtered_matrices_h5,
-        raw_nnz                  = NORMALIZE_DEPTH.raw_nnz,
-        filtered_nnz             = NORMALIZE_DEPTH.filtered_nnz,
-        summary                  = NORMALIZE_DEPTH.summary,
+        gem_group_index      = SETUP_SAMPLES.gem_group_index,
+        molecules            = MERGE_MOLECULES.merged_molecules,
+        raw_matrices_h5      = NORMALIZE_DEPTH.raw_matrices_h5,
+        filtered_matrices_h5 = NORMALIZE_DEPTH.filtered_matrices_h5,
+        raw_nnz              = NORMALIZE_DEPTH.raw_nnz,
+        filtered_nnz         = NORMALIZE_DEPTH.filtered_nnz,
+        summary              = NORMALIZE_DEPTH.summary,
     )
 
     call SC_RNA_ANALYZER(
