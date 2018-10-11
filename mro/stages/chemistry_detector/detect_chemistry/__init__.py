@@ -300,16 +300,16 @@ def main(args, outs):
         if not ok:
             martian.exit(msg)
 
-
         # Check that there is a reasonable whitelist hit rate for explicitly set chemistries
-        for sd_idx, sd in enumerate(args.sample_def):
-            fq_spec = cr_fastq.FastqSpec.from_sample_def(sd)
+        if args.chemistry_name_spec != cr_chem.CUSTOM_CHEMISTRY_NAME:
+            for sd_idx, sd in enumerate(args.sample_def):
+                fq_spec = cr_fastq.FastqSpec.from_sample_def(sd)
 
-            # Check that chemistry correct rate is reasonable.
-            for group, group_spec in fq_spec.get_group_spec_iter():
-                res = cr_chem.check_whitelist_match(args.chemistry_name_spec, group_spec)
-                if res is not None:
-                    martian.exit(res)
+                # Check that chemistry correct rate is reasonable.
+                for group, group_spec in fq_spec.get_group_spec_iter():
+                    res = cr_chem.check_whitelist_match(args.chemistry_name_spec, group_spec)
+                    if res is not None:
+                        martian.exit(res)
 
         # Write empty json
         with open(outs.summary, 'w') as f:
