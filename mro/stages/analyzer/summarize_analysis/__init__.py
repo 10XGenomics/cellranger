@@ -27,9 +27,9 @@ stage SUMMARIZE_ANALYSIS(
     in  path multi_genome_csv,
     in  path multi_genome_json,
     in  bool is_multi_genome,
-    in  bool batch_alignment,
-    in  float batch_score_before_alignment,
-    in  float batch_score_after_alignment,
+    in  bool chemistry_batch_correction,
+    in  float batch_score_before_correction,
+    in  float batch_score_after_correction,
     in  bool skip,
     out path analysis,
     out path analysis_csv,
@@ -99,10 +99,10 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     summary = {}
 
-    # batch alignment summary
-    if args.batch_alignment is True:
-        summary['batch_effect_score_before_alignment'] = args.batch_score_before_alignment
-        summary['batch_effect_score_after_alignment'] = args.batch_score_after_alignment    
+    # batch correction summary
+    if args.chemistry_batch_correction is True:
+        summary['batch_effect_score_before_correction'] = args.batch_score_before_correction
+        summary['batch_effect_score_after_correction'] = args.batch_score_after_correction    
 
     if args.is_multi_genome:
         with open(args.multi_genome_summary) as reader:

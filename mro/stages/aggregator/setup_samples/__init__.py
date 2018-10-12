@@ -15,7 +15,7 @@ stage SETUP_SAMPLES(
     out map   gem_group_index,
     out json  gem_group_index_json,
     out map[] libraries,
-    out bool  batch_alignment,
+    out bool  chemistry_batch_correction,
     src py    "stages/aggregator/setup_samples",
 )
 '''
@@ -24,12 +24,12 @@ def main(args, outs):
     new_gg = 0
     gg_index = {}
     libraries = []
-    batch_alignment = False
+    chemistry_batch_correction = False
 
     ### Batch info
     # If a column 'batch' is given in sample_defs (read from input csv), that
-    # column will be used as batch identifier and batch_alignment will be turned on.
-    # otherwise, aggr_id will be used as batch identifier.
+    # column will be used as batch identifier and chemistry_batch_correction will 
+    # be turned on. otherwise, aggr_id will be used as batch identifier.
     # Each batch will have a distinct batch_id, which is an increasing integer. 
     batch_name_to_id = {}
 
@@ -41,7 +41,7 @@ def main(args, outs):
         aggr_id = sample_def[cr_constants.AGG_ID_FIELD]
 
         if cr_constants.AGG_BATCH_FIELD in sample_def:
-            batch_alignment = True 
+            chemistry_batch_correction = True 
             batch_name = sample_def[cr_constants.AGG_BATCH_FIELD]
         else:
             batch_name =  aggr_id
@@ -78,13 +78,13 @@ def main(args, outs):
             # Track gem groups
             seen_ggs.add(old_gg)
 
-    if batch_alignment is True and len(batch_name_to_id) <= 1:
-        batch_alignment = False
-        martian.log_info('Warning: only one batch sepecified in the input csv, batch_alignment is disabled.')
+    if chemistry_batch_correction is True and len(batch_name_to_id) <= 1:
+        chemistry_batch_correction = False
+        martian.log_info('Warning: only one batch sepecified in the input csv, chemistry_batch_correction is disabled.')
 
     outs.libraries = libraries
     outs.gem_group_index = gg_index
-    outs.batch_alignment = batch_alignment
+    outs.chemistry_batch_correction = chemistry_batch_correction
 
     # Write the "gem group index" (a legacy structure) for Loupe
     with open(outs.gem_group_index_json, 'w') as outfile:

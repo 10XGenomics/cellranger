@@ -17,24 +17,24 @@ import cellranger.h5_constants as h5_constants
 import cellranger.analysis.constants as analysis_constants
 
 __MRO__  = """
-stage ALIGN_BATCH(
+stage CORRECT_CHEMISTRY_BATCH(
     in  pickle dimred_matrix,
     in  pickle matrix_barcode_feature_info,
     in  map[]  library_info,
-    in  int    alignment_knn,
-    in  float  alignment_alpha,
-    in  float  alignment_sigma,
-    in  bool   alignment_realign_panorama,
+    in  int    cbc_knn,
+    in  float  cbc_alpha,
+    in  float  cbc_sigma,
+    in  bool   cbc_realign_panorama,
     in  bool   skip,
-    out float  batch_score_before_alignment,
-    out float  batch_score_after_alignment,
+    out float  batch_score_before_correction,
+    out float  batch_score_after_correction,
     out h5     aligned_pca_h5,
     out path   aligned_pca_csv,
-    src py     "stages/analyzer/align_batch",
+    src py     "stages/analyzer/correct_chemistry_batch",
 ) split (
     in  int    batch_id,
     in  map    batch_to_bc_indices,
-    in  pickle dimred_matrix,
+    in  pickle ordered_dimred_matrix,
     in  pickle idx_to_batch_id,
     in  bool   need_reorder_barcode,
     in  pickle barcode_reorder_index,
@@ -121,12 +121,14 @@ def split(args):
         barcode_reorder_index_file = martian.make_path('barcode_reorder_index.pickle')
         with open(barcode_reorder_index_file, 'wb') as fp:
             cPickle.dump(barcode_reorder_index, fp, cPickle.HIGHEST_PROTOCOL)
-    else:
-        barcode_reorder_index_file = None
 
-    dimred_matrix_file = martian.make_path('dimred_matrix.pickle')
-    with open(dimred_matrix_file, 'wb') as fp:
-        cPickle.dump(dimred_matrix, fp, cPickle.HIGHEST_PROTOCOL)
+        ordered_dimred_matrix_file = martian.make_path('ordered_dimred_matrix.pickle')
+        with open(ordered_dimred_matrix_file, 'wb') as fp:
+            cPickle.dump(dimred_matrix, fp, cPickle.HIGHEST_PROTOCOL)
+    else:
+        barcode_reorder_index_file, ordered_dimred_matrix_file = None, None
+
+
 
     idx_to_batch_id_file = martian.make_path('idx_to_batch_id.pickle')
     with open(idx_to_batch_id_file, 'wb') as fp:
@@ -141,7 +143,7 @@ def split(args):
             '__mem_gb': mem_gb,
             'batch_id': str(batch_id),
             'batch_to_bc_indices': batch_to_bc_indices,
-            'dimred_matrix': dimred_matrix_file,
+            'ordered_dimred_matrix': ordered_dimred_matrix_file,
             'idx_to_batch_id': idx_to_batch_id_file,
             'need_reorder_barcode': need_reorder_barcode,
             'barcode_reorder_index': barcode_reorder_index_file,
@@ -166,10 +168,11 @@ def main(args, outs):
     if args.skip:
         return
 
-    with open(args.dimred_matrix) as fp:
+    dimred_matrix_file = args.dimred_matrix if args.ordered_dimred_matrix is None else args.ordered_dimred_matrix
+    with open(dimred_matrix_file) as fp:
         dimred_matrix = cPickle.load(fp)
 
-    alignment_knn = option(args.alignment_knn, analysis_constants.ALIGNMENT_KNN)
+    cbc_knn = option(args.cbc_knn, analysis_constants.CBC_KNN)
 
     batch_to_bc_indices = args.batch_to_bc_indices
     batch_start_idx  = batch_to_bc_indices[args.batch_id][0]
@@ -187,10 +190,10 @@ def main(args, outs):
             continue
 
         ref_matrix = dimred_matrix[batch_to_bc_indices[batch][0]:batch_to_bc_indices[batch][1],]
-        nn_idx_right = find_knn(cur_matrix, ref_matrix, alignment_knn)
+        nn_idx_right = find_knn(cur_matrix, ref_matrix, cbc_knn)
 
         # convert index (in cur_matrix and ref_matrix) to global index (in dimred_matrix)
-        nn_idx_left = np.repeat(np.arange(cur_matrix.shape[0]) + batch_start_idx, alignment_knn)
+        nn_idx_left = np.repeat(np.arange(cur_matrix.shape[0]) + batch_start_idx, cbc_knn)
         nn_idx_right += batch_to_bc_indices[batch][0]
 
         from_idx = nn_idx_left if from_idx is None else np.concatenate([from_idx, nn_idx_left])
@@ -250,16 +253,18 @@ def join(args, outs, chunk_defs, chunk_outs):
     if args.skip:
         return
 
-    batch_to_bc_indices = chunk_defs[0].batch_to_bc_indices
+    chunk_def = chunk_defs[0]
+    batch_to_bc_indices = chunk_def.batch_to_bc_indices
 
-    with open(chunk_defs[0].dimred_matrix) as fp:
+    dimred_matrix_file = args.dimred_matrix if chunk_def.ordered_dimred_matrix is None else chunk_def.ordered_dimred_matrix
+    with open(dimred_matrix_file) as fp:
         dimred_matrix = cPickle.load(fp)
 
-    with open(chunk_defs[0].idx_to_batch_id) as fp:
+    with open(chunk_def.idx_to_batch_id) as fp:
         idx_to_batch_id = cPickle.load(fp)
 
-    # batch score before alignment
-    outs.batch_score_before_alignment = batch_effect_score(dimred_matrix, idx_to_batch_id)
+    # batch score before correction
+    outs.batch_score_before_correction = batch_effect_score(dimred_matrix, idx_to_batch_id)
 
     nn_pairs = {}
     for chunk_out in chunk_outs:
@@ -290,11 +295,11 @@ def join(args, outs, chunk_defs, chunk_outs):
                 float(len(set([idx for _, idx in mutual_nn[(i,j)]]))) / batch_j_size
             )
 
-    alignment_alpha = option(args.alignment_alpha, analysis_constants.ALIGNMENT_ALPHA)
-    alignment_realign_panorama = option(args.alignment_realign_panorama, analysis_constants.ALIGNMENT_REALIGN_PANORAMA)
-    alignment_sigma = option(args.alignment_sigma, analysis_constants.ALIGNMENT_SIGMA)
+    cbc_alpha = option(args.cbc_alpha, analysis_constants.CBC_ALPHA)
+    cbc_realign_panorama = option(args.cbc_realign_panorama, analysis_constants.CBC_REALIGN_PANORAMA)
+    cbc_sigma = option(args.cbc_sigma, analysis_constants.CBC_SIGMA)
 
-    alignments = [k for k,v in sorted(overlap_percentage.items(), key=lambda x: x[1], reverse=True) if v > alignment_alpha]
+    align_orders = [k for k,v in sorted(overlap_percentage.items(), key=lambda x: x[1], reverse=True) if v > cbc_alpha]
 
     ## panorama stitch ##
     aligned_dimred_matrix = dimred_matrix
@@ -302,7 +307,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     panoramas = [] # a list of stitched panoramas
     batch_id_to_alignment_count = defaultdict(int)
 
-    for (i,j) in alignments:
+    for (i,j) in align_orders:
         panorama_idx_i, panorama_idx_j = None, None
         for idx, panorama in enumerate(panoramas):
             if i in panorama:
@@ -322,7 +327,7 @@ def join(args, outs, chunk_defs, chunk_outs):
             panorama_idx_j = len(panoramas) - 1
 
         # re-align within panorama is enabled
-        if alignment_realign_panorama is True:
+        if cbc_realign_panorama is True:
             batch_id_to_alignment_count[i] += 1
             batch_id_to_alignment_count[j] += 1
             if batch_id_to_alignment_count[i] > 3 and batch_id_to_alignment_count[j] > 3:
@@ -355,7 +360,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         mnn_cur_idx = [a for a, _ in matches]
         mnn_ref_idx = [b for _, b in matches]
 
-        corr_vector = correction_vector(aligned_dimred_matrix, cur_submatrix_idx, mnn_cur_idx, mnn_ref_idx, alignment_sigma)
+        corr_vector = correction_vector(aligned_dimred_matrix, cur_submatrix_idx, mnn_cur_idx, mnn_ref_idx, cbc_sigma)
         assert(corr_vector.shape[0] == cur_submatrix_idx.shape[0])
         assert(corr_vector.shape[1] == aligned_dimred_matrix.shape[1])
 
@@ -370,8 +375,8 @@ def join(args, outs, chunk_defs, chunk_outs):
             panoramas[panorama_idx_i].update(panoramas[panorama_idx_j])
             panoramas.pop(panorama_idx_j)
 
-    # batch score after alignment
-    outs.batch_score_after_alignment = batch_effect_score(aligned_dimred_matrix, idx_to_batch_id)
+    # batch score after correction
+    outs.batch_score_after_correction = batch_effect_score(aligned_dimred_matrix, idx_to_batch_id)
 
     if chunk_defs[0].need_reorder_barcode:
         with open(chunk_defs[0].barcode_reorder_index) as fp:

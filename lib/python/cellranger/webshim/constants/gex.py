@@ -834,18 +834,18 @@ CUSTOM_FEATURE_AGGREGATION_METRICS = [
     },
 ]
 
-# Note: these metrics only apply when batch alignment is enabled
-BATCH_ALIGNMENT_METRICS = [
+# Note: these metrics only apply when batch correction is enabled
+CHEMISTRY_BATCH_CORRECTION_METRICS = [
     {
-        'name': 'batch_effect_score_before_alignment',
-        'display_name': 'Batch Effect Score before Alignment',
-        'description': 'Before batch alignment, the average fraction of 100 nearest neighbors belonging to the same batch, normalized by the expected value without batch effect.',
+        'name': 'batch_effect_score_before_correction',
+        'display_name': 'Batch Effect Score before Correction',
+        'description': 'Before chemistry batch correction, the average fraction of 100 nearest neighbors belonging to the same batch, normalized by the expected value without batch effect.',
         'format': '%.2f',
     },
     {
-        'name': 'batch_effect_score_after_alignment',
-        'display_name': 'Batch Effect Score after Alignment',
-        'description': 'After batch alignment, the average fraction of 100 nearest neighbors belonging to the same batch, normalized by the expected value without batch effect.',
+        'name': 'batch_effect_score_after_correction',
+        'display_name': 'Batch Effect Score after Correction',
+        'description': 'After chemistry batch correction, the average fraction of 100 nearest neighbors belonging to the same batch, normalized by the expected value without batch effect.',
         'format': '%.2f',
     },
 ]
@@ -913,8 +913,8 @@ METRICS = [
         'metrics': CUSTOM_FEATURE_APPLICATION_METRICS,
     },
     {
-        'name': 'Batch Alignment',
-        'metrics': BATCH_ALIGNMENT_METRICS,
+        'name': 'Chemistry Batch Correction',
+        'metrics': CHEMISTRY_BATCH_CORRECTION_METRICS,
     },
 ]
 

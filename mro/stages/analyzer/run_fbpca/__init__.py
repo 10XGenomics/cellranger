@@ -83,7 +83,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     # l2 norm
     matrix.m = sk_preprocessing.normalize(matrix.m, axis=0)
 
-    n_pcs = args.num_pcs if args.num_pcs is not None else analysis_constants.BATCH_ALIGNMENT_N_COMPONENTS_DEFAULT
+    n_pcs = args.num_pcs if args.num_pcs is not None else analysis_constants.CBC_N_COMPONENTS_DEFAULT
     dimred_matrix = fbpca_reduce_dimension(matrix, n_pcs)
 
     outs.dimred_matrix = martian.make_path('dimred_matrix.pickle')

@@ -24,6 +24,10 @@ stage ANALYZER_PREFLIGHT(
     in  int   num_pca_bcs,
     in  int   num_pca_genes,
     in  int   num_principal_comps,
+    in  int   cbc_knn,
+    in  float cbc_alpha,
+    in  float cbc_sigma,
+    in  bool  cbc_realign_panorama,
     in  int   max_clusters,
     in  int   graphclust_neighbors,
     in  float neighbor_a,
@@ -118,6 +122,9 @@ def main(args, outs):
         tsne_theta = option(args.tsne_theta, analysis_constants.TSNE_THETA)
         tsne_max_dims = option(args.tsne_max_dims, analysis_constants.TSNE_N_COMPONENTS)
         tsne_perplexity = option(args.tsne_perplexity, analysis_constants.TSNE_DEFAULT_PERPLEXITY)
+        cbc_knn = option(args.cbc_knn, analysis_constants.CBC_KNN)
+        cbc_alpha = option(args.cbc_alpha, analysis_constants.CBC_ALPHA)
+        cbc_sigma = option(args.cbc_sigma, analysis_constants.CBC_SIGMA)
 
         # check constraints
         if not (total_bcs >= analysis_bcs >= pca_bcs >= max_clusters >= 2):
@@ -148,6 +155,12 @@ def main(args, outs):
             martian.exit("Parameter neighbor_a must be finite.")
         if not (neighbor_b >= 0):
             martian.exit("Parameter neighbor_b cannot be less than zero.")
+        if not (5 <= cbc_knn <= 20):
+            martian.exit("Parameter cbc_knn must lie between 5 and 20.")        
+        if not (0 <= cbc_alpha <= 1):
+            martian.exit("Parameter cbc_alpha must lie between 0 and 1.") 
+        if not (10 <= cbc_sigma <= 500):
+            martian.exit("Parameter cbc_sigma must lie between 10 and 500.") 
 
         if not os.access(args.filtered_matrices_h5, os.R_OK):
             martian.exit("Filtered matrix file is not readable, please check file permissions: %s" % args.filtered_matrices_h5)

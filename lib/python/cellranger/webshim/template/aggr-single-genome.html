@@ -24,9 +24,9 @@
     {% if data.tables|selectattr("name", "equalto", "Feature Aggregation")|list|length > 0 %}
     [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Feature Aggregation") | first) ]]
     {% endif %}
-    <!-- Batch Alignment Card -->
-    {% if data.tables|selectattr("name", "equalto", "Batch Alignment")|list|length > 0 %}
-    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Batch Alignment") | first) ]]
+    <!-- Chemistry Batch Correction Card -->
+    {% if data.tables|selectattr("name", "equalto", "Chemistry Batch Correction")|list|length > 0 %}
+    [[ utils.summary_card(data.tables | selectattr("name", "equalto", "Chemistry Batch Correction") | first) ]]
     {% endif %}
  </div>
   <div class="summary_card_gutter">&nbsp;</div>

@@ -16,11 +16,11 @@ pipeline SC_RNA_ANALYZER(
     in  int   num_pca_bcs,
     in  int   num_pca_genes,
     in  int   num_principal_comps,
-    in  bool  batch_alignment,
-    in  int   alignment_knn,
-    in  float alignment_alpha,
-    in  float alignment_sigma,
-    in  bool  alignment_realign_panorama,
+    in  bool  chemistry_batch_correction,
+    in  int   cbc_knn,
+    in  float cbc_alpha,
+    in  float cbc_sigma,
+    in  bool  cbc_realign_panorama,
     in  int   max_clusters,
     in  int   graphclust_neighbors,
     in  float neighbor_a,
@@ -40,33 +40,33 @@ pipeline SC_RNA_ANALYZER(
 )
 {
     call ANALYZER_PREFLIGHT(
-        skip                       = self.no_secondary_analysis,
-        raw_matrices_h5            = self.raw_matrices_h5,
-        filtered_matrices_h5       = self.filtered_matrices_h5,
-        use_genes                  = self.use_genes,
-        exclude_genes              = self.exclude_genes,
-        use_bcs                    = self.use_bcs,
-        num_analysis_bcs           = self.num_analysis_bcs,
-        force_cells                = self.force_cells,
-        random_seed                = self.random_seed,
-        num_pca_bcs                = self.num_pca_bcs,
-        num_pca_genes              = self.num_pca_genes,
-        num_principal_comps        = self.num_principal_comps,
-        alignment_knn              = self.alignment_knn,
-        alignment_alpha            = self.alignment_alpha,
-        alignment_sigma            = self.alignment_sigma,
-        alignment_realign_panorama = self.alignment_realign_panorama,
-        max_clusters               = self.max_clusters,
-        graphclust_neighbors       = self.graphclust_neighbors,
-        neighbor_a                 = self.neighbor_a,
-        neighbor_b                 = self.neighbor_b,
-        tsne_perplexity            = self.tsne_perplexity,
-        tsne_input_pcs             = self.tsne_input_pcs,
-        tsne_max_dims              = self.tsne_max_dims,
-        tsne_max_iter              = self.tsne_max_iter,
-        tsne_stop_lying_iter       = self.tsne_stop_lying_iter,
-        tsne_mom_switch_iter       = self.tsne_mom_switch_iter,
-        tsne_theta                 = self.tsne_theta,
+        skip                 = self.no_secondary_analysis,
+        raw_matrices_h5      = self.raw_matrices_h5,
+        filtered_matrices_h5 = self.filtered_matrices_h5,
+        use_genes            = self.use_genes,
+        exclude_genes        = self.exclude_genes,
+        use_bcs              = self.use_bcs,
+        num_analysis_bcs     = self.num_analysis_bcs,
+        force_cells          = self.force_cells,
+        random_seed          = self.random_seed,
+        num_pca_bcs          = self.num_pca_bcs,
+        num_pca_genes        = self.num_pca_genes,
+        num_principal_comps  = self.num_principal_comps,
+        cbc_knn              = self.cbc_knn,
+        cbc_alpha            = self.cbc_alpha,
+        cbc_sigma            = self.cbc_sigma,
+        cbc_realign_panorama = self.cbc_realign_panorama,
+        max_clusters         = self.max_clusters,
+        graphclust_neighbors = self.graphclust_neighbors,
+        neighbor_a           = self.neighbor_a,
+        neighbor_b           = self.neighbor_b,
+        tsne_perplexity      = self.tsne_perplexity,
+        tsne_input_pcs       = self.tsne_input_pcs,
+        tsne_max_dims        = self.tsne_max_dims,
+        tsne_max_iter        = self.tsne_max_iter,
+        tsne_stop_lying_iter = self.tsne_stop_lying_iter,
+        tsne_mom_switch_iter = self.tsne_mom_switch_iter,
+        tsne_theta           = self.tsne_theta,
     ) using (
         volatile = true,
     )
@@ -94,7 +94,7 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call CHOOSE_DIMENSION_REDUCTION(
-        batch_alignment = self.batch_alignment,
+        chemistry_batch_correction = self.chemistry_batch_correction,
     ) using (
         local = true,
     )
@@ -117,21 +117,21 @@ pipeline SC_RNA_ANALYZER(
         num_pcs      = self.num_principal_comps,
         skip         = ANALYZER_PREFLIGHT.skip,
     ) using (
-        disabled = CHOOSE_DIMENSION_REDUCTION.disable_align_batch,
+        disabled = CHOOSE_DIMENSION_REDUCTION.disable_correct_chemistry_batch,
         volatile = true,
     )
 
-    call ALIGN_BATCH(
+    call CORRECT_CHEMISTRY_BATCH(
         dimred_matrix               = RUN_FBPCA.dimred_matrix,
         matrix_barcode_feature_info = RUN_FBPCA.matrix_barcode_feature_info,
         library_info                = self.aggr_library_info,
-        alignment_knn               = self.alignment_knn,
-        alignment_alpha             = self.alignment_alpha,
-        alignment_sigma             = self.alignment_sigma,
-        alignment_realign_panorama  = self.alignment_realign_panorama,
+        cbc_knn                     = self.cbc_knn,
+        cbc_alpha                   = self.cbc_alpha,
+        cbc_sigma                   = self.cbc_sigma,
+        cbc_realign_panorama        = self.cbc_realign_panorama,
         skip                        = ANALYZER_PREFLIGHT.skip,
     ) using (
-        disabled = CHOOSE_DIMENSION_REDUCTION.disable_align_batch,
+        disabled = CHOOSE_DIMENSION_REDUCTION.disable_correct_chemistry_batch,
         volatile = true,
     )
 
@@ -139,11 +139,11 @@ pipeline SC_RNA_ANALYZER(
         skip         = ANALYZER_PREFLIGHT.skip,
         pca_h5_list  = [
             RUN_PCA.pca_h5,
-            ALIGN_BATCH.aligned_pca_h5,
+            CORRECT_CHEMISTRY_BATCH.aligned_pca_h5,
         ],
         pca_csv_list = [
             RUN_PCA.pca_csv,
-            ALIGN_BATCH.aligned_pca_csv,
+            CORRECT_CHEMISTRY_BATCH.aligned_pca_csv,
         ],
     )
 
@@ -220,23 +220,23 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call SUMMARIZE_ANALYSIS(
-        matrix_h5                    = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5                       = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
-        clustering_h5                = COMBINE_CLUSTERING.clustering_h5,
-        diffexp_h5                   = RUN_DIFFERENTIAL_EXPRESSION.diffexp_h5,
-        tsne_h5                      = RUN_TSNE.tsne_h5,
-        pca_csv                      = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_csv,
-        clustering_csv               = COMBINE_CLUSTERING.clustering_csv,
-        diffexp_csv                  = RUN_DIFFERENTIAL_EXPRESSION.diffexp_csv,
-        tsne_csv                     = RUN_TSNE.tsne_csv,
-        multi_genome_summary         = RUN_MULTIGENOME_ANALYSIS.multi_genome_summary,
-        multi_genome_csv             = RUN_MULTIGENOME_ANALYSIS.multi_genome_csv,
-        multi_genome_json            = RUN_MULTIGENOME_ANALYSIS.multi_genome_json,
-        is_multi_genome              = PREPROCESS_MATRIX.is_multi_genome,
-        batch_alignment              = self.batch_alignment,
-        batch_score_before_alignment = ALIGN_BATCH.batch_score_before_alignment,
-        batch_score_after_alignment  = ALIGN_BATCH.batch_score_after_alignment,
-        skip                         = ANALYZER_PREFLIGHT.skip,
+        matrix_h5                     = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5                        = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_h5,
+        clustering_h5                 = COMBINE_CLUSTERING.clustering_h5,
+        diffexp_h5                    = RUN_DIFFERENTIAL_EXPRESSION.diffexp_h5,
+        tsne_h5                       = RUN_TSNE.tsne_h5,
+        pca_csv                       = CHOOSE_DIMENSION_REDUCTION_OUTPUT.pca_csv,
+        clustering_csv                = COMBINE_CLUSTERING.clustering_csv,
+        diffexp_csv                   = RUN_DIFFERENTIAL_EXPRESSION.diffexp_csv,
+        tsne_csv                      = RUN_TSNE.tsne_csv,
+        multi_genome_summary          = RUN_MULTIGENOME_ANALYSIS.multi_genome_summary,
+        multi_genome_csv              = RUN_MULTIGENOME_ANALYSIS.multi_genome_csv,
+        multi_genome_json             = RUN_MULTIGENOME_ANALYSIS.multi_genome_json,
+        is_multi_genome               = PREPROCESS_MATRIX.is_multi_genome,
+        chemistry_batch_correction    = self.chemistry_batch_correction,
+        batch_score_before_correction = CORRECT_CHEMISTRY_BATCH.batch_score_before_correction,
+        batch_score_after_correction  = CORRECT_CHEMISTRY_BATCH.batch_score_after_correction,
+        skip                          = ANALYZER_PREFLIGHT.skip,
     )
 
     return (
