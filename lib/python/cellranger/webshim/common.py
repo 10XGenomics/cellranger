@@ -991,7 +991,7 @@ def build_metrics_summary_csv(filename, sample_properties, sample_data, pipeline
                 csv_metrics[metric] = value
 
     with open(filename, 'wb') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator='\n')
         writer.writerow(csv_metrics.keys())
         writer.writerow(csv_metrics.values())
 

@@ -45,7 +45,7 @@ def save_h5(f, group, key, namedtuple):
 
 def save_matrix_csv(filename, arr, header, prefixes):
     with open(filename, 'wb') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator='\n')
         writer.writerow(header)
         # Iterate over the given arr, default iteration is by-row
         for i, v in enumerate(arr):

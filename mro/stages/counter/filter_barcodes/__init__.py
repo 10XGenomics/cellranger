@@ -329,7 +329,7 @@ def write_filtered_barcodes(out_csv, bcs_per_genome):
         bcs_per_genome (dict of str to list): Map each genome to its cell-associated barcodes
     """
     with open(out_csv, 'w') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, lineterminator='\n')
         for (genome, bcs) in bcs_per_genome.iteritems():
             for bc in bcs:
                 writer.writerow([genome, bc])

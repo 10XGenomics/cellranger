@@ -215,7 +215,7 @@ class MultiGenomeAnalysis:
         csv_file_path = os.path.join(base_dir, 'gem_classification.csv')
         cr_io.makedirs(os.path.dirname(csv_file_path), allow_existing=True)
         with open(csv_file_path, 'wb') as f:
-            writer = csv.writer(f)
+            writer = csv.writer(f, lineterminator=os.linesep)
             writer.writerow(['barcode',
                              self.result['genome0'],
                              self.result['genome1'],
