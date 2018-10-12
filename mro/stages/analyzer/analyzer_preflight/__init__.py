@@ -157,8 +157,8 @@ def main(args, outs):
             martian.exit("Parameter neighbor_b cannot be less than zero.")
         if not (5 <= cbc_knn <= 20):
             martian.exit("Parameter cbc_knn must lie between 5 and 20.")        
-        if not (0 <= cbc_alpha <= 1):
-            martian.exit("Parameter cbc_alpha must lie between 0 and 1.") 
+        if not (0 <= cbc_alpha <= 0.5):
+            martian.exit("Parameter cbc_alpha must lie between 0 and 0.5.") 
         if not (10 <= cbc_sigma <= 500):
             martian.exit("Parameter cbc_sigma must lie between 10 and 500.") 
 
