@@ -154,7 +154,7 @@ class GtfBuilder(GtfParser):
     def build_gtf(self):
         print "Writing new genes GTF file (may take 10 minutes for a 1GB input GTF file)..."
         with open(self.out_gtf_fn, 'wb') as f:
-            writer = csv.writer(f, delimiter='\t', quoting=csv.QUOTE_NONE, quotechar='', lineterminator=os.linesep)
+            writer = csv.writer(f, delimiter='\t', quoting=csv.QUOTE_NONE, quotechar='')
             for row, is_comment, properties in self.gtf_reader_iter(self.in_gtf_fn):
                 if is_comment:
                     writer.writerow(row)
@@ -275,7 +275,7 @@ class ReferenceBuilder(GtfParser):
 
     def write_genome_gtf(self, out_gtf_fn):
         with open(out_gtf_fn, 'wb') as f:
-            writer = csv.writer(f, delimiter='\t', quoting=csv.QUOTE_NONE, quotechar='', lineterminator='\n')
+            writer = csv.writer(f, delimiter='\t', quoting=csv.QUOTE_NONE, quotechar='')
             for genome_prefix, in_gtf_fn in itertools.izip(self.genome_prefixes, self.in_gtf_fns):
                 if len(self.genomes) > 1:
                     prefix_func = lambda s: '%s_%s' % (genome_prefix, s)
