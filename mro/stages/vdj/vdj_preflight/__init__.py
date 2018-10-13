@@ -22,7 +22,7 @@ stage VDJ_PREFLIGHT(
 
 def run_preflight_checks(args):
     print "Checking sample info..."
-    cr_preflight.check_sample_def(args.sample_def)
+    cr_preflight.check_sample_def(args.sample_def, pipeline="vdj")
 
     print "Checking reference..."
     vdj_preflight.check_refdata(args.vdj_reference_path, args.denovo)

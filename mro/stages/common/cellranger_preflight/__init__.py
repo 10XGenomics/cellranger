@@ -29,7 +29,7 @@ def run_preflight_checks(args):
         feature_ref = None
 
     print "Checking sample info..."
-    cr_preflight.check_sample_def(args.sample_def, feature_ref)
+    cr_preflight.check_sample_def(args.sample_def, feature_ref, pipeline="count")
 
     # If any non "Gene Expression" libraries are present then the feature-ref is required.
     if any((x.get("library_type") != None and x.get("library_type") != GENE_EXPRESSION_LIBRARY_TYPE) for x in args.sample_def):

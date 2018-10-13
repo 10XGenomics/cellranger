@@ -40,7 +40,7 @@ def is_int(s):
         return False
     return True
 
-def check_sample_def(sample_def, feature_ref = None):
+def check_sample_def(sample_def, feature_ref=None, pipeline=None):
     hostname = socket.gethostname()
 
     check(tk_preflight.check_gem_groups(sample_def))
@@ -63,40 +63,47 @@ def check_sample_def(sample_def, feature_ref = None):
                 if not is_int(lane):
                     raise PreflightException("Lanes must be a comma-separated list of numbers.")
 
+        check(tk_preflight.check_sample_indices(sample_def))
 
-        options = ", ".join(("'%s'" % x for x in ALLOWED_LIBRARY_TYPES))
-        library_type = sample_def.get("library_type", None)
+        if pipeline == "count":
+            options = ", ".join(("'%s'" % x for x in ALLOWED_LIBRARY_TYPES))
+            library_type = sample_def.get("library_type", None)
 
-        # Check for empty library_type
-        if library_type == '':
-            msg = ("library_type field may not be an empty string."
-                   "\nThe 'library_type' field in the libraries csv"
-                   " must be one of %s, or start with '%s'") % \
-                   (options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
-            raise PreflightException(msg)
-
-        # Check for a valid library_type
-        if not (library_type is None or library_type in ALLOWED_LIBRARY_TYPES or \
-            library_type.startswith(cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)):
-
-            msg = ("Unknown library_type: '%s'."
-                   "\nThe 'library_type' field in the libraries csv"
-                   " must be one of %s, or start with '%s'") % \
-                   (library_type, options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
-            raise PreflightException(msg)
-
-        # Check that the library_type exists in the feature_ref
-        if feature_ref is not None and \
-           library_type is not None and \
-           library_type != cr_constants.GENE_EXPRESSION_LIBRARY_TYPE:
-
-            if not any(x.feature_type == library_type for x in feature_ref.feature_defs):
-                msg = "You declared a library with library_type = '%s', but there are no features declared with that feature_type in the feature reference." % library_type
-                msg += "\nCheck that the 'library_type' field in the libraries csv matches at least 1 entry in the 'feature_type' field in the feature reference csv"
+            # Check for empty library_type
+            if library_type == '':
+                msg = ("library_type field may not be an empty string."
+                    "\nThe 'library_type' field in the libraries csv"
+                    " must be one of %s, or start with '%s'") % \
+                    (options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
                 raise PreflightException(msg)
 
+            # Check for a valid library_type
+            if not (library_type is None or library_type in ALLOWED_LIBRARY_TYPES or \
+            library_type.startswith(cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)):
 
-        check(tk_preflight.check_sample_indices(sample_def))
+                msg = ("Unknown library_type: '%s'."
+                    "\nThe 'library_type' field in the libraries csv"
+                    " must be one of %s, or start with '%s'") % \
+                    (library_type, options, cellranger.rna.library.CUSTOM_LIBRARY_TYPE_PREFIX)
+                raise PreflightException(msg)
+
+            # Check that the library_type exists in the feature_ref
+            if feature_ref is not None and \
+            library_type is not None and \
+            library_type != cr_constants.GENE_EXPRESSION_LIBRARY_TYPE:
+
+                if not any(x.feature_type == library_type for x in feature_ref.feature_defs):
+                    msg = "You declared a library with library_type = '%s', but there are no features declared with that feature_type in the feature reference." % library_type
+                    msg += "\nCheck that the 'library_type' field in the libraries csv matches at least 1 entry in the 'feature_type' field in the feature reference csv"
+                    raise PreflightException(msg)
+
+        elif pipeline == "vdj":
+            # library type can be missing, or VDJ
+            library_type = sample_def.get("library_type", None)
+            if library_type is not None and not (library_type == lib_constants.VDJ_LIBRARY_TYPE):
+                msg = "You declared a library with library_type = '%s'. For the vdj pipeline, the library_type field in sample_def must be missing or '%s'" % (library_type, lib_constants.VDJ_LIBRARY_TYPE)
+                raise PreflightException(msg)
+
 
 def check_refdata(reference_path):
     hostname = socket.gethostname()
