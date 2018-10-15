@@ -45,9 +45,26 @@ def check_sample_def(sample_def, feature_ref=None, pipeline=None):
 
     check(tk_preflight.check_gem_groups(sample_def))
 
+    # Check uniqueness of sample_def entries
+    sd_entries = sorted([
+        (sd.get("read_path"),
+         sd.get("sample_names"),
+         sd.get("sample_indices"),
+         sd.get("lanes")) for sd in sample_def
+    ])
+
+    for i in range(len(sd_entries) - 1):
+        if sd_entries[i] == sd_entries[i + 1]:
+            msg = "Duplicated entry in the input FASTQ data. Please use a unique combination of fastq path and sample name."
+            msg += "\nPath: %s" % sd_entries[i][0]
+            msg += "\nNote in demux mode, a unique combination fastq path, sample indices, and lanes is required."
+            raise PreflightException(msg)
+
     print "Checking FASTQ folder..."
     for sample_def in sample_def:
         read_path = sample_def["read_path"]
+        if read_path.strip() == "":
+            raise PreflightException("Empty fastq path specifed. Please specify an absolute path.")
         if not read_path.startswith('/'):
             raise PreflightException("Specified FASTQ folder must be an absolute path: %s" % read_path)
         if not os.path.exists(read_path):
@@ -134,6 +151,9 @@ def expand_libraries_csv(csv_path):
     if not os.path.isfile(csv_path):
         raise PreflightException("Could not find the libraries csv file %s" % csv_path)
 
+    if not os.access(csv_path, os.R_OK):
+        raise PreflightException("libraries csv is not readable, please check file permissions: %s" % csv_path)
+
     with open(csv_path, 'rU') as f:
 
         rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
@@ -141,12 +161,18 @@ def expand_libraries_csv(csv_path):
         required_cols = set(cr_constants.LIBRARIES_CSV_FIELDS)
 
         libraries = []
+        row_num = 1
 
         for row in reader:
             print row.keys()
+
             if not set(row.keys()).issuperset(required_cols):
                 raise PreflightException('Libraries csv file must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
+
             for key in row.iterkeys():
+                if key is None:
+                    msg = "Invalid libraries CSV file: incorrrect number of columns on line %d" % row_num
+                    raise PreflightException(msg)
                 row[key] = row[key].strip()
 
             library = {
@@ -160,6 +186,7 @@ def expand_libraries_csv(csv_path):
             }
 
             libraries.append(library)
+            row_num += 1
 
     return libraries
 
@@ -199,7 +226,10 @@ def check_read_lengths_vs_chemistry(name, allowed_chems, r1_length, r2_length):
 def check_feature_ref(transcriptome_ref_path, feature_ref_path):
 
     if not os.path.isfile(feature_ref_path):
-        raise PreflightException("Could not find the feature definition file %s" % feature_ref_path)
+        raise PreflightException("Could not find the feature reference file %s" % feature_ref_path)
+
+    if not os.access(feature_ref_path, os.R_OK):
+        raise PreflightException("feature reference is not readable, please check file permissions: %s" % feature_ref_path)
 
     try:
         feature_ref = rna_feature_ref.from_transcriptome_and_csv(
