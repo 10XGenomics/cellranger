@@ -5,6 +5,7 @@
 import martian
 import cellranger.preflight as cr_preflight
 from cellranger.constants import GENE_EXPRESSION_LIBRARY_TYPE
+from cellranger.constants import PIPELINE_COUNT
 
 __MRO__ = """
 stage CELLRANGER_PREFLIGHT_LOCAL(
@@ -29,7 +30,7 @@ def run_preflight_checks(args):
         feature_ref = None
 
     print "Checking sample info..."
-    cr_preflight.check_sample_def(args.sample_def, feature_ref, pipeline="count")
+    cr_preflight.check_sample_def(args.sample_def, feature_ref, pipeline=PIPELINE_COUNT)
 
     # If any non "Gene Expression" libraries are present then the feature-ref is required.
     if any((x.get("library_type") != None and x.get("library_type") != GENE_EXPRESSION_LIBRARY_TYPE) for x in args.sample_def):

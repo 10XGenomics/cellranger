@@ -82,7 +82,7 @@ def check_sample_def(sample_def, feature_ref=None, pipeline=None):
 
         check(tk_preflight.check_sample_indices(sample_def))
 
-        if pipeline == "count":
+        if pipeline == cr_constants.PIPELINE_COUNT:
             options = ", ".join(("'%s'" % x for x in ALLOWED_LIBRARY_TYPES))
             library_type = sample_def.get("library_type", None)
 
@@ -114,7 +114,7 @@ def check_sample_def(sample_def, feature_ref=None, pipeline=None):
                     msg += "\nCheck that the 'library_type' field in the libraries csv matches at least 1 entry in the 'feature_type' field in the feature reference csv"
                     raise PreflightException(msg)
 
-        elif pipeline == "vdj":
+        elif pipeline == cr_constants.PIPELINE_VDJ:
             # library type can be missing, or VDJ
             library_type = sample_def.get("library_type", None)
             if library_type is not None and not (library_type == lib_constants.VDJ_LIBRARY_TYPE):

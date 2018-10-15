@@ -5,6 +5,7 @@
 import martian
 import cellranger.preflight as cr_preflight
 import cellranger.vdj.preflight as vdj_preflight
+import cellranger.constants as cr_constants
 
 __MRO__ = """
 stage VDJ_PREFLIGHT(
@@ -22,7 +23,7 @@ stage VDJ_PREFLIGHT(
 
 def run_preflight_checks(args):
     print "Checking sample info..."
-    cr_preflight.check_sample_def(args.sample_def, pipeline="vdj")
+    cr_preflight.check_sample_def(args.sample_def, pipeline=cr_constants.PIPELINE_VDJ)
 
     print "Checking reference..."
     vdj_preflight.check_refdata(args.vdj_reference_path, args.denovo)
