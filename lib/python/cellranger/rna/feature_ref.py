@@ -14,7 +14,9 @@ import cellranger.rna.library
 import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
 from cellranger.feature_ref import FeatureReference, FeatureDef, FeatureDefException
+import cellranger.feature.crispr.measure_perturbations as cr_perturb
 import string
+
 
 # These feature tag keys are reserved for internal use.
 RESERVED_TAGS = ['genome']
@@ -264,11 +266,46 @@ def from_transcriptome_and_csv(gene_ref_path, feature_def_filename):
         csv_feature_defs, csv_tag_keys = parse_feature_def_file(feature_def_filename,
                                                                 index_offset=len(feature_defs))
 
+        # check the CRISPR 'target_gene_id' field, if it exists
+        # it needs to match a transcriptome entry
+        check_crispr_target_gene(csv_feature_defs, feature_defs)
+
         feature_defs.extend(csv_feature_defs)
         all_tag_keys.extend(csv_tag_keys)
 
     return FeatureReference(feature_defs, all_tag_keys)
 
+def check_crispr_target_gene(features, genes):
+    '''check that 'target_gene_id' and 'target_gene_name' fields specified on CRISPR
+       guides match a gene declared in the transcriptome'''
+
+    gene_id_name_map = {g.id: g.name for g in genes}
+
+    special_ids = [x.lower() for x in cr_perturb.FILTER_LIST]
+
+    for feat in features:
+        target_id = feat.tags.get("target_gene_id")
+        if target_id:
+
+            # Cut-out for special CRISPR guide types
+            if target_id.lower() in special_ids:
+                continue
+
+            if target_id not in gene_id_name_map:
+                msg = "target_gene_id declared in feature reference does not exist in transcriptome: '%s'" % target_id
+                msg += "\nPlease specify a gene_id that exists in the reference, or use the string 'Non-Targeting' to indicate a control guide."
+                raise FeatureDefException(msg)
+
+            target_name = feat.tags.get("target_gene_name")
+            if target_name is None or target_name == '':
+                msg = "No target_gene_name specified for target_gene_id = '%s' in feature reference." % target_id
+                raise FeatureDefException(msg)
+
+            if gene_id_name_map[target_id] != target_name:
+                msg = ("You specified target_gene_id = '%s' and target_gene_name = '%s' in the feature reference.\n"
+                       "The transcriptome reference has gene_id = '%s' with name = '%s'. Please ensure the target_gene_name field has the correct gene name that matches the transcriptome") \
+                    % (target_id, target_name, target_id, gene_id_name_map[target_id])
+                raise FeatureDefException(msg)
 
 def validate_sequence(seq):
     '''Validate a feature barcode sequence.'''
