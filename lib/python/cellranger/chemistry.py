@@ -583,25 +583,21 @@ def check_whitelist_match(chemistry_name, fq_spec):
 
     chemistry = get_chemistry(chemistry_name)
 
-    n_fastqs = 0
-
     # Get the FASTQs containing the barcode for this chemistry
     barcode_read_def = get_barcode_read_def(chemistry)
     read_type = get_read_type_map(chemistry, fq_spec.fastq_mode)[barcode_read_def.read_type]
 
     fastqs = fq_spec.get_fastqs(read_type)
+    if len(fastqs) == 0:
+        return None
+
     print fastqs
-    n_fastqs += len(fastqs)
 
     whitelist = _get_barcode_whitelist_set(chemistry)
-
     wl_frac = _compute_frac_barcodes_on_whitelist(fastqs,
                                                   whitelist,
                                                   reads_interleaved=fq_spec.interleaved,
                                                   read_def=barcode_read_def)
-
-    if n_fastqs == 0:
-        raise NoInputFastqsException()
 
     if wl_frac >= cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST:
         return None
