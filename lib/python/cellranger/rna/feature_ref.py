@@ -311,7 +311,7 @@ def validate_sequence(seq):
     '''Validate a feature barcode sequence.'''
     if len(seq) == 0:
         raise FeatureDefException('Feature sequence must be non-empty.')
-    if not re.match('^[ACGTN]+', seq):
+    if not re.match('^[ACGTN]+$', seq):
         raise FeatureDefException('Invalid sequence: "%s". The only allowed characters are A, C, G, T, and N.' % seq)
 
 def compile_pattern(pattern_str, length):
@@ -329,7 +329,7 @@ def compile_pattern(pattern_str, length):
 
     check_pattern = re.sub('\(BC\)', '', pattern_str)
     if not re.match('^\^{0,1}[ACGTN]*\${0,1}$', check_pattern):
-        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "5P", optionally end with "3P", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.')
+        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "5P", optionally end with "3P", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.' % pattern_str)
 
     # Allow Ns to match anything
     regex_str = re.sub('N', '.', pattern_str)
