@@ -44,10 +44,9 @@ def split(args):
             mem_gb = int(1.5 * MoleculeCounter.estimate_mem_gb(mol_counter.nrows()))
             barcode_whitelist = mol_counter.get_barcode_whitelist()
 
+            barcodes = mol_counter.get_barcodes()
             if barcode_whitelist not in barcode_whitelist_to_idx_offset:
-                barcodes = mol_counter.get_barcodes()
                 merged_barcodes.extend(barcodes)
-
                 barcode_whitelist_to_idx_offset[barcode_whitelist] = barcode_idx_offset
                 barcode_idx_offset += len(barcodes)
 

@@ -90,9 +90,19 @@ def join(args, outs, chunk_defs, chunk_outs):
         martian.log_info('Number of GEM groups differs between input molecule files and aggregated matrix')
         martian.exit(exit_message)
     for lib_gg in input_bc_counts.keys():
+        if len(input_bc_counts[lib_gg]) != len(output_bc_counts[lib_gg]):
+            martian.log_info('Barcode list for library {}, GEM group {} has different length '
+                             'in aggregated output compared to input.'
+                             .format(lib_gg[0], lib_gg[1]))
+            martian.exit(exit_message)
         if np.any(input_bc_counts[lib_gg] < output_bc_counts[lib_gg]):
             martian.log_info('Barcode(s) in library {}, GEM group {} have higher UMI counts '
                              'in aggregated output compared to inputs'
+                             .format(lib_gg[0], lib_gg[1]))
+            martian.exit(exit_message)
+        if len(input_feature_counts[lib_gg]) != len(output_feature_counts[lib_gg]):
+            martian.log_info('Feature list for library {}, GEM group {} has different length '
+                             'in aggregated output compared to input.'
                              .format(lib_gg[0], lib_gg[1]))
             martian.exit(exit_message)
         if np.any(input_feature_counts[lib_gg] < output_feature_counts[lib_gg]):
