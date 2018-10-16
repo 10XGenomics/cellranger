@@ -602,11 +602,11 @@ def check_whitelist_match(chemistry_name, fq_spec):
     if wl_frac >= cr_constants.DETECT_CHEMISTRY_MIN_FRAC_WHITELIST:
         return None
     else:
-        msg = ("You selected chemistry '%s'. "
+        msg = ("You selected chemistry '%s', which expects the cell barcode sequence in read %s.\n"
                "In input data, an extremely low rate of correct barcodes was observed for this chemistry (%.2f %%).\n"
                "Please check your input data and chemistry selection. Note: manual chemistry detection is not required in most cases.\n"
                "Input: %s" %
-               (chemistry_name, 100.0 * wl_frac, fq_spec))
+               (chemistry_name, chemistry['barcode_read_type'], 100.0 * wl_frac, fq_spec))
 
         return msg
 

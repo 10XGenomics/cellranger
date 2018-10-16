@@ -13,6 +13,7 @@ import cellranger.rna.library
 from cellranger.feature_ref import FeatureDefException
 import cellranger.rna.feature_ref as rna_feature_ref
 import itertools
+import collections
 import csv
 
 ALLOWED_LIBRARY_TYPES = [
@@ -158,6 +159,13 @@ def expand_libraries_csv(csv_path):
 
         rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
         reader = csv.DictReader(rows)
+
+        # Check for duplicated columns
+        col_counts = collections.Counter(reader.fieldnames)
+        for (k, v) in col_counts.items():
+            if v > 1:
+                raise PreflightException("libraries csv has a duplicated column: %s" % k)
+
         required_cols = set(cr_constants.LIBRARIES_CSV_FIELDS)
 
         libraries = []
@@ -174,6 +182,9 @@ def expand_libraries_csv(csv_path):
                     msg = "Invalid libraries CSV file: incorrrect number of columns on line %d" % row_num
                     raise PreflightException(msg)
                 row[key] = row[key].strip()
+
+            if row['sample'].strip() == "":
+                raise PreflightException('Empty sample field in libraries csv. Please specify an non-empty sample value for each library.')
 
             library = {
                 "fastq_mode": "ILMN_BCL2FASTQ",

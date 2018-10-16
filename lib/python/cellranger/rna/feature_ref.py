@@ -3,7 +3,7 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
-from collections import namedtuple, OrderedDict
+from collections import namedtuple, OrderedDict, Counter
 import csv
 import itertools
 import re
@@ -367,6 +367,12 @@ def parse_feature_def_file(filename, index_offset=0):
         rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
 
         reader = csv.DictReader(rows)
+
+        # Check for duplicated columns
+        col_counts = Counter(reader.fieldnames)
+        for (k, v) in col_counts.items():
+            if v > 1:
+                raise FeatureDefException("feature reference csv has a duplicated column: %s" % k)
 
         required_cols = get_required_csv_columns()
 
