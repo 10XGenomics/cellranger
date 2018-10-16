@@ -23,7 +23,7 @@ stage CHECK_INVARIANTS(
 """
 
 def split(args):
-    matrix_mem_gb = int(1.1 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.merged_raw_gene_bc_matrices_h5))
+    matrix_mem_gb = int(1.5 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.merged_raw_gene_bc_matrices_h5))
     join_args = {
         '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB),
     }
