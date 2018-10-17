@@ -149,6 +149,14 @@ function implement_generate_sample_defs {
     sample_def=""
 
     if [ -n "$libraries" ]; then
+	if [ -n "$fastqs" ]; then
+		error "Please supply --libraries OR --fastqs, but not both"
+	fi
+
+        if [ -n "$sample" ]; then
+		error "Please supply --libraries OR --sample, but not both"
+	fi
+
         sample_def="[{\"libraries\": \"$(abspath $libraries)\"}]"
     fi
 
