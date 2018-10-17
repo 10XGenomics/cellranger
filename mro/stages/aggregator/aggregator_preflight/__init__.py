@@ -5,6 +5,7 @@
 import martian
 import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mol_counter
+from cellranger.utils import string_is_ascii
 
 __MRO__ = """
 stage AGGREGATOR_PREFLIGHT(
@@ -37,6 +38,14 @@ def main(args, outs):
         library_id = sample[cr_constants.AGG_ID_FIELD]
         if len(library_id) == 0:
             martian.exit("Library ID cannot be empty: %s" % sample)
+
+        if not string_is_ascii(library_id):
+            martian.exit("Library ID %s contains unicode characters, only ASCII is allowed." % library_id)
+
+        if cr_constants.AGG_BATCH_FIELD in sample:
+            batch_name = sample[cr_constants.AGG_BATCH_FIELD]
+            if not string_is_ascii(batch_name):
+                martian.exit("Batch ID %s contains unicode characters, only ASCII is allowed." % batch_name)
 
         if library_id in libraries_seen:
             martian.exit("Same library ID is specified on multiple rows: %s" % library_id)

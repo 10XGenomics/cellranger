@@ -875,3 +875,12 @@ def splitexts(s):
         return (os.path.join(dn, bn), '')
     else:
         return (os.path.join(dn, parts[0]), '.' + '.'.join(parts[1:]))
+
+def string_is_ascii(input):
+    """ Input strings are often stored as ascii in numpy arrays, and we need
+    to check that this conversion works."""
+    try:
+        np.array(input.decode("utf-8"), dtype=str)
+        return True
+    except:
+        return False
