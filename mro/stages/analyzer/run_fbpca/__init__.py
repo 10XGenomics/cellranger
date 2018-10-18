@@ -30,8 +30,9 @@ stage RUN_FBPCA(
 
 MAX_MEM_GB = 64
 
-def fbpca_reduce_dimension(matrix, dimred):
+def fbpca_reduce_dimension(matrix, dimred, seed=0):
     """ Fast Randomized PCA """
+    np.random.seed(seed)
     X = matrix.m.T
     k = min((dimred, X.shape[0], X.shape[1]))
     U, s, Vt = pca(X, k=k) # Automatically centers.

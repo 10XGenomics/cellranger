@@ -50,9 +50,9 @@ def option(arg, default):
 
 def batch_effect_score(dimred_matrix, batch_ids, knn=100, subsample=0.1):
     """
-    For each cell, serach KNN and calculate the proportion of cells from
+    For each cell, search KNN and calculate the proportion of cells from
     the same batch. Then compute the ratio of the proportion to the
-    percentage (number of cell) of this batch. The batch_effect_score is
+    percentage (number of cells) of this batch. The batch_effect_score is
     defined as the average of the ratio. Closer to 1 means no batch effect.
     """
     num_bcs = dimred_matrix.shape[0]
@@ -65,6 +65,7 @@ def batch_effect_score(dimred_matrix, batch_ids, knn=100, subsample=0.1):
     # BallTree for KNN
     balltree  = sk_neighbors.BallTree(dimred_matrix, leaf_size=knn)
 
+    np.random.seed(0)
     select_bc_idx = np.array([i for i in range(num_bcs) if np.random.uniform() < subsample])
     knn_idx = balltree.query(dimred_matrix[select_bc_idx], k=knn+1, return_distance=False)
 
@@ -156,7 +157,7 @@ def split(args):
 
 def find_knn(curr_matrix, ref_matrix, knn):
     """
-    for each row in cur_matrix, find k nearest neighbors in ref_matrix,
+    for each row in curr_matrix, find k nearest neighbors in ref_matrix,
     return an array of shape=[curr_matrix.shape[0] * knn, ], which stores
     the index of nearest neighbors in ref_matrix
     """
