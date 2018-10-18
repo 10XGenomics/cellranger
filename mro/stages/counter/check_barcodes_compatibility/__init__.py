@@ -55,6 +55,32 @@ def cosine_similarity(c1, c2):
     magB = math.sqrt(sum(c2.get(k, 0)**2 for k in terms))
     return tk_stats.robust_divide(dotprod, magA * magB)
 
+
+def robust_cosine_similarity(c1, c2, robust_fraction_threshold=0.75):
+    """ Calculate the robust cosine similarity of two barcode lists.
+        Implements the same basic cosine distance metric, but first
+        caps each count value to a threshold value such that robust_fracion_threshold
+        of the total counts are greater than or equal to the threshold.
+        This reduces the impact of very high count outliers.
+
+    Args:
+        c1 (Counter): A Counter object of the first barcode list.
+        c2 (Counter): A Counter object of the second barcode list.
+
+    Returns:
+        float: The robust cosine similarity of two barcode lists.
+    """
+
+    thresh1 = max(1, tk_stats.NX(c1.values(), robust_fraction_threshold))
+    thresh2 = max(1, tk_stats.NX(c2.values(), robust_fraction_threshold))
+
+    terms = set(c1).union(c2)
+    dotprod = sum(min(thresh1, c1.get(k, 0)) * min(thresh2, c2.get(k, 0)) for k in terms)
+    magA = math.sqrt(sum(min(thresh1, c1.get(k, 0))**2 for k in terms))
+    magB = math.sqrt(sum(min(thresh2, c2.get(k, 0))**2 for k in terms))
+    return tk_stats.robust_divide(dotprod, magA * magB)
+
+
 def split(args):
     # determine number of fastq file for each library and gem group, {gem_group : {library_type : count_of_fastq_file} }
     chunk_counts = defaultdict(lambda: defaultdict(int))
@@ -96,7 +122,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     barcode_translate_map = cr_utils.load_barcode_translate_map(args.barcode_whitelist)
 
     sampled_bc_counter_in_wl = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    outs.barcode_compatibility_info = {} # record sampled barcode info
+    outs.barcode_compatibility_info = {}  # record sampled barcode info
 
     for gem_group in sampled_barcodes:
         outs.barcode_compatibility_info[gem_group] = {}
@@ -109,7 +135,6 @@ def join(args, outs, chunk_defs, chunk_outs):
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled'] = len(sampled_bc)
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled_unique'] = len(unique_bc)
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled_unique_in_whitelist'] = len(unique_bc_in_wl)
-
 
             raw_bc_counter = Counter(sampled_bc)
             bc_counter = defaultdict(int)
@@ -130,7 +155,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         for lib1, lib2 in itertools.combinations(sampled_barcodes[gem_group].keys(), 2):
             counter1, counter2 = sampled_bc_counter_in_wl[gem_group][lib1], sampled_bc_counter_in_wl[gem_group][lib2]
             overlap_size = len(set(counter1).intersection(set(counter2)))
-            cosine_sim = cosine_similarity(counter1, counter2)
+            cosine_sim = robust_cosine_similarity(counter1, counter2)
 
             outs.barcode_compatibility_info['pairwise_compatibility'][gem_group].append([lib1, lib2, overlap_size, cosine_sim])
             if cosine_sim < barcode_compatibility_cutoff:
@@ -150,10 +175,10 @@ def join(args, outs, chunk_defs, chunk_outs):
 
 def main(args, outs):
     bc_read_def = cr_chem.get_barcode_read_def(args.chemistry)
-    bc_reader =  FastqReader(args.read_chunks, bc_read_def, args.reads_interleaved, None, None)
+    bc_reader = FastqReader(args.read_chunks, bc_read_def, args.reads_interleaved, None, None)
 
     sampled_barcodes = []
-    for name, seq, qual in itertools.islice(bc_reader.in_iter, READS_BURNIN, READS_BURNIN+args.num_reads_per_chunk_to_check_barcode):
+    for name, seq, qual in itertools.islice(bc_reader.in_iter, READS_BURNIN, READS_BURNIN + args.num_reads_per_chunk_to_check_barcode):
         sampled_barcodes.append(seq)
 
     outs.sampled_barcodes = sampled_barcodes
