@@ -8,6 +8,7 @@ import cellranger.matrix as cr_matrix
 import cellranger.stats as cr_stats
 import cellranger.io as cr_io
 import cellranger.utils as cr_utils
+import martian
 import numpy as np
 from cellranger.logperf import LogPerf
 
@@ -53,13 +54,25 @@ def select_barcodes_and_features(matrix, num_bcs=None, use_bcs=None, use_genes=N
     if use_genes is not None:
         include_ids = cr_io.load_csv_rownames(use_genes)
         with LogPerf('f4'):
-            include_indices = matrix.feature_ids_to_ints(include_ids)
+            try:
+                include_indices = matrix.feature_ids_to_ints(include_ids)
+            except KeyError as e:
+                err_message = str(e).strip("'")
+                err_message = err_message.replace("Specified feature ID",
+                                                  "Feature ID specified in genes_csv")
+                martian.exit(err_message)
 
     exclude_indices = []
     if exclude_genes is not None:
         exclude_ids = cr_io.load_csv_rownames(exclude_genes)
         with LogPerf('f5'):
-            exclude_indices = matrix.feature_ids_to_ints(exclude_ids)
+            try:
+                exclude_indices = matrix.feature_ids_to_ints(exclude_ids)
+            except KeyError as e:
+                err_message = str(e).strip("'")
+                err_message = err_message.replace("Specified feature ID",
+                                                  "Feature ID specified in exclude_genes_csv")
+                martian.exit(err_message)
 
     gene_indices = np.array(sorted(list(set(include_indices) - set(exclude_indices))), dtype=int)
     with LogPerf('ff'):
