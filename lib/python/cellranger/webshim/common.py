@@ -698,7 +698,15 @@ def plot_subsampled_scatterplot_metric(chart, sample_properties, sample_data, **
     summary_data = sample_data.summary or {}
 
     subsample_type = kwargs.get('subsample_type', 'raw_rpc')
-    ref_prefix = kwargs.get('ref_prefix', '(.+)_')
+
+    # Just use ref_prefix if specified; otherwise try to construct it out of the set of references
+    if 'ref_prefix' in kwargs:
+        ref_prefix = kwargs['ref_prefix']
+    elif 'references' in kwargs:
+        references = kwargs['references']
+        ref_prefix = '(' + '|'.join(references) + ')_'
+    else:
+        ref_prefix = '(.+)_'
 
     # Regular expression to match <reference>_<subsample_type>_<subsample_depth>_<metric_suffix> pattern
     metric_pattern = '^%s(%s)_([0-9]+)_%s' % (ref_prefix,
@@ -775,7 +783,8 @@ def plot_subsampled_scatterplot_metric(chart, sample_properties, sample_data, **
     chart['data'] = [v for k,v in sorted(traces.items())]
     return chart
 
-def build_charts(sample_properties, chart_dicts, sample_data, module=None):
+def build_charts(sample_properties, chart_dicts, sample_data,
+                 all_prefixes = {}, module=None):
     modules = [module, globals()] if module else [globals()]
 
     filters = make_chart_filters(sample_properties, sample_data.analyses)
@@ -793,6 +802,10 @@ def build_charts(sample_properties, chart_dicts, sample_data, module=None):
             raise ValueError('Could not find webshim chart function "%s"' % function)
 
         kwargs = chart_dict.pop('kwargs', {})
+
+        kwargs_prefixes = chart_dict.pop('kwargs_prefixes', [])
+        for prefix in kwargs_prefixes:
+            kwargs[prefix] = all_prefixes[prefix]
 
         new_chart_obj = f(chart_dict, sample_properties, sample_data, **kwargs)
         if new_chart_obj is None:
@@ -874,6 +887,18 @@ def get_custom_features(sample_data):
         custom_features.extend(sorted(list(feature_types - set(rna_library.RECOGNIZED_FEATURE_TYPES))))
     return custom_features
 
+def get_genomes(sample_data):
+    """Infer the set of genomes present in a dataset"""
+
+    analysis = sample_data.get_analysis(SingleGenomeAnalysis)
+    if analysis:
+        feature_ref = analysis.matrix.feature_ref
+        genomes = set(f.tags.get('genome', u'') for f in feature_ref.feature_defs)
+        return list(genomes - set(['']))
+    else:
+        return ['dummy']
+
+
 def build_web_summary_json(sample_properties, sample_data, pipeline):
     """ sample_properties - dict
         sample_data - *SampleData class
@@ -890,8 +915,9 @@ def build_web_summary_json(sample_properties, sample_data, pipeline):
     if alarms:
         view['alarms'] = alarms
 
-    charts, filters = build_charts(sample_properties, charts,
-                                   sample_data=sample_data)
+    all_prefixes['references'] = list(set(all_prefixes['references'] + get_genomes(sample_data)))
+
+    charts, filters = build_charts(sample_properties, charts, sample_data, all_prefixes=all_prefixes)
     if charts:
         view['charts'] = charts
     if filters:
