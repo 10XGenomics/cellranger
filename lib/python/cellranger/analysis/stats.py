@@ -5,7 +5,7 @@ from sklearn.utils import sparsefuncs
 
 def normalize_by_umi(matrix):
     counts_per_bc = matrix.get_counts_per_bc()
-    median_counts_per_bc = np.median(counts_per_bc)
+    median_counts_per_bc = max(1.0, np.median(counts_per_bc))
     scaling_factors = median_counts_per_bc / counts_per_bc
 
     # Normalize each barcode's total count by median total count
