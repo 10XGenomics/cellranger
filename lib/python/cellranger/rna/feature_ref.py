@@ -319,6 +319,7 @@ def compile_pattern(pattern_str, length):
     if '(BC)' not in pattern_str:
         raise FeatureDefException('Invalid pattern: "%s". The pattern must contain the string "(BC)".' % pattern_str)
 
+    input_pattern_str = pattern_str # keep for reporting errors against the initial input
     # We previously only supported the regex ^/$ markers for start and end,
     # but in order to be more human-friendly, we now also support 5p and 3p too
     # -- replace them here to make a valid regex
@@ -329,7 +330,7 @@ def compile_pattern(pattern_str, length):
 
     check_pattern = re.sub('\(BC\)', '', pattern_str)
     if not re.match('^\^{0,1}[ACGTN]*\${0,1}$', check_pattern):
-        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "5P", optionally end with "3P", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.' % pattern_str)
+        raise FeatureDefException('Invalid pattern: "%s". The pattern must optionally start with "5P", optionally end with "3P", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.' % input_pattern_str)
 
     # Allow Ns to match anything
     regex_str = re.sub('N', '.', pattern_str)
