@@ -81,8 +81,14 @@ def parse_sample_sheet(piperoot, filename):
             input_h5 = expand(row[cr_constants.AGG_H5_FIELD])
 
             if not os.path.isabs(input_h5):
-                # assume path is relative to pipestance root
-                input_h5 = os.path.abspath(expand(os.path.join(piperoot, input_h5)))
+                # first test if path is relative to input csv
+                relpath = os.path.join(os.path.dirname(filename), input_h5)
+                if os.path.exists(relpath):
+                    input_h5 = relpath
+
+                elif piperoot is not None:
+                    # assume path is relative to pipestance root
+                    input_h5 = os.path.abspath(expand(os.path.join(piperoot, input_h5)))
 
             if not os.path.exists(input_h5):
                 martian.exit("Specified %s file does not exist: %s" % (cr_constants.AGG_H5_FIELD, input_h5))
