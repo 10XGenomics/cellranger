@@ -660,6 +660,13 @@ class CountMatrix(object):
                 indices.append(feature.index)
         return self.select_features(indices)
 
+    def get_count_of_feature_type(self, feature_type):
+        ''' Count how many features in the matrix are of a given type. (e.g. "Gene Expression")'''
+        total = 0
+        for feature in self.feature_ref.feature_defs:
+            if feature.feature_type == feature_type:
+                total += 1
+        return total
 
     @staticmethod
     def _get_genomes_from_feature_ref(feature_ref):

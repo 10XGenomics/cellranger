@@ -8,9 +8,12 @@ import cellranger.matrix as cr_matrix
 import cellranger.stats as cr_stats
 import cellranger.io as cr_io
 import cellranger.utils as cr_utils
-import martian
+from cellranger.library_constants import GENE_EXPRESSION_LIBRARY_TYPE
+from cellranger.analysis.constants import PCA_N_COMPONENTS_DEFAULT
 import numpy as np
 from cellranger.logperf import LogPerf
+import martian
+
 
 __MRO__ = """
 stage PREPROCESS_MATRIX(
@@ -77,6 +80,16 @@ def select_barcodes_and_features(matrix, num_bcs=None, use_bcs=None, use_genes=N
     gene_indices = np.array(sorted(list(set(include_indices) - set(exclude_indices))), dtype=int)
     with LogPerf('ff'):
         matrix = matrix.select_features(gene_indices)
+
+    # To prevent people passing in just CRISPR or ANTIBODY features, we verify that the number of GEX features is
+    # >= the default number of PCA components
+    num_gex_features = matrix.get_count_of_feature_type(GENE_EXPRESSION_LIBRARY_TYPE)
+    if num_gex_features < PCA_N_COMPONENTS_DEFAULT:
+        err_msg = ("To run the analysis, you must specify at least {} 'Gene Expression' features."
+                   "You only have {} Gene Expression features in this data.  Check that the 'exclude_genes' and "
+                   "'use_genes' arguments enable enough Gene Expression features for the analysis.").format(PCA_N_COMPONENTS_DEFAULT,
+                                                                                                            num_gex_features)
+        martian.exit(err_msg)
 
     return matrix
 
