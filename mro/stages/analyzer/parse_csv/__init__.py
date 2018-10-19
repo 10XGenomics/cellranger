@@ -96,6 +96,16 @@ def parse_parameters(filename):
                 martian.exit("Cannot specify the same parameter twice: %s" % name)
             required_type = ANALYSIS_PARAMS[name]
             try:
+                if required_type == bool:
+                    org_value = value
+                    value = value.lower()
+                    if value == "true":
+                        value = 1
+                    elif value == "false":
+                        value = 0
+                    else:
+                        msg = ("Parameter {} must be set to 'true' or 'false', not {}.").format(name, org_value)
+                        martian.exit(msg)
                 cast_value = required_type(value)
                 params[name] = cast_value
             except ValueError:
