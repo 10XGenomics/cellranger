@@ -452,7 +452,6 @@ img.logo {
     margin: 20px auto;
     width: 1198px;
     display: block;
-    table-layout: fixed;
 }
 
 .de_table_header {
