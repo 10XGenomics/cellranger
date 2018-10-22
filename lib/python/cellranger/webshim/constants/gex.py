@@ -1136,12 +1136,12 @@ METRIC_ALARMS = [
         'format': GOOD_BCS_METRIC['format'],
         'error': {
             'title': 'Low Fraction Valid Barcodes',
-            'message': 'Ideal > 75%. This usually indicates a quality issue with the Ilumina I7 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2. Application performance is likely to be affected.',
+            'message': 'Ideal > 75%. This may indicate a quality issue with the Illumina I7 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2/v3 and Single Cell 5\'. Application performance is likely to be affected.',
             'test': '< 0.5',
         },
         'warn': {
             'title': 'Low Fraction Valid Barcodes',
-            'message': 'Ideal > 75%. This usually indicates a quality issue with the Illumina I7 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2. Application performance may be affected.',
+            'message': 'Ideal > 75%. This may indicate a quality issue with the Illumina I7 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2/v3 and Single Cell 5\'. Application performance may be affected.',
             'test': '< 0.75',
         },
     },
@@ -1150,12 +1150,12 @@ METRIC_ALARMS = [
         'format': GOOD_UMIS_METRIC['format'],
         'error': {
             'title': 'Low Fraction Valid UMIs',
-            'message': 'Ideal > 75%. This usually indicates a quality issue with the Ilumina R2 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2. Application performance is likely to be affected.',
+            'message': 'Ideal > 75%. This may indicate a quality issue with the Illumina R2 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2/v3 and Single Cell 5\'. Application performance is likely to be affected.',
             'test': '< 0.5',
                     },
         'warn': {
             'title': 'Low Fraction Valid UMIs',
-            'message': 'Ideal > 75%. This usually indicates a quality issue with the Illumina R2 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2. Application performance may be affected.',
+            'message': 'Ideal > 75%. This may indicate a quality issue with the Illumina R2 read for Single Cell 3\' v1 or the R1 read for Single Cell 3\' v2/v3 and Single Cell 5\'. Application performance may be affected.',
             'test': '< 0.75',
         },
     },
@@ -1191,12 +1191,12 @@ METRIC_ALARMS = [
         'name': 'bc_bases_with_q30_frac',
         'format': 'percent',
         'error': {
-            'title': 'Low Barcode Q30 Fraction (Illumina I7 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2)',
+            'title': 'Low Barcode Q30 Fraction (Illumina I7 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2/v3 and Single Cell 5\')',
             'message': 'Ideal > 55%. Application performance is likely to be affected.',
             'test': '< 0.45',
         },
         'warn': {
-            'title': 'Low Barcode Q30 Fraction (Illumina I7 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2)',
+            'title': 'Low Barcode Q30 Fraction (Illumina I7 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2/v3 and Single Cell 5\')',
             'message': 'Ideal > 55%. Application performance may be affected.',
             'test': '< 0.55',
         },
@@ -1205,12 +1205,12 @@ METRIC_ALARMS = [
         'name': 'read_bases_with_q30_frac',
         'format': 'percent',
         'error': {
-            'title': 'Low RNA Read Q30 Fraction (Illumina R1 for Single Cell 3\' v1, R2 for Single Cell 3\' v2)',
+            'title': 'Low RNA Read Q30 Fraction (Illumina R1 for Single Cell 3\' v1 and Single Cell 5\' paired end, R2 for Single Cell 3\' v2/v3 and Single Cell 5\' R2-only)',
             'message': 'Ideal > 65%. Application performance is likely to be affected.',
             'test': '< 0.55',
         },
         'warn': {
-            'title': 'Low RNA Read Q30 Fraction (Illumina R1 for Single Cell 3\' v1, R2 for Single Cell 3\' v2)',
+            'title': 'Low RNA Read Q30 Fraction (Illumina R1 for Single Cell 3\' v1 and Single Cell 5\' paired end, R2 for Single Cell 3\' v2/v3 and Single Cell 5\' R2-only)',
             'message': 'Ideal > 65%. Application performance may be affected.',
             'test': '< 0.65',
         },
@@ -1219,12 +1219,12 @@ METRIC_ALARMS = [
         'name': 'sample_index_bases_with_q30_frac',
         'format': 'percent',
         'error': {
-            'title': 'Low Sample Index Q30 Fraction (Illumina I5 Read for Single Cell 3\' v1, I7 for Single Cell 3\' v2)',
+            'title': 'Low Sample Index Q30 Fraction (Illumina I5 Read for Single Cell 3\' v1, I7 for Single Cell 3\' v2/v3 and Single Cell 5\')',
             'message': 'Ideal > 80%. Application performance is likely to be affected.',
             'test': '< 0.7',
         },
         'warn': {
-            'title': 'Low Sample Index Q30 Fraction (Illumina I5 Read for Single Cell 3\' v1, I7 for Single Cell 3\' v2)',
+            'title': 'Low Sample Index Q30 Fraction (Illumina I5 Read for Single Cell 3\' v1, I7 for Single Cell 3\' v2/v3 and Single Cell 5\')',
             'message': 'Ideal > 80%. Application performance may be affected.',
             'test': '< 0.8',
         },
@@ -1233,12 +1233,12 @@ METRIC_ALARMS = [
         'name': 'umi_bases_with_q30_frac',
         'format': 'percent',
         'error': {
-            'title': 'Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2)',
+            'title': 'Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2/v3 and Single Cell 5\')',
             'message': 'Ideal > 75%. Application performance is likely to be affected.',
             'test': '< 0.65',
         },
         'warn': {
-            'title': 'Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2)',
+            'title': 'Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3\' v1, R1 for Single Cell 3\' v2/v3 and Single Cell 5\')',
             'message': 'Ideal > 75%. Application performance may be affected.',
             'test': '< 0.75',
         },
