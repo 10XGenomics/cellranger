@@ -9,6 +9,7 @@ import martian
 import os
 import datetime
 import h5py
+import tables
 
 import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mol_counter
@@ -49,13 +50,22 @@ def split(args):
         else:
             files_seen.add(mol_h5)
 
-        mc_h5 = h5py.File(sample_def[cr_constants.AGG_H5_FIELD], 'r')
+        mc_fn = sample_def[cr_constants.AGG_H5_FIELD]
+        mc_h5 = h5py.File(mc_fn, 'r')
         try:
             mol_h5_version = mc_h5.attrs[cr_mol_counter.FILE_VERSION_KEY]
-        except AttributeError:
-            martian.exit("The molecule info HDF5 file (version %d) was produced by an older version of Cell Ranger. Reading these files is unsupported." % mol_h5_version)
+        except KeyError:
+            martian.exit("The molecule info HDF5 file (%s) was produced by an older version of Cell Ranger. Reading these files is unsupported." % mc_fn)
 
         if mol_h5_version == 2:
+            # CRv1.3-generated files lack essential metrics introduced in CRv2 (force_cells, conf_mapped_filtered_bc_reads)
+            #   hence aggregation with these files is unsupported
+            mc_table = tables.open_file(mc_fn, 'r')
+            cr_major_version = int(mc_table.get_node("/metrics")._v_attrs["cellranger_version"].split(".", 1)[0])
+            mc_table.close()
+            if cr_major_version < 2:
+                martian.exit("The molecule info HDF5 file (%s) was produced by an older version of Cell Ranger. Reading these files is unsupported." % mc_fn)
+
             nrows = mc_h5['barcode'].shape[0]
             mem_gb = cr_mol_counter.MoleculeCounter.estimate_mem_gb(nrows, scale=4)
         else: 
