@@ -139,7 +139,9 @@ def join(args, outs, chunk_defs, chunk_outs):
 
 
     # Preserve original matrix attributes
-    matrix_attrs = cr_matrix.get_matrix_attrs(args.matrix_h5)
+    matrix_attrs = cr_matrix.load_matrix_h5_metadata(args.matrix_h5)
+    # Including user-specified attrs
+    matrix_attrs.update(cr_matrix.load_matrix_h5_custom_attrs(args.matrix_h5))
 
     # gem groups are needed for cloupe, and older versions of cellranger count
     # may not have added those to the matrix_attrs

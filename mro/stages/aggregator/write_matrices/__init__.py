@@ -58,12 +58,15 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     lib_types = sorted(set(lib['library_type'] for lib in library_info))
 
+    # make attrs for user-added columns in aggr csv
+    extra_attrs = get_custom_aggr_columns(args.sample_defs)
     # track original library/gem info
     library_map = cr_matrix.make_library_map_aggr(args.gem_group_index)
+    extra_attrs.update(library_map)
 
     # Merge raw matrix
     raw_matrix = cr_matrix.merge_matrices(args.raw_matrices_h5)
-    raw_matrix.save_h5_file(outs.raw_matrix_h5, extra_attrs=library_map)
+    raw_matrix.save_h5_file(outs.raw_matrix_h5, extra_attrs=extra_attrs)
 
     genomes = raw_matrix.get_genomes()
 
@@ -81,7 +84,7 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     # Merge filtered matrix
     filt_mat = cr_matrix.merge_matrices(args.filtered_matrices_h5)
-    filt_mat.save_h5_file(outs.filtered_matrix_h5, extra_attrs=library_map)
+    filt_mat.save_h5_file(outs.filtered_matrix_h5, extra_attrs=extra_attrs)
 
     # Summarize the matrix across library types and genomes
     for lib_type in lib_types:
@@ -145,3 +148,16 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     with open(outs.summary, 'w') as f:
         json.dump(tk_safe_json.json_sanitize(summary), f, indent=4, sort_keys=True)
+
+def get_custom_aggr_columns(sample_defs):
+    custom_attrs = {}
+    n_samples = len(sample_defs)
+
+    for i, sample_def in enumerate(sample_defs):
+        for key, val in sample_def.items():
+            if key not in cr_constants.AGG_METADATA_FIELDS:
+                if key not in custom_attrs:
+                    custom_attrs[key] = [None] * n_samples
+                custom_attrs[key][i] = val
+
+    return custom_attrs

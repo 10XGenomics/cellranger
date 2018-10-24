@@ -13,6 +13,10 @@ Primer = collections.namedtuple('Primer', ['name', 'seq'])
 
 ReadDef = collections.namedtuple('ReadDef', 'read_type, offset, length')
 
+STR_DTYPE_CHAR = 'S'
+UNICODE_DTYPE_CHAR = 'U'
+STRING_DTYPE_CHARS = (STR_DTYPE_CHAR, UNICODE_DTYPE_CHAR)
+
 BAM_FILE_STREAM = '-' # filename telling samtools and pysam to read stdin / write stdout
 
 NUM_CHECK_BARCODES_FOR_ORIENTATION = 1000
@@ -316,6 +320,8 @@ NORM_MODES = [NORM_MODE_MAPPED, NORM_MODE_NONE]
 AGG_ID_FIELD = 'library_id'
 AGG_H5_FIELD = 'molecule_h5'
 AGG_BATCH_FIELD = 'batch'
+# to distinguish from user-defined keys
+AGG_METADATA_FIELDS = [AGG_ID_FIELD, AGG_H5_FIELD, AGG_BATCH_FIELD]
 
 MAX_INSERT_SIZE = 1000
 

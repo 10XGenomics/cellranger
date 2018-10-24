@@ -20,11 +20,12 @@ import lz4.frame as lz4
 import _io as io  # this is necessary b/c this module is named 'io' ... :(
 import tenkit.log_subprocess as tk_subproc
 import cellranger.h5_constants as h5_constants
-import cellranger.constants as cr_constants
+from cellranger.constants import (MEM_GB_PER_THREAD, STRING_DTYPE_CHARS,
+                                  STR_DTYPE_CHAR, UNICODE_DTYPE_CHAR)
 
 def get_thread_request_from_mem_gb(mem_gb):
     """ For systems without memory reservations, reserve multiple threads if necessary to avoid running out of memory"""
-    est_threads = round(float(mem_gb) / cr_constants.MEM_GB_PER_THREAD)
+    est_threads = round(float(mem_gb) / MEM_GB_PER_THREAD)
     # make sure it's 1, 2, or 4
     for threads in [1, 2, 4]:
         if est_threads <= threads: return threads
@@ -336,10 +337,11 @@ def create_hdf5_string_dataset(group, name, data, **kwargs):
     """
 
     if data is None or hasattr(data, '__len__') and  len(data) == 0:
-        group.create_dataset(name, dtype='S1')
+        dtype = '%s1' % STR_DTYPE_CHAR
+        group.create_dataset(name, dtype=dtype)
         return
 
-    assert (isinstance(data, np.ndarray) and data.dtype.char == 'S') or \
+    assert (isinstance(data, np.ndarray) and data.dtype.char == STR_DTYPE_CHAR) or \
             (isinstance(data, list) and \
             all(x is None or isinstance(x, six.string_types) for x in data))
 
@@ -351,7 +353,7 @@ def create_hdf5_string_dataset(group, name, data, **kwargs):
     # h5py doesn't support strings with zero-length-dtype
     if fixed_len == 0:
         fixed_len = 1
-    dtype = 'S%d' % fixed_len
+    dtype = '%s%d' % (STR_DTYPE_CHAR, fixed_len)
 
     group.create_dataset(name, data=data, dtype=dtype, **kwargs)
 
@@ -365,6 +367,65 @@ def make_utf8(x):
         return x.decode('utf8')
     else:
         raise ValueError('Expected string type, got type %s' % str(type(x)))
+
+def decode_ascii_xml(x):
+    """Decode a string from 7-bit ASCII + XML into unicode.
+    """
+    if isinstance(x, six.text_type):
+        return x
+    elif isinstance(x, six.binary_type):
+        return make_utf8(HTMLParser.unescape.__func__(HTMLParser, x))
+    else:
+        raise ValueError('Expected string type, got type %s' % str(type(x)))
+
+def decode_ascii_xml_array(data):
+    """Decode an array-like container of strings from 7-bit ASCII + XML
+    into unicode.
+    """
+    if isinstance(data, np.ndarray) and \
+       data.dtype.char == UNICODE_DTYPE_CHAR:
+        return data
+
+    unicode_data = map(decode_ascii_xml, data)
+
+    fixed_len = max(len(s) for s in unicode_data)
+    # 0 length string type is Ok
+    dtype = '%s%d' % (UNICODE_DTYPE_CHAR, fixed_len)
+
+    # note: python3 would require no.fromiter
+    return np.array(unicode_data, dtype=dtype)
+
+def encode_ascii_xml(x):
+    """Encode a string as fixed-length 7-bit ASCII with XML-encoding
+    for characters outside of 7-bit ASCII.
+
+    Respect python2 and python3, either unicode or binary.
+    """
+    if isinstance(x, six.text_type):
+        return x.encode('ascii', 'xmlcharrefreplace')
+    elif isinstance(x, six.binary_type):
+        return x
+    else:
+        raise ValueError('Expected string type, got type %s' % str(type(x)))
+
+def encode_ascii_xml_array(data):
+    """Encode an array-like container of strings as fixed-length 7-bit ASCII
+    with XML-encoding for characters outside of 7-bit ASCII.
+    """
+    if isinstance(data, np.ndarray) and \
+       data.dtype.char == STR_DTYPE_CHAR and \
+       data.dtype.itemsize > 0:
+        return data
+
+    convert = lambda s: encode_ascii_xml(s) if s is not None else ''
+    ascii_data = map(convert, data)
+
+    fixed_len = max(len(s) for s in ascii_data)
+    fixed_len = max(1, fixed_len)
+    dtype = '%s%d' % (STR_DTYPE_CHAR, fixed_len)
+
+    # note: python3 would require np.fromiter
+    return np.array(ascii_data, dtype=dtype)
 
 def read_hdf5_string_dataset(dataset):
     """Read a dataset of strings from HDF5 (h5py).
@@ -389,10 +450,21 @@ def read_hdf5_string_dataset(dataset):
     return map(make_utf8, unescaped)
 
 def set_hdf5_attr(dataset, name, value):
-    """Set an attribute of an HDF5 dataset/group"""
+    """Set an attribute of an HDF5 dataset/group.
 
-    if isinstance(value, str) and hasattr(value, 'decode'):
-        # Python2 string; store as unicode
-        dataset.attrs[name] = value.decode('utf8')
-    else:
-        dataset.attrs[name] = value
+    Strings are stored as fixed-length 7-bit ASCII with XML-encoding
+    for characters outside of 7-bit ASCII. This is inspired by the
+    choice made for the Loom spec:
+    https://github.com/linnarsson-lab/loompy/blob/master/doc/format/index.rst
+    """
+
+    name = encode_ascii_xml(name)
+
+    if isinstance(value, (six.text_type, six.binary_type)):
+        value = encode_ascii_xml(value)
+    elif isinstance(value, np.ndarray) and value.dtype.char in STRING_DTYPE_CHARS:
+        value = encode_ascii_xml_array(value)
+    elif isinstance(value, (list, tuple)) and isinstance(value[0], (six.text_type, six.binary_type)):
+        value = encode_ascii_xml_array(value)
+
+    dataset.attrs[name] = value

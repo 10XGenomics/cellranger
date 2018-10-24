@@ -67,6 +67,7 @@ pipeline SC_RNA_AGGREGATOR(
     )
 
     call WRITE_MATRICES(
+        sample_defs          = self.sample_defs,
         gem_group_index      = SETUP_SAMPLES.gem_group_index,
         molecules            = MERGE_MOLECULES.merged_molecules,
         raw_matrices_h5      = NORMALIZE_DEPTH.raw_matrices_h5,

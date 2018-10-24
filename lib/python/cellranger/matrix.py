@@ -53,6 +53,10 @@ MATRIX_H5_FILETYPE = u'matrix'
 MATRIX_H5_VERSION_KEY = u'version'
 MATRIX_H5_VERSION = 2
 
+# used to distinguish from user-defined attrs introduced in aggr
+MATRIX_H5_BUILTIN_ATTRS = ([h5_constants.H5_FILETYPE_KEY, MATRIX_H5_VERSION_KEY] +
+                           h5_constants.H5_METADATA_ATTRS)
+
 class NullAxisMatrixError(Exception):
     pass
 
@@ -891,7 +895,7 @@ def make_matrix_attrs_count(sample_id, gem_groups, chemistry):
     matrix_attrs[h5_constants.H5_CHEMISTRY_DESC_KEY] = chemistry
     return matrix_attrs
 
-def get_matrix_attrs(filename):
+def load_matrix_h5_metadata(filename):
     '''Get matrix metadata attributes from an HDF5 file'''
     # TODO: Consider moving these to the 'matrix' key instead of the root group
     attrs = {}
@@ -906,6 +910,19 @@ def get_matrix_attrs(filename):
                     attrs[key] = val.item()
                 else:
                     attrs[key] = val
+    return attrs
+
+def load_matrix_h5_custom_attrs(filename):
+    '''Get matrix metadata attributes from an HDF5 file'''
+    # TODO: Consider moving these to the 'matrix' key instead of the root group
+    attrs = {}
+    with h5.File(filename, 'r') as f:
+        for key, val in f.attrs.items():
+            if key not in MATRIX_H5_BUILTIN_ATTRS:
+                attrs[key] = val
+            val = f.attrs.get(key)
+            if val is not None:
+                attrs[key] = val
     return attrs
 
 def make_library_map_count(sample_id, gem_groups):
