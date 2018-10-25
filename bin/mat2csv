@@ -12,8 +12,8 @@ import cellranger.io as cr_io
 VERSION = "%s %s %s\n%s" % (os.getenv('TENX_PRODUCT', ''), os.getenv('TENX_SUBCMD', ''), os.getenv('TENX_VERSION', ''), os.getenv('TENX_COPYRIGHT', ''))
 
 __doc__ = '''
-Tool for converting gene-barcode matrices from sparse format to dense CSV
-format, for use by external programs.
+Tool for converting feature-barcode matrices from sparse format to dense 
+CSV format, for use by external programs.
 
 The commands below should be preceded by 'cellranger':
 
@@ -22,9 +22,9 @@ Usage:
     mat2csv -h | --help | --version
 
 Arguments:
-    input_path      Path to a Cell Ranger gene-barcode matrix. Can be either
-                        a gene-barcode or feature-barcode h5 file (recommended)
-                        or a path to a MEX Cell Ranger output folder.
+    input_path      Path to a Cell Ranger feature-barcode matrix. Can be either
+                        a feature-barcode h5 file (recommended) or a path to a 
+                        MEX Cell Ranger output folder.
     output_csv      Output CSV file.
 
 Options:

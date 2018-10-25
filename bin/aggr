@@ -8,8 +8,8 @@
 source $TENX_SCRIPTDIR/common/_includes
 
 DOCOPT_SPEC="$(cat <<EOF
-'$TENX_PRODUCT $TENX_SUBCMD' aggregates the gene/cell count data generated
-from multiple runs of the '$TENX_PRODUCT count' pipeline.
+'$TENX_PRODUCT $TENX_SUBCMD' aggregates the feature/cell count data 
+generated from multiple runs of the '$TENX_PRODUCT count' pipeline.
 
 To run this pipeline, supply a CSV that enumerates the paths to the
 aggregator_output.h5 files produced by '$TENX_PRODUCT count'.
