@@ -898,11 +898,32 @@ def make_matrix_attrs_count(sample_id, gem_groups, chemistry):
 def load_matrix_h5_metadata(filename):
     '''Get matrix metadata attributes from an HDF5 file'''
     # TODO: Consider moving these to the 'matrix' key instead of the root group
+    h5_version = CountMatrix.get_format_version_from_h5(filename)
+    if h5_version == 1:
+        return _load_matrix_legacy_v1_h5_metadata(filename)
+    else:
+        attrs = {}
+        with h5.File(filename, 'r') as f:
+            for key in h5_constants.H5_METADATA_ATTRS:
+                val = f.attrs.get(key)
+                if val is not None:
+                    if np.isscalar(val) and hasattr(val, 'item'):
+                        # Coerce numpy scalars to python types.
+                        # In particular, force np.unicode_ to unicode (python2)
+                        #    or str (python 3)
+                        attrs[key] = val.item()
+                    else:
+                        attrs[key] = val
+            return attrs
+
+# (needed for compatibility with v1 matrices)
+def _load_matrix_legacy_v1_h5_metadata(filename):
     attrs = {}
-    with h5.File(filename, 'r') as f:
+    with tables.open_file(filename, 'r') as f:
+        all_attrs = f.get_node('/')._v_attrs
         for key in h5_constants.H5_METADATA_ATTRS:
-            val = f.attrs.get(key)
-            if val is not None:
+            if hasattr(all_attrs, key):
+                val = getattr(all_attrs, key)
                 if np.isscalar(val) and hasattr(val, 'item'):
                     # Coerce numpy scalars to python types.
                     # In particular, force np.unicode_ to unicode (python2)
