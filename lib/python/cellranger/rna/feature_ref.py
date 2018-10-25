@@ -365,26 +365,31 @@ def parse_feature_def_file(filename, index_offset=0):
 
     with open(filename, 'rU') as f:
         # Skip comments
-        rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
-
+        rows = list(itertools.ifilter(lambda x: not x.startswith('#'), f))
+        if len(rows) == 0:
+            raise FeatureDefException("Feature reference csv file {} has no data.".format(filename))
         reader = csv.DictReader(rows)
 
+        required_cols = get_required_csv_columns()
+        col_names = reader.fieldnames
+        # Check field presence
+        if not set(col_names).issuperset(set(required_cols)):
+            raise FeatureDefException(
+                'The feature reference file header must contain the following comma-delimited fields: "%s".' % ', '.join(
+                    required_cols))
+
         # Check for duplicated columns
-        col_counts = Counter(reader.fieldnames)
+        col_counts = Counter(col_names)
         for (k, v) in col_counts.items():
             if v > 1:
                 raise FeatureDefException("feature reference csv has a duplicated column: %s" % k)
 
-        required_cols = get_required_csv_columns()
 
         feature_index = index_offset
 
         all_tag_keys = [c for c in reader.fieldnames if c not in BASE_FEATURE_FIELDS]
 
         for (row_num, row) in enumerate(reader):
-            # Check field presence
-            if not set(row.keys()).issuperset(set(required_cols)):
-                raise FeatureDefException('The feature reference file header must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
 
             # Check that there aren't extra columns, which you
             for key in row.iterkeys():

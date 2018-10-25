@@ -157,29 +157,34 @@ def expand_libraries_csv(csv_path):
 
     with open(csv_path, 'rU') as f:
 
-        rows = itertools.ifilter(lambda x: not x.startswith('#'), f)
+        rows = list(itertools.ifilter(lambda x: not x.startswith('#'), f))
+        if len(rows) == 0:
+            raise PreflightException("Libraries csv file {} has no data.".format(csv_path))
+
         reader = csv.DictReader(rows)
 
+        col_names = reader.fieldnames
+        required_cols = set(cr_constants.LIBRARIES_CSV_FIELDS)
+
+        if not set(col_names).issuperset(required_cols):
+            raise PreflightException(
+                'Libraries csv file must contain the following comma-delimited fields: "%s".' % ', '.join(
+                    required_cols))
+
         # Check for duplicated columns
-        col_counts = collections.Counter(reader.fieldnames)
+        col_counts = collections.Counter(col_names)
         for (k, v) in col_counts.items():
             if v > 1:
                 raise PreflightException("libraries csv has a duplicated column: %s" % k)
 
-        required_cols = set(cr_constants.LIBRARIES_CSV_FIELDS)
-
         libraries = []
-        row_num = 1
 
         for row in reader:
             print row.keys()
 
-            if not set(row.keys()).issuperset(required_cols):
-                raise PreflightException('Libraries csv file must contain the following comma-delimited fields: "%s".' % ', '.join(required_cols))
-
             for key in row.iterkeys():
                 if key is None:
-                    msg = "Invalid libraries CSV file: incorrrect number of columns on line %d" % row_num
+                    msg = "Invalid libraries CSV file: incorrrect number of columns on line number (after excluding comment lines) %d" % reader.line_num
                     raise PreflightException(msg)
                 row[key] = row[key].strip()
 
@@ -197,7 +202,6 @@ def expand_libraries_csv(csv_path):
             }
 
             libraries.append(library)
-            row_num += 1
 
     return libraries
 
