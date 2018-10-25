@@ -118,25 +118,31 @@ def save_pca_csv_with_bc_feature(pca_map, barcodes, features, base_dir):
         analysis_io.save_matrix_csv(matrix_fn, pca.transformed_pca_matrix, matrix_header,
                               barcodes)
 
-        components_fn = os.path.join(n_components_dir, 'components.csv')
-        components_header = ['PC'] + [f.id for f in features]
-        analysis_io.save_matrix_csv(components_fn, pca.components, components_header,
-                              range(1, n_components+1))
+        # FBPCA presently provides 0-sized entries for the following PCA() member variables.
+        #   This allows us to distinguish FBPCA from IRLBA, and also avoids weird empty files.
+        if pca.components.size > 0:
+            components_fn = os.path.join(n_components_dir, 'components.csv')
+            components_header = ['PC'] + [f.id for f in features]
+            analysis_io.save_matrix_csv(components_fn, pca.components, components_header,
+                                  range(1, n_components+1))
 
-        variance_fn = os.path.join(n_components_dir, 'variance.csv')
-        variance_header = ['PC','Proportion.Variance.Explained']
-        analysis_io.save_matrix_csv(variance_fn, pca.variance_explained, variance_header,
-                              range(1, n_components+1))
+        if pca.variance_explained.size > 0:
+            variance_fn = os.path.join(n_components_dir, 'variance.csv')
+            variance_header = ['PC','Proportion.Variance.Explained']
+            analysis_io.save_matrix_csv(variance_fn, pca.variance_explained, variance_header,
+                                  range(1, n_components+1))
 
-        dispersion_fn = os.path.join(n_components_dir, 'dispersion.csv')
-        dispersion_header = ['Feature','Normalized.Dispersion']
-        analysis_io.save_matrix_csv(dispersion_fn, pca.dispersion, dispersion_header,
-                              [f.id for f in features])
+        if pca.dispersion.size > 0:
+            dispersion_fn = os.path.join(n_components_dir, 'dispersion.csv')
+            dispersion_header = ['Feature','Normalized.Dispersion']
+            analysis_io.save_matrix_csv(dispersion_fn, pca.dispersion, dispersion_header,
+                                  [f.id for f in features])
 
-        features_fn = os.path.join(n_components_dir, 'features_selected.csv')
-        # TODO: there are two columns here, but only 1 entry in the header...BAD
-        features_header = ['Feature']
-        analysis_io.save_matrix_csv(features_fn, pca.features_selected, features_header, range(1, len(pca.features_selected)+1))
+        if pca.features_selected.size > 0:
+            features_fn = os.path.join(n_components_dir, 'features_selected.csv')
+            # TODO: there are two columns here, but only 1 entry in the header...BAD
+            features_header = ['Feature']
+            analysis_io.save_matrix_csv(features_fn, pca.features_selected, features_header, range(1, len(pca.features_selected)+1))
 
 def save_pca_h5(pca_map, f):
     group = f.create_group(f.root, analysis_constants.ANALYSIS_H5_PCA_GROUP)
