@@ -61,9 +61,11 @@ def split(args):
             # CRv1.3-generated files lack essential metrics introduced in CRv2 (force_cells, conf_mapped_filtered_bc_reads)
             #   hence aggregation with these files is unsupported
             mc_table = tables.open_file(mc_fn, 'r')
-            cr_major_version = int(mc_table.get_node("/metrics")._v_attrs["cellranger_version"].split(".", 1)[0])
+            mc_attrs = mc_table.get_node("/metrics")._v_attrs
+            cr_major_version = int(mc_attrs["cellranger_version"].split(".", 1)[0])
+            gem_metrics = dict(mc_attrs["gem_groups"])
             mc_table.close()
-            if cr_major_version < 2:
+            if cr_major_version < 2 or not all('conf_mapped_filtered_bc_reads' in group for group in gem_metrics.itervalues()):
                 martian.exit("The molecule info HDF5 file (%s) was produced by an older version of Cell Ranger. Reading these files is unsupported." % mc_fn)
 
             nrows = mc_h5['barcode'].shape[0]
