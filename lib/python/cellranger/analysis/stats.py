@@ -34,6 +34,13 @@ def summarize_columns(matrix):
     return mu, var
 
 def get_normalized_dispersion(mat_mean, mat_var, nbins=20):
+    """ Calculates the normalized dispersion.  The dispersion is calculated for each feature
+        and then normalized to see how its dispersion compares to samples that had a
+        similar mean value.
+    """
+    # See equation in https://academic.oup.com/nar/article/40/10/4288/2411520
+    # If a negative binomial is parameterized with mean m, and variance = m + d * m^2
+    # then this d = dispersion as calculated below
     mat_disp = (mat_var - mat_mean) / np.square(mat_mean)
 
     quantiles = np.percentile(mat_mean, np.arange(0, 100, 100 / nbins))

@@ -26,20 +26,21 @@ import warnings
 # x is a numpy vector only.
 # Compute A.dot(x) if t is False,  A.transpose().dot(x)  otherwise.
 def mult(A, x, t=False):
+    assert x.ndim == 1
     if(sp.issparse(A)):
         if(t):
             return(sp.csr_matrix(x).dot(A).transpose().todense().A[:, 0])
         return(A.dot(sp.csr_matrix(x).transpose()).todense().A[:, 0])
     if(t):
-        return(x.dot(A))
-    return(A.dot(x))
+        return np.asarray(A.transpose().dot(x)).ravel()
+    return np.asarray(A.dot(x)).ravel()
 
 def orthog(Y, X):
     """Orthogonalize a vector or matrix Y against the columns of the matrix X.
     This function requires that the column dimension of Y is less than X and
     that Y and X have the same number of rows.
     """
-    dotY = mult(X, Y, t=True)
+    dotY = Y.dot(X)
     return (Y - mult(X, dotY))
 
 # Simple utility function used to check linear dependencies during computation:
@@ -181,7 +182,7 @@ def irlb(A, n, tol=0.0001, maxit=50, center=None, scale=None, random_state=0):
         # End of Lanczos process
         S = np.linalg.svd(B)
         R = fn * S[0][m_b - 1, :]  # Residuals
-        if(iter < 1):
+        if(it < 1):
             smax = S[1][0]  # Largest Ritz value
         else:
             smax = max((S[1][0], smax))

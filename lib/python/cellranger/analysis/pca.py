@@ -15,72 +15,134 @@ import numpy as np
 import os
 import tables
 
+# The RUNPCA stage attempts to run the PCA at this threshold, and if that
+# fails it reruns at zero.  In the event thresholding prevents us from
+# returning the requested number of components and we are at this threshold
+# value, we throw an exception.
+DEFAULT_RUNPCA_THRESHOLD = 2
+
 from sklearn.utils import sparsefuncs
+
+class MatrixRankTooSmallException(Exception):
+    pass
 
 PCA = collections.namedtuple('PCA', ['transformed_pca_matrix', 'components', 'variance_explained', 'dispersion', 'features_selected'])
 
+def get_original_columns_used(cols_not_removed, cols_used_after_removal):
+    """If a matrix  is subset down to only have columns indexed by cols_not_removed, and then is further subset to
+    only contain cols_used_after removal, in that order, than this method returns the index of which columns in the old
+    matrix correspond the the columns in the new matrix."""
+    return [cols_not_removed[x] for x in cols_used_after_removal]
+
 def run_pca(matrix, pca_features=None, pca_bcs=None, n_pca_components=None, random_state=None, min_count_threshold=0):
-    if pca_features is None:
-        pca_features = matrix.features_dim
-    if pca_bcs is None:
-        pca_bcs = matrix.bcs_dim
-    if n_pca_components is None:
-        n_pca_components = analysis_constants.PCA_N_COMPONENTS_DEFAULT
-        if n_pca_components > pca_features:
-            print "There are fewer nonzero features than PCA components; reducing the number of components."
-            n_pca_components = pca_features
+    """ Run a PCA on the matrix using the IRLBA matrix factorization algorithm.  Prior to the PCA analysis, the
+    matrix is modified so that all barcodes/columns have the same counts, and then the counts are transformed
+    by a log2(1+X) operation.
+
+    If desired, only a subset of features (e.g. sample rows) can be selected for PCA analysis.  Each feature is ranked
+    by its dispersion relative to other features that have a similar mean count.  The top `pca_features` as ranked by
+    this method will then be used for the PCA.
+
+    One can also select to subset number of barcodes to use (e.g. sample columns), but in this case they are simply
+    randomly sampled.
+
+    Args:
+        matrix (CountMatrix): The matrix to perform PCA on.
+        pca_features (int): Number of features to subset from matrix and use in PCA. The top pca_features ranked by
+                            dispersion are used
+        pca_bcs (int): Number of barcodes to randomly sample for the matrix.
+        n_pca_components (int): How many PCA components should be used.
+        random_state (int): The seed for the RNG
+        min_count_threshold (int): The minimum sum of each row/column for that row/column to be passed to PCA
+                                   (this filter is prior to any subsetting that occurs).
+    Returns:
+        A PCA object
+    """
     if random_state is None:
         random_state=analysis_constants.RANDOM_STATE
-
     np.random.seed(0)
 
-    (full_norm_mat, full_center, full_scale) = normalize_and_transpose(matrix)
+    # Threshold the rows/columns of matrix, will throw error if an empty matrix results.
+    thresholded_matrix, _, thresholded_features = matrix.select_axes_above_threshold(min_count_threshold)
 
-    # initialize PCA subsets
-    pca_bc_indices = np.arange(matrix.bcs_dim)
-    pca_feature_indices = np.arange(matrix.features_dim)
+    # If requested, we can subsample some of the barcodes to get a smaller matrix for PCA
+    pca_bc_indices = np.arange(thresholded_matrix.bcs_dim)
+    if pca_bcs is None:
+        pca_bcs = thresholded_matrix.bcs_dim
+        pca_bc_indices = np.arange(thresholded_matrix.bcs_dim)
+    elif pca_bcs < thresholded_matrix.bcs_dim:
+        pca_bc_indices = np.sort(np.random.choice(np.arange(thresholded_matrix.bcs_dim), size=pca_bcs, replace=False))
+    elif pca_bcs > thresholded_matrix.bcs_dim:
+        msg = ("You requested {} barcodes but the matrix after thresholding only "
+                "included {}, so the smaller amount is being used.").format(pca_bcs, thresholded_matrix.bcs_dim)
+        print(msg)
+        pca_bcs = thresholded_matrix.bcs_dim
+        pca_bc_indices = np.arange(thresholded_matrix.bcs_dim)
 
+    # If requested, select fewer features to use by selecting the features with highest normalized dispersion
+    if pca_features is None:
+        pca_features = thresholded_matrix.features_dim
+    elif pca_features > thresholded_matrix.features_dim:
+        msg = ("You requested {} features but the matrix after thresholding only included {} features,"
+               "so the smaller amount is being used.").format(pca_features, thresholded_matrix.features_dim)
+        print(msg)
+        pca_features = thresholded_matrix.features_dim
     # Calc mean and variance of counts after normalizing
     # But don't transform to log space, in order to preserve the mean-variance relationship
-    m = analysis_stats.normalize_by_umi(matrix)
+    m = analysis_stats.normalize_by_umi(thresholded_matrix)
+    # Get mean and variance of rows
     (mu, var) = analysis_stats.summarize_columns(m.T)
-    dispersion = analysis_stats.get_normalized_dispersion(mu.squeeze(), var.squeeze()) # TODO set number of bins?
-
+    dispersion = analysis_stats.get_normalized_dispersion(mu.squeeze(), var.squeeze())  # TODO set number of bins?
     pca_feature_indices = np.argsort(dispersion)[-pca_features:]
 
-    if pca_bcs < matrix.bcs_dim:
-        pca_bc_indices = np.sort(np.random.choice(np.arange(matrix.bcs_dim), size=pca_bcs, replace=False))
+    # Now determine how many components.
+    if n_pca_components is None:
+        n_pca_components = analysis_constants.PCA_N_COMPONENTS_DEFAULT
+    likely_matrix_rank = min(pca_features, pca_bcs)
+    if likely_matrix_rank < n_pca_components:
+        if min_count_threshold == DEFAULT_RUNPCA_THRESHOLD:
+            # Kick back to run_pca stage so it can retry with no threshold, this is for historical reasons
+            raise MatrixRankTooSmallException()
+        else:
+            print(("There are fewer nonzero features or barcodes ({}) than requested "
+                   "PCA components ({}); reducing the number of components.").format(likely_matrix_rank, n_pca_components))
+            n_pca_components = likely_matrix_rank
 
-    pca_mat, _, pca_features_nonzero = matrix.select_barcodes(pca_bc_indices).select_features(pca_feature_indices).select_axes_above_threshold(min_count_threshold)
-    pca_feature_nonzero_indices = pca_feature_indices[pca_features_nonzero]
+    if (likely_matrix_rank * 0.5) <= float(n_pca_components):
+        print("Requested number of PCA components is large relative to the matrix size, an exact approach to matrix factorization may be faster.")
 
-    if pca_mat.features_dim < 2 or pca_mat.bcs_dim < 2:
-        print "Matrix is too small for further downsampling - num_pca_bcs and num_pca_features will be ignored."
-        pca_mat, _, pca_features_nonzero = matrix.select_axes_above_threshold(min_count_threshold)
-        pca_feature_nonzero_indices = pca_features_nonzero
-
+    # Note, after subsetting it is possible some rows/cols in pca_mat have counts below the threshold.
+    # However, we are not performing a second thresholding as in practice subsetting is not used and we explain
+    # that thresholding occurs prior to subsetting in the doc string.
+    pca_mat = thresholded_matrix.select_barcodes(pca_bc_indices).select_features(pca_feature_indices)
     (pca_norm_mat, pca_center, pca_scale) = normalize_and_transpose(pca_mat)
-
     (u, d, v, _, _) = irlb(pca_norm_mat, n_pca_components, center=pca_center.squeeze(), scale=pca_scale.squeeze(), random_state=random_state)
 
     # make sure to project the matrix before centering, to avoid densification
-    sparsefuncs.inplace_column_scale(full_norm_mat, 1 / full_scale.squeeze())
-    transformed_irlba_matrix = full_norm_mat[:,pca_feature_nonzero_indices].dot(v) - (full_center / full_scale)[:,pca_feature_nonzero_indices].dot(v)
+    (full_norm_mat, full_center, full_scale) = normalize_and_transpose(matrix)
+    sparsefuncs.inplace_column_scale(full_norm_mat, 1 / full_scale.squeeze()) # can have some zeros here
+    # Get a coordinate map so we know which columns in the old matrix correspond to columns in the new
+    org_cols_used = get_original_columns_used(thresholded_features, pca_feature_indices)
+    transformed_irlba_matrix = full_norm_mat[:,org_cols_used].dot(v) - (full_center / full_scale)[:,org_cols_used].dot(v)
     irlba_components = np.zeros((n_pca_components, matrix.features_dim))
-    irlba_components[:,pca_feature_nonzero_indices] = v.T
+    irlba_components[:,org_cols_used] = v.T
 
     # calc proportion of variance explained
     variance_sum = len(pca_feature_indices) # each feature has variance=1, mean=0 after normalization
     variance_explained = np.square(d)/((len(pca_bc_indices)-1) * variance_sum)
+    features_selected = np.array([f.id for f in matrix.feature_ref.feature_defs])[org_cols_used]
 
-    features_selected = np.array([f.id for f in matrix.feature_ref.feature_defs])[pca_feature_nonzero_indices]
+    # Now project back up the dispersion to return.
+    full_dispersion = np.empty(matrix.features_dim)
+    full_dispersion[:] = np.nan
+    full_dispersion[thresholded_features] = dispersion
 
     # sanity check dimensions
     assert transformed_irlba_matrix.shape == (matrix.bcs_dim, n_pca_components)
     assert irlba_components.shape == (n_pca_components, matrix.features_dim)
     assert variance_explained.shape == (n_pca_components,)
 
-    return PCA(transformed_irlba_matrix, irlba_components, variance_explained, dispersion, features_selected)
+    return PCA(transformed_irlba_matrix, irlba_components, variance_explained, full_dispersion, features_selected)
 
 def normalize_and_transpose(matrix):
     matrix.tocsc()
