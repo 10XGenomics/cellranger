@@ -58,7 +58,9 @@ Options:
                                    '$TENX_PRODUCT aggr', you may pass the same
                                    aggregation CSV in order to retain
                                    per-library tag information in the
-                                   resulting .cloupe file. Optional.
+                                   resulting .cloupe file.  This argument is 
+                                   required to enable chemistry batch correction
+                                   Optional.
     --force-cells=NUM          Force pipeline to use this number of cells,
                                    bypassing the cell detection algorithm.
                                    Optional.
