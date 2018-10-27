@@ -1,9 +1,13 @@
 <!-- macro that creates a generic summary card, optionally with an embedded chart -->
-{% macro summary_card(dtable, chart='') -%}
+{% macro summary_card(dtable, chart='', chart_desc_header='') -%}
 <div class="summary_card">
   <div class="has_desc" onclick="show_description(event)" ng-cloak>
     <div class="summary_description">
       <dl>
+        {% if chart_desc_header != '' %}
+        <dt>[[ chart_desc_header ]]</dt>
+        <dd ng-repeat="chart in charts" ng-if="chart.name == '[[chart]]'">{{ chart.description }}</dd>
+        {% endif %}
         {% for row in dtable.rows %}
         <dt>[[ row[0].v ]]</dt>
         <dd>[[ row[0].f ]]</dd>

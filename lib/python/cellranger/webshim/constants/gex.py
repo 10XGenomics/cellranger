@@ -935,35 +935,10 @@ CHARTS = [
                 'type': 'log',
             },
         },
-        'data': [
-            {
-                'x': [],
-                'y': [],
-                'name': 'Cells',
-                'hoverinfo': 'name',
-                'type': 'scattergl',
-                'mode': 'lines',
-                'line': {
-                    'color': 'rgba(88,165,50,1.0)',
-                    'width': 3,
-                },
-            },
-            {
-                'x': [],
-                'y': [],
-                'name': 'Background',
-                'hoverinfo': 'name',
-                'type': 'scattergl',
-                'mode': 'lines',
-                'line': {
-                    'color': '#bdbdbd',
-                    'width': 3,
-                },
-            },
-        ],
+        'data': [],
         'config': shared.CHARTS_PLOTLY_FIXED_CONFIG,
         'function': 'plot_barcode_rank',
-        'description': '',
+        'description': 'The plot shows the count of filtered UMIs mapped to each barcode.  As barcodes are not determined to be cell-associated strictly based on their UMI count, but instead are determined by their expression profiles, some regions of the graph contain both cell-associated and background-associated barcodes.  The color of the graph in these regions is based on the local density of barcodes that are cell-associated.',
         'name': 'barcode_rank',
     },
     {

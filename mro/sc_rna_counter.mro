@@ -211,6 +211,7 @@ pipeline SC_RNA_COUNTER(
         analysis                     = SC_RNA_ANALYZER.analysis,
         barcode_summary_h5           = _BASIC_SC_RNA_COUNTER.barcode_summary,
         filtered_gene_bc_matrices_h5 = _BASIC_SC_RNA_COUNTER.filtered_gene_bc_matrices_h5,
+        filtered_barcodes            = _BASIC_SC_RNA_COUNTER.filtered_barcodes,
         barcode_whitelist            = SETUP_CHUNKS.barcode_whitelist,
         gem_groups                   = _BASIC_SC_RNA_COUNTER.gem_groups,
     )

@@ -302,8 +302,8 @@ CHARTS = [
                 'type': 'scattergl',
                 'mode': 'lines',
                 'line': {
-                    'color': 'rgba(88,165,50,1.0)',
-                    'width': 3,
+                    'color': shared.BC_PLOT_CMAP(1.0),
+                    'width': shared.BC_RANK_PLOT_LINE_WIDTH,
                 },
             },
             {
@@ -314,8 +314,8 @@ CHARTS = [
                 'type': 'scattergl',
                 'mode': 'lines',
                 'line': {
-                    'color': '#bdbdbd',
-                    'width': 3,
+                    'color': shared.BC_PLOT_CMAP(0.0),
+                    'width': shared.BC_RANK_PLOT_LINE_WIDTH,
                 },
             },
         ],

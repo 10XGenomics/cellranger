@@ -20,6 +20,7 @@ stage SUMMARIZE_REPORTS(
     in  path   analysis,
     in  h5     barcode_summary_h5,
     in  h5     filtered_gene_bc_matrices_h5,
+    in  csv    filtered_barcodes,
     in  string barcode_whitelist,
     in  int[]  gem_groups,
     out json   metrics_summary_json,
@@ -44,6 +45,7 @@ def main(args, outs):
         summary_path=outs.metrics_summary_json,
         barcode_summary_path=args.barcode_summary_h5,
         analysis_path=args.analysis,
+        filtered_barcodes_path=args.filtered_barcodes,
     )
 
     genomes = cr_utils.get_reference_genomes(args.reference_path)

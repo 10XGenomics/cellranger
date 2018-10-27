@@ -29,7 +29,7 @@
   <!-- Right Summary Column -->
   <div class="summary_card_column">
     <!-- Cells Card -->
-    [[ utils.summary_card(data.tables[3], chart="barcode_rank") ]]
+    [[ utils.summary_card(data.tables[3], chart="barcode_rank", chart_desc_header="Barcode Rank Plot") ]]
     <!-- CRISPR Application Card -->
     {% if data.tables|selectattr("name", "equalto", "CRISPR Application")|list|length > 0 %}
     [[ utils.summary_card(data.tables | selectattr("name", "equalto", "CRISPR Application") | first) ]]

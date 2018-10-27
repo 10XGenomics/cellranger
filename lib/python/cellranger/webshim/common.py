@@ -274,9 +274,73 @@ def _plot_barcode_rank(chart, counts, num_cells):
 
     return chart
 
+def build_plot_data_dict(plot_segment, counts):
+    """
+    Construct the data for a plot segment by appropriately slicing the
+    counts
+    Inputs:
+    - plot_segment: BarcodeRankPlotSegment containing [start, end)
+        of the segment, the cell density and legend visibility option
+    - counts: Reverse sorted UMI counts for all barcodes.
+    """
+
+    start = max(0, plot_segment.start-1) # -1 for continuity between two charts
+    end = plot_segment.end
+    plot_rows = convert_numpy_array_to_line_chart(counts[start:end], int)
+    name = 'Cells' if plot_segment.cell_density > 0 else 'Background'
+
+    # Setup the tooltip
+    if plot_segment.cell_density > 0.:
+        n_barcodes = plot_segment.end - plot_segment.start
+        n_cells = int(round(plot_segment.cell_density * n_barcodes))
+        hover = "{:.0f}% Cells<br>({}/{})".format(100*plot_segment.cell_density, n_cells, n_barcodes)
+    else:
+        hover = "Background"
+
+    
+    data_dict = {
+        'x': [],
+        'y': [],
+        'name': name,
+        'hoverinfo': 'text',
+        'text': hover,
+        'type': 'scattergl',
+        'mode': 'lines',
+        'line': {
+            'color': shared_constants.BC_PLOT_CMAP(plot_segment.cell_density),
+            'width': shared_constants.BC_RANK_PLOT_LINE_WIDTH,
+        },
+        'showlegend': plot_segment.legend,
+    }
+    offset = 1 + start # it's a log-log plot, hence the 1
+    for index, count in plot_rows:
+        data_dict['x'].append(index + offset)
+        data_dict['y'].append(count)
+
+    # Handle case where the data is empty
+    if len(data_dict['x']) == 0:
+        data_dict['x'].append(0)
+        data_dict['y'].append(0)
+
+    return data_dict
+
+def _plot_counter_barcode_rank(chart, counts, plot_segments):
+    """
+    Generate the RNA counter barcode rank plot 
+    Inputs:
+        - chart: chart element to populate data
+        - counts: UMI counts reverse sorted
+        - plot_segments: A list of BarcodeRankPlotSegments
+    """
+
+    for segment in plot_segments:
+        chart['data'].append(build_plot_data_dict(segment, counts))
+
+    return chart
+    
 def plot_barcode_rank(chart, sample_properties, sample_data):
     """ Generate the RNA counter barcode rank plot """
-    if sample_properties.get('genomes') is None or sample_data.barcode_summary is None:
+    if sample_properties.get('genomes') is None or sample_data.barcode_summary is None or sample_data.cell_barcodes is None:
         return None
 
     if len(sample_properties['genomes']) == 0:
@@ -295,8 +359,8 @@ def plot_barcode_rank(chart, sample_properties, sample_data):
                                                  cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE)
 
     if key in sample_data.barcode_summary:
-        counts_per_bc = sample_data.barcode_summary[key][:]
-        return _plot_barcode_rank(chart, counts_per_bc, sample_data.num_cells)
+        counts_per_bc, plot_segments = sample_data.counter_barcode_rank_plot_data(key)
+        return _plot_counter_barcode_rank(chart, counts_per_bc, plot_segments)
     else:
         # Not guaranteed to exist, depending on pipeline
         pass

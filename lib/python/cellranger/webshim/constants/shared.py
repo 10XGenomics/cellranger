@@ -2,6 +2,8 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+import math
+
 PIPELINE_AGGR = 'aggr'
 PIPELINE_COUNT = 'count'
 PIPELINE_REANALYZE = 'reanalyze'
@@ -46,6 +48,23 @@ CHARTS_PLOTLY_MOVABLE_CONFIG = {
     'displaylogo': False,
     'showLink': False
 }
+
+BC_RANK_PLOT_LINE_WIDTH = 3
+# Gradient scheme used in the barcode rank plot
+BC_PLOT_COLORS = ['#dddddd', '#d1d8dc', '#c6d3dc', '#bacfdb', '#aecada', '#a3c5d9', '#97c0d9', '#8cbbd8', '#80b7d7', '#74b2d7', '#6aadd6', '#66abd4', '#62a8d2', '#5ea5d1', '#59a2cf', '#559fce', '#519ccc', '#4d99ca', '#4997c9', '#4594c7', '#4191c5', '#3d8dc4', '#3a8ac2', '#3787c0', '#3383be', '#3080bd', '#2c7cbb', '#2979b9', '#2676b7', '#2272b6', '#1f6eb3', '#1d6ab0', '#1a65ac', '#1861a9', '#155ca6', '#1358a2', '#10539f', '#0e4f9b', '#0b4a98', '#094695', '#09438f', '#0a4189', '#0c3f83', '#0d3d7c', '#0e3b76', '#103970', '#11366a', '#123463', '#14325d', '#153057']
+
+def BC_PLOT_CMAP(density):
+    """
+    Colormap utility fn to map a number to one of the colors in the gradient
+    color scheme defined above
+    Input
+    - density : A real number in the range [0,1]
+    """
+    assert density >= 0.
+    assert density <= 1.
+    levels = len(BC_PLOT_COLORS)
+    ind = min(levels - 1, int(math.floor(levels*density)))
+    return BC_PLOT_COLORS[ind]
 
 HISTOGRAM_METRIC_ORDER_INTEGER_BIN = 'order_integer'
 
