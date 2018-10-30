@@ -34,9 +34,9 @@ stage SUMMARIZE_REPORTS(
 
 def split(args):
     chunks = [{
-        '__mem_gb': 2,
+        '__mem_gb': 4,
     }]
-    return {'chunks': chunks, 'join': {'__mem_gb': 1}}
+    return {'chunks': chunks, 'join': {'__mem_gb': 2}}
 
 def main(args, outs):
     cr_report.merge_jsons(args.summaries, outs.metrics_summary_json)

@@ -62,7 +62,7 @@ def split(args):
     chunks = []
     for chunk in args.chunks:
         chunk['__threads'] = 1
-        chunk['__mem_gb'] = 4
+        chunk['__mem_gb'] = 6
 
         if args.initial_reads is None:
             chunk['chunk_initial_reads'] = None
