@@ -935,16 +935,17 @@ def _load_matrix_legacy_v1_h5_metadata(filename):
 
 def load_matrix_h5_custom_attrs(filename):
     '''Get matrix metadata attributes from an HDF5 file'''
-    # TODO: Consider moving these to the 'matrix' key instead of the root group
+    h5_version = CountMatrix.get_format_version_from_h5(filename)
+    if h5_version == 1:
+        # no support for custom attrs in older versions
+        return {}
+
     attrs = {}
     with h5.File(filename, 'r') as f:
         for key, val in f.attrs.items():
             if key not in MATRIX_H5_BUILTIN_ATTRS:
                 attrs[key] = val
-            val = f.attrs.get(key)
-            if val is not None:
-                attrs[key] = val
-    return attrs
+        return attrs
 
 def make_library_map_count(sample_id, gem_groups):
     # store gem group mapping for use by Cell Loupe
