@@ -6,6 +6,7 @@ filetype h5;
 filetype html;
 filetype json;
 filetype pickle;
+filetype binary;
 
 stage ANALYZER_PREFLIGHT(
     in  bool  skip,
@@ -302,7 +303,7 @@ stage CORRECT_CHEMISTRY_BATCH(
     in  pickle idx_to_batch_id,
     in  bool   need_reorder_barcode,
     in  pickle barcode_reorder_index,
-    out pickle batch_nearest_neighbor,
+    out binary batch_nearest_neighbor,
 ) using (
     mem_gb = 4,
 )

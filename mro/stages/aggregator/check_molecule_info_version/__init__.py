@@ -15,6 +15,8 @@ import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mol_counter
 import cellranger.io as cr_io
 
+from cellranger.analysis.constants import CBC_MAX_NCELLS
+
 __MRO__ = """
 stage CHECK_MOLECULE_INFO_VERSION(
     in  map[] sample_defs,
@@ -70,7 +72,7 @@ def split(args):
 
             nrows = mc_h5['barcode'].shape[0]
             mem_gb = cr_mol_counter.MoleculeCounter.estimate_mem_gb(nrows, scale=4)
-        else: 
+        else:
             mem_gb = 1
 
         chunks.append({
@@ -96,3 +98,12 @@ def main(args, outs):
 def join(args, outs, chunk_defs, chunk_outs):
     outs.updated_sample_defs = [chunk_out.updated_sample_def for chunk_out in chunk_outs]
 
+    if any("batch" in sample_def for sample_def in outs.updated_sample_defs):
+        ncells = 0
+        for sample_def in outs.updated_sample_defs:
+            with cr_mol_counter.MoleculeCounter.open(sample_def[cr_constants.AGG_H5_FIELD], 'r') as mc:
+                library_info = mc.get_library_info()
+                ncells += sum(mc.get_num_filtered_barcodes_for_library(i) for i in xrange(len(library_info)))
+        if ncells > CBC_MAX_NCELLS:
+            martian.exit("You provided {:,} cells in total, but chemistry batch correction only supports up to {:,} cells.".format(
+                ncells, CBC_MAX_NCELLS))

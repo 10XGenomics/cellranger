@@ -981,3 +981,25 @@ def get_gem_group_index(matrix_h5):
     for ng, (lid, og) in enumerate(zip(library_ids, original_gem_groups), start=1):
         library_map[ng] = (lid, og)
     return library_map
+
+def inplace_csc_column_normalize_l2(X):
+    """perform in-place column L2-normalization of input matrix X
+    >>> import numpy as np
+    >>> import scipy.sparse as sp
+    >>> from sklearn.preprocessing import normalize
+    >>> a = np.arange(12, dtype='float').reshape((3, 4))
+    >>> b = sp.csc_matrix(a)
+    >>> inplace_csc_column_normalize_l2(b)
+    >>> np.all(normalize(a, axis=0) == b)
+    True
+    """
+    assert X.getnnz() == 0 or isinstance(X.data[0], (np.float32, float))
+    for i in xrange(X.shape[1]):
+        s = 0.0
+        for j in xrange(X.indptr[i], X.indptr[i + 1]):
+            s += X.data[j] * X.data[j]
+        if s == 0.0:
+            continue
+        s = np.sqrt(s)
+        for j in xrange(X.indptr[i], X.indptr[i + 1]):
+            X.data[j] /= s

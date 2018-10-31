@@ -6,7 +6,6 @@ import numpy as np
 import cPickle
 import martian
 
-import sklearn.preprocessing as sk_preprocessing
 import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_util
 import cellranger.h5_constants as h5_constants
@@ -47,11 +46,9 @@ def split(args):
     (features_dim, bcs_dim, nonzero_entries) = matrix_dims
     matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_dim(bcs_dim, nonzero_entries)
 
-    mem_gb = min(MAX_MEM_GB, max(matrix_mem_gb, h5_constants.MIN_MEM_GB)) 
+    # convert from int to float costs us 2x memory..
+    mem_gb = max(np.ceil(2.0 * matrix_mem_gb), h5_constants.MIN_MEM_GB)
     return {'chunks': [], 'join': {'__mem_gb': mem_gb}}
-
-def main(args, outs):
-    return
 
 def join(args, outs, chunk_defs, chunk_outs):
     if args.skip:
@@ -82,7 +79,8 @@ def join(args, outs, chunk_defs, chunk_outs):
     matrix = matrix.select_barcodes(bc_indices)
 
     # l2 norm
-    matrix.m = sk_preprocessing.normalize(matrix.m, axis=0)
+    matrix.m = matrix.m.astype('float64')
+    cr_matrix.inplace_csc_column_normalize_l2(matrix.m)
 
     n_pcs = args.num_pcs if args.num_pcs is not None else analysis_constants.CBC_N_COMPONENTS_DEFAULT
     dimred_matrix = fbpca_reduce_dimension(matrix, n_pcs)

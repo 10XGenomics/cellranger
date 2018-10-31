@@ -40,6 +40,10 @@ IRLB_BASE_MEM_GB = 1
 ANALYSIS_H5_PCA_GROUP = 'pca'
 
 # chemistry batch correction
+# this upper limit was determined via testing,
+#   larger numbers of cells will require _at least_ memory reservation changes
+#   in CORRECT_CHEMISTRY_BATCH.join, if not substantial algorithmic changes
+CBC_MAX_NCELLS = 128000
 CBC_N_COMPONENTS_DEFAULT = 100
 CBC_KNN = 10
 CBC_ALPHA = 0.1

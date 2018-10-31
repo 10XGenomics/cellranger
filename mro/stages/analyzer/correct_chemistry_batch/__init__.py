@@ -2,13 +2,16 @@
 #
 # Copyright (c) 2018 10x Genomics, Inc. All rights reserved.
 #
-import numpy as np
 import cPickle
-import martian
+from collections import defaultdict, Counter
+from itertools import izip
+import struct
+import sys
 
+import martian
+import numpy as np
 import sklearn.neighbors as sk_neighbors
 from sklearn.metrics.pairwise import rbf_kernel
-from collections import defaultdict, OrderedDict, Counter
 import tables
 
 import cellranger.utils as cr_util
@@ -38,12 +41,12 @@ stage CORRECT_CHEMISTRY_BATCH(
     in  pickle idx_to_batch_id,
     in  bool   need_reorder_barcode,
     in  pickle barcode_reorder_index,
-    out pickle batch_nearest_neighbor,
+    out binary batch_nearest_neighbor,
 )
 """
 
-MAX_MEM_GB = 64
 NUM_ENTRIES_PER_MEM_GB = 2000000
+JOIN_MEM_GB = 64
 
 def option(arg, default):
     return arg if arg is not None else default
@@ -60,17 +63,17 @@ def batch_effect_score(dimred_matrix, batch_ids, knn=100, subsample=0.1):
 
     # batch percentage
     counter = Counter(batch_ids)
-    batch_to_percentage = {batch: count*1.0/sum(counter.values()) for batch, count in counter.items()}
+    batch_to_percentage = {batch: count*1.0/sum(counter.values()) for batch, count in counter.iteritems()}
 
     # BallTree for KNN
-    balltree  = sk_neighbors.BallTree(dimred_matrix, leaf_size=knn)
+    balltree = sk_neighbors.BallTree(dimred_matrix, leaf_size=knn)
 
     np.random.seed(0)
     select_bc_idx = np.array([i for i in range(num_bcs) if np.random.uniform() < subsample])
     knn_idx = balltree.query(dimred_matrix[select_bc_idx], k=knn+1, return_distance=False)
 
     same_batch_ratio = []
-    for bc, neighbors in zip(select_bc_idx, knn_idx):
+    for bc, neighbors in izip(select_bc_idx, knn_idx):
         batch_id = batch_ids[bc]
         same_batch = len([i for i in neighbors[1:] if batch_ids[i] == batch_id])
         same_batch_ratio.append((same_batch*1.0/knn)/batch_to_percentage[batch_id])
@@ -79,7 +82,7 @@ def batch_effect_score(dimred_matrix, batch_ids, knn=100, subsample=0.1):
 
 def split(args):
     if args.skip:
-        return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
+        return {'chunks': []}
 
     gg_id_to_batch_id, batch_id_to_name = {}, {}
 
@@ -99,7 +102,7 @@ def split(args):
 
     # re-order matrix such that barcodes from same batch are grouped together
     new_bc_indices = None
-    batch_to_bc_indices = OrderedDict()
+    batch_to_bc_indices = []
     idx_to_batch_id = np.full(dimred_matrix.shape[0], 0, dtype=np.int8)
 
     base = 0
@@ -109,7 +112,7 @@ def split(args):
             continue
 
         new_bc_indices = batch_bc_indices if new_bc_indices is None else np.append(new_bc_indices, batch_bc_indices)
-        batch_to_bc_indices[b_id] = (base, base + batch_bc_indices.shape[0])
+        batch_to_bc_indices.append((base, base + batch_bc_indices.shape[0]))
         idx_to_batch_id[base : base + batch_bc_indices.shape[0]] = b_id
         base += len(batch_bc_indices)
 
@@ -129,20 +132,24 @@ def split(args):
     else:
         barcode_reorder_index_file, ordered_dimred_matrix_file = None, None
 
-
-
     idx_to_batch_id_file = martian.make_path('idx_to_batch_id.pickle')
     with open(idx_to_batch_id_file, 'wb') as fp:
         cPickle.dump(idx_to_batch_id, fp, cPickle.HIGHEST_PROTOCOL)
 
-    matrix_mem_gb = float(dimred_matrix.shape[0] * dimred_matrix.shape[1]) / NUM_ENTRIES_PER_MEM_GB
-    mem_gb = min(MAX_MEM_GB, max(int(matrix_mem_gb), h5_constants.MIN_MEM_GB))
+    nitem, ndim = dimred_matrix.shape
+    nbatch = len(batch_to_bc_indices)
+    cbc_knn = option(args.cbc_knn, analysis_constants.CBC_KNN)
+    matrix_mem_gb = sys.getsizeof(dimred_matrix) / 1e9 # float(nitem * ndim) / NUM_ENTRIES_PER_MEM_GB
+    # 72 for size of tuple, 32 * 2 for size of 2 np.int64's, and 40% for inefficient dictionaries
+    nn_mem_gb = 1.4 * nbatch * nitem * cbc_knn * (72 + 2 * 32) / 1e9
+    # presuming all in one batch, dimred_matrix, cur_matrix, ref_matrix
+    main_mem_gb = max(int(3.0 * matrix_mem_gb + nn_mem_gb + 1.0), h5_constants.MIN_MEM_GB)
 
     chunks = []
-    for batch_id, (start_idx, end_idx) in batch_to_bc_indices.items():
+    for batch_id in xrange(len(batch_to_bc_indices)):
         chunks.append({
-            '__mem_gb': mem_gb,
-            'batch_id': str(batch_id),
+            '__mem_gb': main_mem_gb,
+            'batch_id': batch_id,
             'batch_to_bc_indices': batch_to_bc_indices,
             'ordered_dimred_matrix': ordered_dimred_matrix_file,
             'idx_to_batch_id': idx_to_batch_id_file,
@@ -152,7 +159,7 @@ def split(args):
 
     return {
         'chunks': chunks, 
-        'join': {'__mem_gb': MAX_MEM_GB}
+        'join': {'__mem_gb': JOIN_MEM_GB}
     }
 
 def find_knn(curr_matrix, ref_matrix, knn):
@@ -164,6 +171,48 @@ def find_knn(curr_matrix, ref_matrix, knn):
     balltree = sk_neighbors.BallTree(ref_matrix, leaf_size=knn)
     nn_idx = balltree.query(curr_matrix, k=knn, return_distance=False)
     return nn_idx.ravel().astype(int)
+
+def serialize_batch_nearest_neighbor(fp, batch_nearest_neighbor):
+    for (a, b), s in batch_nearest_neighbor.iteritems():
+        fp.write(struct.pack("qqQ", a, b, len(s)))
+        for i, j in s:
+            fp.write(struct.pack("qq", i, j))
+
+def deserialize_batch_nearest_neighbor(fp):
+    """
+    >>> from cStringIO import StringIO
+    >>> batch1 = dict()
+    >>> batch1[(0, 1)] = set([(1, 2), (3, 4), (5, 6)])
+    >>> batch1[(1, 2)] = set([(7, 8), (9, 10)])
+    >>> batch1[(3, 4)] = set([(11, 12)])
+    >>> fp = StringIO()
+    >>> serialize_batch_nearest_neighbor(fp, batch1)
+    >>> fp.seek(0)
+    >>> batch2 = deserialize_batch_nearest_neighbor(fp)
+    >>> batch1 == batch2
+    True
+    """
+    batch_nearest_neighbor = {}
+    while True:
+        fmt = "qqQ"
+        sz = struct.calcsize("qqQ")
+        buf = fp.read(sz)
+        if len(buf) == 0:
+            break
+        elif len(buf) != sz:
+            raise RuntimeError("corrupted batch_nearest_neighbor stream (key)")
+        a, b, slen = struct.unpack(fmt, buf)
+        fmt = "qq"
+        sz = struct.calcsize("qq")
+        s = set()
+        for _ in xrange(slen):
+            buf = fp.read(sz)
+            if len(buf) != sz:
+                raise RuntimeError("corrupted batch_nearest_neighbor stream (set)")
+            i, j = struct.unpack(fmt, buf)
+            s.add((i, j))
+        batch_nearest_neighbor[(a, b)] = s
+    return batch_nearest_neighbor
 
 def main(args, outs):
     if args.skip:
@@ -186,7 +235,7 @@ def main(args, outs):
 
     from_idx, to_idx = None, None
     # Batch balanced KNN
-    for batch in args.batch_to_bc_indices:
+    for batch in xrange(len(args.batch_to_bc_indices)):
         if batch == args.batch_id:
             continue
 
@@ -200,12 +249,12 @@ def main(args, outs):
         from_idx = nn_idx_left if from_idx is None else np.concatenate([from_idx, nn_idx_left])
         to_idx = nn_idx_right if to_idx is None else np.concatenate([to_idx, nn_idx_right])
 
-        for i, j in zip(from_idx, to_idx):
+        for i, j in izip(from_idx, to_idx):
             batch_nearest_neighbor[(args.batch_id, batch)].add((i,j))
 
-    outs.batch_nearest_neighbor = martian.make_path('batch_nearest_neighbor.pickle')
+    outs.batch_nearest_neighbor = martian.make_path('batch_nearest_neighbor.binary')
     with open(outs.batch_nearest_neighbor, 'wb') as fp:
-        cPickle.dump(batch_nearest_neighbor, fp, cPickle.HIGHEST_PROTOCOL)
+        serialize_batch_nearest_neighbor(fp, batch_nearest_neighbor)
 
     return
 
@@ -227,8 +276,8 @@ def correction_vector(dimred_matrix, cur_submatrix_idx, mnn_cur_idx, mnn_ref_idx
     cur_submatrix_size = len(cur_submatrix_idx)
     mnn_size = len(mnn_cur_idx)
     # based on empirical testing
-    cur_submatrix_chunk_size = int(1e6/num_pcs) 
-    mnn_chunk_size = int(2e7/num_pcs) 
+    cur_submatrix_chunk_size = int(1e6/num_pcs)
+    mnn_chunk_size = int(2e7/num_pcs)
 
     for i in range(0, cur_submatrix_size, cur_submatrix_chunk_size):
         cur_submatrix_chunk = cur_submatrix_idx[i:i + cur_submatrix_chunk_size]
@@ -236,7 +285,7 @@ def correction_vector(dimred_matrix, cur_submatrix_idx, mnn_cur_idx, mnn_ref_idx
 
         weighted_sum, weights_sum = np.zeros(cur_submatrix.shape), np.zeros(cur_submatrix.shape)
 
-        for j in range(0, mnn_size, mnn_chunk_size):
+        for j in xrange(0, mnn_size, mnn_chunk_size):
             mnn_cur_chunk = mnn_cur_idx[j:j + mnn_chunk_size]
             mnn_ref_chunk = mnn_ref_idx[j:j + mnn_chunk_size]
 
@@ -269,17 +318,17 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     nn_pairs = {}
     for chunk_out in chunk_outs:
-        with open(chunk_out.batch_nearest_neighbor) as fp:
-            batch_nearest_neighbor = cPickle.load(fp)
-        for k,v in batch_nearest_neighbor.items():
+        with open(chunk_out.batch_nearest_neighbor, 'rb') as fp:
+            batch_nearest_neighbor = deserialize_batch_nearest_neighbor(fp)
+        for k,v in batch_nearest_neighbor.iteritems():
             nn_pairs[k] = v
 
     mutual_nn = {} # mnn between batches
     overlap_percentage = {} # percentage of matching cells (max of batch i and batch j)
 
-    for i in batch_to_bc_indices:
+    for i in xrange(len(batch_to_bc_indices)):
         batch_i_size = batch_to_bc_indices[i][1] - batch_to_bc_indices[i][0]
-        for j in batch_to_bc_indices:
+        for j in xrange(len(batch_to_bc_indices)):
             if i >= j:
                 continue
 
