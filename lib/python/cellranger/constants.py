@@ -395,7 +395,7 @@ ALIGN_LIBRARY_TYPES = [GENE_EXPRESSION_LIBRARY_TYPE]
 
 # Constants for barcode compatability checking
 BARCODE_COMPATIBILITY_CUTOFF = 0.1
-NUM_READS_TO_CHECK_BARCODE = 200000
+NUM_READS_TO_CHECK_BARCODE = 400000
 
 # Field names for the `--libraries` csv input file
 LIBRARIES_CSV_FIELDS = ['fastqs', 'sample', 'library_type']

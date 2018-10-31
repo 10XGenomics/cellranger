@@ -56,7 +56,7 @@ def cosine_similarity(c1, c2):
     return tk_stats.robust_divide(dotprod, magA * magB)
 
 
-def robust_cosine_similarity(c1, c2, robust_fraction_threshold=0.75):
+def robust_cosine_similarity(c1, c2, robust_fraction_threshold=0.925):
     """ Calculate the robust cosine similarity of two barcode lists.
         Implements the same basic cosine distance metric, but first
         caps each count value to a threshold value such that robust_fracion_threshold
