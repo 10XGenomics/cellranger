@@ -46,21 +46,29 @@ def split(args):
     total_reads = cr_utils.get_metric_from_json(args.extract_reads_summary, 'total_reads')
     mol_info_rows = total_reads
 
+    # Memory for chunk
+    if len(args.inputs) > 0:
+        avg_rows_per_chunk = int(total_reads / len(args.inputs))
+        avg_chunk_mem_gb = int(math.ceil((32 * avg_rows_per_chunk)/2.5e8))
+        chunk_mem_gb = min(MAX_MEM_GB, max(8, avg_chunk_mem_gb))
+    else:
+        chunk_mem_gb = 1
+
     # Memory for concatenating molecule info
     # N = total number of rows
     # 8*N bytes to store the sort indices
     # (8+8+8)*N bytes to load, concatenate, and index into a 64-bit data column
     mol_info_mem_gb = int(math.ceil((32 * mol_info_rows)/2.5e8))
-    mem_gb = min(MAX_MEM_GB, max(4, mol_info_mem_gb))
+    join_mem_gb = min(MAX_MEM_GB, max(4, mol_info_mem_gb))
 
     chunks = []
     for chunk_input in args.inputs:
         chunks.append({
             'chunk_input': chunk_input,
-            '__mem_gb': mem_gb,
+            '__mem_gb': chunk_mem_gb,
         })
     join = {
-        '__mem_gb': mem_gb,
+        '__mem_gb': join_mem_gb,
     }
     return {'chunks': chunks, 'join': join}
 
