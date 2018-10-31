@@ -157,8 +157,10 @@ def normalize_and_transpose(matrix):
 
     # compute centering (mean) and scaling (stdev)
     (c,v) = analysis_stats.summarize_columns(m)
-    s = np.sqrt(v)
+    # TODO: Inputs to this function shouldn't have zero variance columns
+    v[np.where(v == 0.0)] = 1.0
 
+    s = np.sqrt(v)
     return (m, c, s)
 
 def get_irlb_mem_gb_from_matrix_dim(nonzero_entries):
