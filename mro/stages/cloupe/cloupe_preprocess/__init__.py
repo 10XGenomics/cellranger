@@ -67,9 +67,17 @@ def split(args):
     if do_not_make_cloupe(args):
         return {'chunks': [{'__mem_gb': h5_constants.MIN_MEM_GB}]}
 
+    # Below is an old estimate (and comment) from before CELLRANGER-1667
     # CELLRANGER-762: worst case is that there's two copies of the sparse matrix,
     # one for reading, and one for writing
-    matrix_mem_gb = 2 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.filtered_gene_bc_matrices_h5)
+    old_matrix_mem_gb = 2 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.filtered_gene_bc_matrices_h5)
+    old_matrix_mem_gb = max(old_matrix_mem_gb, h5_constants.MIN_MEM_GB, 6)
+
+    # After CR-1667, we implemented a new estimate to deal with OOM errors, but to ensure backwards compatibility, we
+    # select the max of the old and the new (the new underestimates for large matrices)
+    new_matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_crconverter_estimate_from_h5(args.filtered_gene_bc_matrices_h5)
+
+    matrix_mem_gb = max(old_matrix_mem_gb, new_matrix_mem_gb)
     chunks = [{
         '__mem_gb': max(matrix_mem_gb, h5_constants.MIN_MEM_GB, 6)
     }]

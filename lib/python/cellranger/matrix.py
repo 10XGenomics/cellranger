@@ -493,6 +493,27 @@ class CountMatrix(object):
         return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries)
 
     @staticmethod
+    def get_mem_gb_crconverter_estimate_from_h5(filename):
+        '''Estimate the amount of memory needed for the crconverter program to process a GEX matrix
+        see the commit message for a full explanation of this process'''
+        h5_version = CountMatrix.get_format_version_from_h5(filename)
+        if h5_version == 1:
+            '''Estimate memory usage from a legacy h5py.File (format version 1)'''
+            _, _, nonzero_entries = CountMatrix._load_dims_from_legacy_v1_h5(filename)
+        else:
+            with h5.File(filename, 'r') as f:
+                _, _, nonzero_entries = CountMatrix.load_dims(f['matrix'])
+        return CountMatrix._get_mem_gb_crconverter_estimate_from_nnz(nonzero_entries)
+
+    @staticmethod
+    def _get_mem_gb_crconverter_estimate_from_nnz(nnz):
+        # Empirically determined baseline + ~85 bytes per nnz
+        estimate = 1.691 + 8.537e-8 * nnz
+        # Arbitrary safety factor
+        estimate *= 1.5
+        return np.ceil(estimate)
+
+    @staticmethod
     def get_mem_gb_from_matrix_h5(filename):
         '''Estimate memory usage from an HDF5 file.'''
         h5_version = CountMatrix.get_format_version_from_h5(filename)
