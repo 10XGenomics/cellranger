@@ -350,7 +350,7 @@ def main(args, outs):
             report += sd_report
             auto_chemistries[idx] = chemistry_name
             if not chemistry_name:
-                err_msg = ("Were were unable to detect the chemistry for the following dataset. "
+                err_msg = ("Unable to detect the chemistry for the following dataset. "
                            "Please validate it and/or specify the chemistry via the --chemistry argument.\n"
                            + sd_report)
                 martian.exit(err_msg)
