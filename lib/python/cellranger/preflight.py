@@ -183,7 +183,7 @@ def expand_libraries_csv(csv_path):
             print row.keys()
 
             for key in row.iterkeys():
-                if key is None:
+                if key is None or row[key] is None:
                     msg = "Invalid libraries CSV file: incorrrect number of columns on line number (after excluding comment lines) %d" % reader.line_num
                     raise PreflightException(msg)
                 row[key] = row[key].strip()
