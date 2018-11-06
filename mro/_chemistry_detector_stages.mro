@@ -16,6 +16,6 @@ stage DETECT_CHEMISTRY(
     out txt      report,
     src py       "stages/chemistry_detector/detect_chemistry",
 ) using (
-    mem_gb   = 4,
+    mem_gb   = 8,
     volatile = strict,
 )

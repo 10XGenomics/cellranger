@@ -78,7 +78,7 @@ def split(args):
 
         chunks.append(chunk)
     join = {
-        '__mem_gb': 4,
+        '__mem_gb': 8,
     }
     return {'chunks': chunks, 'join': join}
 
