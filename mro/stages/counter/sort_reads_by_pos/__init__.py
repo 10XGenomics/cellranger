@@ -20,17 +20,16 @@ stage SORT_BY_POS(
 )
 """
 
-JOIN_MEM_GB = 2
-
 def split(args):
     chunks = []
     for chunk_input in args.inputs:
         chunks.append({
             'chunk_input': chunk_input,
+            '__mem_gb': 2,
         })
     join = {
         '__threads': args.num_threads,
-        '__mem_gb': JOIN_MEM_GB,
+        '__mem_gb': 4,
     }
     return {'chunks': chunks, 'join': join}
 
