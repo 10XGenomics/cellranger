@@ -9,6 +9,7 @@ import tables
 import itertools
 import json
 import math
+import random
 import numpy as np
 from cellranger.feature_ref import FeatureReference, FeatureDef
 import cellranger.rna.library as rna_library
@@ -746,6 +747,9 @@ class MoleculeCounter:
             for (gg, chunk) in zip(unique_ggs, chunk_iter):
                 yield (gg, chunk[0], chunk[1])
         
+        random.seed(0)
+        np.random.seed(0)
+
         v2_mc_in = h5py.File(v2_mole_info_h5, 'r')
         v2_metrics = get_v2_metrics(v2_mole_info_h5)
 

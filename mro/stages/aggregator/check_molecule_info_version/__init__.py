@@ -81,7 +81,7 @@ def split(args):
             '__mem_gb': mem_gb,
         })
 
-    return {'chunks': chunks, 'join': {'__mem_gb': 1}}
+    return {'chunks': chunks, 'join': {'__mem_gb': 3}}
 
 def main(args, outs):
     outs.updated_sample_def = args.sample_def.copy()
