@@ -192,6 +192,8 @@ stage ASSEMBLE_VDJ(
 ) split (
     in  bam       chunked_bam,
     in  int       gem_group,
+) using (
+    vmem_gb = 15,
 )
 
 stage FILTER_BARCODES_VDJ(
@@ -343,6 +345,8 @@ stage ASSEMBLE_CONSENSUS(
 ) split (
     in  string[]  chunk_clonotypes,
     in  json      chunk_annotations,
+) using (
+    vmem_gb = 15,
 )
 
 stage FILTER_CONTIGS(
