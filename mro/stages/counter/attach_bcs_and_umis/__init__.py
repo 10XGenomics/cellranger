@@ -37,6 +37,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  bool     correct_barcodes,
     in  bool     skip_metrics,
     in  bool     paired_end,
+    in  map      skip_translate,
     in  map[]    library_info,
     out bam[]    output,
     out int[]    num_alignments,
@@ -72,6 +73,13 @@ def split(args):
     chunks = []
     for chunk_genome_input, tags, gem_group, library_type, library_id, in itertools.izip_longest(
             args.genome_inputs, args.tags, args.gem_groups, args.library_types, args.library_ids):
+
+        gem_group_str = str(gem_group)
+        if gem_group_str in args.skip_translate and library_type in args.skip_translate[gem_group_str]:
+            this_skip_translate = args.skip_translate[gem_group_str][library_type]
+        else:
+            this_skip_translate = True
+
         chunks.append({
             'chunk_genome_input': chunk_genome_input,
             'chunk_tags': tags,
@@ -80,6 +88,7 @@ def split(args):
             'library_id': library_id,
             'library_info_json': libraries_fn,
             'bam_comments_json': bam_comment_fn,
+            'skip_translate': this_skip_translate,
             '__mem_gb': 4,
         })
     join = {
@@ -119,6 +128,8 @@ def main(args, outs):
 
     if cr_chem.get_endedness(args.chemistry_def) == cr_constants.FIVE_PRIME:
         cmd.append('--fiveprime')
+    if args.skip_translate:
+        cmd.append('--skip-translate')
     if args.feature_reference is not None:
         cmd.extend(['--feature-ref', args.feature_reference])
 

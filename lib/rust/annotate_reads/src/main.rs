@@ -62,7 +62,7 @@ use utils::CellrangerFastqHeader;
 
 const USAGE: &'static str = "
 Usage:
-  annotate_reads main <in-bam> <in-tags> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> <library-id> <library-info> [--fiveprime] [--bam-comments=F] [--feature-ref=F]
+  annotate_reads main <in-bam> <in-tags> <out-bam> <out-metrics> <reference-path> <gene-index> <bc-counts> <bc-whitelist> <gem-group> <out-metadata> <strandedness> <feature-dist> <library-type> <library-id> <library-info> [--fiveprime] [--skip-translate] [--bam-comments=F] [--feature-ref=F]
   annotate_reads join <in-chunked-metrics> <out-json> <out-bc-csv>
   annotate_reads (-h | --help)
 
@@ -98,6 +98,7 @@ struct Args {
 
     // main flags
     flag_fiveprime:         bool,
+    flag_skip_translate:    bool,
     flag_bam_comments:      Option<String>,
     flag_feature_ref:       Option<String>,
 
@@ -130,7 +131,7 @@ fn annotate_reads_main(args: Args) -> Result<(), Error> {
     println!("Loading indices");
     let reference_path = args.arg_reference_path.ok_or(format_err!("No reference path given"))?;
 
-    
+
     let strandedness = Strandedness::from_string(args.arg_strandedness.unwrap());
     let params = AnnotationParams {
         chemistry_strandedness:     strandedness,
@@ -147,10 +148,16 @@ fn annotate_reads_main(args: Args) -> Result<(), Error> {
     let gem_group = &args.arg_gem_group.unwrap();
 
     // Attempt to translate barcodes only if the library type specifies that we should
-    let translate_barcodes = match &args.arg_library_type {
-        &Some(ref library_type) =>
-            !features::LIBRARY_TYPES_WITHOUT_FEATURES.contains(&library_type.as_str()),
-        _ => false,
+    // If skip_translate is True for this chunk (gem_group, library_type combo), as determined by check_barcodes_compatibility,
+    // then over ride the logic based on library_type and skip the translation of barcodes
+    let translate_barcodes: bool = if args.flag_skip_translate {
+        false
+    } else {
+        match &args.arg_library_type {
+            &Some(ref library_type) =>
+                !features::LIBRARY_TYPES_WITHOUT_FEATURES.contains(&library_type.as_str()),
+            _ => false,
+        }
     };
 
     let bc_umi_checker = barcodes::BarcodeUmiChecker::new(&args.arg_bc_counts.unwrap(),
@@ -534,6 +541,7 @@ mod tests {
             arg_library_id:         Some("0".to_owned()),
             arg_library_info:       Some("test/library_info.json".to_owned()),
             flag_fiveprime:         false,
+            flag_skip_translate:    true,
             flag_bam_comments:      None,
             flag_feature_ref:       None,
         };
@@ -561,6 +569,7 @@ mod tests {
             arg_library_id:         Some("0".to_owned()),
             arg_library_info:       Some("test/library_info.json".to_owned()),
             flag_fiveprime:         false,
+            flag_skip_translate:    true,
             flag_bam_comments:      None,
             flag_feature_ref:       None,
         };

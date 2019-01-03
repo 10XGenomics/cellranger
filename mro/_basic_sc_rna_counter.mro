@@ -20,6 +20,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     in  bool    correct_barcodes,
     in  bool    rescue_multimappers,
     in  bool    skip_metrics,
+    in  map     skip_translate,
     in  map     annotation_params,
     in  bool    filter_umis,
     in  bool    retain_fastqs,
@@ -121,6 +122,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
         bam_comments                 = SUMMARIZE_READ_REPORTS.bam_comments,
         rescue_multimappers          = self.rescue_multimappers,
         skip_metrics                 = self.skip_metrics,
+        skip_translate               = self.skip_translate,
         correct_barcodes             = self.correct_barcodes,
         library_info                 = self.library_info,
     ) using (

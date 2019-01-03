@@ -143,6 +143,7 @@ pipeline SC_RNA_COUNTER(
         correct_barcodes             = true,
         rescue_multimappers          = true,
         skip_metrics                 = false,
+        skip_translate               = CHECK_BARCODES_COMPATIBILITY.skip_translate,
         annotation_params            = self.annotation_params,
         filter_umis                  = self.filter_umis,
         retain_fastqs                = self.retain_fastqs,

@@ -82,6 +82,7 @@ stage ATTACH_BCS_AND_UMIS(
     in  bool     rescue_multimappers,
     in  bool     correct_barcodes,
     in  bool     skip_metrics,
+    in  map      skip_translate,
     in  map[]    library_info,
     out bam[]    output,
     out int[]    num_alignments,
@@ -278,6 +279,7 @@ stage CHECK_BARCODES_COMPATIBILITY(
     in  float    barcode_compatibility_cutoff,
     out bool     barcode_compatible,
     out map      barcode_compatibility_info,
+    out map      skip_translate,
     src py       "stages/counter/check_barcodes_compatibility",
 ) split (
     in  map      read_chunks,

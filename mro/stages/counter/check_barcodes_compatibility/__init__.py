@@ -22,6 +22,7 @@ stage CHECK_BARCODES_COMPATIBILITY(
     in  float    barcode_compatibility_cutoff,
     out bool     barcode_compatible,
     out map      barcode_compatibility_info,
+    out map      skip_translate,
     src py       "stages/counter/check_barcodes_compatibility",
 ) split (
     in  map      read_chunks,
@@ -33,28 +34,6 @@ stage CHECK_BARCODES_COMPATIBILITY(
 
 # throwing away the first N reads at the beginning of a fastq file
 READS_BURNIN = 10000
-
-def cosine_similarity(c1, c2):
-    """ Calculate the cosine similarity of two barcode lists.
-
-    The barcode list is represented as 'bag of barcode', which is a
-    collections.Counter object (barcodes as keys and their counts as
-    values. This function will calculate the cosine similarity of two
-    barcode lists.
-
-    Args:
-        c1 (Counter): A Counter object of the first barcode list.
-        c2 (Counter): A Counter object of the second barcode list.
-
-    Returns:
-        float: The cosine similarity of two barcode lists.
-    """
-    terms = set(c1).union(c2)
-    dotprod = sum(c1.get(k, 0) * c2.get(k, 0) for k in terms)
-    magA = math.sqrt(sum(c1.get(k, 0)**2 for k in terms))
-    magB = math.sqrt(sum(c2.get(k, 0)**2 for k in terms))
-    return tk_stats.robust_divide(dotprod, magA * magB)
-
 
 def robust_cosine_similarity(c1, c2, robust_fraction_threshold=0.925):
     """ Calculate the robust cosine similarity of two barcode lists.
@@ -108,6 +87,8 @@ def split(args):
 
 def join(args, outs, chunk_defs, chunk_outs):
     outs.barcode_compatible = True
+    outs.barcode_compatibility_info = {}  # record sampled barcode info
+    outs.skip_translate = {}
 
     if chunk_outs is None or len(chunk_outs) == 0:
         return
@@ -122,7 +103,6 @@ def join(args, outs, chunk_defs, chunk_outs):
     barcode_translate_map = cr_utils.load_barcode_translate_map(args.barcode_whitelist)
 
     sampled_bc_counter_in_wl = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    outs.barcode_compatibility_info = {}  # record sampled barcode info
 
     for gem_group in sampled_barcodes:
         outs.barcode_compatibility_info[gem_group] = {}
@@ -136,41 +116,64 @@ def join(args, outs, chunk_defs, chunk_outs):
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled_unique'] = len(unique_bc)
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled_unique_in_whitelist'] = len(unique_bc_in_wl)
 
-            raw_bc_counter = Counter(sampled_bc)
-            bc_counter = defaultdict(int)
-            for b in unique_bc_in_wl:
-                if (lib != GENE_EXPRESSION_LIBRARY_TYPE) and (barcode_translate_map is not None):
-                    bc_trans = barcode_translate_map.get(b, b)
-                else:
-                    bc_trans = b
-                bc_counter[bc_trans] += raw_bc_counter[b]
-            sampled_bc_counter_in_wl[gem_group][lib] = bc_counter
+            sampled_bc_counter_in_wl[gem_group][lib] = Counter(sampled_bc)
 
     barcode_compatibility_cutoff = cr_constants.BARCODE_COMPATIBILITY_CUTOFF if args.barcode_compatibility_cutoff is None else args.barcode_compatibility_cutoff
 
-    outs.barcode_compatibility_info['pairwise_compatibility'] = {}
-    # for every gem_group, check each pair of library types
-    for gem_group in sampled_barcodes:
-        outs.barcode_compatibility_info['pairwise_compatibility'][gem_group] = []
-        for lib1, lib2 in itertools.combinations(sampled_barcodes[gem_group].keys(), 2):
-            counter1, counter2 = sampled_bc_counter_in_wl[gem_group][lib1], sampled_bc_counter_in_wl[gem_group][lib2]
-            overlap_size = len(set(counter1).intersection(set(counter2)))
-            cosine_sim = robust_cosine_similarity(counter1, counter2)
+    pairwise_compatibility = {}
+    exit_log_msg = "Barcodes from libraries are not compatible."
 
-            outs.barcode_compatibility_info['pairwise_compatibility'][gem_group].append([lib1, lib2, overlap_size, cosine_sim])
+    for gem_group in sampled_barcodes:
+        outs.skip_translate[gem_group] = {}
+        pairwise_compatibility[gem_group] = {}
+        library_types = sampled_barcodes[gem_group].keys()
+
+        if len(library_types) < 2:
+            continue
+
+        if GENE_EXPRESSION_LIBRARY_TYPE in library_types:
+            base_lib = GENE_EXPRESSION_LIBRARY_TYPE
+            library_types.remove(base_lib)
+            outs.skip_translate[gem_group][base_lib] = True
+        else:
+            # TODO: as for CR3.0, we need GEX for cell calling et al
+            # at some point, we might support samples without GEX
+            martian.exit("Gene expression data not found in the GEM group {}.".format(gem_group))
+
+        base_lib_counter = sampled_bc_counter_in_wl[gem_group][base_lib]
+        for lib in library_types:
+            pair_key = '{}/{}'.format(base_lib, lib)
+            pairwise_compatibility[gem_group][pair_key] = {}
+            lib_counter = sampled_bc_counter_in_wl[gem_group][lib]
+
+            # without translate
+            overlap_size = len(set(base_lib_counter).intersection(set(lib_counter)))
+            cosine_sim = robust_cosine_similarity(base_lib_counter, lib_counter)
+            outs.skip_translate[gem_group][lib] = True
+
+            # with translate
+            if (lib != GENE_EXPRESSION_LIBRARY_TYPE) and (barcode_translate_map is not None):
+                translated_counter = {barcode_translate_map.get(k,k) : v for (k,v) in lib_counter.iteritems()}
+                overlap_size_translated = len(set(base_lib_counter).intersection(set(translated_counter)))
+                cosine_sim_translated = robust_cosine_similarity(base_lib_counter, translated_counter)
+
+                if cosine_sim_translated > cosine_sim:
+                    outs.skip_translate[gem_group][lib] = False
+                    overlap_size = overlap_size_translated
+                    cosine_sim = cosine_sim_translated
+
+            pairwise_compatibility[gem_group][pair_key]['overlap_size'] = overlap_size
+            pairwise_compatibility[gem_group][pair_key]['cosine_similarity'] = cosine_sim
             if cosine_sim < barcode_compatibility_cutoff:
                 outs.barcode_compatible = False
+                exit_log_msg += '\n - GEM group {}: Barcodes from [{}] and [{}] have cosine similarity {:.4f}'.format(gem_group, base_lib, lib, cosine_sim)
 
+    outs.barcode_compatibility_info['pairwise_compatibility'] = pairwise_compatibility
     # format warning/error message if incompatible
     if outs.barcode_compatible is False:
-        log_msg = 'Barcodes from libraries are not compatible.'
-        for gem_group in outs.barcode_compatibility_info['pairwise_compatibility']:
-            for pair in outs.barcode_compatibility_info['pairwise_compatibility'][gem_group]:
-                if pair[3] < barcode_compatibility_cutoff:
-                    log_msg += '\n - GEM group {}: Barcodes from [{}] and [{}] have cosine similarity {:.4f}'.format(gem_group, pair[0], pair[1], pair[3])
+        martian.log_info(exit_log_msg)
+        martian.exit(exit_log_msg)
 
-        martian.log_info(log_msg)
-        martian.exit(log_msg)
     return
 
 def main(args, outs):
