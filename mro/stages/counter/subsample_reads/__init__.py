@@ -146,7 +146,11 @@ def split(args):
             'chunk_start': chunk_start,
             'chunk_len': chunk_len,
             'subsample_info': subsamplings,
-            '__mem_gb': MoleculeCounter.estimate_mem_gb(chunk_len),
+            # The estimate_mem_gb only count the memory usage for the MoleculeCounter object, which is
+            # under-estimated the actual memory usage.
+            # Based on memory profiling with test case fuzzer_114, actual memory usageis ~4x more
+            # than estimate_mem_gb (without cap), here set scale = 6.
+            '__mem_gb': MoleculeCounter.estimate_mem_gb(chunk_len, scale=6),
         })
 
     join = {
@@ -207,8 +211,8 @@ def main(args, outs):
     lib_genome_idx_pairs = set(izip(mol_library_idx[mol_read_pairs > 0],
                                     mol_genome_idx[mol_read_pairs > 0]))
     for (lib_idx, genome_idx) in lib_genome_idx_pairs:
-       lib_type_idx = lib_idx_to_lib_type_idx[lib_idx]
-       lib_type_genome_any_reads[lib_type_idx, genome_idx] = True
+        lib_type_idx = lib_idx_to_lib_type_idx[lib_idx]
+        lib_type_genome_any_reads[lib_type_idx, genome_idx] = True
 
 
     # Run each subsampling task on this chunk of data
