@@ -55,7 +55,7 @@ def split(args):
             'gem_group': gem_group,
             'library_type': lib_type,
         })
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 2}}
 
 def main(args, outs):
     # Load barcode whitelist

@@ -83,7 +83,7 @@ def split(args):
             'chunks_per_gem_group': chunks_per_gem_group,
             '__mem_gb': 6,
         })
-    return {'chunks': chunks}
+    return {'chunks': chunks, 'join': {'__mem_gb': 2}}
 
 def enumerate_bucket_names(chunks_per_gem_group):
     """ yield (gem_group, bucket_name) """
