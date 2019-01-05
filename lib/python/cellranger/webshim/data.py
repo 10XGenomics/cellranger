@@ -89,9 +89,11 @@ class SampleData:
             - plot_segments: List of BarcodeRankPlotSegment
         """
         counts_per_bc = self.barcode_summary[key][:]
-        bc_sequence = self.barcode_summary['bc_sequence'][:]
-        sorted_bc, sorted_counts = zip(*sorted(zip(bc_sequence, counts_per_bc), key=lambda pair: pair[1], reverse=True))
-
+        srt_order = sorted(range(len(counts_per_bc)), key=lambda x: counts_per_bc[x], reverse=True)
+        sorted_bc = self.barcode_summary['bc_sequence'][:][srt_order]
+        sorted_counts = counts_per_bc[srt_order]
+        del srt_order
+ 
         # find the first barcode which is not a cell
         first_non_cell = len(sorted_bc)
         for i, bc in enumerate(sorted_bc):
