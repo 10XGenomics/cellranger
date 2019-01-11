@@ -116,7 +116,7 @@ def join(args, outs, chunk_defs, chunk_outs):
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled_unique'] = len(unique_bc)
             outs.barcode_compatibility_info[gem_group][lib]['num_barcodes_sampled_unique_in_whitelist'] = len(unique_bc_in_wl)
 
-            sampled_bc_counter_in_wl[gem_group][lib] = Counter(sampled_bc)
+            sampled_bc_counter_in_wl[gem_group][lib] = {k : v for (k,v) in Counter(sampled_bc).iteritems() if k in unique_bc_in_wl}
 
     barcode_compatibility_cutoff = cr_constants.BARCODE_COMPATIBILITY_CUTOFF if args.barcode_compatibility_cutoff is None else args.barcode_compatibility_cutoff
 
