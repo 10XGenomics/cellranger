@@ -11,17 +11,17 @@ export ROOT_DIR=$(shell pwd)
 ### Rust
 RUST_SRC_PATH=$(shell pwd)/lib/rust
 export CARGO_HOME=$(RUST_SRC_PATH)/.cargo
-RUST_BINS=vdj_asm chunk_reads annotate_reads detect_chemistry cr_stage cr_stage_pd
+RUST_BINS=vdj_asm chunk_reads annotate_reads detect_chemistry cr_stage
 
 .PHONY: all  clean $(RUST_BINS)   louvain rust-clean  version-files
 
 #
 # Targets for development builds.
 #
-all: $(RUST_BINS) louvain   cython bamtofastq
+all: $(RUST_BINS) louvain   cython
 	make -C tenkit all
 
-clean: rust-clean  louvain-clean clean-cython clean-bamtofastq
+clean: rust-clean  louvain-clean clean-cython
 	make -C tenkit clean
 
 #
@@ -92,14 +92,3 @@ $(RUST_BINS): lib/bin
 	cargo build --release; \
 	cp target/release/$@ ../bin/; \
 	popd > /dev/null
-
-bamtofastq: lib/bin
-	cd lib/bamtofastq; cargo build --release
-	cp lib/bamtofastq/target/release/bamtofastq lib/bin
-
-clean-bamtofastq:
-	rm -Rf $(CARGO_HOME)
-	rm -Rf lib/bin/bamtofastq
-	rm -Rf lib/bamtofastq/target
-
-

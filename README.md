@@ -1,20 +1,21 @@
 # Building Cell Ranger 2.1.1
 ## Build dependencies
 - Python 2.7.13
-- rust 1.19.0
-- clang 4.0.1
-- go 1.9
+- rust 1.28.0
+- clang 6.0
+- go 1.11
+- node v8.11.4
 
 ### Example setup of build dependencies on Ubuntu 16.04.3
 ```
-sudo apt-get install make clang-4.0 golang-1.9 libz-dev
+sudo apt-get install make clang-6.0 golang-1.11-go libz-dev libbz2-dev liblzma-dev
 
 # Add golang to path
-export PATH=/usr/lib/go-1.9/bin:$PATH
+export PATH=/usr/lib/go-1.11/bin:$PATH
 
 # Install rustup from https://www.rustup.rs/ . Then:
-rustup install 1.19.0
-rustup default 1.19.0
+rustup install 1.28.0
+rustup default 1.28.0
 ```
 
 ## Build command
@@ -22,8 +23,8 @@ rustup default 1.19.0
 
 # Running Cell Ranger
 ## Runtime dependencies
-- Binary dependencies can be found in the Ranger 2.1.0 package (https://support.10xgenomics.com/developers/software/downloads/latest)
-  - The Ranger package includes a build of the Martian platform (v2.3.0), which is open source. For more information, go to http://martian-lang.org/ .
+- Binary dependencies can be found in the Ranger 3.0.2 package (https://support.10xgenomics.com/developers/software/downloads/latest)
+  - The Ranger package includes a build of the Martian platform (v3.2.0), which is open source. For more information, go to http://martian-lang.org/ .
 
 ## Setting up the environment
 ```
@@ -35,8 +36,8 @@ source /path/to/cellranger/sourceme.bash
 ```
 
 ## Note about Loupe
-The binaries required to generate Loupe Cell Browser (.cloupe) and Loupe V(D)J Browser files (.vloupe) are not included in this repository or in the binary dependencies package Ranger. By default, you will get empty .cloupe/.vloupe files when running a version of Cell Ranger built from this repository. The necessary binaries can be obtained from an existing binary version of Cell Ranger by running:
-`cp /path/to/cellranger-2.1.1/cellranger-cs/*/lib/bin/{crconverter,vlconverter} /path/to/open-source-cellranger/lib/bin/`
+The binaries required to generate Loupe Cell Browser (.cloupe) and Loupe V(D)J Browser files (.vloupe) are not included in this repository or in the binary dependencies package Ranger. The necessary binaries can be obtained from an existing binary version of Cell Ranger by running:
+`cp /path/to/cellranger-3.0.2/cellranger-cs/*/lib/bin/{crconverter,vlconverter} /path/to/open-source-cellranger/lib/bin/`
 
 # Support
 We do not provide support for building and running this code.
