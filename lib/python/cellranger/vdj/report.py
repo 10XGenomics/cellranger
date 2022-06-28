@@ -189,13 +189,8 @@ class VdjReporter(cr_report.Reporter):
                                recovered_cells):
         self._get_metric_attr('vdj_filtered_bcs').set_value(len(cell_barcodes))
         cell_barcodes = set(cell_barcodes)
-        cell_read_pairs = 0
-        barcoded_read_pairs = 0
-        for bc, count in itertools.izip(barcodes, counts):
-            if bc in cell_barcodes:
-                cell_read_pairs += count
-            barcoded_read_pairs += count
-
+        cell_read_pairs = np.sum([1 for bc in barcodes if bc in cell_barcodes])
+        barcoded_read_pairs = np.sum(counts)
         self._get_metric_attr('vdj_filtered_bcs_cum_frac').set_value(cell_read_pairs, barcoded_read_pairs)
         self._get_metric_attr('vdj_total_raw_read_pairs_per_filtered_bc').set_value(total_read_pairs, len(cell_barcodes))
 
