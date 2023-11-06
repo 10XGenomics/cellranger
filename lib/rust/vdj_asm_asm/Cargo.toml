@@ -1,0 +1,103 @@
+[dependencies]
+bio = '>=0.35'
+bitflags = '1.2'
+debruijn = '0.3.4'
+fxhash = '0.2.1'
+hostname = '0.3.1'
+libc = '0.2.147'
+lz4 = '1.23.3'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.byteseq]
+path = '../byteseq'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.io_utils]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.json_report_derive]
+path = '../json_report_derive'
+
+[dependencies.kmer_lookup]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.metric_derive]
+path = '../metric_derive'
+
+[dependencies.parameters_toml]
+path = '../parameters_toml'
+
+[dependencies.perf_stats]
+workspace = true
+
+[dependencies.pretty_trace]
+workspace = true
+
+[dependencies.rust-htslib]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.string_utils]
+workspace = true
+
+[dependencies.umi]
+path = '../umi'
+
+[dependencies.vdj_ann]
+workspace = true
+
+[dependencies.vdj_asm_utils]
+path = '../vdj_asm_utils'
+
+[dependencies.vdj_reference]
+path = '../vdj_reference'
+
+[dependencies.vdj_types]
+workspace = true
+
+[dependencies.vector_utils]
+workspace = true
+
+[features]
+default = []
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+autobins = false
+edition = '2021'
+name = 'vdj_asm_asm'
+publish = false
+version = '0.1.0'

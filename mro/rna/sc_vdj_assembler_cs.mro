@@ -1,0 +1,158 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+
+@include "sc_multi_core.mro"
+@include "sc_multi_cs.mro"
+@include "_sc_multi_defs.mro"
+@include "_sc_vdj_assembler_stages.mro"
+
+pipeline _STRUCTIFY(
+    in  CommonInputs        common_input,
+    in  VdjInputsCS[]       vdj_inputs,
+    in  BasicPipelineConfig config,
+    out CommonInputs        common_input,
+    out VdjInputsCS[]       vdj_inputs,
+    out BasicPipelineConfig config,
+)
+{
+    return (
+        common_input = self.common_input,
+        vdj_inputs   = self.vdj_inputs,
+        config       = self.config,
+    )
+}
+
+pipeline SC_VDJ_ASSEMBLER_CS(
+    in  string       sample_id,
+    in  map[]        sample_def,
+    in  string       sample_desc,
+    in  path         vdj_reference_path,
+    in  bool         denovo,
+    in  path         inner_enrichment_primers,
+    in  string       chain_type,
+    out html         web_summary                      "Run summary HTML",
+    out csv          metrics_summary_csv              "Run summary CSV"           "metrics_summary.csv",
+    out csv          clonotypes                       "Clonotype info",
+    out fasta        filtered_contig_fasta            "Filtered contig sequences FASTA"  "filtered_contig.fasta",
+    out fastq        filtered_contig_fastq            "Filtered contig sequences FASTQ"  "filtered_contig.fastq",
+    out csv          filtered_contig_annotations_csv  "Filtered contigs (CSV)"    "filtered_contig_annotations.csv",
+    out fasta        all_contig_fasta                 "All-contig FASTA"          "all_contig.fasta",
+    out fasta.fai    all_contig_fasta_fai             "All-contig FASTA index"    "all_contig.fasta.fai",
+    out fastq        all_contig_fastq                 "All-contig FASTQ"          "all_contig.fastq",
+    out bam          all_contig_bam                   "Read-contig alignments"    "all_contig.bam",
+    out bam.bai      all_contig_bam_bai               "Read-contig alignment index"  "all_contig.bam.bai",
+    out json         all_contig_annotations_json      "All contig annotations (JSON)"  "all_contig_annotations.json",
+    out bed          all_contig_annotations_bed       "All contig annotations (BED)"  "all_contig_annotations.bed",
+    out csv          all_contig_annotations_csv       "All contig annotations (CSV)"  "all_contig_annotations.csv",
+    out json         cell_barcodes                    "Barcodes that are declared to be targetted cells",
+    out fasta        consensus_fasta                  "Clonotype consensus FASTA"  "consensus.fasta",
+    out fasta.fai    consensus_fasta_fai              "Clonotype consensus FASTA index"  "consensus.fasta.fai",
+    out bam          consensus_bam                    "Contig-consensus alignments"  "consensus.bam",
+    out bam.bai      consensus_bam_bai                "Contig-consensus alignment index"  "consensus.bam.bai",
+    out csv          consensus_annotations_csv        "Clonotype consensus annotations (CSV)"  "consensus_annotations.csv",
+    out fasta        concat_ref_fasta                 "Concatenated reference sequences"  "concat_ref.fasta",
+    out fasta.fai    concat_ref_fasta_fai             "Concatenated reference index"  "concat_ref.fasta.fai",
+    out bam          concat_ref_bam                   "Contig-reference alignments"  "concat_ref.bam",
+    out bam.bai      concat_ref_bam_bai               "Contig-reference alignment index"  "concat_ref.bam.bai",
+    out vloupe       vloupe                           "Loupe V(D)J Browser file"  "vloupe.vloupe",
+    out VdjRefFolder vdj_reference                    "V(D)J reference",
+    out tsv          airr_rearrangement               "AIRR Rearrangement TSV",
+    out pb           vdj_contig_info                  "All contig info (ProtoBuf format)",
+)
+{
+    call VDJ_PREFLIGHT as VDJ_PREFLIGHT_LOCAL(
+        sample_def               = self.sample_def,
+        vdj_reference_path       = self.vdj_reference_path,
+        denovo                   = self.denovo,
+        full_check               = false,
+        inner_enrichment_primers = self.inner_enrichment_primers,
+        chain_type               = self.chain_type,
+    ) using (
+        local     = true,
+        preflight = true,
+    )
+
+    call VDJ_PREFLIGHT(
+        sample_def               = self.sample_def,
+        vdj_reference_path       = self.vdj_reference_path,
+        denovo                   = self.denovo,
+        full_check               = true,
+        inner_enrichment_primers = self.inner_enrichment_primers,
+        chain_type               = self.chain_type,
+    ) using (
+        preflight = true,
+    )
+
+    call _STRUCTIFY(
+        common_input = {
+            multi_config_sha: null,
+            sample_desc:      self.sample_desc,
+            sample_id:        self.sample_id,
+        },
+        vdj_inputs   = [
+            {
+                chain_type:               self.chain_type,
+                denovo:                   self.denovo,
+                inner_enrichment_primers: self.inner_enrichment_primers,
+                physical_library_id:      null,
+                r1_length:                null,
+                r2_length:                null,
+                r2_revcomp:               false,
+                sample_def:               self.sample_def,
+            },
+        ],
+        config       = {
+            disable_count:       true,
+            disable_multi:       true,
+            disable_multi_count: true,
+            disable_vdj:         false,
+        },
+    )
+
+    map call FULL_VDJ_INPUTS(
+        cs_inputs = split _STRUCTIFY.vdj_inputs,
+    )
+
+    call SC_MULTI_CORE(
+        common_input          = _STRUCTIFY.common_input,
+        count_input           = null,
+        vdj_inputs            = FULL_VDJ_INPUTS,
+        vdj_gen_inputs        = {
+            filter_flags: {
+                multiplet_filter:     null,
+                shared_contig_filter: null,
+                umi_baseline_filter:  null,
+            },
+            reference_path:     null,
+            vdj_reference_path: self.vdj_reference_path,
+        },
+        basic_config          = _STRUCTIFY.config,
+        multi_config          = null,
+        is_pd                 = false,
+        count_allowed_chems   = null,
+        count_pipestance_type = "SC_RNA_COUNTER_CS",
+        is_multi              = false,
+        feature_config        = null,
+        no_preflight          = false,
+    )
+
+    call BUILD_VDJ_OUTPUTS_CS(
+        multi_core = SC_MULTI_CORE,
+    )
+
+    call PICK_VDJ_OUTS(
+        disable_vdj_t     = SC_MULTI_CORE.full_config.disable_vdj_t,
+        disable_vdj_b     = SC_MULTI_CORE.full_config.disable_vdj_b,
+        vdj_t_outs        = BUILD_VDJ_OUTPUTS_CS.vdj_t_outs_cs,
+        vdj_t_web_summary = BUILD_VDJ_OUTPUTS_CS.vdj_t_web_summary,
+        vdj_b_outs        = BUILD_VDJ_OUTPUTS_CS.vdj_b_outs_cs,
+        vdj_b_web_summary = BUILD_VDJ_OUTPUTS_CS.vdj_b_web_summary,
+    )
+
+    return (
+        vdj_reference = SC_MULTI_CORE.vdj_ref_out,
+        web_summary   = PICK_VDJ_OUTS.web_summary,
+        *             = PICK_VDJ_OUTS.vdj_outs,
+    )
+}

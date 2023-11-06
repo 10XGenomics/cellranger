@@ -1,0 +1,83 @@
+[[bin]]
+name = 'cr_vdj'
+test = false
+
+[dependencies]
+docopt = '1.1'
+statrs = '>=0.12, <= 0.16'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.clonotype_assigner]
+path = '../clonotype_assigner'
+
+[dependencies.enclone_core]
+workspace = true
+
+[dependencies.hdf5]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.json_report_derive]
+path = '../json_report_derive'
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.metric_derive]
+path = '../metric_derive'
+
+[dependencies.plotly]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.rand_distr]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tenx-websummary]
+features = ['derive']
+workspace = true
+
+[dependencies.vdj_ann]
+workspace = true
+
+[dependencies.vdj_asm_asm]
+default-features = false
+path = '../vdj_asm_asm'
+
+[dependencies.vdj_asm_utils]
+default-features = false
+path = '../vdj_asm_utils'
+
+[dependencies.websummary_build]
+path = '../websummary_build'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'cr_vdj'
+publish = false
+version = '0.1.0'

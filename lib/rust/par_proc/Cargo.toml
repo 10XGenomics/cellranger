@@ -1,0 +1,25 @@
+[dependencies]
+crossbeam-channel = '>=0.4'
+crossbeam-utils = '>=0.6'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'par_proc'
+publish = false
+version = '0.1.0'

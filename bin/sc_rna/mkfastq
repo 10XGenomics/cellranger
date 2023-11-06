@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2017 10x Genomics, Inc.  All rights reserved.
+#
+# Wrapper for running MAKE_FASTQS_CS with mrp, with appropriate
+# Cell Ranger Chromium settings.
+
+function implement_read_configuration {
+    maxilen=$(get_max_index_len "$run/RunInfo.xml")
+    if [ $maxilen -lt 14 ]; then
+        # No 10x barcode in index read, v2 chemistry
+        TENX_BC_READ_TYPE=R1
+        TENX_BC_LENGTH=16
+        TENX_UMI_READ_TYPE=R1
+        TENX_UMI_START_INDEX=16
+        TENX_UMI_LENGTH=10
+        TENX_SI_READ_TYPE=I1
+        WHITELIST_NAME="737K-august-2016,3M-february-2018"
+    else
+        # 10x barcode in index read, v1 chemistry
+        TENX_BC_READ_TYPE=I1
+        TENX_BC_LENGTH=14
+        TENX_UMI_READ_TYPE=R2
+        TENX_UMI_START_INDEX=0
+        TENX_UMI_LENGTH=10
+        TENX_SI_READ_TYPE=I2
+        WHITELIST_NAME="737K-april-2014_rc"
+    fi
+    TENX_BARCODE_WHITELIST=$(python -c 'from sys import argv;import cellranger.barcodes.utils as u;print(u.get_barcode_whitelist_paths(argv[1]))' "$WHITELIST_NAME")
+}
+
+# shellcheck source=../tenkit/_mkfastq
+source _mkfastq

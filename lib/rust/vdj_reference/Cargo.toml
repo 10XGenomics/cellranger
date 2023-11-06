@@ -1,0 +1,47 @@
+[dependencies]
+bio = '>=0.35'
+fxhash = '0.2.1'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.byteseq]
+path = '../byteseq'
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.strum]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
+[dependencies.vdj_types]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'vdj_reference'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['martian']

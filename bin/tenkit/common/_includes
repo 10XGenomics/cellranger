@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Common helper functions, docopt strings, options processing functions,
+# and sample_def generation functions.
+#
+
+###########################################################
+# Helper functions
+#
+function error {
+    echo -e "[error] $1"
+    exit 1
+}
+
+function warn {
+    echo -e "[warn] $1"
+}
+
+function abspath {
+    eval "path='$1'"
+    if [[ "$path" = /* ]]; then
+        echo "$path"
+    else
+        echo "$(pwd)/$path"
+    fi
+}
+
+function print_help {
+    echo -e "$USAGE"
+    exit 0
+}
+
+function sourceme {
+    if [ -r "$TENX_SCRIPTDIR/../sourceme.bash" ]; then
+        SOURCEME="$TENX_SCRIPTDIR/../sourceme.bash"
+    else
+        SOURCEME="$TENX_SCRIPTDIR/../../../sourceme.bash"
+    fi
+    source "$SOURCEME" 2> /dev/null
+}
+
+FASTQS_ARG="--fastqs=PATH"
+if [ ! -z "$FASTQS_OPTIONAL" ]; then
+    FASTQS_ARG="[--fastqs=PATH]"
+fi
+
+###########################################################
+# Shared docopt strings
+#
+read -d '' DOCOPT_PREAMBLE_FASTQS <<EOF
+The commands below should be preceded by '$TENX_PRODUCT':
+
+Usage:
+    $TENX_SUBCMD
+        --id=ID
+        $FASTQS_ARG
+        [options]
+    $TENX_SUBCMD <run_id> <mro> [options]
+    $TENX_SUBCMD -h | --help | --version
+
+Arguments:
+    id                  A unique run id and output folder name [a-zA-Z0-9_-]+.
+    fastqs              Path of folder created by mkfastq or bcl2fastq.
+    sample              Prefix of the filenames of FASTQs to select.
+EOF
+
+
+
+read -d '' DOCOPT_OPTIONS_FASTQS <<EOF
+    --sample=PREFIX     Prefix of the filenames of FASTQs to select.
+    --lanes=NUMS        Comma-separated lane numbers.
+    --indices=INDICES   Comma-separated sample index set "SI-001" or sequences.
+    --project=TEXT      Name of the project folder within a mkfastq or
+                            bcl2fastq-generated folder to pick FASTQs from.
+EOF
+
+read -d '' DOCOPT_OPTIONS_MRP_CLUSTER <<EOF
+    --jobmode=MODE      Job manager to use. Valid options: local (default), sge,
+                            lsf, or a .template file
+    --localcores=NUM    Set max cores the pipeline may request at one time. Only
+                            applies to local jobs.
+    --localmem=NUM      Set max GB the pipeline may request at one time. Only
+                            applies to local jobs.
+    --localvmem=NUM     Set max virtual address space in GB for the pipeline.
+                            Only applies to local jobs.
+    --mempercore=NUM    Reserve enough threads for each job to ensure enough
+                        memory will be available, assuming each core on your
+                        cluster has at least this much memory available. Only
+                            applies in cluster jobmodes.
+    --maxjobs=NUM       Set max jobs submitted to cluster at one time. Only
+                            applies in cluster jobmodes.
+    --jobinterval=NUM   Set delay between submitting jobs to cluster, in ms.
+                            Only applies in cluster jobmodes.
+    --overrides=PATH    The path to a JSON file that specifies stage-level
+                            overrides for cores and memory. Finer-grained
+                            than --localcores, --mempercore and --localmem.
+                            Consult the 10x support website for an example
+                            override file.
+EOF
+
+read -d '' DOCOPT_OPTIONS_MRP <<EOF
+    --uiport=PORT       Serve web UI at http://localhost:PORT
+    --disable-ui        Do not serve the UI.
+    --noexit            Keep web UI running after pipestance completes or fails.
+    --nopreflight       Skip preflight checks.
+EOF
+
+read -d '' DOCOPT_OPTIONS_FOOTER <<EOF
+    -h --help           Show this message.
+    --version           Show version.
+
+If you demultiplexed with '$TENX_PRODUCT mkfastq' or directly with Illumina
+bcl2fastq, then set --fastqs to the project folder containing FASTQ files. In
+addition, set --sample to the name prefixed to the FASTQ files comprising
+your sample. For example, if your FASTQs are named:
+    subject1_S1_L001_R1_001.fastq.gz
+then set --sample=subject1
+EOF
+
+###########################################################
+# Shared options processing and sample_defs generator functions
+#
+
+function process_options_fastqs {
+    # Re-write any paths that came directly from demux/mkfastq pipestances into
+    # pipeline-compatible paths -- result will still be comma-delimited list.
+    if [ -n "$fastqs" ]; then
+        if [ -n "$project" ]; then
+            fastqs=$(check_fastq_paths "--fastqs=$fastqs" "--project=$project")
+            fastq_code=$?
+        else
+            fastqs=$(check_fastq_paths "--fastqs=$fastqs")
+            fastq_code=$?
+        fi
+        if [[ $fastq_code -ne 0 ]]; then
+            exit $fastq_code
+        fi
+     fi
+
+    # Auto-detect input mode, fastqs, correct fastqprefix from supplied args
+    if [ -n "$fastqs" ]; then
+        if [ -n "$sample" ]; then
+            fastq_mro_args=( $(check_fastq_params "--fastqs=$fastqs" "--fastqprefix=$sample") )
+            fastq_code=$?
+        else
+            fastq_mro_args=( $(check_fastq_params "--fastqs=$fastqs") )
+            fastq_code=$?
+        fi
+        if [[ $fastq_code -ne 0 ]]; then
+            exit $fastq_code
+        fi
+        fastq_mode="\"${fastq_mro_args[0]}\""
+        sample="${fastq_mro_args[1]}"
+    fi
+
+    # --fastqs
+    # Build array for later sample_def generation
+    if [ -n "$fastqs" ]; then
+        _fastqs="${fastqs//\,/\ }"
+        fastqs=""
+        for _fastq in $_fastqs; do
+           fastqs="$fastqs "$(abspath "$_fastq")
+        done
+    fi
+
+    # --sample
+    # Build array of sample prefixes (normally single, array not advertised)
+    sample_names=null
+    if [ -n "$sample" ]; then
+        sample_names="${sample//\,/\"\,\"}"
+        sample_names=\[\ \""$sample_names"\"\ \]
+    fi
+
+    # --library
+    if [ -n "$library" ]; then
+        library="\"$library\""
+    else
+        # consistent with pipeline missing param behavior
+        library=\"LibraryNotSpecified\"
+    fi
+
+    # --indices (double-quote, arrayize)
+    if [ -n "$indices" ]; then
+        indices="${indices//\,/\"\,\"}"
+        indices=\[\ \""$indices"\"\ \]
+    else
+        indices=\[\ \"any\"\ \]
+    fi
+
+    # --lanes (double-quote, arrayize)
+    if [ -n "$lanes" ]; then
+        lanes="${lanes//\,/\"\,\"}"
+        lanes=\[\ \""$lanes"\"\ \]
+    else
+        lanes=null
+    fi
+}

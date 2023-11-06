@@ -1,0 +1,23 @@
+[dependencies]
+bitflags = '1.2'
+shardio = '0.8.2'
+wyhash = '>=0.4, <0.6'
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.rust-htslib]
+workspace = true
+
+[dependencies.umi]
+path = '../umi'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'cr_bam'
+publish = false
+version = '0.1.0'

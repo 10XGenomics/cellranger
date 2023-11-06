@@ -1,0 +1,58 @@
+# This template shows the possible cellranger multi config CSV options for analyzing Single Cell Gene Expression with Feature Barcode Technology (Antibody Capture, CRISPR Guide Capture, Cell Multiplexing, Antigen Capture), Fixed RNA Profiling, or Single Cell Immune Profiling data.
+# These options cannot be used all together - see section descriptions for detail.
+# Use 'cellranger multi-template --parameters' to see descriptions of all parameters.
+# Please see cellranger multi documentation for details and experimental design-specific examples at https://www.10xgenomics.com/support.
+
+[gene-expression]
+reference,/path/to/transcriptome
+# probe-set,/path/to/probe/set, # Required, Fixed RNA Profiling only.
+# filter-probes,<true|false>, # Optional, Fixed RNA Profiling only.
+# r1-length,<int>
+# r2-length,<int>
+# chemistry,<auto>
+# expect-cells,<int>
+# force-cells,<int>
+# no-secondary,<true|false>
+# no-bam,<true|false>
+# check-library-compatibility,<true|false>
+# include-introns,<true|false>
+# min-assignment-confidence,<0.9>, # Optional, Cell Multiplexing only.
+# cmo-set,/path/to/CMO/reference, # Optional, Cell Multiplexing only.
+# barcode-sample-assignment,/path/to/barcode-sample-assignment/csv, # Optional, Cell Multiplexing only.
+
+[feature] # For Feature Barcode libraries only
+reference,/path/to/feature/reference
+# r1-length,<int>
+# r2-length,<int>
+
+[vdj] # For TCR and BCR libraries only
+reference,/path/to/vdj_reference
+# inner-enrichment-primers,/path/to/primers
+# r1-length,<int>
+# r2-length,<int>
+
+[libraries]
+fastq_id,fastqs,feature_types
+gex1,/path/to/fastqs,Gene Expression
+# Antibody1,/path/to/fastqs,Antibody Capture
+# CRISPR1,path/to/CRISPR_fastqs,CRISPR Guide Capture
+# CMO1,/path/to/fastqs,Multiplexing Capture, # Cell Multiplexing only
+# VDJ_B1,path/to/vdj_B_fastqs,VDJ-B, # 5' Immune Profiling only
+# VDJ_T1,path/to/vdj_T_fastqs,VDJ-T, # 5' Immune Profiling only
+# VDJ_T_GD1,path/to/vdj_T_GD_fastqs,VDJ-T-GD, # 5' Immune Profiling only for gamma-delta TCR
+# Antigen1,path/to/antigen_capture_fastqs,Antigen Capture #5' Antigen Capture only
+
+[antigen-specificity] # for 5' BCR/TCR Antigen Capture only
+control_id,mhc_allele
+Antigen1,AG001
+Antigen2,AG002
+
+[samples] # for Cell Multiplexing libraries only
+sample_id,cmo_ids,description
+sample1,CMO301,Control
+sample2,CMO303,Treated
+
+[samples] # for Fixed RNA Profiling multiplexed libraries only
+sample_id,probe_barcode_ids,description
+sample1,BC001,Control
+sample2,BC003,Treated

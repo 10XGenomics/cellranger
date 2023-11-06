@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Generic script for running a Martian pipeine as a subcommand.
+#
+# Requires the including subcommand script to implement the following
+# functions with their own specific functionality:
+#    implement_process_options
+#    implement_generate_sample_defs
+#    implement_generate_mro
+#
+
+sourceme
+read -d '' DOCOPT_SPEC <<EOF
+$DOCOPT_SPEC
+    $DOCOPT_OPTIONS_MRP
+
+    $DOCOPT_OPTIONS_FOOTER
+EOF
+eval "$(docopts -V " " -h "$DOCOPT_SPEC" : "$@")" # do not remove -V space
+
+###########################################################
+# Construct pass-through options string for mrp.
+#
+opts=""
+
+# mrp flag options
+flagopts=(
+    "disable-ui"
+    "noexit"
+    "nopreflight"
+)
+for opt in "${flagopts[@]}"; do
+    # Associated variables have underscores instead of hyphens
+    var=${opt//-/_}
+    if [ "${!var}" == "true" ]; then
+        opts="$opts --$opt"
+    fi
+done
+
+# mrp number options
+numopts=(
+    "uiport"
+    "jobmode"
+    "localcores"
+    "localmem"
+    "mempercore"
+    "maxjobs"
+    "jobinterval"
+    "overrides"
+)
+for opt in "${numopts[@]}"; do
+    # Associated variables have underscores instead of hyphens
+    var=${opt//-/_}
+    if [ -n "${!var}" ]; then
+        opts="$opts --$opt=${!var}"
+    fi
+done
+
+###########################################################
+# Generate MRO file if user did not supply one.
+#
+if [ -n "$mro" ]; then
+    id="$run_id"
+else
+    mro="__$id.mro"
+    mro_is_temp=true
+
+    sample_id="\"$id\""
+
+    # Call the specific sub-command's implementations
+    implement_process_options
+    implement_generate_sample_defs
+    implement_generate_mro
+fi
+
+# shellcheck source=_mrp
+source "$TENX_SCRIPTDIR/tenkit/common/_mrp"

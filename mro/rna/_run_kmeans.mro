@@ -1,0 +1,18 @@
+filetype h5;
+
+stage RUN_KMEANS(
+    in  h5     matrix_h5,
+    in  h5     pca_h5,
+    in  int    random_seed,
+    in  int    max_clusters,
+    in  int    num_bcs,
+    in  int    num_pcs,
+    out h5     kmeans_h5,
+    out path   kmeans_csv,
+    src py     "stages/analyzer/run_kmeans",
+) split (
+    in  int    n_clusters,
+    in  string library,
+) using (
+    volatile = strict,
+)

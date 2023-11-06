@@ -1,0 +1,613 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2018 10x Genomics, Inc.  All rights reserved.
+#
+# Run MAKE_FASTQS_CS with mrp.
+#
+# NOTE: not using docopt to allow flexibility for passing args into bcl2fastq,
+# otherwise would need to include docopt option for every single bcl2fastq
+# option.  Trapping args that are handled by bcl2fastq.
+#
+
+# shellcheck source=common/_includes
+source "$TENX_SCRIPTDIR/tenkit/common/_includes"
+
+sourceme
+
+read -r -d '' USAGE <<EOF
+Run Illumina demultiplexer on sample sheets that contain 10x-specific sample
+index sets, and generate 10x-specific quality metrics after the demultiplex.
+Any bcl2fastq argument will work (except a few that are set by the pipeline
+to ensure proper trimming and sample indexing). The FASTQ output generated
+will be the same as when running bcl2fastq directly.
+
+These bcl2fastq arguments are overridden by this pipeline:
+    --fastq-cluster-count
+    --minimum-trimmed-read-length
+    --mask-short-adapter-reads
+
+Usage:
+    $TENX_PRODUCT $TENX_SUBCMD --run=PATH [options]
+    $TENX_PRODUCT $TENX_SUBCMD -h | --help | --version
+
+Required:
+    --run=PATH          Path of Illumina BCL run folder.
+
+Optional:
+# Sample Sheet
+    --id=NAME           Name of the folder created by mkfastq. If not supplied,
+                            will default to the name of the flowcell referred to
+                            by the --run argument.
+    --csv=PATH
+    --samplesheet=PATH
+    --sample-sheet=PATH
+                        Path to the sample sheet. The sample sheet can either be
+                            a simple CSV with lane, sample and index columns, or
+                            an Illumina Experiment Manager-compatible sample
+                            sheet. Sample sheet indexes can refer to 10x sample
+                            index set names (e.g., SI-GA-A12).
+    --simple-csv=PATH   Deprecated. Same meaning as --csv.
+    --force-single-index
+                        If 10x-supplied i7/i5 paired indices are specified,
+                            but the flowcell was run with only one sample
+                            index, allow the demultiplex to proceed using
+                                the i7 half of the sample index pair.
+    --filter-single-index
+                        Only demultiplex samples identified
+                            by an i7-only sample index, ignoring dual-indexed
+                            samples.  Dual-indexed samples will not be
+                            demultiplexed.
+    --filter-dual-index
+                        Only demultiplex samples identified
+                          by i7/i5 dual-indices (e.g., SI-TT-A6), ignoring single-
+                          index samples.  Single-index samples will not be
+                          demultiplexed.
+    --rc-i2-override=BOOL
+                        Indicates if the bases in the I2 read are emitted as
+                          reverse complement by the sequencing workflow.
+                          Set to 'true' for the Reverse Complement Workflow
+                          (Workflow B)/ NovaSeq Reagent Kit v1.5 or greater.
+                          Set to 'false' for the Forward Strand Workflow
+                          (Workflow A) / older NovaSeq Reagent Kits.
+                          NOTE: this parameter is autodetected
+                          and should only be passed in special circumstances.
+
+# bcl2fastq Pass-Through
+    --lanes=NUMS        Comma-delimited series of lanes to demultiplex. Shortcut
+                            for the --tiles argument.
+    --use-bases-mask=MASK
+                        Same as bcl2fastq; override the read lengths as
+                            specified in RunInfo.xml. See Illumina bcl2fastq
+                            documentation for more information.
+    --delete-undetermined
+                        Delete the Undetermined FASTQ files left by bcl2fastq
+                            Useful if your sample sheet is only expected to
+                            match a subset of the flowcell.
+    --output-dir=PATH   Same as in bcl2fastq. Folder where FASTQs, reports and
+                            stats will be generated.
+    --project=NAME      Custom project name, to override the samplesheet or to
+                            use in conjunction with the --csv argument.
+
+# Martian Runtime
+    $DOCOPT_OPTIONS_MRP_CLUSTER
+
+    $DOCOPT_OPTIONS_MRP
+
+    $DOCOPT_OPTIONS_FOOTER
+EOF
+
+mrp_opts=""
+lanes=""
+bcl2fastq1_opts=""
+bcl2fastq2_opts=""
+bcl2fastq_output_dir=""
+bcl2fastq_interop_dir=""
+bcl2fastq_use_bases_mask=""
+bcl2fastq1_mismatches=1
+bcl2fastq2_mismatches="1"
+bcl2fastq2_r=6
+bcl2fastq2_w=6
+bcl2fastq2_d=0
+bcl2fastq2_p=0
+tiles_supplied=0
+delete_undetermined=0
+force_single_index=0
+filter_dual_index=0
+rc_i2_override="null"
+filter_single_index=0
+jobmode=local
+localcores=0
+pipestance_id=""
+all_args="$*"
+
+##########################################################
+# Trap command-line arguments to run the pipeline and pass
+# the bcl2fastq arguments onward.
+#
+while [[ $# -gt 0 ]]
+do
+arg="$1"
+case "$arg" in
+    --version)
+        exit 0
+        ;;
+    -\?|-h|--help)
+        print_help
+        ;;
+    --run=*|--input-dir=*)
+        run="${arg#*=}"
+        ;;
+    -R|--run|--input-dir)
+        run="$2"
+        shift
+        ;;
+    --id=*)
+        pipestance_id="${arg#*=}"
+        ;;
+    --id)
+        pipestance_id="$2"
+        shift
+        ;;
+    --lanes=*)
+        lanes="${arg#*=}"
+        ;;
+    --lanes)
+        lanes="$2"
+        shift
+        ;;
+    --samplesheet=*|--sample-sheet=*)
+        samplesheet=$(abspath "${arg#*=}")
+        ;;
+    --samplesheet|--sample-sheet)
+        samplesheet=$(abspath "$2")
+        shift
+        ;;
+    --csv=*|--simple-csv=*)
+        csv=$(abspath "${arg#*=}")
+        ;;
+    --csv|--simple-csv)
+        csv=$(abspath "$2")
+        shift
+        ;;
+    --project=*)
+        project="\"${arg#*=}\""
+        ;;
+    --project)
+        project="\"$2\""
+        shift
+        ;;
+    # trap mrp arg flags
+    --uiport=*|--localmem=*|--mempercore=*|--maxjobs=*|--jobinterval=*|--overrides=*)
+        mrp_opts="$mrp_opts $arg"
+        ;;
+    --localcores=*)
+        mrp_opts="$mrp_opts $arg"
+        localcores=${arg#*=}
+        ;;
+    # trap jobmode
+    --jobmode=*)
+        mrp_opts="$mrp_opts $arg"
+        jobmode="${arg#*=}"
+        ;;
+    # trap mrp action_true flags
+    --noexit|--nopreflight|--disable-ui)
+        mrp_opts="$mrp_opts $arg"
+        ;;
+    # trap bcl2fastq args that we default
+    -r|--loading-threads)
+        bcl2fastq2_r=$2
+        shift
+        ;;
+    -r=*|--loading-threads=*)
+        bcl2fastq2_r=${arg#*=}
+        ;;
+    -w|--writing-threads)
+        bcl2fastq2_w=$2
+        shift
+        ;;
+    -w=*|--writing-threads=*)
+        bcl2fastq2_w=${arg#*=}
+        ;;
+    -d|--demultiplexing-threads)
+        bcl2fastq2_d=$2
+        shift
+        ;;
+    -d=*|--demultiplexing-threads=*)
+        bcl2fastq2_d=${arg#*=}
+        ;;
+    -p|--processing-threads)
+        bcl2fastq2_p=$2
+        shift
+        ;;
+    -p=*|--processing-threads=*)
+        bcl2fastq2_p=${arg#*=}
+        ;;
+    --mismatches=*)
+        bcl2fastq1_mismatches="${arg#*=}"
+        ;;
+    --mismatches)
+        bcl2fastq1_mismatches="$2"
+        shift
+        ;;
+    --barcode-mismatches=*)
+        bcl2fastq2_mismatches="${arg#*=}"
+        ;;
+    --barcode-mismatches)
+        bcl2fastq2_mismatches="$2"
+        shift
+        ;;
+    --fastq-cluster-count)
+        shift
+        ;;
+    --fastq-cluster-count=*)
+        ;;
+    --minimum-trimmed-read-length)
+        shift
+        ;;
+    --minimum-trimmed-read-length=*)
+        ;;
+    --mask-short-adapter-reads)
+        shift
+        ;;
+    --mask-short-adapter-reads=*)
+        ;;
+    --delete-undetermined)
+        delete_undetermined=1
+        ;;
+    --force-single-index)
+        force_single_index=1
+        ;;
+    --filter-dual-index)
+        filter_dual_index=1
+        ;;
+    --filter-single-index)
+        filter_single_index=1
+        ;;
+    --rc-i2-override=*)
+        rc_i2_override="${arg#*=}"
+        ;;
+    --rc-i2-override)
+        rc_i2_override="$2"
+        shift
+        ;;
+    --output-dir=*)
+        bcl2fastq_output_dir=$(abspath "${arg#*=}")
+        bcl2fastq_output_dir="\"$bcl2fastq_output_dir\""
+        ;;
+    --output-dir)
+        bcl2fastq_output_dir=$(abspath "$2")
+        bcl2fastq_output_dir="\"$bcl2fastq_output_dir\""
+        shift
+        ;;
+    --interop-dir=*)
+        bcl2fastq_interop_dir=$(abspath "${arg#*=}")
+        bcl2fastq_interop_dir="\"$bcl2fastq_interop_dir\""
+        ;;
+    --interop-dir)
+        bcl2fastq_interop_dir=$(abspath "$2")
+        bcl2fastq_interop_dir="\"$bcl2fastq_interop_dir\""
+        shift
+        ;;
+    --use-bases-mask=*)
+        bcl2fastq_use_bases_mask="\"${arg#*=}\""
+        ;;
+    --use-bases-mask)
+        bcl2fastq_use_bases_mask="\"$2\""
+        shift
+        ;;
+    --tiles=*)
+        tiles_supplied=1
+        bcl2fastq1_opts="$bcl2fastq1_opts $arg"
+        bcl2fastq2_opts="$bcl2fastq2_opts $arg"
+        ;;
+    --tiles)
+        tiles_supplied=1
+        tiles_arg="$2"
+        bcl2fastq1_opts="$bcl2fastq1_opts --tiles=$tiles_arg"
+        bcl2fastq2_opts="$bcl2fastq2_opts --tiles $tiles_arg"
+        shift
+        ;;
+    *)
+        # pass through to bcl2fastq opts, decide on which to execute later
+        bcl2fastq1_opts="$bcl2fastq1_opts $arg"
+        bcl2fastq2_opts="$bcl2fastq2_opts $arg"
+        ;;
+esac
+shift
+done
+
+maxlocalcores=12
+#######################################################
+# If localcores is not overridden but num cores > 12,
+# set --localcores to 12 in order to avoid local
+# saturation on merge steps.
+#######################################################
+if [[ $localcores -eq 0 ]]; then
+    numcpus=$(grep -c ^processor /proc/cpuinfo)
+    if [ $? == 0 ]; then
+        if [[ $numcpus -gt $maxlocalcores ]]; then
+            mrp_opts="$mrp_opts --localcores=$maxlocalcores"
+            localcores=$maxlocalcores
+        fi
+    fi
+fi
+
+###########################################################
+# implement_process_options
+#
+if [ -z "$run" ]; then
+    error "You must specify a run path with -R, --run or --input-dir."
+fi
+
+# TODO: not yet supporting standalone --spec arguments
+if [[ -z "$samplesheet" && -z "$csv" ]]; then
+    error "You must specify either a samplesheet or CSV file."
+fi
+
+run=$(abspath "$run")
+
+# Check run folder exists.
+if [ ! -d "$run" ]; then
+    error "Specified run folder does not exist: $run"
+fi
+
+# Check run folder is executable.
+if [ ! -x "$run" ]; then
+    error "Do not have permission to open run folder."
+fi
+
+# Check run is complete.
+if [ ! -e "$run/RTAComplete.txt" ]; then
+    error "Run does not appear to be complete yet.  RTAComplete.txt not found."
+fi
+
+# Check RunInfo.xml exists.
+if [ ! -e "$run/RunInfo.xml" ]; then
+    error "Cannot find RunInfo.xml in folder: $run."
+fi
+
+# Check RunInfo.xml is readable.
+if [ ! -r "$run/RunInfo.xml" ]; then
+    error "Do not have permission to open RunInfo.xml."
+fi
+
+# Get flowcell ID.
+folder=$(get_flowcell "$run/RunInfo.xml")
+if [ $? != 0 ]; then
+    error "Cannot read flowcell ID."
+fi
+
+# Call the implementation specified by the wrapping script.
+implement_read_configuration
+
+# if --lanes specified, name flowcell output by lanes, and
+# prepare --lanes arg in MRO
+if [ -n "$lanes" ]; then
+    folder="${folder}_"
+    tiles=""
+    IFS=',' read -ra LANES <<< "$lanes"
+    for i in "${LANES[@]}"; do
+        folder="$folder$i"
+        tiles="$tiles$i"
+    done
+    lanes=\[\ $lanes\ \]
+    if [ $tiles_supplied -ne 1 ]; then
+        bcl2fastq1_opts="$bcl2fastq1_opts --tiles=s_[$tiles]"
+        bcl2fastq2_opts="$bcl2fastq2_opts --tiles s_[$tiles]"
+    fi
+else
+    lanes=null
+fi
+
+if [ -z "$project" ]; then
+    project="\"$folder\""
+fi
+
+# figure out which bcl2fastq to use
+
+if [ -z "$bcl2fastq_output_dir" ]; then
+    bcl2fastq_output_dir=null
+fi
+
+if [ -z "$bcl2fastq_interop_dir" ]; then
+    bcl2fastq_interop_dir=null
+fi
+
+# use RunInfo.xml default if not supplied
+if [ -z "$bcl2fastq_use_bases_mask" ]; then
+    bcl2fastq_use_bases_mask=null
+fi
+
+
+if [ -n "$samplesheet" ]; then
+    specs="[{
+        \"csv\": \"$samplesheet\"
+    }]"
+elif [ -n "$csv" ]; then
+    specs="[{
+        \"csv\": \"$csv\"
+    }]"
+else
+    specs=null
+fi
+
+##############################
+# Check environment variables
+#
+if [ -z "$TENX_BARCODE_WHITELIST" ]; then
+    echo "TENX_BARCODE_WHITELIST environment variable must be set by enclosing script."
+    exit 1
+fi
+
+if [ -z "$TENX_BC_READ_TYPE" ]; then
+    echo "TENX_BC_READ_TYPE environment variable must be set by enclosing script."
+    exit 1
+fi
+
+if [ -n "$TENX_BC_START_INDEX" ]; then
+    bc_start_index=$TENX_BC_START_INDEX
+else
+    bc_start_index=0
+fi
+
+if [ -z "$TENX_BC_LENGTH" ]; then
+    echo "TENX_BC_LENGTH environment variable must be set by enclosing script."
+    exit 1
+fi
+
+if [ -z "$TENX_SI_READ_TYPE" ]; then
+    echo "TENX_SI_READ_TYPE environment variable must be set by enclosing script."
+    exit 1
+fi
+
+if [ -n "$TENX_UMI_READ_TYPE" ]; then
+    umi_read_type="\"$TENX_UMI_READ_TYPE\""
+else
+    umi_read_type=null
+fi
+
+if [ -n "$TENX_UMI_START_INDEX" ]; then
+    umi_start_index=$TENX_UMI_START_INDEX
+else
+    umi_start_index=null
+fi
+
+if [ -n "$TENX_UMI_LENGTH" ]; then
+    umi_length=$TENX_UMI_LENGTH
+else
+    umi_length=null
+fi
+
+if [[ $delete_undetermined -eq 1 ]]; then
+    delete_undetermined_str="true"
+else
+    delete_undetermined_str="false"
+fi
+
+if [[ $force_single_index -eq 1 ]]; then
+    force_single_index_str="true"
+else
+    force_single_index_str="false"
+fi
+
+if [[ $filter_dual_index -eq 1 ]]; then
+    filter_dual_index_str="true"
+else
+    filter_dual_index_str="false"
+fi
+
+# JAG-1030: ATAC flow cells must set --filter-single-index as true by default
+# and we autodetect as the barcode being in I2 and the barcode length being 16
+if [[ $filter_single_index -eq 1 ||
+    ( $TENX_BC_READ_TYPE == "I2" && \
+      $TENX_BC_LENGTH -ge 16 ) ]]; then
+    filter_single_index_str="true"
+else
+    filter_single_index_str="false"
+fi
+
+rc_i2_override=$(echo "$rc_i2_override" | tr '[:upper:]' '[:lower:]')
+if [[ "$rc_i2_override" != "null" ]] && [[ "$rc_i2_override" != "true" ]] && [[ "$rc_i2_override" != "false" ]]; then
+    echo "--rc-i2-override must be set to 'true' or 'false'"
+    exit 1
+fi
+
+threads_ar=("$bcl2fastq2_r" "$bcl2fastq2_w" "$bcl2fastq2_d" "$bcl2fastq2_p")
+threads_max=0
+for threads in "${threads_ar[@]}"; do
+    ((threads > threads_max)) && threads_max=$threads
+done
+
+# if threads_max exceeds localcores, localcores takes precedence
+if [[ $localcores -ne 0 ]]; then
+    if [[ $threads_max -gt $localcores ]]; then
+        threads_max=$localcores
+    fi
+    if [[ $bcl2fastq2_r -gt $localcores ]]; then
+        bcl2fastq2_r=$localcores
+    fi
+    if [[ $bcl2fastq2_w -gt $localcores ]]; then
+        bcl2fastq2_w=$localcores
+    fi
+    if [[ $bcl2fastq2_p -gt $localcores ]]; then
+        bcl2fastq2_p=$localcores
+    fi
+    if [[ $bcl2fastq2_d -gt $localcores ]]; then
+        bcl2fastq2_d=$localcores
+    fi
+fi
+
+# if threads_max is set, override -d/-p if not set
+# to avoid cluster oversubscription/job reaping
+
+if [[ $bcl2fastq2_p -eq 0 ]]; then
+    bcl2fastq2_opts="$bcl2fastq2_opts -p $threads_max"
+fi
+if [[ $bcl2fastq2_d -eq 0 ]]; then
+    if [[ $threads_max -gt 6 ]]; then
+        bcl2fastq2_opts="$bcl2fastq2_opts -d 6"
+    else
+        bcl2fastq2_opts="$bcl2fastq2_opts -d $threads_max"
+    fi
+fi
+# if -d/-p set explicitly, propagate
+if [[ $bcl2fastq2_d -ne 0 ]]; then
+    bcl2fastq2_opts="$bcl2fastq2_opts -d $bcl2fastq2_d"
+fi
+if [[ $bcl2fastq2_p -ne 0 ]]; then
+    bcl2fastq2_opts="$bcl2fastq2_opts -p $bcl2fastq2_p"
+fi
+# always set -r/-w (demux convention)
+bcl2fastq2_opts="$bcl2fastq2_opts -r $bcl2fastq2_r -w $bcl2fastq2_w"
+
+bcl2fastq2_opts="\"$bcl2fastq2_opts --barcode-mismatches $bcl2fastq2_mismatches\""
+bcl2fastq1_opts="\"$bcl2fastq1_opts --mismatches=$bcl2fastq1_mismatches\""
+
+opts="$mrp_opts"
+
+
+###########################################################
+# implement_generate_mro
+#
+
+if [ -z "$pipestance_id" ]; then
+    id="$folder"
+else
+    id="$pipestance_id"
+fi
+mro="__$id.mro"
+cat <<EOF > "$mro"
+@include "tenkit/make_fastqs_cs.mro"
+
+call MAKE_FASTQS_CS(
+    run_path              = "$run",
+    lanes                 = $lanes,
+    specs                 = $specs,
+    project               = $project,
+    bases_mask            = $bcl2fastq_use_bases_mask,
+    barcode_whitelist     = "$TENX_BARCODE_WHITELIST",
+    bcl2fastq1_args       = $bcl2fastq1_opts,
+    bcl2fastq2_args       = $bcl2fastq2_opts,
+    bc_read_type          = "$TENX_BC_READ_TYPE",
+    bc_start_index        = $bc_start_index,
+    bc_length             = $TENX_BC_LENGTH,
+    si_read_type          = "$TENX_SI_READ_TYPE",
+    umi_read_type         = $umi_read_type,
+    umi_start_index       = $umi_start_index,
+    umi_length            = $umi_length,
+    rc_i2_override        = $rc_i2_override,
+    output_path           = $bcl2fastq_output_dir,
+    interop_output_path   = $bcl2fastq_interop_dir,
+    delete_undetermined   = $delete_undetermined_str,
+    force_single_index    = $force_single_index_str,
+    filter_dual_index     = $filter_dual_index_str,
+    filter_single_index   = $filter_single_index_str,
+    max_bcl2fastq_threads = $threads_max,
+    all_mkfastq_args      = "$all_args",
+)
+EOF
+
+mro_is_temp=true
+
+# shellcheck source=common/_mrp
+source "$TENX_SCRIPTDIR/tenkit/common/_mrp"

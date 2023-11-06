@@ -1,0 +1,59 @@
+#
+# Copyright (c) 2022 10X Genomics, Inc. All rights reserved.
+#
+
+filetype csv;
+filetype h5;
+filetype html;
+filetype json;
+filetype pickle;
+filetype binary;
+
+struct AnalyzerInputs(
+    h5     filtered_matrices_h5,
+    h5     molecule_info,
+    map[]  aggr_library_info,
+    bool   no_secondary_analysis,
+    csv    use_genes,
+    csv    exclude_genes,
+    csv    use_bcs,
+    int    num_analysis_bcs,
+    int    random_seed,
+    int    num_pca_bcs,
+    int    num_pca_genes,
+    int    num_principal_comps,
+    bool   chemistry_batch_correction,
+    bool   is_spatial,
+    bool   is_visium_hd,
+    int    cbc_knn,
+    float  cbc_alpha,
+    float  cbc_sigma,
+    bool   cbc_realign_panorama,
+    int    max_clusters,
+    int    graphclust_neighbors,
+    float  neighbor_a,
+    float  neighbor_b,
+    float  graphclust_resolution,
+    int    tsne_perplexity,
+    int    tsne_input_pcs,
+    int    tsne_max_dims,
+    int    tsne_max_iter,
+    int    tsne_stop_lying_iter,
+    int    tsne_mom_switch_iter,
+    float  tsne_theta,
+    string umap_implementation,
+    int    umap_n_neighbors,
+    int    umap_input_pcs,
+    int    umap_max_dims,
+    float  umap_min_dist,
+    string umap_metric,
+    int    force_cells,
+    bool   skip_multigenome_analysis,
+)
+
+struct AnalyzerOutputs(
+    path analysis,
+    path analysis_csv,
+    h5   cloupe_matrix_h5,
+    json summary,
+)

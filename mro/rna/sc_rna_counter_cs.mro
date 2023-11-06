@@ -1,0 +1,236 @@
+#
+# Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
+#
+
+@include "sc_multi_core.mro"
+@include "sc_multi_cs.mro"
+@include "_common_stages.mro"
+@include "_cr_lib_stages.mro"
+@include "_sc_multi_defs.mro"
+
+pipeline _STRUCTIFY(
+    in  CommonInputs        common_input,
+    in  CountInputsCS       count_input,
+    in  BasicPipelineConfig config,
+    out CommonInputs        common_input,
+    out CountInputsCS       count_input,
+    out BasicPipelineConfig config,
+)
+{
+    return (
+        common_input = self.common_input,
+        count_input  = self.count_input,
+        config       = self.config,
+    )
+}
+
+pipeline SC_RNA_COUNTER_CS(
+    in  string  sample_id,
+    in  map[]   sample_def,
+    in  string  sample_desc,
+    in  path    reference_path,
+    in  int     recovered_cells,
+    in  bool    no_bam,
+    in  bool    filter_probes,
+    in  bool    no_secondary_analysis,
+    in  bool    no_target_umi_filter,
+    in  int     force_cells,
+    in  bool    include_introns,
+    in  bool    check_library_compatibility,
+    in  string  chemistry,
+    in  int     r1_length,
+    in  int     r2_length,
+    in  string  targeting_method,
+    in  string  aligner,
+    in  int     trim_polya_min_score,
+    in  int     trim_tso_min_score,
+    in  csv     feature_reference,
+    in  int     emptydrops_minimum_umis,
+    out html    web_summary                    "Run summary HTML",
+    out csv     metrics_summary                "Run summary CSV",
+    out bam     possorted_genome_bam           "BAM"                       "possorted_genome_bam.bam",
+    out bam.bai possorted_genome_bai_index     "BAM BAI index"             "possorted_genome_bam.bam.bai",
+    out bam.csi possorted_genome_csi_index     "BAM CSI index"             "possorted_genome_bam.bam.csi",
+    out path    filtered_feature_bc_matrix     "Filtered feature-barcode matrices MEX",
+    out h5      filtered_feature_bc_matrix_h5  "Filtered feature-barcode matrices HDF5"  "filtered_feature_bc_matrix.h5",
+    out path    raw_feature_bc_matrix          "Unfiltered feature-barcode matrices MEX",
+    out h5      raw_feature_bc_matrix_h5       "Unfiltered feature-barcode matrices HDF5"  "raw_feature_bc_matrix.h5",
+    out path    analysis                       "Secondary analysis output CSV",
+    out h5      molecule_info                  "Per-molecule read information",
+    out path    crispr_analysis                "CRISPR-specific analysis",
+    out csv     aggregate_barcodes             "Antibody aggregate barcodes",
+    out cloupe  cloupe                         "Loupe Browser file",
+    out csv     feature_reference              "Feature Reference",
+    out csv     target_panel                   "Target Panel File",
+    out csv     probe_set                      "Probe Set File",
+)
+{
+    call CELLRANGER_PREFLIGHT as CELLRANGER_PREFLIGHT_LOCAL(
+        sample_def        = self.sample_def,
+        reference_path    = self.reference_path,
+        feature_reference = self.feature_reference,
+        full_check        = false,
+        recovered_cells   = {
+            per_gem_well: self.recovered_cells,
+            per_sample:   null,
+        },
+        force_cells       = {
+            per_gem_well: self.force_cells,
+            per_sample:   null,
+        },
+        r1_length         = self.r1_length,
+        r2_length         = self.r2_length,
+        targeting_method  = self.targeting_method,
+    ) using (
+        local     = true,
+        preflight = true,
+    )
+
+    call CELLRANGER_PREFLIGHT(
+        sample_def        = self.sample_def,
+        reference_path    = self.reference_path,
+        feature_reference = self.feature_reference,
+        full_check        = true,
+        recovered_cells   = {
+            per_gem_well: self.recovered_cells,
+            per_sample:   null,
+        },
+        force_cells       = {
+            per_gem_well: self.force_cells,
+            per_sample:   null,
+        },
+        r1_length         = self.r1_length,
+        r2_length         = self.r2_length,
+        targeting_method  = self.targeting_method,
+    ) using (
+        preflight = true,
+    )
+
+    call WRITE_GENE_INDEX(
+        reference_path = self.reference_path,
+    )
+
+    call _STRUCTIFY(
+        common_input = {
+            multi_config_sha: null,
+            sample_desc:      self.sample_desc,
+            sample_id:        self.sample_id,
+        },
+        count_input  = {
+            aligner:                     self.aligner,
+            cell_calling_config: {
+                cell_barcodes:                        null,
+                disable_ab_aggregate_detection:       false,
+                disable_high_occupancy_gem_detection: false,
+                emptydrops_minimum_umis: {
+                    per_gem_well: self.emptydrops_minimum_umis,
+                    per_sample:   null,
+                },
+                force_cells: {
+                    per_gem_well: self.force_cells,
+                    per_sample:   null,
+                },
+                override_library_types:               null,
+                override_mode:                        null,
+                recovered_cells: {
+                    per_gem_well: self.recovered_cells,
+                    per_sample:   null,
+                },
+            },
+            check_library_compatibility: self.check_library_compatibility,
+            chemistry:                   self.chemistry,
+            emptydrops_minimum_umis:     self.emptydrops_minimum_umis,
+            feature_reference:           self.feature_reference,
+            filter_probes:               self.filter_probes,
+            force_sample_barcodes: {
+                cells_per_tag:        null,
+                non_singlet_barcodes: null,
+                sample_barcodes:      null,
+            },
+            gene_index:                  WRITE_GENE_INDEX.gene_index,
+            include_introns:             self.include_introns,
+            min_assignment_confidence:   null,
+            no_bam:                      self.no_bam,
+            no_secondary_analysis:       self.no_secondary_analysis,
+            no_target_umi_filter:        self.no_target_umi_filter,
+            r1_length:                   self.r1_length,
+            r2_length:                   self.r2_length,
+            reference_path:              self.reference_path,
+            sample_def:                  self.sample_def,
+            targeting_method:            self.targeting_method,
+            tenx_cmos:                   null,
+            trim_polya_min_score:        self.trim_polya_min_score,
+            trim_tso_min_score:          self.trim_tso_min_score,
+        },
+        config       = {
+            disable_count:       false,
+            disable_multi:       true,
+            disable_multi_count: true,
+            disable_vdj:         true,
+        },
+    )
+
+    call FULL_COUNT_INPUTS(
+        cs_inputs     = _STRUCTIFY.count_input,
+        allowed_chems = [
+            "auto",
+            "custom",
+            "threeprime",
+            "fiveprime",
+            "SC3P_auto",
+            "SC5P_auto",
+            "SC3Pv1",
+            "SC3Pv2",
+            "SC3Pv3",
+            "SC3Pv3LT",
+            "SC3Pv3HT",
+            "SC5P-PE",
+            "SC5P-R1",
+            "SC5P-R2",
+            "SC5PHT",
+            "SC-FB",
+            "ARC-v1",
+        ],
+    ) using (
+        disabled = _STRUCTIFY.config.disable_count,
+    )
+
+    call SC_MULTI_CORE(
+        common_input          = _STRUCTIFY.common_input,
+        count_input           = FULL_COUNT_INPUTS,
+        vdj_inputs            = [],
+        vdj_gen_inputs        = null,
+        basic_config          = _STRUCTIFY.config,
+        multi_config          = null,
+        is_pd                 = false,
+        count_allowed_chems   = FULL_COUNT_INPUTS.count_allowed_chems,
+        count_pipestance_type = "SC_RNA_COUNTER_CS",
+        is_multi              = false,
+        feature_config        = null,
+        no_preflight          = false,
+    )
+
+    call GET_AGGREGATE_BARCODES_OUT(
+        antibody_analysis = SC_MULTI_CORE.count_analyzer.antibody_analyzer.antibody_analysis,
+    )
+
+    return (
+        analysis                      = SC_MULTI_CORE.count_analyzer.common_analyzer.analysis_csv,
+        cloupe                        = SC_MULTI_CORE.multi_reporter.cloupe,
+        crispr_analysis               = SC_MULTI_CORE.count_analyzer.crispr_analyzer.crispr_analysis,
+        aggregate_barcodes            = GET_AGGREGATE_BARCODES_OUT.aggregate_barcodes,
+        feature_reference             = SC_MULTI_CORE.multi_reporter.count_summary.feature_reference,
+        filtered_feature_bc_matrix    = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.filtered_gene_bc_matrices_mex,
+        filtered_feature_bc_matrix_h5 = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
+        metrics_summary               = SC_MULTI_CORE.multi_reporter.count_summary.metrics_summary_csv,
+        molecule_info                 = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.molecule_info,
+        possorted_genome_bam          = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.possorted_genome_bam,
+        possorted_genome_bai_index    = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.possorted_genome_bai_index,
+        possorted_genome_csi_index    = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.possorted_genome_csi_index,
+        raw_feature_bc_matrix         = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_mex,
+        raw_feature_bc_matrix_h5      = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_h5,
+        target_panel                  = SC_MULTI_CORE.multi_gw.count.target_outs.target_panel,
+        probe_set                     = SC_MULTI_CORE.multi_gw.count.target_outs.probe_set,
+        web_summary                   = SC_MULTI_CORE.multi_reporter.count_summary.web_summary,
+    )
+}

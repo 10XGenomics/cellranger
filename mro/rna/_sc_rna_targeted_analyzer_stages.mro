@@ -1,0 +1,29 @@
+filetype csv;
+filetype pdf;
+filetype h5;
+filetype json;
+filetype fa;
+filetype tps.json;
+
+stage CALCULATE_TARGETED_METRICS(
+    in  h5       molecule_info,
+    in  h5       filtered_gene_bc_matrices,
+    in  json     basic_counter_summary,
+    in  tps.json target_panel_summary,
+    out json     summary,
+    out csv      per_feature_metrics_csv,
+    src py       "stages/targeted/calculate_targeted_metrics",
+) split (
+)
+
+stage DISABLE_GDNA_STAGES(
+    in  csv  probe_set,
+    out bool disable_targeted_gdna,
+    src py   "stages/targeted/disable_gdna_stages",
+)
+
+stage GET_GDNA_PLOT(
+    in  json gdna_plot_sufficient_stats,
+    out json summary,
+    src py   "stages/targeted/get_gdna_plot",
+)

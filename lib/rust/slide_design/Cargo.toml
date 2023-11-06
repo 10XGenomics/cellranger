@@ -1,0 +1,38 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.arrayvec]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.prost]
+optional = true
+version = '>= 0.7, < 0.12'
+
+[dependencies.prost-build]
+optional = true
+version = '>= 0.7, < 0.12'
+
+[dependencies.serde]
+workspace = true
+
+[features]
+default = ['tenx_oss']
+tenx_internal = ['prost', 'prost-build']
+tenx_oss = []
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'slide_design'
+publish = false
+version = '0.1.0'

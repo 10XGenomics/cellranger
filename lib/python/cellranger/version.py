@@ -1,0 +1,34 @@
+#
+# Copyright (c) 2020 10X Genomics, Inc. All rights reserved.
+#
+
+"""Utility for getting the version of the pipeline."""
+
+
+from __future__ import annotations
+
+import os.path
+
+import tenkit.log_subprocess as tk_subproc
+
+
+def get_version():
+    """Get the version for the pipeline.
+
+    Normally it will read this from the .version file in the package root, but
+    if that is not found it will attempt to query git for the version.
+    """
+    # NOTE: this makes assumptions about the directory structure
+    script_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "bin")
+    version_fn = os.path.join(script_dir, "..", ".version")
+    if os.path.exists(version_fn):
+        with open(version_fn) as f:
+            output = f.read()
+    else:
+        try:
+            output = tk_subproc.check_output(
+                ["git", "describe", "--tags", "--always", "--dirty"], cwd=script_dir
+            )
+        except OSError:
+            output = "unknown_version"
+    return output.strip()

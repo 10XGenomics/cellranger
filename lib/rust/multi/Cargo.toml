@@ -1,0 +1,64 @@
+[dependencies]
+csv = '1.2'
+lazy_static = '1.4'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.nom]
+workspace = true
+
+[dependencies.nom_locate]
+workspace = true
+
+[dependencies.regex]
+default-features = false
+features = ['std', 'perf']
+version = '1'
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.transcriptome]
+path = '../transcriptome'
+
+[dependencies.vdj_reference]
+path = '../vdj_reference'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'multi'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['martian']

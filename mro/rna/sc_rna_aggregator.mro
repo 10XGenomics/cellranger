@@ -1,0 +1,207 @@
+#
+# Copyright (c) 2022 10X Genomics, Inc. All rights reserved.
+#
+
+@include "sc_rna_analyzer.mro"
+@include "_cr_aggr_stages.mro"
+@include "_crispr_analyzer.mro"
+@include "_sc_rna_aggregator_stages.mro"
+
+pipeline SC_RNA_AGGREGATOR(
+    in  string      sample_id,
+    in  string      sample_desc,
+    in  map[]       sample_defs,
+    in  string      normalization_mode,
+    in  bool        no_secondary_analysis,
+    in  int         num_analysis_bcs,
+    in  int         num_pca_bcs,
+    in  int         num_pca_genes,
+    in  int         num_principal_comps,
+    in  int         cbc_knn,
+    in  float       cbc_alpha,
+    in  float       cbc_sigma,
+    in  bool        cbc_realign_panorama,
+    in  int         max_clusters,
+    in  int         graphclust_neighbors,
+    in  float       neighbor_a,
+    in  float       neighbor_b,
+    in  int         tsne_perplexity,
+    in  int         tsne_input_pcs,
+    in  int         random_seed,
+    in  int         tsne_max_dims,
+    in  int         tsne_max_iter,
+    in  int         tsne_stop_lying_iter,
+    in  int         tsne_mom_switch_iter,
+    in  float       tsne_theta,
+    in  string      product_type,
+    in  bool        is_pd,
+    out h5          raw_gene_bc_matrices_h5,
+    out h5          filtered_gene_bc_matrices_h5,
+    out path        filtered_gene_bc_matrices_mex,
+    out h5          molecule_info,
+    out path        analysis,
+    out path        crispr_analysis,
+    out json        cells_per_protospacer,
+    out path        analysis_csv,
+    out json        analysis_summary,
+    out json        summary,
+    out html        web_summary,
+    out json        web_summary_data,
+    out map         gem_group_index,
+    out json        gem_group_index_json,
+    out string      beam_mode,
+    out map<string> antigen_specificity_controls,
+    out csv         feature_reference,
+    out bool        disable_antigen_aggr,
+)
+{
+    call AGGREGATOR_PREFLIGHT(
+        sample_defs        = self.sample_defs,
+        normalization_mode = self.normalization_mode,
+        is_pd              = self.is_pd,
+    ) using (
+        preflight = true,
+    )
+
+    call CHECK_MOLECULE_INFO_VERSION(
+        sample_defs  = self.sample_defs,
+        product_type = self.product_type,
+        is_pd        = self.is_pd,
+    )
+
+    call SETUP_SAMPLES(
+        sample_defs = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+    ) using (
+        volatile = true,
+    )
+
+    call MERGE_MOLECULES(
+        sample_defs = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+        libraries   = SETUP_SAMPLES.libraries,
+    ) using (
+        volatile = true,
+    )
+
+    call NORMALIZE_DEPTH(
+        gem_group_index          = SETUP_SAMPLES.gem_group_index,
+        normalization_mode       = self.normalization_mode,
+        molecules                = MERGE_MOLECULES.merged_molecules,
+        gem_group_barcode_ranges = MERGE_MOLECULES.gem_group_barcode_ranges,
+        targeted_depth_factor    = 2,
+    )
+
+    call WRITE_MATRICES(
+        sample_defs          = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+        gem_group_index      = SETUP_SAMPLES.gem_group_index,
+        molecules            = MERGE_MOLECULES.merged_molecules,
+        raw_matrices_h5      = NORMALIZE_DEPTH.raw_matrices_h5,
+        filtered_matrices_h5 = NORMALIZE_DEPTH.filtered_matrices_h5,
+        raw_nnz              = NORMALIZE_DEPTH.raw_nnz,
+        filtered_nnz         = NORMALIZE_DEPTH.filtered_nnz,
+        summary              = NORMALIZE_DEPTH.summary,
+        is_pd                = self.is_pd,
+    )
+
+    call CRISPR_AGGR_INPUT_PREP(
+        merged_molecules = MERGE_MOLECULES.merged_molecules,
+    ) using (
+        disabled = SETUP_SAMPLES.disable_crispr_aggr,
+    )
+
+    call _CRISPR_ANALYZER(
+        filtered_feature_counts_matrix = WRITE_MATRICES.filtered_matrix_h5,
+        filtered_barcodes    = CRISPR_AGGR_INPUT_PREP.filtered_barcodes,
+        feature_reference    = CRISPR_AGGR_INPUT_PREP.feature_reference,
+        counter_metrics_json = CRISPR_AGGR_INPUT_PREP.counter_metrics_json,
+    ) using (
+        disabled = SETUP_SAMPLES.disable_crispr_aggr,
+    )
+
+    call SC_RNA_ANALYZER(
+        aggregate_barcodes = null,
+        analyzer_inputs    = {
+            aggr_library_info:          SETUP_SAMPLES.libraries,
+            cbc_alpha:                  self.cbc_alpha,
+            cbc_knn:                    self.cbc_knn,
+            cbc_realign_panorama:       self.cbc_realign_panorama,
+            cbc_sigma:                  self.cbc_sigma,
+            chemistry_batch_correction: SETUP_SAMPLES.chemistry_batch_correction,
+            exclude_genes:              null,
+            filtered_matrices_h5:       WRITE_MATRICES.filtered_matrix_h5,
+            force_cells:                null,
+            graphclust_neighbors:       self.graphclust_neighbors,
+            graphclust_resolution:      null,
+            is_spatial:                 CHECK_MOLECULE_INFO_VERSION.is_spatial,
+            is_visium_hd:               false,
+            max_clusters:               self.max_clusters,
+            molecule_info:              MERGE_MOLECULES.merged_molecules,
+            neighbor_a:                 self.neighbor_a,
+            neighbor_b:                 self.neighbor_b,
+            no_secondary_analysis:      self.no_secondary_analysis,
+            num_analysis_bcs:           self.num_analysis_bcs,
+            num_pca_bcs:                self.num_pca_bcs,
+            num_pca_genes:              self.num_pca_genes,
+            num_principal_comps:        self.num_principal_comps,
+            random_seed:                self.random_seed,
+            skip_multigenome_analysis:  false,
+            tsne_input_pcs:             self.tsne_input_pcs,
+            tsne_max_dims:              self.tsne_max_dims,
+            tsne_max_iter:              self.tsne_max_iter,
+            tsne_mom_switch_iter:       self.tsne_mom_switch_iter,
+            tsne_perplexity:            self.tsne_perplexity,
+            tsne_stop_lying_iter:       self.tsne_stop_lying_iter,
+            tsne_theta:                 self.tsne_theta,
+            umap_implementation:        "original",
+            umap_input_pcs:             null,
+            umap_max_dims:              null,
+            umap_metric:                null,
+            umap_min_dist:              null,
+            umap_n_neighbors:           null,
+            use_bcs:                    null,
+            use_genes:                  null,
+        },
+    )
+
+    call SUMMARIZE_AGGREGATED_REPORTS(
+        sample_id                = self.sample_id,
+        sample_desc              = self.sample_desc,
+        gem_group_index          = SETUP_SAMPLES.gem_group_index,
+        filtered_matrices_h5     = WRITE_MATRICES.filtered_matrix_h5,
+        analysis                 = SC_RNA_ANALYZER.common_analyzer.analysis,
+        normalize_depth_summary  = WRITE_MATRICES.summary,
+        analyze_matrices_summary = SC_RNA_ANALYZER.common_analyzer.summary,
+        antibody_histograms      = SC_RNA_ANALYZER.antibody_analyzer.antibody_histograms_json,
+        antibody_treemap         = SC_RNA_ANALYZER.antibody_analyzer.antibody_treemap_json,
+        crispr_analysis_metrics  = _CRISPR_ANALYZER.crispr_analysis_metrics,
+        product_type             = self.product_type,
+        sample_defs              = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+    )
+
+    call CHECK_INVARIANTS(
+        input_sample_defs = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+        merged_raw_gene_bc_matrices_h5 = WRITE_MATRICES.raw_matrix_h5,
+    ) using (
+        disabled = CHECK_MOLECULE_INFO_VERSION.is_not_pd,
+    )
+
+    return (
+        filtered_gene_bc_matrices_h5  = WRITE_MATRICES.filtered_matrix_h5,
+        filtered_gene_bc_matrices_mex = WRITE_MATRICES.filtered_matrix_mex,
+        raw_gene_bc_matrices_h5       = WRITE_MATRICES.raw_matrix_h5,
+        analysis                      = SC_RNA_ANALYZER.common_analyzer.analysis,
+        crispr_analysis               = _CRISPR_ANALYZER.crispr_analysis,
+        cells_per_protospacer         = _CRISPR_ANALYZER.cells_per_protospacer,
+        analysis_csv                  = SC_RNA_ANALYZER.common_analyzer.analysis_csv,
+        analysis_summary              = SC_RNA_ANALYZER.common_analyzer.summary,
+        summary                       = SUMMARIZE_AGGREGATED_REPORTS.summary,
+        web_summary                   = SUMMARIZE_AGGREGATED_REPORTS.web_summary,
+        web_summary_data              = SUMMARIZE_AGGREGATED_REPORTS.web_summary_data,
+        gem_group_index               = SETUP_SAMPLES.gem_group_index,
+        gem_group_index_json          = SETUP_SAMPLES.gem_group_index_json,
+        molecule_info                 = MERGE_MOLECULES.merged_molecules,
+        beam_mode                     = CHECK_MOLECULE_INFO_VERSION.beam_mode,
+        antigen_specificity_controls  = CHECK_MOLECULE_INFO_VERSION.antigen_specificity_controls,
+        feature_reference             = CHECK_MOLECULE_INFO_VERSION.feature_reference,
+        disable_antigen_aggr          = CHECK_MOLECULE_INFO_VERSION.disable_antigen_aggr,
+    )
+}

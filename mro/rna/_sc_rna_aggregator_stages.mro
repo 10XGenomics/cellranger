@@ -1,0 +1,158 @@
+#
+# Copyright (c) 2022 10X Genomics, Inc. All rights reserved.
+#
+
+filetype bam;
+filetype bam.bai;
+filetype csv;
+filetype tsv;
+filetype fastq;
+filetype json;
+filetype h5;
+filetype html;
+filetype pickle;
+
+stage AGGREGATOR_PREFLIGHT(
+    in  map[]  sample_defs,
+    in  string normalization_mode,
+    in  bool   is_pd,
+    src py     "stages/aggregator/aggregator_preflight",
+) using (
+    mem_gb   = 7,
+    volatile = strict,
+)
+
+stage PARSE_CSV(
+    in  path   pipestance_root,
+    in  csv    aggregation_csv,
+    in  bool   reanalyze,
+    in  h5     matrix_h5,
+    in  string product_type,
+    out csv    aggregation_csv,
+    out map[]  sample_defs,
+    src py     "stages/aggregator/parse_csv",
+) using (
+    volatile = strict,
+)
+
+stage CHECK_MOLECULE_INFO_VERSION(
+    in  map[]       sample_defs,
+    in  string      product_type,
+    in  bool        is_pd,
+    out map[]       updated_sample_defs,
+    out bool        is_not_pd,
+    out string      beam_mode,
+    out bool        is_spatial,
+    out map<string> antigen_specificity_controls,
+    out csv         feature_reference,
+    out bool        disable_antigen_aggr,
+    src py          "stages/aggregator/check_molecule_info_version",
+) split (
+    in  int         mol_h5_version,
+    in  map         sample_def,
+    out map         updated_sample_def,
+) using (
+    volatile = strict,
+)
+
+stage SETUP_SAMPLES(
+    in  map[] sample_defs,
+    out map   gem_group_index,
+    out map[] libraries,
+    out json  gem_group_index_json,
+    out bool  chemistry_batch_correction,
+    out bool  disable_crispr_aggr,
+    src py    "stages/aggregator/setup_samples",
+) using (
+    volatile = strict,
+)
+
+stage NORMALIZE_DEPTH(
+    in  map        gem_group_index,
+    in  h5         molecules,
+    in  string     normalization_mode,
+    in  map<int[]> gem_group_barcode_ranges,
+    in  float      targeted_depth_factor,
+    out h5[]       raw_matrices_h5,
+    out int        raw_nnz,
+    out h5[]       filtered_matrices_h5,
+    out int        filtered_nnz,
+    out json       summary,
+    src py         "stages/aggregator/normalize_depth",
+) split (
+    in  float[]    frac_reads_kept,
+    in  int[]      num_cells,
+    in  int        chunk_start,
+    in  int        chunk_len,
+    in  json       reads_per_library,
+    out json       chunk_summary,
+    out h5         raw_matrix_h5,
+    out h5         filtered_matrix_h5,
+) using (
+    mem_gb   = 4,
+    volatile = strict,
+)
+
+stage WRITE_MATRICES(
+    in  map[] sample_defs,
+    in  map   gem_group_index,
+    in  h5    molecules,
+    in  h5[]  raw_matrices_h5,
+    in  int   raw_nnz,
+    in  h5[]  filtered_matrices_h5,
+    in  int   filtered_nnz,
+    in  json  summary,
+    in  bool  is_pd,
+    out h5    raw_matrix_h5,
+    out h5    filtered_matrix_h5,
+    out path  filtered_matrix_mex,
+    out h5    barcode_summary_h5,
+    out json  summary,
+    src py    "stages/aggregator/write_matrices",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage CRISPR_AGGR_INPUT_PREP(
+    in  h5   merged_molecules,
+    out csv  filtered_barcodes,
+    out csv  feature_reference,
+    out json counter_metrics_json,
+    src py   "stages/aggregator/crispr_aggr_input_prep",
+) using (
+    mem_gb   = 4,
+    volatile = strict,
+)
+
+stage CHECK_INVARIANTS(
+    in  map[] input_sample_defs,
+    in  h5    merged_raw_gene_bc_matrices_h5,
+    out json  summary,
+    src py    "stages/aggregator/check_invariants",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage SUMMARIZE_AGGREGATED_REPORTS(
+    in  string sample_id,
+    in  string sample_desc,
+    in  map    gem_group_index,
+    in  h5     filtered_matrices_h5,
+    in  path   analysis,
+    in  map[]  sample_defs,
+    in  json   normalize_depth_summary,
+    in  json   analyze_matrices_summary,
+    in  json   antibody_histograms,
+    in  json   antibody_treemap,
+    in  json   crispr_analysis_metrics,
+    in  string product_type,
+    out json   summary,
+    out html   web_summary,
+    out json   web_summary_data,
+    src py     "stages/aggregator/summarize_aggregated_reports",
+) split (
+) using (
+    volatile = strict,
+)

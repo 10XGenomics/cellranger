@@ -1,0 +1,25 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+
+filetype csv;
+filetype h5;
+filetype pb;
+filetype vloupe;
+
+stage VLOUPE_PREPROCESS(
+    in  string      pipestance_type,
+    in  string      sample_id,
+    in  string      sample_desc,
+    in  pb          enclone_output,
+    in  bool        disable_vloupe,
+    in  string      beam_mode,
+    in  csv         feature_reference,
+    in  h5          feature_barcode_matrix,
+    in  csv         antigen_specificity_scores,
+    in  map<string> antigen_specificity_controls,
+    out vloupe      output_for_vloupe,
+    src py          "stages/vloupe/vloupe_preprocess",
+) using (
+    mem_gb = 15,
+)

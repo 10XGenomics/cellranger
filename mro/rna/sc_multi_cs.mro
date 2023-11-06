@@ -1,0 +1,316 @@
+@include "sc_multi_core.mro"
+@include "_cr_lib_stages.mro"
+@include "_sc_multi_defs.mro"
+
+# The subset of CountInputs which are not overridden in the CS pipeline.
+struct CountInputsMinimal(
+    map[]              sample_def,
+    string             chemistry,
+    path               reference_path,
+    CellCalling        cell_calling_config,
+    int                r1_length,
+    int                r2_length,
+    bool               no_bam,
+    bool               filter_probes,
+    bool               no_secondary_analysis,
+    bool               no_target_umi_filter,
+    csv                feature_reference,
+    bool               include_introns,
+    bool               check_library_compatibility,
+    string             targeting_method,
+    BarcodeAssignments force_sample_barcodes,
+    bool               tenx_cmos,
+    float              min_assignment_confidence,
+)
+
+pipeline FULL_VDJ_INPUTS(
+    in  VdjInputsCS  cs_inputs,
+    out map[]        sample_def,
+    out string       chemistry,
+    out ChemistryDef custom_chemistry_def,
+    out map[]        primers,
+    out float        subsample_rate,
+    out int          initial_reads,
+    out int          primer_initial_reads,
+    out string[]     special_genomic_regions,
+    out bool         denovo,
+    out int          r1_length,
+    out int          r2_length,
+    out path         ground_truth_clonotype_path,
+    out path         inner_enrichment_primers,
+    out string       chain_type,
+    out string       physical_library_id,
+    out bool         r2_revcomp,
+)
+{
+    return (
+        chemistry                   = "SCVDJ_auto",
+        custom_chemistry_def        = null,
+        ground_truth_clonotype_path = null,
+        initial_reads               = null,
+        primer_initial_reads        = null,
+        primers                     = [
+            {
+                "name": "P5",
+                "seq": "AATGATACGGCGACCACCGAGATCT",
+            },
+            {
+                "name": "P7",
+                "seq": "CAAGCAGAAGACGGCATACGAGAT",
+            },
+            {
+                "name": "R1",
+                "seq": "ACACTCTTTCCCTACACGACGCTCTTCCGATCT",
+            },
+            {
+                "name": "R2",
+                "seq": "GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT",
+            },
+            {
+                "name": "polyA",
+                "seq": "AAAAAAAAAAAAAAAAAAAA",
+            },
+            {
+                "name": "rt_primer",
+                "seq": "AAGCAGTGGTATCAACGCAGAGTACAT",
+            },
+            {
+                "name": "spacer",
+                "seq": "TTTCTTATATGGG",
+            },
+        ],
+        special_genomic_regions     = null,
+        subsample_rate              = null,
+        *                           = self.cs_inputs,
+    )
+}
+
+# Fills in CountInputs from CountInputsMinimal plus default values.
+pipeline FULL_COUNT_INPUTS(
+    in  CountInputsMinimal cs_inputs,
+    in  string[]           allowed_chems,
+    out map[]              sample_def,
+    out string             chemistry,
+    out ChemistryDef       custom_chemistry_def,
+    out path               reference_path,
+    out json               gene_index,
+    out map[]              primers,
+    out CellCalling        cell_calling_config,
+    out float              subsample_rate,
+    out int                initial_reads,
+    out int                primer_initial_reads,
+    out string[]           special_genomic_regions,
+    out int                r1_length,
+    out int                r2_length,
+    out int                trim_polya_min_score,
+    out int                trim_tso_min_score,
+    out bool               no_bam,
+    out bool               no_secondary_analysis,
+    out bool               filter_probes,
+    out bool               no_target_umi_filter,
+    out csv                feature_reference,
+    out bool               include_exons,
+    out bool               include_introns,
+    out string             targeting_method,
+    out string             aligner,
+    out map                genetic_demux_params,
+    out bool               check_library_compatibility,
+    out string[]           count_allowed_chems,
+    out string             throughput,
+    out BarcodeAssignments force_sample_barcodes,
+    out bool               tenx_cmos,
+    out float              min_assignment_confidence,
+    out csv[]              annotations,
+)
+{
+    call WRITE_GENE_INDEX(
+        reference_path = self.cs_inputs.reference_path,
+    )
+
+    return (
+        aligner                 = null,
+        annotations             = null,
+        custom_chemistry_def    = null,
+        gene_index              = WRITE_GENE_INDEX.gene_index,
+        genetic_demux_params    = null,
+        throughput              = null,
+        initial_reads           = null,
+        primer_initial_reads    = null,
+        primers                 = [
+            {
+                "name": "P5",
+                "seq": "AATGATACGGCGACCACCGAGATCT",
+            },
+            {
+                "name": "P7",
+                "seq": "CAAGCAGAAGACGGCATACGAGAT",
+            },
+            {
+                "name": "R1",
+                "seq": "ACACTCTTTCCCTACACGACG",
+            },
+            {
+                "name": "R2",
+                "seq": "GTGACTGGAGTTCAGACGTGTG",
+            },
+            {
+                "name": "switch_oligo",
+                "seq": "AAGCAGTGGTATCAACGCAGAGTACATGGG",
+            },
+            {
+                "name": "polyA",
+                "seq": "AAAAAAAAAAAAAAAAAAAA",
+            },
+        ],
+        special_genomic_regions = null,
+        subsample_rate          = null,
+        trim_polya_min_score    = 20,
+        trim_tso_min_score      = 20,
+        count_allowed_chems     = self.allowed_chems,
+        include_exons           = true,
+        *                       = self.cs_inputs,
+    )
+}
+
+pipeline SC_MULTI_CS(
+    in  string               sample_id,
+    in  string               sample_desc,
+    in  FileOrBytes          config,
+    in  string               config_hash,
+    in  bool                 no_preflight,
+    out csv                  config           "Multi Config CSV",
+    out VdjRefFolder         vdj_reference    "V(D)J reference",
+    out MultiOutputsCS       multi,
+    out map<SampleOutputsCS> per_sample_outs,
+)
+{
+    call MULTI_PREFLIGHT as MULTI_PREFLIGHT_LOCAL(
+        config = self.config,
+        is_pd  = false,
+    ) using (
+        local     = true,
+        preflight = true,
+    )
+
+    call MULTI_PREFLIGHT(
+        config = self.config,
+        is_pd  = false,
+    ) using (
+        preflight = true,
+    )
+
+    call PARSE_MULTI_CONFIG(
+        sample_id   = self.sample_id,
+        sample_desc = self.sample_desc,
+        config      = self.config,
+        config_hash = self.config_hash,
+        params      = null,
+        is_pd       = false,
+    )
+
+    call FULL_COUNT_INPUTS(
+        cs_inputs     = PARSE_MULTI_CONFIG.count_input,
+        allowed_chems = [
+            "auto",
+            "custom",
+            "threeprime",
+            "fiveprime",
+            "SC3P_auto",
+            "SC5P_auto",
+            "SC3Pv1",
+            "SC3Pv2",
+            "SC3Pv3",
+            "SC3Pv3LT",
+            "SC3Pv3HT",
+            "SC5P-PE",
+            "SC5P-R1",
+            "SC5P-R2",
+            "SC5PHT",
+            "SC-FB",
+            "SFRP",
+            "MFRP",
+            "MFRP-R1",
+            "MFRP-R1-48-uncollapsed",
+            "ARC-v1",
+        ],
+    ) using (
+        disabled = PARSE_MULTI_CONFIG.basic_config.disable_count,
+    )
+
+    map call FULL_VDJ_INPUTS(
+        cs_inputs = split PARSE_MULTI_CONFIG.vdj_inputs,
+    )
+
+    call SC_MULTI_CORE(
+        common_input          = PARSE_MULTI_CONFIG.common_input,
+        count_input           = FULL_COUNT_INPUTS,
+        vdj_inputs            = FULL_VDJ_INPUTS,
+        vdj_gen_inputs        = PARSE_MULTI_CONFIG.vdj_gen_inputs,
+        basic_config          = PARSE_MULTI_CONFIG.basic_config,
+        multi_config          = PARSE_MULTI_CONFIG.config_file,
+        is_pd                 = false,
+        count_allowed_chems   = FULL_COUNT_INPUTS.count_allowed_chems,
+        count_pipestance_type = "SC_RNA_COUNTER_CS",
+        is_multi              = true,
+        feature_config        = PARSE_MULTI_CONFIG.feature_config,
+        no_preflight          = self.no_preflight,
+    )
+
+    call BUILD_VDJ_OUTPUTS_CS(
+        multi_core = SC_MULTI_CORE,
+    )
+
+    call SANITIZE_MAP_CALLS(
+        in_crispr_analysis           = SC_MULTI_CORE.sample_analyzer.crispr_analyzer.crispr_analysis,
+        in_rna_analysis              = SC_MULTI_CORE.sample_analyzer.common_analyzer.analysis_csv,
+        in_cloupe_file               = SC_MULTI_CORE.sample_reporter.cloupe,
+        in_metrics_summary           = SC_MULTI_CORE.sample_reporter.metrics_summary,
+        in_sample_tsne_plots         = null,
+        in_sample_barcode_rank_plots = null,
+        in_sample_treemap_plots      = null,
+    )
+
+    map call BUILD_SAMPLE_OUTS(
+        sample_slfe_outs             = split SC_MULTI_CORE.sample_outs,
+        crispr_analysis              = split SANITIZE_MAP_CALLS.crispr_analysis,
+        rna_analysis                 = split SANITIZE_MAP_CALLS.rna_analysis,
+        cloupe                       = split SANITIZE_MAP_CALLS.cloupe_file,
+        web_summary                  = split SC_MULTI_CORE.multi_web_summaries,
+        metrics_summary_csv          = split SC_MULTI_CORE.multi_metrics_csvs,
+        vdj_b_outs                   = BUILD_VDJ_OUTPUTS_CS.vdj_b_outs_cs,
+        vdj_t_outs                   = BUILD_VDJ_OUTPUTS_CS.vdj_t_outs_cs,
+        vdj_t_gd_outs                = BUILD_VDJ_OUTPUTS_CS.vdj_t_gd_outs_cs,
+        output_per_sample_raw_matrix = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.output_per_sample_raw_matrix,
+        beam_analyzer                = SC_MULTI_CORE.multi_reporter.beam_analyzer,
+    )
+
+    return (
+        config          = PARSE_MULTI_CONFIG.config_file,
+        vdj_reference   = SC_MULTI_CORE.vdj_ref_out,
+        multi           = {
+            count: {
+                feature_reference_csv:           SC_MULTI_CORE.multi_reporter.count_summary.feature_reference,
+                raw_cloupe:                      SC_MULTI_CORE.multi_reporter.cloupe,
+                raw_feature_bc_matrix_h5:        SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_h5,
+                raw_feature_bc_matrix_mex:       SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_mex,
+                raw_molecule_info_h5:            SC_MULTI_CORE.multi_gw.count.basic_counter_outs.molecule_info,
+                raw_probe_bc_matrix:             SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_probe_bc_matrix,
+                unassigned_alignments:           SC_MULTI_CORE.unassigned_bam,
+                unassigned_alignments_bai_index: SC_MULTI_CORE.unassigned_bai,
+                unassigned_alignments_csi_index: SC_MULTI_CORE.unassigned_csi,
+            },
+            multiplexing_analysis: {
+                assignment_confidence_table: SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.assignment_confidence_table,
+                barcode_sample_assignments:  PARSE_MULTI_CONFIG.barcode_sample_assignments,
+                cells_per_tag:               SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.cells_per_tag,
+                frp_gem_barcode_overlap:     SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.frp_gem_barcode_overlap,
+                tag_calls_per_cell:          SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.tag_calls_per_cell,
+                tag_calls_summary:           SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.tag_calls_summary,
+            },
+            vdj_b:    BUILD_VDJ_OUTPUTS_CS.vdj_b_outs_cs,
+            vdj_t:    BUILD_VDJ_OUTPUTS_CS.vdj_t_outs_cs,
+            vdj_t_gd: BUILD_VDJ_OUTPUTS_CS.vdj_t_gd_outs_cs,
+        },
+        per_sample_outs = BUILD_SAMPLE_OUTS.sample_outs,
+    )
+}

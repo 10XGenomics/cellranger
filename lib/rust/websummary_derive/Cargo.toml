@@ -1,0 +1,31 @@
+[dependencies]
+heck = '0.4'
+proc-macro2 = '1'
+quote = '1'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.syn]
+features = ['full']
+version = '1'
+
+[dependencies.toml]
+workspace = true
+
+[lib]
+proc-macro = true
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'websummary_derive'
+publish = false
+version = '0.1.0'

@@ -1,0 +1,16 @@
+diff --git a/tables/utils.py b/tables/utils.py
+index 8b5d0267d62753bb6b952a4b9adae76561145f56..96186d89cc2c5ea20c9ae4219679b462821ab866 100644
+--- a/lib/python3.10/site-packages/tables/utils.py
++++ b/lib/python3.10/site-packages/tables/utils.py
+@@ -157,11 +157,6 @@ def check_file_access(filename, mode='r'):
+                 raise FileNotFoundError(f"``{path.parent}`` does not exist")
+             if not path.parent.is_dir():
+                 raise NotADirectoryError(f"``{path.parent}`` is not a directory")
+-            if not os.access(path.parent, os.W_OK):
+-                raise PermissionError(
+-                    f"directory ``{path.parent}`` exists but it can not be "
+-                    f"written"
+-                )
+     elif mode == 'a':
+         if os.access(path, os.F_OK):
+             check_file_access(path, 'r+')

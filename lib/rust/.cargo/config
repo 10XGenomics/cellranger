@@ -1,0 +1,54 @@
+[net]
+git-fetch-with-cli = true
+
+[target.'cfg(target_os="linux")']
+rustflags = [
+  "-Cforce-frame-pointers=yes",
+  "-Ctarget-feature=+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt",
+]
+
+[target.'cfg(target_os="macos")']
+rustflags = [
+  "-Clink-arg=-undefined",
+  "-Clink-arg=dynamic_lookup",
+]
+
+[target.'cfg(unix)']
+rustflags = [
+# --- lint deny ---
+# rustc lints
+  "-Dfuture_incompatible",
+  "-Dnonstandard_style",
+  "-Drust_2018_compatibility",
+  "-Drust_2021_compatibility",
+  "-Drust_2018_idioms",
+  "-Dunused",
+# clippy categorical
+  "-Dclippy::perf",
+  "-Dclippy::style",
+  "-Dclippy::suspicious",
+# clippy pedantic
+  "-Dclippy::cloned_instead_of_copied",
+  "-Dclippy::enum_glob_use",
+  "-Dclippy::explicit_deref_methods",
+  "-Dclippy::explicit_into_iter_loop",
+  "-Dclippy::explicit_iter_loop",
+  "-Dclippy::flat_map_option",
+  "-Dclippy::implicit_clone",
+  "-Dclippy::inefficient_to_string",
+  "-Dclippy::mut_mut",
+  "-Dclippy::needless_for_each",
+  "-Dclippy::redundant_closure_for_method_calls",
+  "-Dclippy::uninlined_format_args",
+  "-Dclippy::unused_self",
+  "-Dclippy::wildcard_imports",
+# clippy complexity
+  "-Dclippy::extra_unused_lifetimes",
+  "-Dclippy::needless_lifetimes",
+  "-Dclippy::unnecessary_unwrap",
+# clippy nursery
+  "-Dclippy::needless_collect",
+  "-Dclippy::or_fun_call",
+# --- lint allow ---
+  "-Aclippy::comparison_chain"
+]

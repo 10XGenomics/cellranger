@@ -1,0 +1,356 @@
+#
+# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+#
+
+@include "_assign_tags.mro"
+@include "_assign_tags_stages.mro"
+@include "_cr_lib_stages.mro"
+@include "_slfe_cells_reporter.mro"
+@include "_slfe_matrix_computer.mro"
+@include "_basic_sc_rna_counter_stages.mro"
+
+pipeline _BASIC_SC_RNA_COUNTER(
+    in  int                  gem_well,
+    in  string               sample_id,
+    in  ChemistryDef         chemistry_def,
+    in  bool                 is_antibody_only,
+    in  bool                 is_pd,
+    in  map[]                chunks,
+    in  path                 reference_path,
+    in  CellCalling          cell_calling_config,
+    in  string[]             libraries_to_translate,
+    in  float                subsample_rate,
+    in  int                  initial_reads,
+    in  int                  r1_length,
+    in  int                  r2_length,
+    in  int                  trim_polya_min_score,
+    in  int                  trim_tso_min_score,
+    in  int                  min_reads_to_report_bc,
+    in  csv                  feature_reference,
+    in  csv                  target_features,
+    in  csv                  target_set,
+    in  string               target_set_name,
+    in  tps.json             target_panel_summary,
+    in  bool                 include_exons,
+    in  bool                 include_introns,
+    in  bool                 filter_probes,
+    in  string               aligner,
+    in  bool                 disable_target_umi_filter,
+    in  string               multi_config_sha,
+    in  bool                 no_bam,
+    in  int                  rps_limit,
+    in  BarcodeAssignments   force_sample_barcodes,
+    in  bool                 disable_multi,
+    in  json                 multi_graph,
+    in  bool                 is_spatial,
+    in  float                min_assignment_confidence,
+    in  string               slide_serial_capture_area,
+    in  FeatureConfig        feature_config,
+    in  h5                   v1_filtered_fbm,
+    out csv                  filtered_barcodes,
+    out csv                  aggregate_barcodes,
+    out csv                  nonambient_cell_calls,
+    out csv                  barcode_correction_csv,
+    out path                 bam_header,
+    out bam                  possorted_genome_bam,
+    out bam.bai              possorted_genome_bai_index,
+    out bam.csi              possorted_genome_csi_index,
+    out json                 summary,
+    out h5                   barcode_summary,
+    out tbcc.bincode         barcode_counts,
+    out h5                   molecule_info,
+    out h5                   raw_gene_bc_matrices_h5,
+    out path                 raw_gene_bc_matrices_mex,
+    out h5                   filtered_gene_bc_matrices_h5,
+    out path                 filtered_gene_bc_matrices_mex,
+    out int[]                gem_groups,
+    out ReadShards           read_shards,
+    out AnnotationFiles      annotation_files,
+    out smf.json             sequencing_metrics,
+    out csv                  per_probe_metrics,
+    out h5                   raw_probe_bc_matrix,
+    # subset of summary json, needed only for verifying correct sample metrics
+    out json                 gem_well_alignment_metrics,
+    # sliced outputs for multi
+    out AssignTagsOuts       assign_tags,
+    out string               gem_well_throughput,
+    out SampleBamFile[]      multi_pos_sorted_bam,
+    out SampleMoleculeInfo[] multi_molecule_info,
+    out SampleMetrics[]      multi_metrics,
+    out SampleMatrices[]     multi_matrices,
+    out map<json>            sample_assignment_metrics,
+    out json                 sample_barcodes,
+    # everything below here is needed only for gem group merging
+    out csv                  per_barcode_metrics,
+    out csv                  isotype_normalization_factors,
+    out bmsf[]               per_barcode_metrics_shard,
+    out bui[]                bc_umi_info,
+    out asf[]                alignments,
+    out map[]                read_chunks,
+    out string               target_set_name,
+    out frf.bincode          slfe_feature_reference,
+    out pickle               merged_subsampling_metrics,
+    # Shard files of feature x barcode counts sorted by barcode
+    out csf[]                counts_bc_order,
+    out bool                 no_star_alignments,
+    out bi.bincode           barcode_index,
+)
+{
+    call _SLFE_MATRIX_COMPUTER as _MATRIX_COMPUTER(
+        gem_well                  = self.gem_well,
+        sample_id                 = self.sample_id,
+        chemistry_def             = self.chemistry_def,
+        barcodes_under_tissue     = self.cell_calling_config.cell_barcodes,
+        is_pd                     = self.is_pd,
+        chunks                    = self.chunks,
+        reference_path            = self.reference_path,
+        libraries_to_translate    = self.libraries_to_translate,
+        subsample_rate            = self.subsample_rate,
+        initial_reads             = self.initial_reads,
+        r1_length                 = self.r1_length,
+        r2_length                 = self.r2_length,
+        trim_polya_min_score      = self.trim_polya_min_score,
+        trim_tso_min_score        = self.trim_tso_min_score,
+        min_reads_to_report_bc    = self.min_reads_to_report_bc,
+        feature_reference         = self.feature_reference,
+        target_features           = self.target_features,
+        target_set                = self.target_set,
+        target_set_name           = self.target_set_name,
+        include_exons             = self.include_exons,
+        include_introns           = self.include_introns,
+        no_bam                    = self.no_bam,
+        aligner                   = self.aligner,
+        disable_target_umi_filter = self.disable_target_umi_filter,
+        rps_limit                 = self.rps_limit,
+        feature_config            = self.feature_config,
+        v1_filtered_fbm           = self.v1_filtered_fbm,
+    )
+
+    call FILTER_BARCODES(
+        sample_id              = self.sample_id,
+        matrices_h5            = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
+        barcode_correction_csv = _MATRIX_COMPUTER.barcode_correction_csv,
+        config                 = self.cell_calling_config,
+        gem_groups             = [self.gem_well],
+        chemistry_description  = self.chemistry_def.description,
+        is_antibody_only       = self.is_antibody_only,
+        reference_path         = self.reference_path,
+        target_set             = self.target_set,
+        chemistry_def          = self.chemistry_def,
+        multi_graph            = self.multi_graph,
+        per_barcode_metrics    = _MATRIX_COMPUTER.per_barcode_metrics,
+        is_spatial             = self.is_spatial,
+    )
+
+    call CHECK_CORRECTION_FACTOR(
+        v1_filtered_fbm = self.v1_filtered_fbm,
+        filtered_fbm    = FILTER_BARCODES.filtered_matrices_h5,
+    )
+
+    call DISABLE_STAGES(
+        raw_feature_bc_matrix = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
+        probe_barcode_counts  = _MATRIX_COMPUTER.probe_barcode_counts,
+        *                     = self,
+    )
+
+    call COLLATE_PROBE_METRICS(
+        probe_barcode_counts = _MATRIX_COMPUTER.probe_barcode_counts,
+        reference_path       = self.reference_path,
+        probe_set            = self.target_set,
+        filtered_barcodes    = FILTER_BARCODES.filtered_barcodes,
+        probe_set_name       = self.target_set_name,
+        barcode_index_path   = _MATRIX_COMPUTER.barcode_index,
+    ) using (
+        disabled = DISABLE_STAGES.no_probe_barcode_counts,
+    )
+
+    call WRITE_POS_BAM(
+        target_set_name           = self.target_set_name,
+        sample_barcodes           = null,
+        slide_serial_capture_area = self.slide_serial_capture_area,
+        *                         = _MATRIX_COMPUTER,
+    ) using (
+        disabled = DISABLE_STAGES.disable_legacy_bam,
+    )
+
+    call _SLFE_CELLS_REPORTER as _CELLS_REPORTER(
+        gem_well                  = self.gem_well,
+        reference_path            = self.reference_path,
+        recovered_cells           = self.cell_calling_config.recovered_cells,
+        force_cells               = self.cell_calling_config.force_cells,
+        slfe_feature_reference    = _MATRIX_COMPUTER.slfe_feature_reference,
+        target_panel_summary      = self.target_panel_summary,
+        matrices_h5               = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
+        read_chunks               = self.chunks,
+        report_mol_inputs         = _MATRIX_COMPUTER.report_mol_inputs,
+        matrix_computer_summary   = _MATRIX_COMPUTER.summary,
+        barcode_summary           = _MATRIX_COMPUTER.barcode_summary,
+        filtered_barcodes         = FILTER_BARCODES.filtered_barcodes,
+        per_probe_metrics         = COLLATE_PROBE_METRICS.per_probe_metrics,
+        filter_barcodes_summary   = FILTER_BARCODES.summary,
+        per_barcode_metrics       = _MATRIX_COMPUTER.per_barcode_metrics,
+        include_introns           = self.include_introns,
+        filter_probes             = self.filter_probes,
+        multi_config_sha          = self.multi_config_sha,
+        barcode_index             = _MATRIX_COMPUTER.barcode_index,
+        slide_serial_capture_area = self.slide_serial_capture_area,
+    )
+
+    call INFER_GEM_WELL_THROUGHPUT(
+        throughput            = null,
+        chemistry_description = self.chemistry_def.description,
+        filtered_feature_counts_matrix = FILTER_BARCODES.filtered_matrices_h5,
+        reference_path        = self.reference_path,
+        barcode_summary_h5    = _MATRIX_COMPUTER.barcode_summary,
+    ) using (
+        disabled = self.is_spatial,
+    )
+
+    call _ASSIGN_TAGS(
+        chemistry_def             = self.chemistry_def,
+        filtered_barcodes         = FILTER_BARCODES.filtered_barcodes,
+        filtered_feature_counts_matrix = FILTER_BARCODES.filtered_matrices_h5,
+        raw_feature_bc_matrix     = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
+        molecule_info             = _CELLS_REPORTER.molecule_info,
+        multi_graph               = self.multi_graph,
+        force_sample_barcodes     = self.force_sample_barcodes,
+        gem_well                  = self.gem_well,
+        min_assignment_confidence = self.min_assignment_confidence,
+        throughput                = INFER_GEM_WELL_THROUGHPUT.throughput,
+        inferred_throughputs      = INFER_GEM_WELL_THROUGHPUT.inferred_throughputs,
+        # default=null is multiplexing, but this enables others e.g. antigen capture
+        library_type              = null,
+    ) using (
+        disabled = DISABLE_STAGES.disable_assign_tags,
+    )
+
+    # stages/pipelines below here are for multiplexing sliced outputs
+    # sample_barcodes is passed on by the _CELLS_REPORTER
+    # and was either calculated from tags or is equal to self.force_sample_barcodes
+    # in multi-gem world a couple of these things (BAM writing, metrics) should be completely migrated to MERGE_GEM_WELLS_AND_SLICE_CELLS
+    # but without multi-gem there isn't explicitly a need to run that stage and it does unnecessary things like running Aggr.
+
+    call DEMUX_PROBE_BC_MATRIX(
+        probe_barcode_counts = _MATRIX_COMPUTER.probe_barcode_counts,
+        reference_path       = self.reference_path,
+        probe_set            = self.target_set,
+        probe_set_name       = self.target_set_name,
+        sample_barcodes      = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
+        sample_cell_barcodes = _ASSIGN_TAGS.assign_tags_outs.sample_cell_barcodes,
+    ) using (
+        disabled = DISABLE_STAGES.no_probe_barcode_matrix_demux,
+    )
+
+    call MULTI_WRITE_PER_SAMPLE_MATRICES(
+        matrix_h5                    = FILTER_BARCODES.filtered_matrices_h5,
+        raw_matrix_h5                = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
+        sample_barcodes              = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
+        sample_cell_barcodes         = _ASSIGN_TAGS.assign_tags_outs.sample_cell_barcodes,
+        multi_graph                  = self.multi_graph,
+        sample_raw_probe_bc_matrices = DEMUX_PROBE_BC_MATRIX.sample_raw_probe_bc_matrices,
+        samples_per_probe_metrics    = DEMUX_PROBE_BC_MATRIX.samples_per_probe_metrics,
+        filtered_barcodes            = FILTER_BARCODES.filtered_barcodes,
+        aggregate_barcodes           = FILTER_BARCODES.aggregate_barcodes,
+    ) using (
+        disabled = self.disable_multi,
+    )
+
+    call WRITE_POS_BAM as MULTI_WRITE_PER_SAMPLE_BAM(
+        target_set_name           = self.target_set_name,
+        slide_serial_capture_area = self.slide_serial_capture_area,
+        sample_barcodes           = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
+        *                         = _MATRIX_COMPUTER,
+    ) using (
+        disabled = DISABLE_STAGES.disable_sample_bams,
+    )
+
+    call COLLATE_METRICS as MULTI_COLLATE_PER_SAMPLE_METRICS(
+        per_barcode_metrics = _MATRIX_COMPUTER.per_barcode_metrics_shard,
+        reference_path      = self.reference_path,
+        feature_reference   = _MATRIX_COMPUTER.slfe_feature_reference,
+        filtered_barcodes   = FILTER_BARCODES.filtered_barcodes,
+        aggregate_barcodes  = FILTER_BARCODES.aggregate_barcodes,
+        sample_barcodes     = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
+    ) using (
+        disabled = self.disable_multi,
+    )
+
+    call WRITE_MOLECULE_INFO as MULTI_WRITE_PER_SAMPLE_MOLECULE_INFO(
+        gem_well                  = self.gem_well,
+        counts_bc_order           = _MATRIX_COMPUTER.report_mol_inputs,
+        reference_path            = self.reference_path,
+        read_chunks               = self.chunks,
+        feature_reference         = _MATRIX_COMPUTER.slfe_feature_reference,
+        target_panel_summary      = self.target_panel_summary,
+        matrix_computer_summary   = _MATRIX_COMPUTER.summary,
+        recovered_cells           = self.cell_calling_config.recovered_cells,
+        force_cells               = self.cell_calling_config.force_cells,
+        filtered_barcodes         = FILTER_BARCODES.filtered_barcodes,
+        per_probe_metrics         = COLLATE_PROBE_METRICS.per_probe_metrics,
+        include_introns           = self.include_introns,
+        filter_probes             = self.filter_probes,
+        multi_config_sha          = self.multi_config_sha,
+        sample_barcodes           = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
+        per_sample_metrics        = MULTI_COLLATE_PER_SAMPLE_METRICS.multi_metrics,
+        barcode_index             = _MATRIX_COMPUTER.barcode_index,
+        slide_serial_capture_area = self.slide_serial_capture_area,
+    ) using (
+        disabled = self.disable_multi,
+    )
+
+    call MERGE_METRICS(
+        summaries = [
+            _CELLS_REPORTER.summary,
+            _ASSIGN_TAGS.assign_tags_outs.tag_call_metrics,
+            COLLATE_PROBE_METRICS.estimated_gdna_metrics,
+        ],
+    )
+
+    return (
+        filtered_barcodes             = FILTER_BARCODES.filtered_barcodes,
+        aggregate_barcodes            = FILTER_BARCODES.aggregate_barcodes,
+        nonambient_cell_calls         = FILTER_BARCODES.nonambient_calls,
+        barcode_correction_csv        = _MATRIX_COMPUTER.barcode_correction_csv,
+        bam_header                    = _MATRIX_COMPUTER.bam_header,
+        possorted_genome_bam          = WRITE_POS_BAM.pos_sorted_bam.bam_file,
+        possorted_genome_bai_index    = WRITE_POS_BAM.pos_sorted_bam.bai_index_file,
+        possorted_genome_csi_index    = WRITE_POS_BAM.pos_sorted_bam.csi_index_file,
+        summary                       = MERGE_METRICS.summary,
+        barcode_summary               = _MATRIX_COMPUTER.barcode_summary,
+        barcode_counts                = _MATRIX_COMPUTER.barcode_counts,
+        molecule_info                 = _CELLS_REPORTER.molecule_info,
+        raw_gene_bc_matrices_h5       = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
+        raw_gene_bc_matrices_mex      = _MATRIX_COMPUTER.raw_gene_bc_matrices_mex,
+        filtered_gene_bc_matrices_h5  = FILTER_BARCODES.filtered_matrices_h5,
+        filtered_gene_bc_matrices_mex = FILTER_BARCODES.filtered_matrices_mex,
+        gem_groups                    = [self.gem_well],
+        read_shards                   = _MATRIX_COMPUTER.read_shards,
+        annotation_files              = _MATRIX_COMPUTER.annotation_files,
+        sequencing_metrics            = _MATRIX_COMPUTER.sequencing_metrics,
+        per_probe_metrics             = COLLATE_PROBE_METRICS.per_probe_metrics,
+        raw_probe_bc_matrix           = COLLATE_PROBE_METRICS.raw_probe_bc_matrix,
+        # sliced outputs for multi
+        assign_tags                   = _ASSIGN_TAGS.assign_tags_outs,
+        gem_well_throughput           = INFER_GEM_WELL_THROUGHPUT.throughput,
+        multi_pos_sorted_bam          = MULTI_WRITE_PER_SAMPLE_BAM.multi_pos_sorted_bam,
+        multi_molecule_info           = MULTI_WRITE_PER_SAMPLE_MOLECULE_INFO.multi_mol_info,
+        multi_metrics                 = MULTI_COLLATE_PER_SAMPLE_METRICS.multi_metrics,
+        multi_matrices                = MULTI_WRITE_PER_SAMPLE_MATRICES.sample_matrices,
+        sample_assignment_metrics     = _ASSIGN_TAGS.assign_tags_outs.sample_assignment_metrics,
+        sample_barcodes               = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
+        # everything below here is needed only for gem well merging
+        bc_umi_info                   = _MATRIX_COMPUTER.bc_umi_info,
+        per_barcode_metrics           = _MATRIX_COMPUTER.per_barcode_metrics,
+        isotype_normalization_factors = FILTER_BARCODES.isotype_normalization_factors,
+        per_barcode_metrics_shard     = _MATRIX_COMPUTER.per_barcode_metrics_shard,
+        alignments                    = _MATRIX_COMPUTER.alignments,
+        read_chunks                   = self.chunks,
+        target_set_name               = self.target_set_name,
+        slfe_feature_reference        = _MATRIX_COMPUTER.slfe_feature_reference,
+        gem_well_alignment_metrics    = _MATRIX_COMPUTER.gem_well_alignment_metrics,
+        merged_subsampling_metrics    = _CELLS_REPORTER.merged_subsampling_metrics,
+        counts_bc_order               = _MATRIX_COMPUTER.counts_bc_order,
+        no_star_alignments            = _MATRIX_COMPUTER.no_star_alignments,
+        barcode_index                 = _MATRIX_COMPUTER.barcode_index,
+    )
+}

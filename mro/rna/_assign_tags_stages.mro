@@ -1,0 +1,123 @@
+#
+# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+#
+
+filetype csv;
+filetype h5;
+filetype json;
+filetype pickle;
+
+struct BarcodeAssignments(
+    json sample_barcodes,
+    json non_singlet_barcodes,
+    json cells_per_tag,
+)
+
+struct AssignTagsOuts(
+    BarcodeAssignments force_sample_barcodes,
+    json               sample_barcodes               "Maps sample names to list of barcodes"                                                                          "sample_barcodes.json",
+    json               sample_cell_barcodes,
+    csv                tag_calls_per_cell            "Specifies tag assignments per cell"                                                                             "tag_calls_per_cell.csv",
+    csv                tag_calls_summary             "Summarizes basic statistics about tag assignments"                                                              "tag_calls_summary",
+    csv                frp_gem_barcode_overlap       "Gel-bead barcodes in common for all pairs of probe barcodes"                                                    "frp_gem_barcode_overlap.csv",
+    csv                assignment_confidence_table   "Lists the posterior probabilities for tag assignments provided by JIBES model"                                  "assignment_confidence_table",
+    json               cells_per_tag                 "Provides a JSON that lists, for each tag, the cells it has been assigned to"                                    "cells_per_tag.json",
+    json               non_singlet_barcodes          "Provides a JSON that lists, for each non-tag assignment (blanks/unassigned), the cells it has been assigned to" "non_singlet_barcodes.json",
+    csv                tag_umi_thresholds_csv        "tag UMI thresholds csv"                                                                                         "tag_umi_thresholds_csv.csv",
+    csv                marginal_tag_frequencies      "marginal_tag_frequencies"                                                                                       "marginal_tag_frequencies.csv",
+    csv                jibes_model_summary           "jibes_model_summary"                                                                                            "jibes_model_summary.csv",
+    json               jibes_parameters              "jibes_parameters"                                                                                               "jibes_parameters.json",
+    json               jibes_summary_data            "jibes_summary_data"                                                                                             "jibes_summary_data.json",
+    json               tag_call_metrics              "tag_call_metrics"                                                                                               "tag_call_metrics.json",
+    json               tag_umi_thresholds_json       "tag_umi_thresholds_json"                                                                                        "tag_umi_thresholds_json.json",
+    json               tag_contaminant_info          "tag_contaminant_info"                                                                                           "tag_contaminant_info.json",
+    pickle             tag_assigner_pickle           "tag_assigner_pickle"                                                                                            "tag_assigner_pickle.pickle",
+    map<json>          sample_assignment_metrics     "Per-sample sample assignment summary metrics"                                                                   "sample_assignment_metrics.json",
+    string             gem_well_throughput           "Gem well throughput"                                                                                            "gem_well_throughput.txt",
+    json               gem_well_inferred_throughputs "Gem well inferred throughput"                                                                                   "gem_well_inferred_throughputs.json",
+    bool               multiplexing_is_not_cmo,
+    bool               output_per_sample_raw_matrix,
+)
+
+stage MULTIPLEXING_METHOD(
+    in  json multi_graph,
+    out bool multiplexing_is_not_rtl,
+    out bool multiplexing_is_not_cmo,
+    out bool multiplexing_is_not_oh,
+    out bool output_per_sample_raw_matrix,
+    src py   "../rna/stages/multi/multiplexing_method",
+) using (
+    mem_gb   = 1,
+    threads  = 1,
+    volatile = strict,
+)
+
+stage CALL_TAGS_MARGINAL(
+    in  csv    filtered_barcodes,
+    in  h5     filtered_feature_counts_matrix,
+    in  string throughput,
+    in  string library_type,
+    out csv    marginal_tag_calls_per_cell,
+    out csv    marginal_tag_frequencies,
+    out json   tag_contaminant_info,
+    src py     "stages/feature/call_tags_marginal",
+) split (
+)
+
+stage CALL_TAGS_JIBES(
+    in  csv    marginal_tag_calls_per_cell,
+    in  csv    marginal_tag_frequencies,
+    in  csv    filtered_barcodes,
+    in  h5     filtered_feature_counts_matrix,
+    in  h5     molecule_info,
+    in  string throughput,
+    in  string library_type,
+    in  float  min_assignment_confidence,
+    out json   jibes_parameters,
+    out csv    jibes_model_summary,
+    out json   jibes_summary_data,
+    out csv    assignment_confidence_table,
+    out csv    tag_calls_summary,
+    out csv    tag_calls_per_cell,
+    out json   tag_call_metrics,
+    out json   cells_per_tag,
+    out json   tag_umi_thresholds_json,
+    out csv    tag_umi_thresholds_csv,
+    out pickle tag_assigner_pickle,
+    out json   non_singlet_barcodes,
+    src py     "stages/feature/call_tags_jibes",
+) split (
+)
+
+stage DETERMINE_SAMPLE_ASSIGNMENTS(
+    in  json[]             barcodes_per_tag,
+    in  BarcodeAssignments force_sample_barcodes,
+    in  csv                filtered_barcodes,
+    in  json               multi_graph,
+    in  json               non_singlet_barcodes,
+    in  int                gem_well,
+    in  h5                 raw_feature_bc_matrix,
+    out json               cells_per_tag,
+    out json               sample_barcodes,
+    out json               sample_cell_barcodes,
+    out json               non_singlet_barcodes,
+    out map<json>          sample_summaries,
+    out json               summary,
+    src py                 "stages/multi/determine_sample_assignments",
+) using (
+    mem_gb   = 8,
+    volatile = strict,
+)
+
+stage COMPUTE_EXTRA_MULTIPLEXING_METRICS(
+    in  h5   molecule_info,
+    in  h5   filtered_feature_counts_matrix,
+    in  json multi_graph,
+    in  json sample_cell_barcodes,
+    in  json non_singlet_barcodes,
+    out json summary,
+    src py   "stages/multi/compute_extra_multiplexing_metrics",
+) split (
+) using (
+    volatile = strict,
+)

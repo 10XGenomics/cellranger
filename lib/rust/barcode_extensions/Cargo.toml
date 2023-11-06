@@ -1,0 +1,52 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.fastq_set]
+optional = true
+workspace = true
+
+[dependencies.fst]
+optional = true
+version = '0.4'
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.rayon]
+optional = true
+version = '1.7'
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.slide_design]
+path = '../slide_design'
+
+[dependencies.triple_accel]
+optional = true
+version = '0.4.0'
+
+[features]
+default = ['tenx_oss']
+tenx_internal = ['triple_accel', 'rayon', 'fst', 'fastq_set']
+tenx_oss = []
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'barcode_extensions'
+publish = false
+version = '0.1.0'

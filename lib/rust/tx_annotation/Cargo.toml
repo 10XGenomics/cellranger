@@ -1,0 +1,59 @@
+[dependencies]
+bio-types = '*'
+rand_chacha = '>=0.3'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.cr_bam]
+path = '../cr_bam'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.rust-htslib]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.transcriptome]
+path = '../transcriptome'
+
+[dependencies.umi]
+path = '../umi'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'tx_annotation'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['martian']

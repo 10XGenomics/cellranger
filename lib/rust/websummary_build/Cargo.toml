@@ -1,0 +1,19 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.bazel_utils]
+path = '../bazel_utils'
+
+[dependencies.tenx-websummary]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'websummary_build'
+publish = false
+version = '0.1.0'

@@ -1,0 +1,19 @@
+[dependencies]
+proc-macro2 = '1'
+quote = '1'
+syn = '1'
+
+[dependencies.itertools]
+workspace = true
+
+[lib]
+proc-macro = true
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+include = ['src/lib.rs']
+name = 'json_report_derive'
+publish = false
+version = '0.1.0'

@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2017 10x Genomics, Inc. All rights reserved.
+#
+# Run SC_RNA_COUNTER_CS with mrp.
+#
+
+export FASTQS_OPTIONAL=1
+
+# shellcheck source=../rna/_includes
+source "$TENX_SCRIPTDIR/rna/_includes"
+
+# Add pipeline-specific required args
+DOCOPT_PREAMBLE_FASTQS="${DOCOPT_PREAMBLE_FASTQS/\[options\]/--transcriptome=DIR
+        \[options\]}"
+
+DOCOPT_PREAMBLE_FASTQS="${DOCOPT_PREAMBLE_FASTQS}"'
+    transcriptome       Path of folder containing 10x-compatible reference.'
+
+
+#Path of folder containing 10X-compatible transcriptome.
+DOCOPT_SPEC="$(cat <<EOF
+'$TENX_PRODUCT $TENX_SUBCMD' quantifies single-cell gene expression.
+
+$DOCOPT_PREAMBLE_FASTQS
+
+Options:
+# Single Cell Gene Expression
+    $DOCOPT_OPTIONS_SAMPLE_INFO
+    --libraries=CSV     CSV file declaring input library data sources.
+    --expect-cells=NUM  Expected number of recovered cells, used as input to cell calling algorithm. [default: 3000]
+    --force-cells=NUM   Force pipeline to use this number of cells, bypassing
+                            the cell calling algorithm.
+    --feature-ref=CSV   Feature reference CSV file, declaring Feature Barcode
+                             constructs and associated barcodes.
+    --target-panel=JSON JSON file, declaring targeted genes and their
+                            associated baits
+    --nosecondary       Disable secondary analysis, e.g. clustering. Optional.
+    --r1-length=NUM     Hard trim the input Read 1 to this length before
+                            analysis.
+    --r2-length=NUM     Hard trim the input Read 2 to this length before
+                            analysis.
+    --chemistry=CHEM    Assay configuration. NOTE: by default the assay
+                            configuration is detected automatically, which is
+                            the recommened mode. You usually will not need to
+                            specify a chemistry. Options are: 'auto' for
+                            autodetection, 'threeprime' for Single Cell 3',
+                            'fiveprime' for  Single Cell 5', 'SC3Pv1' or
+                            'SC3Pv2' or 'SC3Pv3' for Single Cell 3' v1/v2/v3,
+                            'SC5P-PE' or 'SC5P-R2' for Single Cell 5',
+                            paired-end/R2-only, 'SC-FB' for Single Cell
+                            Antibody-only 3' v2 or 5'. Default: auto.
+    --no-libraries      Proceed with processing using a --feature-ref but no
+                            Feature Barcode libraries specified with the
+                            'libraries' flag.
+    $DOCOPT_OPTIONS_FASTQS
+
+# Martian Runtime
+    $DOCOPT_OPTIONS_MRP_CLUSTER
+EOF
+)"
+
+function implement_process_options {
+    process_options_fastqs
+    process_options_sample_info
+
+    # --transcriptome
+    if [ -n "$transcriptome" ]; then
+        reference_path=\"$(abspath "$transcriptome")\"
+    else
+        reference_path=\"\"
+    fi
+
+    # --chemistry
+    if [ -z "$chemistry" ]; then
+        chemistry=\"auto\"
+    else
+        chemistry="\"$chemistry\""
+    fi
+
+    if [ -n "$feature_ref" ]; then
+        feature_reference=\"$(abspath "$feature_ref")\"
+
+	# If the feature reference is supplied, then the user generally is in feature-barcode mode
+        # and needs to use --libraries to specify the input fastqs and their associated library types
+        # Make sure they're doing that. They can override the warning in the (rarer) case that they're
+        # need to supply the feature ref to make aggr happy, but don't actually have those any FB data.
+        if [ -z "$libraries" ]; then
+		if [ "$no_libraries" == "false" ]; then
+			msg="$(cat <<EOF
+You specified --feature-ref, but not --libraries.
+Did you mean to input feature barcoding libraries?
+If you do have 1 or more feature barcoding libraries:
+  use --libraries to specify your input FASTQs and the associated library types.
+If you want to proceed with a feature barcoding reference, but no feature barcoding data:
+  add the --no-libraries flag.
+EOF
+)"
+			error "$msg"
+		fi
+	fi
+    else
+        feature_reference=null
+    fi
+
+    # regex for validating a numeric argument
+    int_re='^[0-9]+$'
+
+    # NOTE: docopt automatically converts dashes to underscores (e.g. force-cells becomes force_cells)
+    # --expect_cells
+    if [ -z "$expect_cells" ]; then
+        if [ -n "$cells" ]; then
+            expect_cells="$cells"
+        else
+            expect_cells=null
+        fi
+    else
+	if ! [[ "$expect_cells" =~ $int_re ]] ; then
+	   error "--expect-cells must be a number"
+	fi
+    fi
+
+    # --force_cells
+    if [ -z "$force_cells" ]; then
+        force_cells=null
+    else
+	if ! [[ "$force_cells" =~ $int_re ]] ; then
+	   error "--force-cells must be a number"
+	fi
+    fi
+
+
+    # --r1-length
+    if [ -z "$r1_length" ]; then
+        r1_length=null
+    else
+	if ! [[ "$r1_length" =~ $int_re ]] ; then
+	   error "--r1-length must be a positive number"
+	fi
+    fi
+
+    # --r2-length
+    if [ -z "$r2_length" ]; then
+        r2_length=null
+    else
+	if ! [[ "$r2_length" =~ $int_re ]] ; then
+	   error "--r2-length must be a positive number"
+	fi
+    fi
+}
+
+function implement_generate_sample_defs {
+    sample_def=""
+
+    if [ -n "$libraries" ]; then
+	if [ -n "$fastqs" ]; then
+		error "Please supply --libraries OR --fastqs, but not both"
+	fi
+
+        if [ -n "$sample" ]; then
+		error "Please supply --libraries OR --sample, but not both"
+	fi
+
+        sample_def="[{\"libraries\": \""$(abspath "$libraries")"\"}]"
+    fi
+
+    if [ -n "$target_panel" ]; then
+        target_set=\"$(abspath "$target_panel")\"
+        # TODO: the sed bed/csv is a temporary hack so things work -- will go away soon
+        target_set_name=$(basename "${target_panel}" .json | sed 's/\.bed$//g' | sed 's/\.csv$//g')
+    else
+        target_set=null
+        target_set_name=null
+    fi
+
+    if [ ! -z "$fastqs" ]; then
+        for fastq in $fastqs; do
+            sample_def="$sample_def
+            {
+                \"fastq_mode\": $fastq_mode,
+                \"gem_group\": null,
+                \"lanes\": $lanes,
+                \"read_path\": \"$fastq\",
+                \"sample_indices\": $indices,
+                \"sample_names\": $sample_names,
+                \"target_set\": ${target_set},
+                \"target_set_name\": \"${target_set_name}\",
+            },"
+        done
+        sample_def="${sample_def%\,}"
+        sample_def=$(echo -e "[ $sample_def\n    ]")
+    fi
+
+    if [ -z "$sample_def" ]; then
+        error "You must provide the --fastqs or --libraries argument to specify the location of the input data"
+    fi
+}
+
+function implement_generate_mro {
+    cat <<EOF > "$mro"
+@include "rna/sc_rna_counter_cs.mro"
+
+call SC_RNA_COUNTER_CS(
+    sample_id = $sample_id,
+    sample_def = $sample_def,
+    sample_desc = $sample_desc,
+    reference_path = $reference_path,
+    recovered_cells = $expect_cells,
+    force_cells = $force_cells,
+    no_secondary_analysis = $nosecondary,
+    chemistry = $chemistry,
+    r1_length = $r1_length,
+    r2_length = $r2_length,
+    feature_reference = $feature_reference,
+)
+EOF
+}
+
+# shellcheck source=../tenkit/common/_subcmd_mrp
+source "$TENX_SCRIPTDIR/tenkit/common/_subcmd_mrp"

@@ -1,0 +1,98 @@
+#
+# Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#
+
+@include "_basic_sc_rna_counter_stages.mro"
+@include "_cr_lib_stages.mro"
+@include "_sc_rna_targeted_analyzer_stages.mro"
+
+filetype csv;
+filetype h5;
+filetype json;
+
+pipeline _RUN_GDNA_ANALYSIS(
+    in  h5   molecule_info,
+    in  path reference_path,
+    in  csv  probe_set,
+    out json gdna_summary,
+)
+{
+    call GET_GDNA_METRICS(
+        molecule_info  = self.molecule_info,
+        reference_path = self.reference_path,
+        probe_set      = self.probe_set,
+    )
+
+    call GET_GDNA_PLOT(
+        gdna_plot_sufficient_stats = GET_GDNA_METRICS.gdna_plot_sufficient_stats,
+    )
+
+    call MERGE_METRICS(
+        summaries = [
+            GET_GDNA_METRICS.summary,
+            GET_GDNA_PLOT.summary,
+        ],
+    )
+
+    return (
+        gdna_summary = MERGE_METRICS.summary,
+    )
+}
+
+pipeline _TARGETED_ANALYZER(
+    in  h5       molecule_info,
+    in  h5       filtered_gene_bc_matrices,
+    in  csv      filtered_barcodes,
+    in  json     basic_counter_summary,
+    in  path     reference_path,
+    in  csv      probe_set,
+    in  tps.json target_panel_summary,
+    out json     targeted_analysis_metrics,
+    out csv      per_feature_metrics_csv,
+)
+{
+    call DISABLE_GDNA_STAGES(
+        probe_set = self.probe_set,
+    )
+
+    call _RUN_GDNA_ANALYSIS(
+        molecule_info  = self.molecule_info,
+        reference_path = self.reference_path,
+        probe_set      = self.probe_set,
+    ) using (
+        disabled = DISABLE_GDNA_STAGES.disable_targeted_gdna,
+    )
+
+    call CALCULATE_TARGETED_METRICS(
+        molecule_info             = self.molecule_info,
+        filtered_gene_bc_matrices = self.filtered_gene_bc_matrices,
+        basic_counter_summary     = self.basic_counter_summary,
+        target_panel_summary      = self.target_panel_summary,
+    )
+
+    call SUBSAMPLE_READS as SUBSAMPLE_ON_TARGET_READS(
+        molecule_info     = self.molecule_info,
+        filtered_barcodes = self.filtered_barcodes,
+        target_mode       = "ontarget",
+    )
+
+    call SUBSAMPLE_READS as SUBSAMPLE_OFF_TARGET_READS(
+        molecule_info     = self.molecule_info,
+        filtered_barcodes = self.filtered_barcodes,
+        target_mode       = "offtarget",
+    )
+
+    call MERGE_METRICS(
+        summaries = [
+            CALCULATE_TARGETED_METRICS.summary,
+            SUBSAMPLE_ON_TARGET_READS.summary,
+            SUBSAMPLE_OFF_TARGET_READS.summary,
+            _RUN_GDNA_ANALYSIS.gdna_summary,
+        ],
+    )
+
+    return (
+        targeted_analysis_metrics = MERGE_METRICS.summary,
+        per_feature_metrics_csv   = CALCULATE_TARGETED_METRICS.per_feature_metrics_csv,
+    )
+}

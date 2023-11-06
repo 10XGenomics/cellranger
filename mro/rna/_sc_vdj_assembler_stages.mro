@@ -1,0 +1,64 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+
+filetype bam;
+filetype bam.bai;
+filetype sam;
+filetype fasta;
+filetype fasta.fai;
+filetype fastq;
+filetype fastq.lz4;
+filetype h5;
+filetype json;
+filetype pickle;
+filetype gtf;
+filetype csv;
+filetype tsv;
+filetype html;
+filetype lz4;
+filetype bin;
+filetype txt;
+
+stage VDJ_PREFLIGHT(
+    in  map[]  sample_def,
+    in  path   vdj_reference_path,
+    in  bool   denovo,
+    in  bool   full_check,
+    in  path   inner_enrichment_primers,
+    in  string chain_type,
+    src py     "stages/vdj/vdj_preflight",
+)
+
+stage REPORT_CONTIGS(
+    in  path  vdj_reference_path,
+    in  json  cell_barcodes,
+    in  fasta contigs,
+    in  json  annotations,
+    in  csv   filter_summary,
+    in  tsv   contig_summary,
+    in  tsv   umi_summary,
+    out json  summary,
+    src py    "stages/vdj/report_contigs",
+) split (
+)
+
+stage SUMMARIZE_VDJ_REPORTS(
+    in  string sample_id,
+    in  string sample_desc,
+    in  string barcode_whitelist,
+    in  json[] summaries,
+    in  json   cell_barcodes,
+    in  csv    clonotype_summary,
+    in  csv    barcode_support,
+    in  string receptor,
+    out string receptor,
+    out json   metrics_summary_json,
+    out csv    metrics_summary_csv,
+    out html   web_summary,
+    out json   web_summary_data,
+    src py     "stages/vdj/summarize_reports",
+) split (
+) retain (
+    metrics_summary_json,
+)

@@ -1,0 +1,587 @@
+@include "_common_stages.mro"
+@include "_cr_lib_stages.mro"
+@include "_cr_vdj_stages.mro"
+@include "_sc_multi_defs.mro"
+@include "_sc_vdj_clonotype_assigner.mro"
+
+struct VdjWebSummaryInputs(
+    json      metrics_summary,
+    string    receptor,
+    VdjInputs vdj_inputs,
+    smf.json  sequencing_metrics,
+    json      vdj_ws_json,
+    bool      disable,
+    json      filter_metrics,
+)
+
+pipeline MULTI_WEBSUMMARY_BUILDER(
+    in  VdjGenInputs                 vdj_gen_inputs,
+    in  VdjWebSummaryInputs          vdj_t,
+    in  VdjWebSummaryInputs          vdj_t_gd,
+    in  VdjWebSummaryInputs          vdj_b,
+    in  map<json>                    per_sample_metrics,
+    in  json                         library_metrics,
+    in  smf.json                     sequencing_metrics,
+    in  csv                          multi_config,
+    in  json                         multi_graph,
+    in  CommonInputs                 common_inputs,
+    in  CountInputs                  count_inputs,
+    in  json                         tag_contaminant_info,
+    in  map<json>                    sample_tsne_plots,
+    in  map<json>                    sample_barcode_rank_plots,
+    in  map<json>                    sample_treemap_plots,
+    in  json                         barcode_rank_plots,
+    in  json                         antibody_histograms,
+    in  map<json>                    sample_antibody_histograms,
+    in  json                         antigen_histograms,
+    in  json                         jibes_biplot_histogram,
+    in  json                         cmo_tsne_plot,
+    in  string                       target_set_name,
+    in  csv                          targeted_per_feature_metrics,
+    in  ag.vdj.bincode               antigen_vdj_metrics,
+    in  csv                          antigen_specificity,
+    in  FeatureConfig                feature_config,
+    in  json                         detected_probe_barcode_pairing,
+    in  bool                         no_preflight,
+    out WRITE_MULTI_WEB_SUMMARY_JSON multi_web_summary_json,
+    out map<html>                    multi_web_summaries,
+    out map<csv>                     metrics_summary_csvs,
+)
+{
+    call BUILD_VDJ_WS_CONTENTS as BUILD_VDJ_T_WS_CONTENTS(
+        vdj_gen_inputs = self.vdj_gen_inputs,
+        *              = self.vdj_t,
+    ) using (
+        disabled = self.vdj_t.disable,
+    )
+
+    call BUILD_VDJ_WS_CONTENTS as BUILD_VDJ_T_GD_WS_CONTENTS(
+        vdj_gen_inputs = self.vdj_gen_inputs,
+        *              = self.vdj_t_gd,
+    ) using (
+        disabled = self.vdj_t_gd.disable,
+    )
+
+    call BUILD_VDJ_WS_CONTENTS as BUILD_VDJ_B_WS_CONTENTS(
+        vdj_gen_inputs = self.vdj_gen_inputs,
+        *              = self.vdj_b,
+    ) using (
+        disabled = self.vdj_b.disable,
+    )
+
+    call BUILD_MULTI_GRAPH_VIEW(
+        multi_graph = self.multi_graph,
+    )
+
+    call WRITE_MULTI_WEB_SUMMARY_JSON(
+        per_sample_metrics           = self.per_sample_metrics,
+        library_metrics              = self.library_metrics,
+        multi_config                 = self.multi_config,
+        multi_graph                  = self.multi_graph,
+        multi_graph_svg              = BUILD_MULTI_GRAPH_VIEW.view,
+        common_inputs                = self.common_inputs,
+        count_inputs                 = self.count_inputs,
+        sequencing_metrics           = self.sequencing_metrics,
+        tag_contaminant_info         = self.tag_contaminant_info,
+        sample_tsne_plots            = self.sample_tsne_plots,
+        sample_barcode_rank_plots    = self.sample_barcode_rank_plots,
+        sample_treemap_plots         = self.sample_treemap_plots,
+        barcode_rank_plots           = self.barcode_rank_plots,
+        antibody_histograms          = self.antibody_histograms,
+        sample_antibody_histograms   = self.sample_antibody_histograms,
+        antigen_histograms           = self.antigen_histograms,
+        jibes_biplot_histogram       = self.jibes_biplot_histogram,
+        cmo_tsne_plot                = self.cmo_tsne_plot,
+        target_set_name              = self.target_set_name,
+        targeted_per_feature_metrics = self.targeted_per_feature_metrics,
+        vdj_t_contents               = BUILD_VDJ_T_WS_CONTENTS.vdj_ws_contents,
+        vdj_t_gd_contents            = BUILD_VDJ_T_GD_WS_CONTENTS.vdj_ws_contents,
+        vdj_b_contents               = BUILD_VDJ_B_WS_CONTENTS.vdj_ws_contents,
+        antigen_vdj_metrics          = self.antigen_vdj_metrics,
+        antigen_specificity          = self.antigen_specificity,
+        feature_config               = self.feature_config,
+        detected_probe_barcode_pairing = self.detected_probe_barcode_pairing,
+        no_preflight                 = self.no_preflight,
+    )
+
+    call BUILD_MULTI_WEB_SUMMARY(
+        web_summary_data     = WRITE_MULTI_WEB_SUMMARY_JSON.web_summary_json,
+        metrics_summary_csvs = WRITE_MULTI_WEB_SUMMARY_JSON.metrics_summary_csv,
+    )
+
+    return (
+        multi_web_summary_json = WRITE_MULTI_WEB_SUMMARY_JSON,
+        multi_web_summaries    = BUILD_MULTI_WEB_SUMMARY.web_summaries,
+        metrics_summary_csvs   = BUILD_MULTI_WEB_SUMMARY.metrics_summary_csvs,
+    )
+}
+
+pipeline SC_MULTI_CORE(
+    in  CommonInputs                 common_input,
+    in  CountInputs                  count_input,
+    in  VdjInputs[]                  vdj_inputs,
+    in  VdjGenInputs                 vdj_gen_inputs,
+    in  BasicPipelineConfig          basic_config,
+    in  csv                          multi_config,
+    in  bool                         is_pd,
+    # We would ultimately want to consolidate or get rid of the
+    # remaining inputs.
+    in  string[]                     count_allowed_chems,
+    in  string                       count_pipestance_type,
+    in  bool                         is_multi,
+    in  FeatureConfig                feature_config,
+    in  bool                         no_preflight,
+    out FullPipelineConfig           full_config,
+    out SPLIT_VDJ_INPUTS             split_vdj,
+    out MULTI_GEM_WELL_PROCESSOR     multi_gw,
+    out SC_VDJ_CLONOTYPE_ASSIGNER    vdj_t_clonotype,
+    out SC_VDJ_CLONOTYPE_ASSIGNER    vdj_t_gd_clonotype,
+    out SC_VDJ_CLONOTYPE_ASSIGNER    vdj_b_clonotype,
+    out MULTI_REPORTER               multi_reporter,
+    out COUNT_ANALYZER               count_analyzer,
+    out DETECT_CHEMISTRY             detect_count_chem,
+    out DISABLE_FEATURE_STAGES       disable_feat,
+    out VdjRefFolder                 vdj_ref_out,
+    out map<COUNT_ANALYZER>          sample_analyzer,
+    out map<SAMPLE_REPORTER>         sample_reporter,
+    out map<SampleSlfeOuts>          sample_outs,
+    out bam                          unassigned_bam,
+    out bam.bai                      unassigned_bai,
+    out bam.csi                      unassigned_csi,
+    out WRITE_MULTI_WEB_SUMMARY_JSON multi_web_summary_json,
+    out map<html>                    multi_web_summaries,
+    out map<csv>                     multi_metrics_csvs,
+)
+{
+    # calls a helper pipeline to perform DETECT_CHEMISTRY on
+    # the GEX and VDJ libraries
+    call MULTI_CHEMISTRY_DETECTOR(
+        count_inputs        = self.count_input,
+        vdj_inputs          = self.vdj_inputs,
+        vdj_gen_inputs      = self.vdj_gen_inputs,
+        basic_config        = self.basic_config,
+        count_allowed_chems = self.count_allowed_chems,
+        multi_config        = self.multi_config,
+        is_multi            = self.is_multi,
+        is_pd               = self.is_pd,
+        feature_config      = self.feature_config,
+    )
+
+    call CREATE_MULTI_GRAPH(
+        sample_id    = self.common_input.sample_id,
+        sample_desc  = self.common_input.sample_desc,
+        multi_config = self.multi_config,
+        detected_probe_barcode_pairing = MULTI_CHEMISTRY_DETECTOR.detect_count_chem.detected_probe_barcode_pairing,
+    ) using (
+        disabled = self.basic_config.disable_multi,
+    )
+
+    call SPLIT_VDJ_INPUTS(
+        vdj_inputs         = self.vdj_inputs,
+        vdj_chemistry_defs = MULTI_CHEMISTRY_DETECTOR.detect_vdj_chem.chemistry_def,
+        vdj_receptors      = MULTI_CHEMISTRY_DETECTOR.detect_vdj_chem.receptor,
+    ) using (
+        disabled = self.basic_config.disable_vdj,
+    )
+
+    call MAKE_FULL_CONFIG(
+        vdj_t_input        = SPLIT_VDJ_INPUTS.vdj_t_input,
+        vdj_t_gd_input     = SPLIT_VDJ_INPUTS.vdj_t_gd_input,
+        vdj_b_input        = SPLIT_VDJ_INPUTS.vdj_b_input,
+        basic_config       = self.basic_config,
+        vdj_reference_path = self.vdj_gen_inputs.vdj_reference_path,
+    )
+
+    call MULTI_GEM_WELL_PROCESSOR(
+        gem_group              = 1,
+        multi_config_sha       = self.common_input.multi_config_sha,
+        sample_id              = self.common_input.sample_id,
+        count_inputs           = self.count_input,
+        count_chem             = MULTI_CHEMISTRY_DETECTOR.detect_count_chem,
+        libraries_to_translate = MULTI_CHEMISTRY_DETECTOR.libraries_to_translate,
+        vdj_t_chem_def         = SPLIT_VDJ_INPUTS.vdj_t_chemistry_def,
+        vdj_t_receptor         = SPLIT_VDJ_INPUTS.vdj_t_receptor,
+        vdj_t_inputs           = SPLIT_VDJ_INPUTS.vdj_t_input,
+        vdj_t_gd_chem_def      = SPLIT_VDJ_INPUTS.vdj_t_gd_chemistry_def,
+        vdj_t_gd_receptor      = SPLIT_VDJ_INPUTS.vdj_t_gd_receptor,
+        vdj_t_gd_inputs        = SPLIT_VDJ_INPUTS.vdj_t_gd_input,
+        vdj_b_chem_def         = SPLIT_VDJ_INPUTS.vdj_b_chemistry_def,
+        vdj_b_receptor         = SPLIT_VDJ_INPUTS.vdj_b_receptor,
+        vdj_b_inputs           = SPLIT_VDJ_INPUTS.vdj_b_input,
+        vdj_gen_inputs         = self.vdj_gen_inputs,
+        is_pd                  = self.is_pd,
+        config                 = MAKE_FULL_CONFIG.config,
+        multi_graph            = CREATE_MULTI_GRAPH.multi_graph,
+        feature_config         = self.feature_config,
+    )
+
+    # eventually GEM_WELL_PROCESSOR will be map-called and this stage will merge those results
+    #call MERGE_GEM_WELLS_AND_SLICE_CELLS(
+    #    gem_groups               = [1],
+    #    count_input              = self.count_input,
+    #    gem_well_processor_count = [MULTI_GEM_WELL_PROCESSOR.count],
+    #    is_pd                    = self.is_pd,
+    #) using (
+    #    disabled = MAKE_FULL_CONFIG.config.disable_multi,
+    #)
+
+    # NOTE: This needs to be map-called for each sample when multiplexed
+    call SC_VDJ_CLONOTYPE_ASSIGNER as VDJ_T_CLONOTYPE_ASSIGNER(
+        vdj_reference_path = self.vdj_gen_inputs.vdj_reference_path,
+        contig_annotations = MULTI_GEM_WELL_PROCESSOR.vdj_t.contig_annotations,
+        filter_switch      = MULTI_GEM_WELL_PROCESSOR.vdj_filter_switch,
+        receptor           = SPLIT_VDJ_INPUTS.vdj_t_receptor,
+        has_no_vdj_ref     = MAKE_FULL_CONFIG.config.has_no_vdj_ref,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_vdj_t,
+    )
+
+    # NOTE: This needs to be map-called for each sample when multiplexed
+    call SC_VDJ_CLONOTYPE_ASSIGNER as VDJ_T_GD_CLONOTYPE_ASSIGNER(
+        vdj_reference_path = self.vdj_gen_inputs.vdj_reference_path,
+        contig_annotations = MULTI_GEM_WELL_PROCESSOR.vdj_t_gd.contig_annotations,
+        filter_switch      = MULTI_GEM_WELL_PROCESSOR.vdj_filter_switch,
+        receptor           = SPLIT_VDJ_INPUTS.vdj_t_gd_receptor,
+        has_no_vdj_ref     = MAKE_FULL_CONFIG.config.has_no_vdj_ref,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_vdj_t_gd,
+    )
+
+    # NOTE: This needs to be map-called for each sample when multiplexed
+    call SC_VDJ_CLONOTYPE_ASSIGNER as VDJ_B_CLONOTYPE_ASSIGNER(
+        vdj_reference_path = self.vdj_gen_inputs.vdj_reference_path,
+        contig_annotations = MULTI_GEM_WELL_PROCESSOR.vdj_b.contig_annotations,
+        filter_switch      = MULTI_GEM_WELL_PROCESSOR.vdj_filter_switch,
+        receptor           = SPLIT_VDJ_INPUTS.vdj_b_receptor,
+        has_no_vdj_ref     = MAKE_FULL_CONFIG.config.has_no_vdj_ref,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_vdj_b,
+    )
+
+    call STRUCTIFY_PER_SAMPLE_OUTS(
+        sample_bams           = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.multi_pos_sorted_bam,
+        sample_metrics        = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.multi_metrics,
+        sample_molecule_infos = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.multi_molecule_info,
+        sample_matrices       = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.multi_matrices,
+        multi_graph           = CREATE_MULTI_GRAPH.multi_graph,
+        feature_reference     = self.count_input.feature_reference,
+        target_panel          = MULTI_GEM_WELL_PROCESSOR.count.target_outs.target_panel,
+        probe_set             = MULTI_GEM_WELL_PROCESSOR.count.target_outs.probe_set,
+    )
+
+    # TODO: Can `disable_crispr` be part of the `BasicPipelineConfig`?
+    call DISABLE_FEATURE_STAGES(
+        sample_def          = self.count_input.sample_def,
+        disable_multi       = MAKE_FULL_CONFIG.config.disable_multi,
+        disable_count       = MAKE_FULL_CONFIG.config.disable_count,
+        in_disable_targeted = MULTI_GEM_WELL_PROCESSOR.count.target_outs.disable_targeted,
+        is_pd               = self.is_pd,
+        sample_outs         = STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
+        multi_graph         = CREATE_MULTI_GRAPH.multi_graph,
+    )
+
+    # per-sample map call of the count analyzer for multi runs
+    map call COUNT_ANALYZER as SAMPLE_ANALYZER(
+        filtered_matrices_h5  = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_matrix_h5,
+        molecule_info         = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.molecule_info,
+        count_inputs          = self.count_input,
+        filtered_barcodes     = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_barcodes,
+        aggregate_barcodes    = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.aggregate_barcodes,
+        counter_metrics_json  = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.metrics_summary,
+        disable_rna           = false,
+        disable_crispr        = DISABLE_FEATURE_STAGES.disable_crispr,
+        disable_antibody      = DISABLE_FEATURE_STAGES.disable_antibody,
+        disable_antigen       = DISABLE_FEATURE_STAGES.disable_antigen,
+        disable_targeted      = DISABLE_FEATURE_STAGES.disable_targeted,
+        feature_reference     = self.count_input.feature_reference,
+        no_secondary_analysis = self.count_input.no_secondary_analysis,
+        parse_target_features = MULTI_GEM_WELL_PROCESSOR.count.target_outs,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_multi_count,
+    )
+
+    # library-level count analyzer
+    # library-level rna analyzer is not run for legacy count runs
+    call COUNT_ANALYZER(
+        filtered_matrices_h5  = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
+        molecule_info         = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.molecule_info,
+        count_inputs          = self.count_input,
+        filtered_barcodes     = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_barcodes,
+        aggregate_barcodes    = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.aggregate_barcodes,
+        counter_metrics_json  = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.summary,
+        disable_rna           = DISABLE_FEATURE_STAGES.disable_library_cloupe,
+        disable_crispr        = DISABLE_FEATURE_STAGES.disable_crispr,
+        disable_antibody      = DISABLE_FEATURE_STAGES.disable_antibody,
+        disable_antigen       = DISABLE_FEATURE_STAGES.disable_antigen,
+        disable_targeted      = DISABLE_FEATURE_STAGES.disable_targeted,
+        feature_reference     = self.count_input.feature_reference,
+        no_secondary_analysis = self.count_input.no_secondary_analysis,
+        parse_target_features = MULTI_GEM_WELL_PROCESSOR.count.target_outs,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_count,
+    )
+
+    # per-sample map-called run of reporter, for multi runs
+    map call SAMPLE_REPORTER(
+        sample_outs               = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
+        count_analyzer            = split SAMPLE_ANALYZER.common_analyzer,
+        crispr_analyzer           = split SAMPLE_ANALYZER.crispr_analyzer,
+        targeted_analyzer         = split SAMPLE_ANALYZER.targeted_analyzer,
+        sample_assignment_metrics = split MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.sample_assignment_metrics,
+        target_panel_summary      = MULTI_GEM_WELL_PROCESSOR.count.target_outs.target_panel_summary,
+        sample_id                 = self.common_input.sample_id,
+        sample_desc               = self.common_input.sample_desc,
+        config                    = MAKE_FULL_CONFIG.config,
+        count_pipestance_type     = self.count_pipestance_type,
+        cell_calling_config       = self.count_input.cell_calling_config,
+        barcode_summary           = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.barcode_summary,
+        reference_path            = self.count_input.reference_path,
+        cells_per_sample          = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.sample_cell_barcodes,
+        cells_per_tag             = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.cells_per_tag,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_multi_count,
+    )
+
+    # reporter for library-level information
+    call MULTI_REPORTER(
+        sample_id              = self.common_input.sample_id,
+        sample_desc            = self.common_input.sample_desc,
+        multi_config_sha       = self.common_input.multi_config_sha,
+        config                 = MAKE_FULL_CONFIG.config,
+        count_pipestance_type  = self.count_pipestance_type,
+        feature_reference      = self.count_input.feature_reference,
+        reference_path         = self.count_input.reference_path,
+        count_gw               = MULTI_GEM_WELL_PROCESSOR.count,
+        include_introns        = self.count_input.include_introns,
+        count_analyzer         = COUNT_ANALYZER.common_analyzer,
+        crispr_analyzer        = COUNT_ANALYZER.crispr_analyzer,
+        antibody_analyzer      = COUNT_ANALYZER.antibody_analyzer,
+        antigen_analyzer       = COUNT_ANALYZER.antigen_analyzer,
+        targeted_analyzer      = COUNT_ANALYZER.targeted_analyzer,
+        vdj_reference_path     = self.vdj_gen_inputs.vdj_reference_path,
+        vdj_t_receptor         = SPLIT_VDJ_INPUTS.vdj_t_receptor,
+        vdj_t_gw               = MULTI_GEM_WELL_PROCESSOR.vdj_t,
+        vdj_t_clonotype        = VDJ_T_CLONOTYPE_ASSIGNER,
+        vdj_t_gd_receptor      = SPLIT_VDJ_INPUTS.vdj_t_gd_receptor,
+        vdj_t_gd_gw            = MULTI_GEM_WELL_PROCESSOR.vdj_t_gd,
+        vdj_t_gd_clonotype     = VDJ_T_GD_CLONOTYPE_ASSIGNER,
+        vdj_b_receptor         = SPLIT_VDJ_INPUTS.vdj_b_receptor,
+        vdj_b_gw               = MULTI_GEM_WELL_PROCESSOR.vdj_b,
+        vdj_b_clonotype        = VDJ_B_CLONOTYPE_ASSIGNER,
+        beam_analyzer_inputs   = {
+            beam_mode:                      MULTI_CHEMISTRY_DETECTOR.beam_mode,
+            disable_beam:                   DISABLE_FEATURE_STAGES.disable_antigen,
+            filtered_feature_counts_matrix: MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
+            per_barcode_count_metrics:      MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.per_barcode_metrics_shard,
+        },
+        filtered_barcodes      = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_barcodes,
+        barcode_summary        = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.barcode_summary,
+        assign_tags_outs       = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags,
+        gem_well_throughput    = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.gem_well_throughput,
+        disable_library_cloupe = DISABLE_FEATURE_STAGES.disable_library_cloupe,
+        sample_cloupe          = SAMPLE_REPORTER.cloupe,
+        feature_config         = self.feature_config,
+    )
+
+    call COPY_VDJ_REFERENCE(
+        vdj_reference_path    = self.vdj_gen_inputs.vdj_reference_path,
+        vdj_t_donor_ref_fa    = VDJ_T_CLONOTYPE_ASSIGNER.donor_ref_fa,
+        vdj_t_gd_donor_ref_fa = VDJ_T_GD_CLONOTYPE_ASSIGNER.donor_ref_fa,
+        vdj_b_donor_ref_fa    = VDJ_B_CLONOTYPE_ASSIGNER.donor_ref_fa,
+    ) using (
+        disabled = self.basic_config.disable_vdj,
+    )
+
+    call SANITIZE_MAP_CALLS(
+        in_crispr_analysis           = null,
+        in_rna_analysis              = null,
+        in_cloupe_file               = null,
+        in_metrics_summary           = SAMPLE_REPORTER.metrics_summary,
+        in_sample_tsne_plots         = SAMPLE_REPORTER.sample_tsne_plots,
+        in_sample_barcode_rank_plots = SAMPLE_REPORTER.sample_library_to_barcode_rank,
+        in_sample_treemap_plots      = SAMPLE_REPORTER.sample_treemap_plots,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_multi,
+    )
+
+    call MULTI_WEBSUMMARY_BUILDER(
+        vdj_gen_inputs               = self.vdj_gen_inputs,
+        vdj_t                        = {
+            disable:            MAKE_FULL_CONFIG.config.disable_vdj_t,
+            filter_metrics:     MULTI_REPORTER.vdj_t_report.filter_metrics,
+            metrics_summary:    MULTI_REPORTER.vdj_t_report.metrics_summary_json,
+            receptor:           SPLIT_VDJ_INPUTS.vdj_t_receptor,
+            sequencing_metrics: MULTI_GEM_WELL_PROCESSOR.vdj_t.assembler_outs.sequencing_metrics,
+            vdj_inputs:         SPLIT_VDJ_INPUTS.vdj_t_input,
+            vdj_ws_json:        MULTI_REPORTER.vdj_t_report.web_summary_data,
+        },
+        vdj_t_gd                     = {
+            disable:            MAKE_FULL_CONFIG.config.disable_vdj_t_gd,
+            filter_metrics:     MULTI_REPORTER.vdj_t_gd_report.filter_metrics,
+            metrics_summary:    MULTI_REPORTER.vdj_t_gd_report.metrics_summary_json,
+            receptor:           SPLIT_VDJ_INPUTS.vdj_t_gd_receptor,
+            sequencing_metrics: MULTI_GEM_WELL_PROCESSOR.vdj_t_gd.assembler_outs.sequencing_metrics,
+            vdj_inputs:         SPLIT_VDJ_INPUTS.vdj_t_gd_input,
+            vdj_ws_json:        MULTI_REPORTER.vdj_t_gd_report.web_summary_data,
+        },
+        vdj_b                        = {
+            disable:            MAKE_FULL_CONFIG.config.disable_vdj_b,
+            filter_metrics:     MULTI_REPORTER.vdj_b_report.filter_metrics,
+            metrics_summary:    MULTI_REPORTER.vdj_b_report.metrics_summary_json,
+            receptor:           SPLIT_VDJ_INPUTS.vdj_b_receptor,
+            sequencing_metrics: MULTI_GEM_WELL_PROCESSOR.vdj_b.assembler_outs.sequencing_metrics,
+            vdj_inputs:         SPLIT_VDJ_INPUTS.vdj_b_input,
+            vdj_ws_json:        MULTI_REPORTER.vdj_b_report.web_summary_data,
+        },
+        per_sample_metrics           = SANITIZE_MAP_CALLS.metrics_summary,
+        library_metrics              = MULTI_REPORTER.count_summary.metrics_summary_json,
+        multi_config                 = self.multi_config,
+        multi_graph                  = CREATE_MULTI_GRAPH.multi_graph,
+        common_inputs                = self.common_input,
+        count_inputs                 = self.count_input,
+        sequencing_metrics           = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.sequencing_metrics,
+        tag_contaminant_info         = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.tag_contaminant_info,
+        sample_tsne_plots            = SANITIZE_MAP_CALLS.sample_tsne_plots,
+        sample_barcode_rank_plots    = SANITIZE_MAP_CALLS.sample_barcode_rank_plots,
+        sample_treemap_plots         = SANITIZE_MAP_CALLS.sample_treemap_plots,
+        barcode_rank_plots           = MULTI_REPORTER.barcode_rank_plots,
+        antibody_histograms          = MULTI_REPORTER.antibody_histograms,
+        sample_antibody_histograms   = SAMPLE_ANALYZER.antibody_analyzer.antibody_histograms_json,
+        antigen_histograms           = MULTI_REPORTER.antigen_histograms,
+        jibes_biplot_histogram       = MULTI_REPORTER.jibes_biplot_histogram,
+        cmo_tsne_plot                = MULTI_REPORTER.cmo_tsne_plot,
+        target_set_name              = MULTI_GEM_WELL_PROCESSOR.count.target_outs.target_set_name,
+        targeted_per_feature_metrics = COUNT_ANALYZER.targeted_analyzer.per_feature_metrics_csv,
+        antigen_vdj_metrics          = MULTI_REPORTER.beam_analyzer.antigen_vdj_metrics_bin,
+        antigen_specificity          = MULTI_REPORTER.beam_analyzer.antigen_specificity_scores,
+        feature_config               = self.feature_config,
+        detected_probe_barcode_pairing = MULTI_CHEMISTRY_DETECTOR.detect_count_chem.detected_probe_barcode_pairing,
+        no_preflight                 = self.no_preflight,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.disable_multi,
+    )
+
+    return (
+        full_config            = MAKE_FULL_CONFIG.config,
+        split_vdj              = SPLIT_VDJ_INPUTS,
+        multi_gw               = MULTI_GEM_WELL_PROCESSOR,
+        vdj_t_clonotype        = VDJ_T_CLONOTYPE_ASSIGNER,
+        vdj_t_gd_clonotype     = VDJ_T_GD_CLONOTYPE_ASSIGNER,
+        vdj_b_clonotype        = VDJ_B_CLONOTYPE_ASSIGNER,
+        multi_reporter         = MULTI_REPORTER,
+        count_analyzer         = COUNT_ANALYZER,
+        detect_count_chem      = MULTI_CHEMISTRY_DETECTOR.detect_count_chem,
+        disable_feat           = DISABLE_FEATURE_STAGES,
+        vdj_ref_out            = COPY_VDJ_REFERENCE.vdj_reference,
+        sample_analyzer        = SAMPLE_ANALYZER,
+        sample_reporter        = SAMPLE_REPORTER,
+        sample_outs            = STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
+        unassigned_bam         = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments,
+        unassigned_bai         = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments_bai_index,
+        unassigned_csi         = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments_csi_index,
+        multi_web_summary_json = MULTI_WEBSUMMARY_BUILDER.multi_web_summary_json,
+        multi_web_summaries    = MULTI_WEBSUMMARY_BUILDER.multi_web_summaries,
+        multi_metrics_csvs     = MULTI_WEBSUMMARY_BUILDER.metrics_summary_csvs,
+    )
+}
+
+pipeline BUILD_VDJ_OUTPUTS_CS(
+    in  SC_MULTI_CORE multi_core,
+    out VdjOutputsCS  vdj_t_outs_cs,
+    out html          vdj_t_web_summary,
+    out VdjOutputsCS  vdj_t_gd_outs_cs,
+    out html          vdj_t_gd_web_summary,
+    out VdjOutputsCS  vdj_b_outs_cs,
+    out html          vdj_b_web_summary,
+)
+{
+    return (
+        vdj_t_outs_cs        = {
+            airr_rearrangement:              self.multi_core.vdj_t_clonotype.airr_rearrangement,
+            all_contig_annotations_bed:      self.multi_core.multi_reporter.vdj_t_report.annotations_bed,
+            all_contig_annotations_csv:      self.multi_core.vdj_t_clonotype.all_contig_annotations_csv,
+            all_contig_annotations_json:     self.multi_core.vdj_t_clonotype.all_contig_annotations_json,
+            all_contig_bam:                  self.multi_core.multi_gw.vdj_t.assembler_outs.contig_bam,
+            all_contig_bam_bai:              self.multi_core.multi_gw.vdj_t.assembler_outs.contig_bam_bai,
+            all_contig_fasta:                self.multi_core.multi_reporter.vdj_t_report.contig_fasta,
+            all_contig_fasta_fai:            self.multi_core.multi_reporter.vdj_t_report.contig_fasta_fai,
+            all_contig_fastq:                self.multi_core.multi_reporter.vdj_t_report.contig_fastq,
+            cell_barcodes:                   self.multi_core.multi_reporter.vdj_t_report.cell_barcodes,
+            clonotypes:                      self.multi_core.vdj_t_clonotype.clonotypes_csv,
+            concat_ref_bam:                  self.multi_core.vdj_t_clonotype.concat_ref_bam,
+            concat_ref_bam_bai:              self.multi_core.vdj_t_clonotype.concat_ref_bam_bai,
+            concat_ref_fasta:                self.multi_core.vdj_t_clonotype.concat_ref_fasta,
+            concat_ref_fasta_fai:            self.multi_core.vdj_t_clonotype.concat_ref_fasta_fai,
+            consensus_annotations_csv:       self.multi_core.vdj_t_clonotype.consensus_annotations_csv,
+            consensus_bam:                   self.multi_core.vdj_t_clonotype.consensus_bam,
+            consensus_bam_bai:               self.multi_core.vdj_t_clonotype.consensus_bam_bai,
+            consensus_fasta:                 self.multi_core.vdj_t_clonotype.consensus_fasta,
+            consensus_fasta_fai:             self.multi_core.vdj_t_clonotype.consensus_fasta_fai,
+            filtered_contig_annotations_csv: self.multi_core.vdj_t_clonotype.filtered_contig_annotations_csv,
+            filtered_contig_fasta:           self.multi_core.multi_reporter.vdj_t_report.filtered_contig_fasta,
+            filtered_contig_fastq:           self.multi_core.multi_reporter.vdj_t_report.filtered_contig_fastq,
+            metrics_summary_csv:             self.multi_core.multi_reporter.vdj_t_report.metrics_summary_csv,
+            vdj_contig_info:                 self.multi_core.multi_reporter.vdj_t_report.vdj_contig_info,
+            vloupe:                          self.multi_core.multi_reporter.vdj_t_report.vloupe,
+        },
+        vdj_t_web_summary    = self.multi_core.multi_reporter.vdj_t_report.web_summary,
+        vdj_t_gd_outs_cs     = {
+            airr_rearrangement:              self.multi_core.vdj_t_gd_clonotype.airr_rearrangement,
+            all_contig_annotations_bed:      self.multi_core.multi_reporter.vdj_t_gd_report.annotations_bed,
+            all_contig_annotations_csv:      self.multi_core.vdj_t_gd_clonotype.all_contig_annotations_csv,
+            all_contig_annotations_json:     self.multi_core.vdj_t_gd_clonotype.all_contig_annotations_json,
+            all_contig_bam:                  self.multi_core.multi_gw.vdj_t_gd.assembler_outs.contig_bam,
+            all_contig_bam_bai:              self.multi_core.multi_gw.vdj_t_gd.assembler_outs.contig_bam_bai,
+            all_contig_fasta:                self.multi_core.multi_reporter.vdj_t_gd_report.contig_fasta,
+            all_contig_fasta_fai:            self.multi_core.multi_reporter.vdj_t_gd_report.contig_fasta_fai,
+            all_contig_fastq:                self.multi_core.multi_reporter.vdj_t_gd_report.contig_fastq,
+            cell_barcodes:                   self.multi_core.multi_reporter.vdj_t_gd_report.cell_barcodes,
+            clonotypes:                      self.multi_core.vdj_t_gd_clonotype.clonotypes_csv,
+            concat_ref_bam:                  self.multi_core.vdj_t_gd_clonotype.concat_ref_bam,
+            concat_ref_bam_bai:              self.multi_core.vdj_t_gd_clonotype.concat_ref_bam_bai,
+            concat_ref_fasta:                self.multi_core.vdj_t_gd_clonotype.concat_ref_fasta,
+            concat_ref_fasta_fai:            self.multi_core.vdj_t_gd_clonotype.concat_ref_fasta_fai,
+            consensus_annotations_csv:       self.multi_core.vdj_t_gd_clonotype.consensus_annotations_csv,
+            consensus_bam:                   self.multi_core.vdj_t_gd_clonotype.consensus_bam,
+            consensus_bam_bai:               self.multi_core.vdj_t_gd_clonotype.consensus_bam_bai,
+            consensus_fasta:                 self.multi_core.vdj_t_gd_clonotype.consensus_fasta,
+            consensus_fasta_fai:             self.multi_core.vdj_t_gd_clonotype.consensus_fasta_fai,
+            filtered_contig_annotations_csv: self.multi_core.vdj_t_gd_clonotype.filtered_contig_annotations_csv,
+            filtered_contig_fasta:           self.multi_core.multi_reporter.vdj_t_gd_report.filtered_contig_fasta,
+            filtered_contig_fastq:           self.multi_core.multi_reporter.vdj_t_gd_report.filtered_contig_fastq,
+            metrics_summary_csv:             self.multi_core.multi_reporter.vdj_t_gd_report.metrics_summary_csv,
+            vdj_contig_info:                 self.multi_core.multi_reporter.vdj_t_gd_report.vdj_contig_info,
+            vloupe:                          self.multi_core.multi_reporter.vdj_t_gd_report.vloupe,
+        },
+        vdj_t_gd_web_summary = self.multi_core.multi_reporter.vdj_t_gd_report.web_summary,
+        vdj_b_outs_cs        = {
+            airr_rearrangement:              self.multi_core.vdj_b_clonotype.airr_rearrangement,
+            all_contig_annotations_bed:      self.multi_core.multi_reporter.vdj_b_report.annotations_bed,
+            all_contig_annotations_csv:      self.multi_core.vdj_b_clonotype.all_contig_annotations_csv,
+            all_contig_annotations_json:     self.multi_core.vdj_b_clonotype.all_contig_annotations_json,
+            all_contig_bam:                  self.multi_core.multi_gw.vdj_b.assembler_outs.contig_bam,
+            all_contig_bam_bai:              self.multi_core.multi_gw.vdj_b.assembler_outs.contig_bam_bai,
+            all_contig_fasta:                self.multi_core.multi_reporter.vdj_b_report.contig_fasta,
+            all_contig_fasta_fai:            self.multi_core.multi_reporter.vdj_b_report.contig_fasta_fai,
+            all_contig_fastq:                self.multi_core.multi_reporter.vdj_b_report.contig_fastq,
+            cell_barcodes:                   self.multi_core.multi_reporter.vdj_b_report.cell_barcodes,
+            clonotypes:                      self.multi_core.vdj_b_clonotype.clonotypes_csv,
+            concat_ref_bam:                  self.multi_core.vdj_b_clonotype.concat_ref_bam,
+            concat_ref_bam_bai:              self.multi_core.vdj_b_clonotype.concat_ref_bam_bai,
+            concat_ref_fasta:                self.multi_core.vdj_b_clonotype.concat_ref_fasta,
+            concat_ref_fasta_fai:            self.multi_core.vdj_b_clonotype.concat_ref_fasta_fai,
+            consensus_annotations_csv:       self.multi_core.vdj_b_clonotype.consensus_annotations_csv,
+            consensus_bam:                   self.multi_core.vdj_b_clonotype.consensus_bam,
+            consensus_bam_bai:               self.multi_core.vdj_b_clonotype.consensus_bam_bai,
+            consensus_fasta:                 self.multi_core.vdj_b_clonotype.consensus_fasta,
+            consensus_fasta_fai:             self.multi_core.vdj_b_clonotype.consensus_fasta_fai,
+            filtered_contig_annotations_csv: self.multi_core.vdj_b_clonotype.filtered_contig_annotations_csv,
+            filtered_contig_fasta:           self.multi_core.multi_reporter.vdj_b_report.filtered_contig_fasta,
+            filtered_contig_fastq:           self.multi_core.multi_reporter.vdj_b_report.filtered_contig_fastq,
+            metrics_summary_csv:             self.multi_core.multi_reporter.vdj_b_report.metrics_summary_csv,
+            vdj_contig_info:                 self.multi_core.multi_reporter.vdj_b_report.vdj_contig_info,
+            vloupe:                          self.multi_core.multi_reporter.vdj_b_report.vloupe,
+        },
+        vdj_b_web_summary    = self.multi_core.multi_reporter.vdj_b_report.web_summary,
+    )
+}

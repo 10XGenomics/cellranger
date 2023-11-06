@@ -1,0 +1,237 @@
+#
+# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+#
+
+@include "_analyzer_struct.mro"
+@include "_antibody_analyzer.mro"
+@include "_batch_correction_pca.mro"
+@include "_cr_ana_stages.mro"
+@include "_run_kmeans.mro"
+@include "_sc_rna_analyzer_stages.mro"
+
+stage DISABLE_SECONDARY_ANALYSIS(
+    in  h5   filtered_matrices_h5,
+    in  h5   molecule_info,
+    in  bool no_secondary_analysis_in,
+    out bool no_secondary_analysis,
+    src py   "stages/common/disable_secondary_analysis",
+)
+
+pipeline SC_RNA_ANALYZER(
+    in  csv                aggregate_barcodes,
+    in  AnalyzerInputs     analyzer_inputs,
+    out AnalyzerOutputs    common_analyzer,
+    out _ANTIBODY_ANALYZER antibody_analyzer,
+    out _ANTIBODY_ANALYZER antigen_analyzer,
+    out h5                 clustering_h5,
+)
+{
+    call ANALYZER_PREFLIGHT(
+        * = self.analyzer_inputs,
+    ) using (
+        volatile = true,
+    )
+
+    call PREPROCESS_MATRIX(
+        matrix_h5       = self.analyzer_inputs.filtered_matrices_h5,
+        random_seed     = self.analyzer_inputs.random_seed,
+        use_genes       = self.analyzer_inputs.use_genes,
+        exclude_genes   = self.analyzer_inputs.exclude_genes,
+        use_bcs         = self.analyzer_inputs.use_bcs,
+        num_bcs         = self.analyzer_inputs.num_analysis_bcs,
+        force_cells     = self.analyzer_inputs.force_cells,
+        is_visium_hd    = self.analyzer_inputs.is_visium_hd,
+        get_peak_matrix = false,
+        *               = ANALYZER_PREFLIGHT,
+    ) using (
+        volatile = true,
+    )
+
+    call RUN_MULTIGENOME_ANALYSIS(
+        filtered_matrices_h5 = self.analyzer_inputs.filtered_matrices_h5,
+        is_multi_genome      = PREPROCESS_MATRIX.is_multi_genome,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip_multigenome_analysis,
+        volatile = true,
+    )
+
+    call RUN_BATCH_CORRECTION_PCA(
+        matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        num_pcs          = self.analyzer_inputs.num_principal_comps,
+        is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
+        is_atac          = false,
+    ) using (
+        disabled = PREPROCESS_MATRIX.disable_correct_chemistry_batch,
+    )
+
+    call CORRECT_CHEMISTRY_BATCH(
+        dimred_matrix               = RUN_BATCH_CORRECTION_PCA.dimred_matrix,
+        matrix_barcode_feature_info = RUN_BATCH_CORRECTION_PCA.matrix_barcode_feature_info,
+        library_info                = self.analyzer_inputs.aggr_library_info,
+        library_type                = RUN_BATCH_CORRECTION_PCA.library_type,
+        cbc_knn                     = self.analyzer_inputs.cbc_knn,
+        cbc_alpha                   = self.analyzer_inputs.cbc_alpha,
+        cbc_sigma                   = self.analyzer_inputs.cbc_sigma,
+        cbc_realign_panorama        = self.analyzer_inputs.cbc_realign_panorama,
+    ) using (
+        disabled = PREPROCESS_MATRIX.disable_correct_chemistry_batch,
+        volatile = true,
+    )
+
+    call RUN_PCA_NG as RUN_PCA(
+        matrix_h5           = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        num_pca_genes       = self.analyzer_inputs.num_pca_genes,
+        num_principal_comps = self.analyzer_inputs.num_principal_comps,
+        is_spatial          = self.analyzer_inputs.is_spatial,
+        pca_map             = CORRECT_CHEMISTRY_BATCH.aligned_pca_map,
+    ) using (
+        disabled = PREPROCESS_MATRIX.disable_run_pca,
+        volatile = true,
+    )
+
+    call RUN_KMEANS(
+        matrix_h5    = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5       = RUN_PCA.pca_h5,
+        random_seed  = self.analyzer_inputs.random_seed,
+        max_clusters = self.analyzer_inputs.max_clusters,
+        num_bcs      = null,
+        num_pcs      = null,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+        volatile = true,
+    )
+
+    call RUN_GRAPH_CLUSTERING_NG as RUN_GRAPH_CLUSTERING(
+        matrix_h5           = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5              = RUN_PCA.pca_h5,
+        num_neighbors       = self.analyzer_inputs.graphclust_neighbors,
+        neighbor_a          = self.analyzer_inputs.neighbor_a,
+        neighbor_b          = self.analyzer_inputs.neighbor_b,
+        input_pcs           = null,
+        resolution          = self.analyzer_inputs.graphclust_resolution,
+        random_seed         = self.analyzer_inputs.random_seed,
+        is_antibody_only    = PREPROCESS_MATRIX.is_antibody_only,
+        threads             = 4,
+        parallel_clustering = false,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+        volatile = true,
+    )
+
+    call RUN_HIERARCHICAL_CLUSTERING(
+        matrix_h5         = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        graph_clusters_h5 = RUN_GRAPH_CLUSTERING.clusters_h5,
+        is_antibody_only  = PREPROCESS_MATRIX.is_antibody_only,
+    ) using (
+        disabled = PREPROCESS_MATRIX.disable_hierarchical_clustering,
+        volatile = true,
+    )
+
+    call COMBINE_CLUSTERING(
+        kmeans_h5      = RUN_KMEANS.kmeans_h5,
+        kmeans_csv     = RUN_KMEANS.kmeans_csv,
+        graphclust_h5  = RUN_GRAPH_CLUSTERING.clusters_h5,
+        graphclust_csv = RUN_GRAPH_CLUSTERING.clusters_csv,
+        hclust_h5      = RUN_HIERARCHICAL_CLUSTERING.clusters_h5,
+        hclust_csv     = RUN_HIERARCHICAL_CLUSTERING.clusters_csv,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+        volatile = true,
+    )
+
+    call RUN_DIFFERENTIAL_EXPRESSION_NG as RUN_DIFFERENTIAL_EXPRESSION(
+        matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        clustering_h5    = COMBINE_CLUSTERING.clustering_h5,
+        is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+        volatile = true,
+    )
+
+    call RUN_TSNE_NG as RUN_TSNE(
+        matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5           = RUN_PCA.pca_h5,
+        random_seed      = self.analyzer_inputs.random_seed,
+        perplexity       = self.analyzer_inputs.tsne_perplexity,
+        input_pcs        = self.analyzer_inputs.tsne_input_pcs,
+        max_dims         = self.analyzer_inputs.tsne_max_dims,
+        max_iter         = self.analyzer_inputs.tsne_max_iter,
+        stop_lying_iter  = self.analyzer_inputs.tsne_stop_lying_iter,
+        mom_switch_iter  = self.analyzer_inputs.tsne_mom_switch_iter,
+        theta            = self.analyzer_inputs.tsne_theta,
+        is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+        volatile = true,
+    )
+
+    call RUN_UMAP(
+        matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5           = RUN_PCA.pca_h5,
+        implementation   = self.analyzer_inputs.umap_implementation,
+        random_seed      = self.analyzer_inputs.random_seed,
+        n_neighbors      = self.analyzer_inputs.umap_n_neighbors,
+        input_pcs        = self.analyzer_inputs.umap_input_pcs,
+        max_dims         = self.analyzer_inputs.umap_max_dims,
+        min_dist         = self.analyzer_inputs.umap_min_dist,
+        metric           = self.analyzer_inputs.umap_metric,
+        is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+        volatile = true,
+    )
+
+    call SUMMARIZE_ANALYSIS(
+        matrix_h5                     = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5                        = RUN_PCA.pca_h5,
+        clustering_h5                 = COMBINE_CLUSTERING.clustering_h5,
+        diffexp_h5                    = RUN_DIFFERENTIAL_EXPRESSION.diffexp_h5,
+        tsne_h5                       = RUN_TSNE.tsne_h5,
+        umap_h5                       = RUN_UMAP.umap_h5,
+        pca_csv                       = RUN_PCA.pca_csv,
+        clustering_csv                = COMBINE_CLUSTERING.clustering_csv,
+        diffexp_csv                   = RUN_DIFFERENTIAL_EXPRESSION.diffexp_csv,
+        tsne_csv                      = RUN_TSNE.tsne_csv,
+        umap_csv                      = RUN_UMAP.umap_csv,
+        multi_genome_summary          = RUN_MULTIGENOME_ANALYSIS.multi_genome_summary,
+        multi_genome_csv              = RUN_MULTIGENOME_ANALYSIS.multi_genome_csv,
+        multi_genome_json             = RUN_MULTIGENOME_ANALYSIS.multi_genome_json,
+        is_multi_genome               = PREPROCESS_MATRIX.is_multi_genome,
+        chemistry_batch_correction    = self.analyzer_inputs.chemistry_batch_correction,
+        batch_score_before_correction = CORRECT_CHEMISTRY_BATCH.batch_score_before_correction,
+        batch_score_after_correction  = CORRECT_CHEMISTRY_BATCH.batch_score_after_correction,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip,
+    )
+
+    # Note this stage uses the original and the the preprocessed matrix.
+    call _ANTIBODY_ANALYZER(
+        filtered_feature_counts_matrix = self.analyzer_inputs.filtered_matrices_h5,
+        molecule_info      = self.analyzer_inputs.molecule_info,
+        aggregate_barcodes = self.aggregate_barcodes,
+        is_antibody        = true,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip_antibody_analysis,
+    )
+
+    call _ANTIBODY_ANALYZER as _ANTIGEN_ANALYZER(
+        filtered_feature_counts_matrix = self.analyzer_inputs.filtered_matrices_h5,
+        molecule_info      = self.analyzer_inputs.molecule_info,
+        aggregate_barcodes = self.aggregate_barcodes,
+        is_antibody        = false,
+    ) using (
+        disabled = PREPROCESS_MATRIX.skip_antigen_analysis,
+    )
+
+    return (
+        antibody_analyzer = _ANTIBODY_ANALYZER,
+        antigen_analyzer  = _ANTIGEN_ANALYZER,
+        clustering_h5     = COMBINE_CLUSTERING.clustering_h5,
+        common_analyzer   = {
+            analysis:         SUMMARIZE_ANALYSIS.analysis,
+            analysis_csv:     SUMMARIZE_ANALYSIS.analysis_csv,
+            cloupe_matrix_h5: PREPROCESS_MATRIX.cloupe_matrix_h5,
+            summary:          SUMMARIZE_ANALYSIS.summary,
+        },
+    )
+}

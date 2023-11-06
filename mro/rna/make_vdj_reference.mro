@@ -1,0 +1,50 @@
+#
+# Copyright (c) 2023 10X Genomics, Inc. All rights reserved.
+#
+
+filetype fasta;
+filetype gtf;
+
+stage _MAKE_VDJ_REFERENCE(
+    in  string genome_name,
+    in  fasta  fasta_file,
+    in  gtf[]  gtf_files,
+    in  fasta  seq_file,
+    in  file   remove_transcripts_file,
+    in  string ref_version,
+    in  string mkref_version,
+    in  int    mem_gb,
+    out path   reference,
+    src py     "stages/make_vdj_reference",
+) split (
+) using (
+    volatile = strict,
+)
+
+pipeline MAKE_VDJ_REFERENCE(
+    in  string genome_name,
+    in  fasta  fasta_file,
+    in  gtf[]  gtf_files,
+    in  fasta  seq_file,
+    in  file   remove_transcripts_file,
+    in  string ref_version,
+    in  string mkref_version,
+    in  int    mem_gb,
+    out path   reference,
+)
+{
+    call _MAKE_VDJ_REFERENCE(
+        genome_name             = self.genome_name,
+        fasta_file              = self.fasta_file,
+        gtf_files               = self.gtf_files,
+        seq_file                = self.seq_file,
+        remove_transcripts_file = self.remove_transcripts_file,
+        ref_version             = self.ref_version,
+        mkref_version           = self.mkref_version,
+        mem_gb                  = self.mem_gb,
+    )
+
+    return (
+        reference = _MAKE_VDJ_REFERENCE.reference,
+    )
+}

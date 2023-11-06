@@ -1,0 +1,12 @@
+[dependencies]
+lazy_static = '1'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'byteseq'
+publish = false
+version = '0.1.0'

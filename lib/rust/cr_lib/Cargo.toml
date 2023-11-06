@@ -1,0 +1,162 @@
+[[bin]]
+name = 'cr_lib'
+test = false
+
+[dependencies]
+assert_approx_eq = '1.1.0'
+base64 = '>= 0.12, < 0.14'
+bio = '>=0.35'
+bio-types = '*'
+csv = '1.2'
+derive_more = '0.99'
+docopt = '1.1'
+file_diff = '1.0'
+fxhash = '0.2.1'
+hostname = '0.3'
+lazy_static = '1.4'
+libc = '0.2.147'
+log = '0.4'
+ndarray-rand = '0.14'
+num = '0.4.0'
+rand_chacha = '>=0.3'
+rayon = '1.7'
+sha2 = '0.10.7'
+shardio = '0.8.2'
+tempfile = '3.6'
+thiserror = '1'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.barcode_extensions]
+path = '../barcode_extensions'
+
+[dependencies.bazel_utils]
+path = '../bazel_utils'
+
+[dependencies.cr_bam]
+path = '../cr_bam'
+
+[dependencies.cr_h5]
+path = '../cr_h5'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.cr_websummary]
+path = '../cr_websummary'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.flate2]
+workspace = true
+
+[dependencies.hdf5]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.json_report_derive]
+path = '../json_report_derive'
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.metric_derive]
+path = '../metric_derive'
+
+[dependencies.multi]
+path = '../multi'
+
+[dependencies.ndarray]
+workspace = true
+
+[dependencies.orbit]
+branch = 'master'
+git = 'https://github.com/10XGenomics/orbit'
+
+[dependencies.ordered-float]
+features = ['serde']
+version = '>=1.1.1, < 4'
+
+[dependencies.par_proc]
+path = '../par_proc'
+
+[dependencies.parameters_toml]
+path = '../parameters_toml'
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.regex]
+default-features = false
+features = ['std', 'perf']
+version = '1'
+
+[dependencies.rust-htslib]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.stats]
+path = '../stats'
+
+[dependencies.strum]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
+[dependencies.transcriptome]
+path = '../transcriptome'
+
+[dependencies.tx_annotation]
+path = '../tx_annotation'
+
+[dependencies.umi]
+path = '../umi'
+
+[dependencies.vdj_reference]
+path = '../vdj_reference'
+
+[dependencies.vdj_types]
+workspace = true
+
+[features]
+default = ['tenx_oss']
+slow_tests = []
+tenx_internal = []
+tenx_oss = []
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+default-run = 'cr_lib'
+edition = '2021'
+name = 'cr_lib'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['heck']

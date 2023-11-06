@@ -1,0 +1,37 @@
+--- a/lib/python3.10/site-packages/numba/core/ccallback.py
++++ b/lib/python3.10/site-packages/numba/core/ccallback.py
+@@ -56,7 +56,7 @@ class CFunc(object):
+         self._cache_hits = 0
+ 
+     def enable_caching(self):
+-        self._cache = FunctionCache(self._pyfunc)
++        pass
+ 
+     @global_compiler_lock
+     def compile(self):
+diff --git a/lib/python3.10/site-packages/numba/core/dispatcher.py b/lib/python3.10/site-packages/numba/core/dispatcher.py
+index 18d9426..fb7ab55 100644
+--- a/lib/python3.10/site-packages/numba/core/dispatcher.py
++++ b/lib/python3.10/site-packages/numba/core/dispatcher.py
+@@ -740,7 +740,7 @@ class Dispatcher(serialize.ReduceMixin, _MemoMixin, _DispatcherBase):
+         return types.Dispatcher(self)
+ 
+     def enable_caching(self):
+-        self._cache = FunctionCache(self.py_func)
++        pass
+ 
+     def __get__(self, obj, objtype=None):
+         '''Allow a JIT function to be bound as a method to an object'''
+diff --git a/lib/python3.10/site-packages/numba/np/ufunc/ufuncbuilder.py b/lib/python3.10/site-packages/numba/np/ufunc/ufuncbuilder.py
+index 8339c48..f7cbf47 100644
+--- a/lib/python3.10/site-packages/numba/np/ufunc/ufuncbuilder.py
++++ b/lib/python3.10/site-packages/numba/np/ufunc/ufuncbuilder.py
+@@ -72,7 +72,7 @@ class UFuncDispatcher(serialize.ReduceMixin):
+         return cls(py_func=pyfunc, locals=locals, targetoptions=targetoptions)
+ 
+     def enable_caching(self):
+-        self.cache = FunctionCache(self.py_func)
++        pass
+ 
+     def compile(self, sig, locals={}, **targetoptions):
+         locs = self.locals.copy()

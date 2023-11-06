@@ -1,0 +1,225 @@
+@include "_antibody_analyzer.mro"
+@include "_cr_aggr_stages.mro"
+@include "_cr_vdj_stages.mro"
+@include "_sc_multi_defs.mro"
+@include "_vloupe_stages.mro"
+
+filetype json;
+filetype vloupe;
+
+stage BUILD_AGGR_WEB_SUMMARY(
+    in  json content,
+    in  json diversity_chart,
+    out json web_summary_data,
+    src py   "stages/vdj/build_aggr_web_summary",
+)
+
+stage BUILD_ANTIGEN_AGGR_WEB_SUMMARY(
+    in  json antigen_histograms_json,
+    in  json antigen_treemap_json,
+    in  json clonotype_clustermap_json,
+    out json antigen_tab,
+    src py   "stages/aggregator/build_antigen_aggr_web_summary",
+)
+
+stage CALCULATE_CLONOTYPE_DIVERSITY(
+    in  json per_origin_clonotype_hist,
+    out json plotly_diversity_chart,
+    src py   "stages/vdj/clonotype_diversity",
+)
+
+pipeline ANTIGEN_AGGR(
+    in  bool               disable_antigen_aggr,
+    in  h5                 filtered_feature_counts_matrix,
+    in  string             beam_mode,
+    in  csv                filtered_contig_annotations,
+    in  csv                clonotypes_csv,
+    in  map                count_gem_well_map,
+    out AntigenAggrResults antigen_analysis,
+    out json               antigen_aggr_web_summary_data,
+)
+{
+    call CALCULATE_ANTIGEN_SPECIFICITY(
+        * = self,
+    ) using (
+        disabled = self.disable_antigen_aggr,
+    )
+
+    call CREATE_BARCODE_CSV(
+        gex_filtered_matrix      = self.filtered_feature_counts_matrix,
+        vdj_filtered_annotations = self.filtered_contig_annotations,
+        count_gem_well_map       = self.count_gem_well_map,
+    ) using (
+        disabled = self.disable_antigen_aggr,
+    )
+
+    call _ANTIBODY_ANALYZER as _ANTIGEN_ANALYZER(
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        molecule_info      = null,
+        aggregate_barcodes = null,
+        is_antibody        = false,
+    ) using (
+        disabled = self.disable_antigen_aggr,
+    )
+
+    call CREATE_CLONOTYPE_CLUSTERMAP(
+        antigen_specificity = CALCULATE_ANTIGEN_SPECIFICITY.antigen_specificity_scores,
+    ) using (
+        disabled = self.disable_antigen_aggr,
+    )
+
+    call BUILD_ANTIGEN_AGGR_WEB_SUMMARY(
+        antigen_histograms_json   = _ANTIGEN_ANALYZER.antibody_histograms_json,
+        antigen_treemap_json      = _ANTIGEN_ANALYZER.antibody_treemap_json,
+        clonotype_clustermap_json = CREATE_CLONOTYPE_CLUSTERMAP.antigen_clonotype_clustermap,
+    ) using (
+        disabled = self.disable_antigen_aggr,
+    )
+
+    return (
+        antigen_analysis              = {
+            antigen_specificity_scores: CALCULATE_ANTIGEN_SPECIFICITY.antigen_specificity_scores,
+            per_barcode_csv:            CREATE_BARCODE_CSV.per_barcode_csv,
+        },
+        antigen_aggr_web_summary_data = BUILD_ANTIGEN_AGGR_WEB_SUMMARY.antigen_tab,
+    )
+}
+
+pipeline SC_VDJ_AGGREGATOR(
+    in  VdjAggrInput       aggr_input,
+    in  map                count_gem_well_map,
+    in  h5                 filtered_feature_bc_matrix_h5,
+    in  csv                feature_reference,
+    in  string             sample_id,
+    in  string             sample_desc,
+    in  string             beam_mode,
+    in  map<string>        antigen_specificity_controls,
+    in  bool               disable_antigen_aggr,
+    in  bool               disable_count_aggr,
+    out pb                 enclone_output,
+    out string             receptor,
+    out csv                clonotypes,
+    out fa                 donor_ref_fa,
+    out fasta              consensus_fasta,
+    out path               vdj_reference_path,
+    out csv                filt_ann_csv,
+    out csv                consensus_ann_csv,
+    out json               web_summary_data,
+    out vloupe             vloupe,
+    out AntigenAggrResults antigen_analysis,
+    out json               antigen_aggr_web_summary_data,
+    out tsv                airr_rearrangement,
+)
+{
+    call PROCESS_VDJ_PROTO(
+        libraries          = self.aggr_input.libraries,
+        count_gem_well_map = self.count_gem_well_map,
+    )
+
+    call SETUP_VDJ_AGGR(
+        libraries    = self.aggr_input.libraries,
+        gem_well_map = PROCESS_VDJ_PROTO.gem_well_map,
+        receptor     = PROCESS_VDJ_PROTO.receptor,
+    )
+
+    call RUN_ENCLONE_AGGR(
+        contig_ann_json_files = SETUP_VDJ_AGGR.contig_ann_json_files,
+        enclone_input_csv     = SETUP_VDJ_AGGR.enclone_input_csv,
+        enclone_gem_well_meta = SETUP_VDJ_AGGR.enclone_gem_well_meta,
+        vdj_reference_path    = SETUP_VDJ_AGGR.vdj_reference_path,
+    )
+
+    call WRITE_CONSENSUS_TXT(
+        enclone_output = RUN_ENCLONE_AGGR.enclone_output,
+    )
+
+    call WRITE_CLONOTYPE_OUTS(
+        receptor       = PROCESS_VDJ_PROTO.receptor,
+        enclone_output = RUN_ENCLONE_AGGR.enclone_output,
+    )
+
+    call FILL_CLONOTYPE_INFO(
+        contig_annotations = SETUP_VDJ_AGGR.combined_ann_json,
+        enclone_output     = RUN_ENCLONE_AGGR.enclone_output,
+    )
+
+    call WRITE_CONCAT_REF_OUTS(
+        all_contig_annotations_json = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
+        enclone_output              = RUN_ENCLONE_AGGR.enclone_output,
+    )
+
+    call CREATE_AIRR_TSV(
+        contig_annotations = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
+        concat_ref_fasta   = WRITE_CONCAT_REF_OUTS.concat_ref_fasta,
+        gem_well_map       = PROCESS_VDJ_PROTO.gem_well_map,
+    )
+
+    call WRITE_ANN_CSV(
+        all_contig_annotations_json = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
+    )
+
+    call WRITE_AGGR_ANN(
+        enclone_gem_well_meta = SETUP_VDJ_AGGR.enclone_gem_well_meta,
+        annotation_csv        = WRITE_ANN_CSV.filtered_contig_annotations_csv,
+    )
+
+    call WRITE_WEB_SUMMARY_JSON(
+        libraries             = self.aggr_input.libraries,
+        enclone_gem_well_meta = SETUP_VDJ_AGGR.enclone_gem_well_meta,
+        enclone_output        = RUN_ENCLONE_AGGR.enclone_output,
+        sample_id             = self.sample_id,
+        sample_desc           = self.sample_desc,
+        clonotypes_csv        = WRITE_CLONOTYPE_OUTS.clonotypes_csv,
+        receptor              = PROCESS_VDJ_PROTO.receptor,
+        vdj_reference_path    = SETUP_VDJ_AGGR.vdj_reference_path,
+    )
+
+    call ANTIGEN_AGGR(
+        disable_antigen_aggr        = self.disable_antigen_aggr,
+        filtered_feature_counts_matrix = self.filtered_feature_bc_matrix_h5,
+        beam_mode                   = self.beam_mode,
+        filtered_contig_annotations = WRITE_ANN_CSV.filtered_contig_annotations_csv,
+        clonotypes_csv              = WRITE_CLONOTYPE_OUTS.clonotypes_csv,
+        count_gem_well_map          = self.count_gem_well_map,
+    ) using (
+        disabled = self.disable_count_aggr,
+    )
+
+    call CALCULATE_CLONOTYPE_DIVERSITY(
+        per_origin_clonotype_hist = WRITE_WEB_SUMMARY_JSON.per_origin_hist,
+    )
+
+    call BUILD_AGGR_WEB_SUMMARY(
+        content         = WRITE_WEB_SUMMARY_JSON.web_summary_content,
+        diversity_chart = CALCULATE_CLONOTYPE_DIVERSITY.plotly_diversity_chart,
+    )
+
+    call VLOUPE_PREPROCESS(
+        pipestance_type              = "SC_VDJ_AGGREGATOR",
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        enclone_output               = RUN_ENCLONE_AGGR.enclone_output,
+        disable_vloupe               = false,
+        beam_mode                    = self.beam_mode,
+        feature_reference            = self.feature_reference,
+        feature_barcode_matrix       = self.filtered_feature_bc_matrix_h5,
+        antigen_specificity_scores   = ANTIGEN_AGGR.antigen_analysis.antigen_specificity_scores,
+        antigen_specificity_controls = self.antigen_specificity_controls,
+    )
+
+    return (
+        enclone_output                = RUN_ENCLONE_AGGR.enclone_output,
+        receptor                      = PROCESS_VDJ_PROTO.receptor,
+        clonotypes                    = WRITE_CLONOTYPE_OUTS.clonotypes_csv,
+        donor_ref_fa                  = RUN_ENCLONE_AGGR.donor_ref_fa,
+        consensus_fasta               = WRITE_CONSENSUS_TXT.consensus_fasta,
+        vdj_reference_path            = SETUP_VDJ_AGGR.vdj_reference_path,
+        filt_ann_csv                  = WRITE_AGGR_ANN.augmented_annotation_csv,
+        consensus_ann_csv             = WRITE_CONSENSUS_TXT.consensus_annotations_csv,
+        web_summary_data              = BUILD_AGGR_WEB_SUMMARY.web_summary_data,
+        antigen_aggr_web_summary_data = ANTIGEN_AGGR.antigen_aggr_web_summary_data,
+        vloupe                        = VLOUPE_PREPROCESS.output_for_vloupe,
+        antigen_analysis              = ANTIGEN_AGGR.antigen_analysis,
+        airr_rearrangement            = CREATE_AIRR_TSV.airr_annotations,
+    )
+}

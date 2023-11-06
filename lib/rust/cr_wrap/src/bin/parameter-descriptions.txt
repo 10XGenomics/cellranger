@@ -1,0 +1,92 @@
+Section: [gene-expression]
+
+    reference <path>
+        Required. Path of folder containing 10x Genomics-compatible genome
+        reference.
+    probe-set <path>
+        Required, Fixed RNA profiling only. Probe set CSV file, declaring probe
+        constructs and associated barcodes.
+    filter-probes <true|false>
+        Optional, Fixed RNA Profiling only. Include all non-deprecated probes
+        listed in the probe set reference CSV file. Probes that are predicted
+        to have off-target activity to homologous genes are excluded from
+        analysis by default. Setting filter-probes to false will result in UMI
+        counts from all non-deprecated probes, including those with predicted
+        off-target activity, to be used in the analysis. Probes whose ID is
+        prefixed with DEPRECATED are always excluded from the analysis.
+        Default: true.
+    r1-length <int>
+        Optional. Hard trim the input Read 1 of gene expression libraries to
+        this length before analysis. Default: do not trim Read 1.
+    r2-length <int>
+        Optional. Hard trim the input Read 2 of gene expression libraries to
+        this length before analysis. Default: do not trim Read 2.
+    chemistry <auto>
+        Optional. Assay configuration. NOTE: by default the assay configuration
+        is detected automatically, which is the recommended mode. You usually
+        will not need to specify a chemistry. Options are: 'auto' for
+        autodetection, 'threeprime' for Single Cell 3', 'fiveprime' for
+        Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3' for Single Cell 3'
+        v1/v2/v3, 'SC5P-PE' or 'SC5P-R2' for Single Cell 5',
+        paired-end/R2-only, 'SC-FB' for Single Cell Antibody-only 3' v2 or 5',
+        'SFRP' for singleplex FRP and 'MFRP' for multiplex FRP. To analyse GEX
+        portion of multiome data, chemistry must be set to 'ARC-v1'; 'ARC-v1'
+        chemistry cannot be autodetected. Default: auto.
+    expect-cells <int>
+        Optional. Expected number of recovered cells.
+    force-cells <int>
+        Optional. Force pipeline to use this number of cells, bypassing cell
+        detection. Default: detect cells using EmptyDrops.
+    no-secondary <true|false>
+        Optional. Disable secondary analysis, e.g. clustering. Default: false.
+    no-bam <true|false>
+        Optional. Disables BAM(.bai) file generation, saving disk space at the
+        expense of interrogable alignment records. Default: false.
+    check-library-compatibility <true|false>
+        Optional. This option allows users to disable the check that evaluates
+        10x Barcode overlap between libraries when multiple libraries are
+        specified (e.g., Gene Expression + Antibody Capture). Default: true.
+    include-introns <true|false>
+        Optional. Set to false to exclude intronic reads in count. Including
+        introns in analysis is recommended to maximize sensitivity.
+        Default: true.
+    min-assignment-confidence <float>
+        Optional. The minimum estimated likelihood to call a sample as tagged
+        with a Cell Multiplexing Oligo instead of "Unassigned". Default: 0.9.
+        Introduced in Cell Ranger 6.0.2.
+    cmo-set <path>
+        Optional, Cell Multiplexing only. CMO set CSV file, declaring CMO
+        constructs and associated barcodes.
+    barcode-sample-assignment <path>
+        Optional, Cell Multiplexing only. Path to a barcode-sample assignment
+        CSV file that specifies the barcodes that belong to each sample.
+
+Section: [feature]
+
+    reference <path>
+        Required for Feature Barcode libraries, otherwise optional. Feature
+        reference CSV file, declaring Feature Barcode constructs and associated
+        barcodes.
+    r1-length <int>
+        Optional. Hard trim the input Read 1 of Feature Barcode libraries to
+        this length before analysis. Default: do not trim Read 1.
+    r2-length <int>
+        Optional. Hard trim the input Read 2 of Feature Barcode libraries to
+        this length before analysis. Default: do not trim Read 2.
+
+Section: [vdj]
+
+    reference <path>
+        Required for Immune Profiling libraries. Path of folder containing
+        10x-compatible VDJ reference.
+    inner-enrichment-primers <path>
+        Optional. If inner enrichment primers other than those provided in the
+        10x kits are used, they need to be specified here as a text file with
+        one primer per line.
+    r1-length <int>
+        Optional. Hard trim the input Read 1 of VDJ libraries to this length
+        before analysis. Default: do not trim Read 1.
+    r2-length <int>
+        Optional. Hard trim the input Read 2 of VDJ libraries to this length
+        before analysis. Default: do not trim Read 2.
+

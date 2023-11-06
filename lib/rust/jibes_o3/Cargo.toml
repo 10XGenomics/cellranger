@@ -1,0 +1,23 @@
+[dependencies]
+ndarray-stats = '>=0.4.0'
+numpy = '>=0.13'
+statrs = '>=0.12, <= 0.16'
+
+[dependencies.ndarray]
+workspace = true
+
+[dependencies.pyo3]
+features = ['extension-module', 'abi3-py310']
+version = '>=0.18.2'
+
+[lib]
+crate-type = ['staticlib']
+name = 'jibes_o3'
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'jibes_o3'
+publish = false
+version = '0.1.0'

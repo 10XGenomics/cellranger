@@ -1,0 +1,90 @@
+[[bin]]
+name = 'cr_aggr'
+test = false
+
+[dependencies]
+csv = '1.2'
+docopt = '1.1'
+path-clean = '1.0'
+thiserror = '1'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.cr_h5]
+path = '../cr_h5'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.cr_websummary]
+path = '../cr_websummary'
+
+[dependencies.enclone_proto]
+workspace = true
+
+[dependencies.enclone_ranger]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.ndarray]
+workspace = true
+
+[dependencies.plotly]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.umi]
+path = '../umi'
+
+[dependencies.vdj_ann]
+workspace = true
+
+[dependencies.vdj_asm_asm]
+default-features = false
+path = '../vdj_asm_asm'
+
+[dependencies.vdj_asm_utils]
+path = '../vdj_asm_utils'
+
+[dependencies.vdj_proto]
+path = '../vdj_proto'
+
+[dependencies.vdj_reference]
+path = '../vdj_reference'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'cr_aggr'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['heck']

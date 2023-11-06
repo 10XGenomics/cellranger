@@ -1,0 +1,16 @@
+diff --git a/bwt_gen.c b/bwt_gen.c
+index 3adcc22..ed50bc6 100644
+--- a/bwt_gen.c
++++ b/bwt_gen.c
+@@ -948,7 +948,7 @@ static void BWTIncBuildBwt(unsigned int* insertBwt, const bgint_t *relativeRank,
+ }
+ 
+ static void BWTIncMergeBwt(const bgint_t *sortedRank, const unsigned int* oldBwt, const unsigned int *insertBwt,
+-						   unsigned int* __restrict mergedBwt, const bgint_t numOldBwt, const bgint_t numInsertBwt)
++						   unsigned int* mergedBwt, const bgint_t numOldBwt, const bgint_t numInsertBwt)
+ {
+ 	unsigned int bitsInWordMinusBitPerChar;
+ 	bgint_t leftShift, rightShift;
+-- 
+2.18.5
+

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Site Check for 10x Genomics pipelines.
+#
+
+eval "$(docopts -V " " -h - : "$@" <<EOF
+The commands below should be preceded by '$TENX_PRODUCT':
+
+Usage:
+    sitecheck
+    sitecheck -h | --help | --version
+
+Options:
+    -h --help           Show this message.
+    --version           Show version.
+EOF
+)"
+
+set -o pipefail
+
+function check {
+    echo "====================================================================="
+    echo "$1"
+    echo "$2"
+    echo "---------------------------------------------------------------------"
+    cmd=$2
+    (
+        exec 3>&1
+        builtin read -t 20 < <(
+            eval /usr/bin/env $cmd 1>&3 2> /dev/null
+            builtin echo $?
+        ) 3>&1 && exit $REPLY || {
+            rc=$?
+            builtin echo "timed out"
+            builtin kill -s SIGHUP -- $! 2> /dev/null
+            exit $rc
+        }
+    )
+    ecode=$?
+    echo "====================================================================="
+    echo ""
+}
+
+function ifchk {
+    if [ $ecode == 0 ]; then
+        check "$1" "$2"
+    fi
+}
+
+
+# Generate version banner
+read -d '' BANNER <<EOF
+$TENX_PRODUCT $TENX_SUBCMD ($TENX_VERSION)
+$TENX_COPYRIGHT
+-------------------------------------------------------------------------------
+EOF
+echo "$BANNER"
+
+date
+echo
+check "System Info"         "uname -a"
+check "Linux Distro"        "cat /etc/*-release | sort -u"
+check "Kernel Build"        "cat /proc/version"
+check "glibc version"       "ldd --version | head -n 1"
+check "CPU Model"           "grep -m 1 'model name' /proc/cpuinfo | cut -d ':' -f 2 | sed 's/^[ \t]*//'"
+check "CPU Sockets"         "grep 'physical id' /proc/cpuinfo | sort -u | wc -l"
+check "CPU Cores"           "grep -c processor /proc/cpuinfo"
+check "CPU Support"         "grep -m 1 'flags' /proc/cpuinfo | cut -d ':' -f 2 | sed 's/^\s*//'"
+check "Memory Total"        "grep MemTotal /proc/meminfo | cut -d ':' -f 2 | sed 's/^[ \t]*//'"
+check "Disk Space"          "df -Ph | awk '{print \$2, \$3, \$4}'"
+check "Filesystem Options"  "mount | cut -d ' ' -f 5,6"
+check "User Limits"         "bash -c 'ulimit -a'"
+check "User Limits (hard)"  "bash -c 'ulimit -aH'"
+check "Global File Limit"   "cat /proc/sys/fs/file-{max,nr}"
+
+check "Memory config"       "sysctl vm"
+check "THP memory config"   "cat /sys/kernel/mm/*transparent_hugepage/enabled"
+
+check "cgroups"             "cat /proc/self/cgroup"
+MEM_CGROUP=$(mount | grep '^cgroup\b.*\(.*\bmemory\b.*\)' | \
+             cut -d ' ' -f 3)$(\
+             grep -e ':memory:' /proc/self/cgroup | \
+             cut -d ':' -f 3)
+if [ ! -z "$MEM_CGROUP" ]; then
+  check "cgroup mem stats"    "cat $MEM_CGROUP/memory.stat"
+  ifchk "memory soft limit"   "cat $MEM_CGROUP/memory.*soft_limit_in_bytes"
+  ifchk "memory hard limit"   "cat $MEM_CGROUP/memory.limit_in_bytes"
+  ifchk "memory swap limit"   "cat $MEM_CGROUP/memory.memsw.limit_in_bytes"
+fi
+
+# docker container detection
+check "Container"           "[ -e /.dockerenv ] || [ -e /.dockerinit ] \
+|| [ ! -z \"\$container\" ] || grep -m 1 -E 'docker|lxc' /proc/1/cgroup \
+> /dev/null && echo 'Detected'"
+check "init process"        "head -n 1 /proc/1/sched | cut -d ' ' -f 1"
+
+# cluster config
+check "SGE Submit"          "which qsub"
+ifchk "SGE CLUSTER_NAME"    "echo \$SGE_CLUSTER_NAME"
+ifchk "SGE JOB_NAME"        "echo \$JOB_NAME"
+
+check "LSF Submit"          "which bsub"
+ifchk "LSF LSB_JOBNAME"     "echo \$LSB_JOBNAME"
+
+check "BCL2FASTQ 1"         "which configureBclToFastq.pl"
+ifchk "BCL2FASTQ 1 Version" "ls \$(dirname \$(which configureBclToFastq.pl))/../etc"
+ifchk "Perl"                "which perl"
+ifchk "Perl Version"        "perl -v"
+
+check "BCL2FASTQ 2"         "which bcl2fastq"
+ifchk "BCL2FASTQ 2 Version" "bcl2fastq --version"
+
+check "Java"                "which java"
+ifchk "Java Version"        "java -version 2>&1 | cat"
+
+check "10X Refdata"         "echo \$TENX_REFDATA"
+ifchk "10X Refdata Version" "cat \$TENX_REFDATA/version"
+
+check "qconf"               "which qconf"
+ifchk "qconf -sc"           "qconf -sc && qconf -sconf | grep -E '(shell_start_mode|login_shells|max_jobs)'"
+ifchk "qhost"               "which qhost"
+ifchk "qhost count"         "qhost -l \"mem_total=20G\" | tail -n +3 | wc -l"
+ifchk "qhost -F"            "qhost -F -q -h \$(qhost | sort -h -k 5 -r | head -n 1 | cut -d \" \" -f 1)"
+
+check "slurm info"          "sinfo -O nodes,maxcpuspernode,memory,time"
+
+check "MRP"                 "mrp --version"
+ifchk "mrp templates"       "ls \$(dirname \$(dirname \$(which mrp)))/jobmanagers/*.template"
+if [ $ecode == 0 ]; then
+  mrp_dir=$(dirname "$(which mrp)")
+  jobmanagers=$(dirname "$mrp_dir")/jobmanagers
+  for template in "$jobmanagers"/*.template; do
+    ifchk "$template" "cat $template"
+  done
+fi
+

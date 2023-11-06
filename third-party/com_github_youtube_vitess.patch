@@ -1,0 +1,12 @@
+diff --git a/go/cgzip/BUILD.bazel b/go/cgzip/BUILD.bazel
+index 7aeee53a..d9b79629 100644
+--- a/go/cgzip/BUILD.bazel
++++ b/go/cgzip/BUILD.bazel
+@@ -13,6 +13,7 @@ go_library(
+     cgo = True,
+     copts = ["-Werror=implicit"],
+     importpath = "github.com/youtube/vitess/go/cgzip",
++    cdeps = ["@zlib"],
+     visibility = ["//visibility:public"],
+ )
+ 

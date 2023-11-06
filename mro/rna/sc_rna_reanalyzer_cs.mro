@@ -1,0 +1,154 @@
+#
+# Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
+#
+
+@include "sc_rna_analyzer.mro"
+@include "_common_cloupe_stages.mro"
+@include "_cr_aggr_stages.mro"
+@include "_sc_rna_aggregator_stages.mro"
+@include "_sc_rna_analyzer_stages.mro"
+
+pipeline SC_RNA_REANALYZER_CS(
+    in  string sample_id,
+    in  string sample_desc,
+    in  h5     filtered_matrices_h5,
+    in  h5     molecule_info,
+    in  csv    params_csv,
+    in  csv    aggregation_csv,
+    in  csv    barcodes_csv,
+    in  csv    genes_csv,
+    in  csv    exclude_genes_csv,
+    in  int    force_cells,
+    out path   analysis                       "Secondary analysis output CSV",
+    out html   web_summary                    "Secondary analysis web summary",
+    out csv    params                         "Copy of the input parameter CSV",
+    out csv    aggregation                    "Copy of the input aggregation CSV",
+    out cloupe cloupe                         "Loupe Browser file",
+    out path   filtered_feature_bc_matrix     "Filtered feature-barcode matrices MEX",
+    out h5     filtered_feature_bc_matrix_h5  "Filtered feature-barcode matrices HDF5"  "filtered_feature_bc_matrix.h5",
+)
+{
+    call REANALYZER_PREFLIGHT(
+        filtered_matrices_h5 = self.filtered_matrices_h5,
+    ) using (
+        preflight = true,
+    )
+
+    call PARSE_PARAM_CSV(
+        params_csv = self.params_csv,
+    )
+
+    call PARSE_AGGR_CSV(
+        pipestance_root = ".",
+        aggregation_csv = self.aggregation_csv,
+    )
+
+    call REANALYZE_VERIFY_SAMPLE_IDS(
+        matrix_h5   = self.filtered_matrices_h5,
+        sample_defs = PARSE_AGGR_CSV.count_libraries,
+    ) using (
+        disabled = PARSE_AGGR_CSV.disable_count_aggr,
+    )
+
+    call SETUP_SAMPLES(
+        sample_defs = REANALYZE_VERIFY_SAMPLE_IDS.sample_defs,
+    ) using (
+        volatile = true,
+    )
+
+    call SC_RNA_ANALYZER(
+        aggregate_barcodes = null,
+        # don't support barnyard re-analysis (but see note below)
+        # NOTE: if using force_cells, this might actually be the raw matrix
+        analyzer_inputs    = {
+            aggr_library_info:          SETUP_SAMPLES.libraries,
+            cbc_alpha:                  PARSE_PARAM_CSV.cbc_alpha,
+            cbc_knn:                    PARSE_PARAM_CSV.cbc_knn,
+            cbc_realign_panorama:       PARSE_PARAM_CSV.cbc_realign_panorama,
+            cbc_sigma:                  PARSE_PARAM_CSV.cbc_sigma,
+            chemistry_batch_correction: SETUP_SAMPLES.chemistry_batch_correction,
+            exclude_genes:              self.exclude_genes_csv,
+            filtered_matrices_h5:       self.filtered_matrices_h5,
+            force_cells:                self.force_cells,
+            graphclust_neighbors:       PARSE_PARAM_CSV.graphclust_neighbors,
+            graphclust_resolution:      null,
+            is_spatial:                 false,
+            is_visium_hd:               false,
+            max_clusters:               PARSE_PARAM_CSV.max_clusters,
+            molecule_info:              self.molecule_info,
+            neighbor_a:                 PARSE_PARAM_CSV.neighbor_a,
+            neighbor_b:                 PARSE_PARAM_CSV.neighbor_b,
+            no_secondary_analysis:      false,
+            num_analysis_bcs:           PARSE_PARAM_CSV.num_analysis_bcs,
+            num_pca_bcs:                PARSE_PARAM_CSV.num_pca_bcs,
+            num_pca_genes:              PARSE_PARAM_CSV.num_pca_genes,
+            num_principal_comps:        PARSE_PARAM_CSV.num_principal_comps,
+            random_seed:                PARSE_PARAM_CSV.random_seed,
+            skip_multigenome_analysis:  false,
+            tsne_input_pcs:             PARSE_PARAM_CSV.tsne_input_pcs,
+            tsne_max_dims:              PARSE_PARAM_CSV.tsne_max_dims,
+            tsne_max_iter:              PARSE_PARAM_CSV.tsne_max_iter,
+            tsne_mom_switch_iter:       PARSE_PARAM_CSV.tsne_mom_switch_iter,
+            tsne_perplexity:            PARSE_PARAM_CSV.tsne_perplexity,
+            tsne_stop_lying_iter:       PARSE_PARAM_CSV.tsne_stop_lying_iter,
+            tsne_theta:                 PARSE_PARAM_CSV.tsne_theta,
+            umap_implementation:        "original",
+            umap_input_pcs:             PARSE_PARAM_CSV.umap_input_pcs,
+            umap_max_dims:              PARSE_PARAM_CSV.umap_max_dims,
+            umap_metric:                PARSE_PARAM_CSV.umap_metric,
+            umap_min_dist:              PARSE_PARAM_CSV.umap_min_dist,
+            umap_n_neighbors:           PARSE_PARAM_CSV.umap_n_neighbors,
+            use_bcs:                    self.barcodes_csv,
+            use_genes:                  self.genes_csv,
+        },
+    )
+
+    call SUMMARIZE_REANALYSIS(
+        sample_id                = self.sample_id,
+        sample_desc              = self.sample_desc,
+        filtered_matrices        = SC_RNA_ANALYZER.common_analyzer.cloupe_matrix_h5,
+        analysis                 = SC_RNA_ANALYZER.common_analyzer.analysis,
+        analyze_matrices_summary = SC_RNA_ANALYZER.common_analyzer.summary,
+        antibody_histograms      = SC_RNA_ANALYZER.antibody_analyzer.antibody_histograms_json,
+        antibody_treemap         = SC_RNA_ANALYZER.antibody_analyzer.antibody_treemap_json,
+    )
+
+    call CLOUPE_PREPROCESS(
+        pipestance_type              = "SC_RNA_REANALYZER_CS",
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        analysis                     = SC_RNA_ANALYZER.common_analyzer.analysis,
+        filtered_gene_bc_matrices_h5 = SC_RNA_ANALYZER.common_analyzer.cloupe_matrix_h5,
+        metrics_json                 = null,
+        aggregation_csv              = self.aggregation_csv,
+        gem_group_index_json         = null,
+        image_page_names             = null,
+        tissue_image_paths           = null,
+        dark_images                  = null,
+        tissue_positions             = null,
+        fiducial_positions_list      = null,
+        dzi_info                     = null,
+        dzi_tiles_paths              = null,
+        scale_factors_json           = null,
+        no_secondary_analysis        = false,
+        barcode_whitelist            = null,
+        hd_slide_name                = null,
+        loupe_map                    = null,
+        product_type                 = "sc",
+        cells_per_sample             = null,
+        cells_per_tag                = null,
+        cells_per_protospacer        = null,
+        spatial_enrichment           = null,
+        spatial_deconvolution_path   = null,
+    )
+
+    return (
+        analysis                      = SC_RNA_ANALYZER.common_analyzer.analysis_csv,
+        web_summary                   = SUMMARIZE_REANALYSIS.web_summary,
+        params                        = PARSE_PARAM_CSV.params_csv,
+        aggregation                   = PARSE_AGGR_CSV.aggregation_csv,
+        cloupe                        = CLOUPE_PREPROCESS.output_for_cloupe,
+        filtered_feature_bc_matrix    = SUMMARIZE_REANALYSIS.feature_bc_matrix_mex,
+        filtered_feature_bc_matrix_h5 = SC_RNA_ANALYZER.common_analyzer.cloupe_matrix_h5,
+    )
+}

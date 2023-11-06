@@ -1,0 +1,47 @@
+#
+# Copyright (c) 2023 10X Genomics, Inc. All rights reserved.
+#
+
+filetype fasta;
+filetype gtf;
+
+stage _MAKE_REFERENCE(
+    in  string[] genome_names,
+    in  fasta[]  fasta_files,
+    in  gtf[]    gtf_files,
+    in  string   ref_version,
+    in  string   mkref_version,
+    in  int      num_threads,
+    in  int      mem_gb,
+    out path     reference,
+    src py       "stages/make_reference",
+) split (
+) using (
+    volatile = strict,
+)
+
+pipeline MAKE_REFERENCE(
+    in  string[] genome_names,
+    in  fasta[]  fasta_files,
+    in  gtf[]    gtf_files,
+    in  string   ref_version,
+    in  string   mkref_version,
+    in  int      num_threads,
+    in  int      mem_gb,
+    out path     reference,
+)
+{
+    call _MAKE_REFERENCE(
+        genome_names  = self.genome_names,
+        fasta_files   = self.fasta_files,
+        gtf_files     = self.gtf_files,
+        ref_version   = self.ref_version,
+        mkref_version = self.mkref_version,
+        num_threads   = self.num_threads,
+        mem_gb        = self.mem_gb,
+    )
+
+    return (
+        reference = _MAKE_REFERENCE.reference,
+    )
+}

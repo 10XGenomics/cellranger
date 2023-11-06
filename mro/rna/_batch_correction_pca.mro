@@ -1,0 +1,71 @@
+@include "_cr_ana_stages.mro"
+
+filetype pickle;
+
+stage PCA_PREP(
+    in  h5     matrix_h5,
+    in  bool   is_antibody_only,
+    in  bool   is_atac,
+    out float  mem_gb,
+    out h5     filt_matrix,
+    out string library_type,
+    src py     "stages/analyzer/pca_prep",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage POST_PCA(
+    in  h5     matrix_h5,
+    in  h5     filt_matrix_h5,
+    in  npy    dimred_matrix_npy,
+    in  float  mem_gb,
+    out pickle dimred_matrix,
+    out pickle matrix_barcode_feature_info,
+    src py     "stages/analyzer/post_pca",
+) split (
+) using (
+    volatile = strict,
+)
+
+# Replacement for the old RUN_FBPCA which uses the PCA implemented in scan-rs
+pipeline RUN_BATCH_CORRECTION_PCA(
+    in  h5     matrix_h5,
+    in  int    num_pcs,
+    in  bool   is_antibody_only,
+    in  bool   is_atac,
+    out pickle dimred_matrix,
+    out pickle matrix_barcode_feature_info,
+    out string library_type,
+)
+{
+    call PCA_PREP(
+        matrix_h5        = self.matrix_h5,
+        is_antibody_only = self.is_antibody_only,
+        is_atac          = self.is_atac,
+    ) using (
+        volatile = true,
+    )
+
+    call RUN_PCA2(
+        matrix_h5 = PCA_PREP.filt_matrix,
+        num_pcs   = self.num_pcs,
+    ) using (
+        volatile = true,
+    )
+
+    call POST_PCA(
+        matrix_h5         = self.matrix_h5,
+        filt_matrix_h5    = PCA_PREP.filt_matrix,
+        dimred_matrix_npy = RUN_PCA2.dimred_matrix,
+        mem_gb            = PCA_PREP.mem_gb,
+    ) using (
+        volatile = true,
+    )
+
+    return (
+        dimred_matrix               = POST_PCA.dimred_matrix,
+        matrix_barcode_feature_info = POST_PCA.matrix_barcode_feature_info,
+        library_type                = PCA_PREP.library_type,
+    )
+}

@@ -1,0 +1,57 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.hdf5]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.ndarray]
+workspace = true
+
+[dependencies.rand]
+workspace = true
+
+[dependencies.rand_distr]
+workspace = true
+
+[dependencies.rand_pcg]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.transcriptome]
+path = '../transcriptome'
+
+[dependencies.umi]
+path = '../umi'
+
+[features]
+default = []
+rayon = []
+slow_tests = []
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'cr_h5'
+publish = false
+version = '0.1.0'

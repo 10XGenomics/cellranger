@@ -1,0 +1,108 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+
+filetype bam;
+filetype bam.bai;
+filetype bam.csi;
+filetype csv;
+filetype fastq;
+filetype json;
+filetype tps.json;
+filetype pickle;
+filetype fa;
+filetype h5;
+
+# duplicating this here to avoid circular dependency
+struct SampleSlfeOuts(
+    string  sample,
+    bam     bam_file,
+    bam.bai bai_index_file,
+    bam.csi csi_index_file,
+    json    metrics_summary,
+    csv     per_barcode_metrics,
+    h5      molecule_info,
+    h5      filtered_matrix_h5,
+    path    filtered_matrix_mex,
+    h5      raw_matrix_h5,
+    h5      raw_probe_bc_matrix,
+    path    raw_matrix_mex,
+    csv     filtered_barcodes,
+    csv     aggregate_barcodes,
+    csv     feature_reference,
+    csv     target_panel,
+    csv     probe_set,
+    csv     per_probe_metrics,
+)
+
+struct CellCallingParam(
+    int      per_gem_well,
+    map<int> per_sample,
+)
+
+stage GET_AGGREGATE_BARCODES_OUT(
+    in  path antibody_analysis,
+    out csv  aggregate_barcodes,
+    src py   "stages/counter/get_aggregate_barcodes_out",
+)
+
+stage CELLRANGER_PREFLIGHT(
+    in  bool             full_check,
+    in  map[]            sample_def,
+    in  path             reference_path,
+    in  csv              feature_reference,
+    in  CellCallingParam recovered_cells,
+    in  CellCallingParam force_cells,
+    in  int              r1_length,
+    in  int              r2_length,
+    in  string           targeting_method,
+    src py               "stages/common/cellranger_preflight",
+) using (
+    mem_gb   = 8,
+    volatile = strict,
+)
+
+stage DISABLE_FEATURE_STAGES(
+    in  map[]               sample_def,
+    in  bool                disable_multi,
+    in  bool                disable_count,
+    in  bool                is_pd,
+    in  bool                in_disable_targeted,
+    in  map<SampleSlfeOuts> sample_outs,
+    in  json                multi_graph,
+    out bool                disable_crispr,
+    out bool                disable_antibody,
+    out bool                disable_antigen,
+    out bool                disable_multiplexing,
+    out bool                disable_targeted,
+    out bool                disable_legacy_stages,
+    out bool                disable_library_cloupe,
+    out bool                disable_gex,
+    src py                  "stages/common/disable_feature_stages",
+)
+
+stage PARSE_TARGET_FEATURES(
+    in  map[]    sample_def,
+    in  path     reference_path,
+    in  json     gene_index,
+    in  bool     filter_probes,
+    in  bool     no_target_umi_filter,
+    in  bool     no_bam,
+    in  bool     is_pd,
+    in  int      rps_limit,
+    out fa       bait_fasta,
+    out csv      target_panel,
+    out csv      probe_set,
+    out csv      target_panel_or_probe_set,
+    out csv      target_gene_indices,
+    out bool     disable_targeted,
+    out bool     disable_target_umi_filter,
+    out bool     no_bam,
+    out int      rps_limit,
+    out string   target_set_name,
+    out string   targeting_method,
+    out tps.json target_panel_summary,
+    src py       "stages/common/parse_target_features",
+) using (
+    mem_gb = 4,
+)

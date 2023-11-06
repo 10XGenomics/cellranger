@@ -1,0 +1,72 @@
+[dependencies]
+bio = '>=0.35'
+csv = '1.2'
+json = '0.12.1'
+rayon = '1.7'
+
+[dependencies.amino]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.enclone_proto]
+workspace = true
+
+[dependencies.enclone_ranger]
+workspace = true
+
+[dependencies.io_utils]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.perf_stats]
+workspace = true
+
+[dependencies.pretty_trace]
+workspace = true
+
+[dependencies.rust-htslib]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.string_utils]
+workspace = true
+
+[dependencies.vdj_ann]
+workspace = true
+
+[dependencies.vdj_ann_ref]
+workspace = true
+
+[dependencies.vdj_asm_utils]
+path = '../vdj_asm_utils'
+
+[dependencies.vdj_reference]
+path = '../vdj_reference'
+
+[dependencies.vector_utils]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'clonotype_assigner'
+publish = false
+version = '0.1.0'

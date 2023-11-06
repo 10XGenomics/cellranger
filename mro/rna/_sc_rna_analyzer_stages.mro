@@ -1,0 +1,331 @@
+#
+# Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
+#
+
+filetype csv;
+filetype h5;
+filetype html;
+filetype json;
+filetype pickle;
+filetype binary;
+
+struct PcaOutputs(
+    h5   pca_h5,
+    path pca_csv,
+)
+
+stage ANALYZER_PREFLIGHT(
+    in  bool   no_secondary_analysis,
+    in  h5     filtered_matrices_h5,
+    in  csv    use_genes,
+    in  csv    exclude_genes,
+    in  csv    use_bcs,
+    in  int    num_analysis_bcs,
+    in  int    force_cells,
+    in  int    random_seed,
+    in  int    num_pca_bcs,
+    in  int    num_pca_genes,
+    in  int    num_principal_comps,
+    in  int    cbc_knn,
+    in  float  cbc_alpha,
+    in  float  cbc_sigma,
+    in  bool   cbc_realign_panorama,
+    in  int    max_clusters,
+    in  int    graphclust_neighbors,
+    in  float  neighbor_a,
+    in  float  neighbor_b,
+    in  int    tsne_perplexity,
+    in  int    tsne_input_pcs,
+    in  int    tsne_max_dims,
+    in  int    tsne_max_iter,
+    in  int    tsne_stop_lying_iter,
+    in  int    tsne_mom_switch_iter,
+    in  float  tsne_theta,
+    in  int    umap_n_neighbors,
+    in  int    umap_input_pcs,
+    in  int    umap_max_dims,
+    in  float  umap_min_dist,
+    in  string umap_metric,
+    in  bool   chemistry_batch_correction,
+    in  bool   skip_multigenome_analysis,
+    out bool   skip,
+    out bool   is_antibody_only,
+    out bool   disable_run_pca,
+    out bool   disable_correct_chemistry_batch,
+    out bool   skip_multigenome_analysis,
+    src py     "stages/analyzer/analyzer_preflight",
+) using (
+    volatile = strict,
+)
+
+stage REANALYZER_PREFLIGHT(
+    in  h5 filtered_matrices_h5,
+    src py "stages/analyzer/reanalyzer_preflight",
+) using (
+    volatile = strict,
+)
+
+stage REANALYZE_VERIFY_SAMPLE_IDS(
+    in  h5    matrix_h5,
+    in  map[] sample_defs,
+    out map[] sample_defs,
+    src py    "stages/analyzer/reanalyze_verify_sample_ids",
+) using (
+    volatile = strict,
+)
+
+stage PREPROCESS_MATRIX(
+    in  h5   matrix_h5,
+    in  int  random_seed,
+    in  csv  use_genes,
+    in  csv  exclude_genes,
+    in  csv  use_bcs,
+    in  int  num_bcs,
+    in  int  force_cells,
+    in  bool get_peak_matrix,
+    in  bool skip,
+    in  bool is_visium_hd,
+    in  bool is_antibody_only,
+    in  bool disable_run_pca,
+    in  bool disable_correct_chemistry_batch,
+    in  bool skip_multigenome_analysis,
+    out bool skip_antibody_analysis,
+    out bool skip_antigen_analysis,
+    out h5   cloupe_matrix_h5,
+    out h5   preprocessed_matrix_h5,
+    out bool is_multi_genome,
+    out bool skip,
+    out bool is_antibody_only,
+    out bool disable_run_pca,
+    out bool disable_correct_chemistry_batch,
+    out bool skip_multigenome_analysis,
+    out bool disable_hierarchical_clustering,
+    src py   "stages/analyzer/preprocess_matrix",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage RUN_MULTIGENOME_ANALYSIS(
+    in  h5   filtered_matrices_h5,
+    in  bool is_multi_genome,
+    out path multi_genome_csv,
+    out path multi_genome_json,
+    out json multi_genome_summary,
+    src py   "stages/analyzer/run_multigenome_analysis",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage RUN_PCA(
+    in  h5   matrix_h5,
+    in  int  random_seed,
+    in  int  num_pca_bcs,
+    in  int  num_pca_genes,
+    in  int  num_principal_comps,
+    in  bool is_antibody_only,
+    out h5   pca_h5,
+    out path pca_csv,
+    src py   "stages/analyzer/run_pca",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage RUN_GRAPH_CLUSTERING(
+    in  h5     matrix_h5,
+    in  h5     pca_h5,
+    in  int    num_neighbors       "Use this many neighbors",
+    in  float  neighbor_a          "Use larger of (a+b*log10(n_cells) neighbors or num_neighbors",
+    in  float  neighbor_b          "Use larger of (a+b*log10(n_cells) neighbors or num_neighbors",
+    in  int    num_bcs             "Use this many cell-barcodes in clustering",
+    in  int    input_pcs           "Use top N PCs",
+    in  int    balltree_leaf_size,
+    in  string similarity_type     "Type of similarity to use (nn or snn)",
+    in  int    random_seed         "Seed for random number generator",
+    out h5     chunked_neighbors,
+    out h5     clusters_h5,
+    out path   clusters_csv,
+    src py     "stages/analyzer/run_graph_clustering",
+) split (
+    in  pickle neighbor_index,
+    in  h5     submatrix,
+    in  int    row_start,
+    in  int    total_rows,
+    in  int    k_nearest,
+    in  h5     use_bcs,
+) using (
+    volatile = strict,
+)
+
+stage MERGE_CLUSTERS(
+    in  h5   matrix_h5,
+    in  h5   pca_h5,
+    in  h5   clusters_h5,
+    out h5   clusters_h5,
+    out path clusters_csv,
+    src py   "stages/analyzer/merge_clusters",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage COMBINE_CLUSTERING(
+    in  h5   kmeans_h5,
+    in  path kmeans_csv,
+    in  h5   graphclust_h5,
+    in  path graphclust_csv,
+    in  h5   hclust_h5,
+    in  path hclust_csv,
+    out h5   clustering_h5,
+    out path clustering_csv,
+    src py   "stages/analyzer/combine_clustering",
+) using (
+    volatile = strict,
+)
+
+stage RUN_DIFFERENTIAL_EXPRESSION(
+    in  h5     matrix_h5,
+    in  h5     clustering_h5,
+    in  int    random_seed,
+    in  int    max_clusters,
+    in  bool   is_antibody_only,
+    out h5     diffexp_h5,
+    out path   diffexp_csv,
+    src py     "stages/analyzer/run_differential_expression",
+) split (
+    in  string clustering_key,
+) using (
+    volatile = strict,
+)
+
+stage RUN_TSNE(
+    in  h5     matrix_h5,
+    in  h5     pca_h5,
+    in  int    random_seed,
+    in  int    perplexity,
+    in  int    input_pcs,
+    in  int    max_dims,
+    in  int    max_iter,
+    in  int    stop_lying_iter,
+    in  int    mom_switch_iter,
+    in  float  theta,
+    in  bool   is_antibody_only,
+    out h5     tsne_h5,
+    out path   tsne_csv,
+    src py     "stages/analyzer/run_tsne",
+) split (
+    in  int    tsne_dims,
+    in  string feature_type,
+) using (
+    volatile = strict,
+)
+
+stage SUMMARIZE_ANALYSIS(
+    in  h5    matrix_h5,
+    in  h5    pca_h5,
+    in  h5    clustering_h5,
+    in  h5    diffexp_h5,
+    in  h5    tsne_h5,
+    in  h5    umap_h5,
+    in  path  pca_csv,
+    in  path  clustering_csv,
+    in  path  diffexp_csv,
+    in  path  tsne_csv,
+    in  path  umap_csv,
+    in  json  multi_genome_summary,
+    in  path  multi_genome_csv,
+    in  path  multi_genome_json,
+    in  bool  is_multi_genome,
+    in  bool  chemistry_batch_correction,
+    in  float batch_score_before_correction,
+    in  float batch_score_after_correction,
+    out path  analysis,
+    out path  analysis_csv,
+    out json  summary,
+    src py    "stages/analyzer/summarize_analysis",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage PARSE_PARAM_CSV(
+    in  csv    params_csv,
+    out csv    params_csv,
+    out int    num_analysis_bcs,
+    out int    random_seed,
+    out int    num_pca_bcs,
+    out int    num_pca_genes,
+    out int    num_principal_comps,
+    out int    cbc_knn,
+    out float  cbc_alpha,
+    out float  cbc_sigma,
+    out bool   cbc_realign_panorama,
+    out int    max_clusters,
+    out int    graphclust_neighbors,
+    out float  neighbor_a,
+    out float  neighbor_b,
+    out int    tsne_perplexity,
+    out int    tsne_input_pcs,
+    out int    tsne_max_dims,
+    out int    tsne_max_iter,
+    out int    tsne_stop_lying_iter,
+    out int    tsne_mom_switch_iter,
+    out float  tsne_theta,
+    out int    umap_n_neighbors,
+    out int    umap_input_pcs,
+    out int    umap_max_dims,
+    out float  umap_min_dist,
+    out string umap_metric,
+    src py     "stages/analyzer/parse_csv",
+) using (
+    volatile = strict,
+)
+
+stage SUMMARIZE_REANALYSIS(
+    in  string sample_id,
+    in  string sample_desc,
+    in  h5     filtered_matrices,
+    in  path   analysis,
+    in  json   analyze_matrices_summary,
+    in  json   antibody_histograms,
+    in  json   antibody_treemap,
+    out html   web_summary,
+    out json   summary,
+    out path   feature_bc_matrix_mex,
+    src py     "stages/analyzer/summarize_reanalysis",
+) split (
+) using (
+    volatile = strict,
+) retain (
+    summary,
+)
+
+stage CORRECT_CHEMISTRY_BATCH(
+    in  pickle          dimred_matrix,
+    in  pickle          matrix_barcode_feature_info,
+    in  map[]           library_info,
+    in  string          library_type,
+    in  int             cbc_knn,
+    in  float           cbc_alpha,
+    in  float           cbc_sigma,
+    in  bool            cbc_realign_panorama,
+    out float           batch_score_before_correction,
+    out float           batch_score_after_correction,
+    out h5              aligned_pca_h5,
+    out path            aligned_pca_csv,
+    out map<PcaOutputs> aligned_pca_map,
+    src py              "stages/analyzer/correct_chemistry_batch",
+) split (
+    in  int             batch_id,
+    in  map             batch_to_bc_indices,
+    in  pickle          ordered_dimred_matrix,
+    in  pickle          idx_to_batch_id,
+    in  bool            need_reorder_barcode,
+    in  pickle          barcode_reorder_index,
+    out binary          batch_nearest_neighbor,
+) using (
+    mem_gb   = 4,
+    volatile = strict,
+)

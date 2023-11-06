@@ -1,0 +1,166 @@
+[profile]
+[profile.dev]
+debug = 1
+opt-level = 3
+split-debuginfo = 'unpacked'
+
+[profile.release]
+codegen-units = 1
+debug = 1
+lto = true
+
+[profile.test]
+debug = 1
+opt-level = 3
+split-debuginfo = 'unpacked'
+
+[workspace]
+exclude = ['cr_ana']
+members = ['barcode', 'barcode_extensions', 'bazel_utils', 'byteseq', 'clonotype_assigner', 'cr_aggr', 'cr_bam', 'cr_h5', 'cr_lib', 'cr_types', 'cr_vdj', 'cr_websummary', 'cr_wrap', 'fast_utils', 'jibes_o3', 'json_report_derive', 'metric', 'metric_derive', 'multi', 'par_proc', 'parameters_toml', 'slide_design', 'stats', 'tenkit2', 'transcriptome', 'tx_annotation', 'umi', 'vdj_asm_asm', 'vdj_asm_utils', 'vdj_proto', 'vdj_reference', 'websummary_build', 'websummary_derive']
+resolver = '2'
+
+[workspace.dependencies]
+criterion = '0.5.1'
+derive_more = '0.99'
+flate2 = '1'
+itertools = '0.10'
+ndarray = '>= 0.15'
+nom_locate = '4.0.0'
+plotly = '0.8.3'
+rand = '0.8'
+rand_distr = '0.4'
+rand_pcg = '0.3'
+serde_json = '1.0.72'
+strum = '>=0.19.0'
+strum_macros = '>=0.19'
+toml = '0.7'
+
+[workspace.dependencies.align_tools]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.amino]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.anyhow]
+features = ['backtrace']
+version = '1'
+
+[workspace.dependencies.arrayvec]
+features = ['serde']
+version = '0.5.2'
+
+[workspace.dependencies.clap]
+features = ['derive', 'wrap_help']
+version = '4, <4.1.10'
+
+[workspace.dependencies.enclone_core]
+branch = 'main'
+git = 'https://github.com/10XGenomics/enclone_ranger'
+
+[workspace.dependencies.enclone_proto]
+branch = 'main'
+git = 'https://github.com/10XGenomics/enclone_ranger'
+
+[workspace.dependencies.enclone_ranger]
+branch = 'main'
+git = 'https://github.com/10XGenomics/enclone_ranger'
+
+[workspace.dependencies.equiv]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.fastq_set]
+branch = 'master'
+git = 'https://github.com/10XGenomics/fastq_set'
+
+[workspace.dependencies.graph_simple]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.hdf5]
+branch = 'conda_nov2021'
+features = ['conda']
+git = 'https://github.com/10XGenomics/hdf5-rust'
+
+[workspace.dependencies.hyperbase]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.insta]
+features = ['backtrace', 'redactions', 'ron']
+version = '~1.17'
+
+[workspace.dependencies.io_utils]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.kmer_lookup]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.martian]
+branch = 'master'
+git = 'https://github.com/martian-lang/martian-rust'
+
+[workspace.dependencies.martian-derive]
+branch = 'master'
+git = 'https://github.com/martian-lang/martian-rust'
+
+[workspace.dependencies.martian-filetypes]
+branch = 'master'
+git = 'https://github.com/martian-lang/martian-rust'
+
+[workspace.dependencies.nom]
+default-features = false
+version = '7.1.1'
+
+[workspace.dependencies.perf_stats]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.pretty_trace]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.rust-htslib]
+default-features = false
+features = ['serde_feature', 'libdeflate']
+version = '0.44'
+
+[workspace.dependencies.serde]
+features = ['derive']
+version = '1.0'
+
+[workspace.dependencies.stats_utils]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.string_utils]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.tables]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.tenx-websummary]
+branch = 'master'
+git = 'https://github.com/10XGenomics/websummary'
+
+[workspace.dependencies.vdj_ann]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.vdj_ann_ref]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.vdj_types]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'
+
+[workspace.dependencies.vector_utils]
+branch = 'master'
+git = 'https://github.com/10XGenomics/rust-toolbox'

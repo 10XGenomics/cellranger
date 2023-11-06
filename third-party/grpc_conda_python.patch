@@ -1,0 +1,72 @@
+From 139f508c2398cf6e71ab4e85e7cb80db431c2986 Mon Sep 17 00:00:00 2001
+Date: Mon, 16 Aug 2021 15:08:20 -0700
+Subject: [PATCH] Use conda python binary and headers.
+
+grpc tries to use the system python, which is a problem.  This overrides
+it to use the correct python binary and headers.  Mostly.  There's still
+the problem that it has to use the version from conda_package_python
+rather than @anaconda//:python because it's a repository rule, but at
+least this should mostly work.
+---
+ third_party/py/python_configure.bzl | 40 ++++++-----------------------
+ 1 file changed, 8 insertions(+), 32 deletions(-)
+
+diff --git a/third_party/py/python_configure.bzl b/third_party/py/python_configure.bzl
+index fa47d89ebc..364bffbb9a 100644
+--- a/third_party/py/python_configure.bzl
++++ b/third_party/py/python_configure.bzl
+@@ -119,36 +119,12 @@ def _symlink_genrule_for_dir(
+   If src_dir is passed, files will be read from the given directory; otherwise
+   we assume files are in src_files and dest_files
+   """
+-    if src_dir != None:
+-        src_dir = _normalize_path(src_dir)
+-        dest_dir = _normalize_path(dest_dir)
+-        files = "\n".join(
+-            sorted(_read_dir(repository_ctx, src_dir).splitlines()),
+-        )
+-
+-        # Create a list with the src_dir stripped to use for outputs.
+-        dest_files = files.replace(src_dir, "").splitlines()
+-        src_files = files.splitlines()
+-    command = []
+-    outs = []
+-    for i in range(len(dest_files)):
+-        if dest_files[i] != "":
+-            # If we have only one file to link we do not want to use the dest_dir, as
+-            # $(@D) will include the full path to the file.
+-            dest = "$(@D)/" + dest_dir + dest_files[i] if len(
+-                dest_files,
+-            ) != 1 else "$(@D)/" + dest_files[i]
+-
+-            # On Windows, symlink is not supported, so we just copy all the files.
+-            cmd = "cp -f" if _is_windows(repository_ctx) else "ln -s"
+-            command.append(cmd + ' "%s" "%s"' % (src_files[i], dest))
+-            outs.append('        "' + dest_dir + dest_files[i] + '",')
+-    return _genrule(
+-        src_dir,
+-        genrule_name,
+-        " && ".join(command),
+-        "\n".join(outs),
+-    )
++    return """
++alias(
++    name = "_python3_include",
++    actual = "@conda_package_python//:conda_package_python_hdrs",
++)
++"""
+ 
+ def _get_python_bin(repository_ctx, bin_path_key, default_bin_path, allow_absent):
+     """Gets the python bin path."""
+@@ -345,7 +321,7 @@ def _python_autoconf_impl(repository_ctx):
+         repository_ctx,
+         "_python3",
+         _PYTHON3_BIN_PATH,
+-        "python3",
++        "../conda_package_python/bin/python3",
+         _PYTHON3_LIB_PATH,
+         False
+     )
+-- 
+2.26.1
+

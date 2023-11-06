@@ -1,0 +1,178 @@
+#
+# Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
+#
+@include "_cr_lib_stages.mro"
+
+filetype bam;
+filetype bam.bai;
+filetype csv;
+filetype fastq;
+filetype json;
+filetype h5;
+filetype pickle;
+filetype bincode;
+
+struct SampleMatrices(
+    string sample,
+    h5     filtered_matrix_h5,
+    path   filtered_matrix_mex,
+    h5     raw_matrix_h5,
+    h5     raw_probe_bc_matrix,
+    path   raw_matrix_mex,
+    csv    filtered_barcodes,
+    csv    aggregate_barcodes,
+    csv    per_probe_metrics,
+)
+
+struct ProbeBCDef(
+    string   id,
+    string[] sequence,
+    int      offset,
+    int      length,
+)
+
+struct CellCallingParam(
+    int      per_gem_well,
+    map<int> per_sample,
+)
+
+struct CellCalling(
+    CellCallingParam recovered_cells,
+    CellCallingParam force_cells,
+    CellCallingParam emptydrops_minimum_umis,
+    json             cell_barcodes,
+    string           override_mode,
+    string[]         override_library_types,
+    bool             disable_ab_aggregate_detection,
+    bool             disable_high_occupancy_gem_detection,
+)
+
+stage FILTER_BARCODES(
+    in  string       sample_id,
+    in  h5           matrices_h5,
+    in  csv          barcode_correction_csv,
+    in  bool         is_antibody_only,
+    in  path         reference_path,
+    in  int[]        gem_groups,
+    in  string       chemistry_description,
+    in  CellCalling  config,
+    in  csv          target_set,
+    in  ChemistryDef chemistry_def,
+    in  json         multi_graph,
+    in  csv          per_barcode_metrics,
+    in  bool         is_spatial,
+    out json         summary,
+    out csv          filtered_barcodes,
+    out csv          aggregate_barcodes,
+    out h5           filtered_matrices_h5,
+    out path         filtered_matrices_mex,
+    out csv          nonambient_calls,
+    out csv          isotype_normalization_factors,
+    src py           "stages/counter/filter_barcodes",
+) split (
+    in  ProbeBCDef   probe_bc_def,
+    out json         filtered_metrics_groups,
+    out json         filtered_bcs_groups,
+) using (
+    mem_gb   = 8,
+    volatile = strict,
+)
+
+stage INFER_GEM_WELL_THROUGHPUT(
+    in  string throughput,
+    in  string chemistry_description,
+    in  h5     filtered_feature_counts_matrix,
+    in  path   reference_path,
+    in  h5     barcode_summary_h5,
+    out string throughput,
+    out json   inferred_throughputs,
+    src py     "stages/feature/infer_gem_well_throughput",
+) split (
+)
+
+stage MULTI_WRITE_PER_SAMPLE_MATRICES(
+    in  h5               matrix_h5,
+    in  h5               raw_matrix_h5,
+    in  csv              filtered_barcodes,
+    in  csv              aggregate_barcodes,
+    in  json             sample_barcodes,
+    in  json             sample_cell_barcodes,
+    in  json             multi_graph,
+    in  map<h5>          sample_raw_probe_bc_matrices,
+    in  map<csv>         samples_per_probe_metrics,
+    out SampleMatrices[] sample_matrices,
+    src py               "stages/multi/multi_write_per_sample_matrices",
+) split (
+    in  string           sample,
+    out SampleMatrices   matrices,
+) using (
+    mem_gb   = 4,
+    volatile = strict,
+)
+
+stage SUMMARIZE_BASIC_REPORTS(
+    in  string           sample,
+    in  h5               matrices_h5,
+    in  csv              filtered_barcodes,
+    in  csv              per_barcode_metrics,
+    in  json             matrix_computer_summary,
+    in  h5               barcode_summary,
+    in  CellCallingParam recovered_cells,
+    in  path             reference_path,
+    in  json[]           summary_jsons,
+    in  bool             sample_bcs_only,
+    in  tps.json         target_panel_summary,
+    out json             summary,
+    src py               "stages/counter/summarize_basic_reports",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage DISABLE_STAGES(
+    in  bool  no_bam,
+    in  bool  disable_multi,
+    in  bool  is_pd,
+    in  h5    raw_feature_bc_matrix,
+    in  csf[] probe_barcode_counts,
+    out bool  disable_legacy_bam,
+    out bool  disable_sample_bams,
+    out bool  disable_assign_tags,
+    out bool  no_probe_barcode_counts,
+    out bool  no_probe_barcode_matrix_demux,
+    src py    "stages/multi/disable_stages",
+) using (
+    volatile = strict,
+)
+
+stage SUBSAMPLE_READS(
+    in  h5     molecule_info,
+    in  csv    filtered_barcodes,
+    in  string target_mode,
+    out json   summary,
+    out pickle merged_metrics,
+    src py     "stages/counter/subsample_reads",
+) split (
+    in  int    chunk_start,
+    in  int    chunk_len,
+    in  map[]  subsample_info,
+    out pickle metrics,
+) using (
+    mem_gb   = 4,
+    volatile = strict,
+)
+
+stage COMPUTE_CORRECTION_FACTOR(
+    in  h5    v1_filtered_fbm,
+    in  json  barcodes_under_tissue,
+    out float correction_factor,
+    out json  affected_barcodes,
+    out bool  disable_downsampling,
+    src py    "stages/spatial/compute_correction_factor",
+)
+
+stage CHECK_CORRECTION_FACTOR(
+    in  h5 v1_filtered_fbm,
+    in  h5 filtered_fbm,
+    src py "stages/spatial/check_correction_factor",
+)

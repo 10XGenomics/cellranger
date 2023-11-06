@@ -1,0 +1,45 @@
+[[bin]]
+name = 'gtf_to_gene_index'
+test = false
+
+[dependencies]
+bio = '>=0.35'
+bio-types = '*'
+smallvec = '1.11'
+statrs = '>=0.12, <= 0.16'
+tempfile = '3.6'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.flate2]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.nom]
+workspace = true
+
+[dependencies.ordered-float]
+features = ['serde']
+version = '>=1.1.1, < 4'
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'transcriptome'
+publish = false
+version = '0.1.0'

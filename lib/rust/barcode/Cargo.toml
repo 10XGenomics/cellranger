@@ -1,0 +1,50 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.arrayvec]
+workspace = true
+
+[dependencies.bazel_utils]
+path = '../bazel_utils'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.flate2]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.ordered-float]
+features = ['serde']
+version = '>=1.1.1, < 4'
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.slide_design]
+path = '../slide_design'
+
+[dependencies.strum_macros]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'barcode'
+publish = false
+version = '0.1.0'

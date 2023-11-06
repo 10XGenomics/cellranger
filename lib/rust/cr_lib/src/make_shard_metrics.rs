@@ -1,0 +1,406 @@
+use crate::barcode_sort::ReadVisitor;
+use anyhow::Result;
+use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, BcSegSeq, HasBarcode};
+use cr_types::chemistry::ChemistryDef;
+use cr_types::reference::feature_extraction::FeatureExtractor;
+use cr_types::reference::feature_reference::FeatureReference;
+use cr_types::rna_read::{RnaChunk, RnaRead};
+use cr_types::types::LibraryFeatures;
+use cr_websummary::multi::tables::SequencingMetricsRow;
+use cr_websummary::PercentF1;
+use fastq_set::metric_utils::{PatternCheck, ILLUMINA_QUAL_OFFSET};
+use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
+use json_report_derive::JsonReport;
+use metric::{CountMetric, JsonReporter, Metric, PercentMetric, SimpleHistogram, TxHashMap};
+use metric_derive::Metric;
+use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
+use std::convert::Into;
+use std::sync::Arc;
+use umi::HasUmi;
+
+const HOMOPOLYMER_LENGTH: usize = 15;
+const BARCODE_MIN_QUAL_THRESHOLD: u8 = 10;
+const UMI_MIN_QUAL_THRESHOLD: u8 = 10;
+const UMI_POLYT_SUFFIX_LENGTH: usize = 5;
+
+#[allow(non_snake_case)]
+#[derive(Clone, Serialize, Deserialize, Metric, JsonReport)]
+#[json_report(extend = "extra_reports")]
+pub struct MakeShardMetrics {
+    bc_N_bases: PercentMetric,
+    umi_N_bases: PercentMetric,
+    read_N_bases: PercentMetric,
+    read2_N_bases: Option<PercentMetric>,
+    i1_N_bases: Option<PercentMetric>,
+    i2_N_bases: Option<PercentMetric>,
+
+    bc_bases_with_q30: PercentMetric,
+    /// bc_bases_with_q30_in_gel_bead_frac and bc_bases_with_q30_in_probe_frac
+    bc_bases_with_q30_in: BarcodeConstructMetric<PercentMetric>,
+    umi_bases_with_q30: PercentMetric,
+    read_bases_with_q30: PercentMetric,
+    read2_bases_with_q30: Option<PercentMetric>,
+    i1_bases_with_q30: Option<PercentMetric>,
+    i2_bases_with_q30: Option<PercentMetric>,
+
+    A_perfect_homopolymer: PercentMetric,
+    C_perfect_homopolymer: PercentMetric,
+    G_perfect_homopolymer: PercentMetric,
+    T_perfect_homopolymer: PercentMetric,
+
+    good_umi: PercentMetric,
+    has_n_barcode_property: PercentMetric,
+    has_n_umi_property: PercentMetric,
+    pub(crate) homopolymer_barcode_property: PercentMetric,
+    homopolymer_umi_property: PercentMetric,
+    low_min_qual_barcode_property: PercentMetric,
+    low_min_qual_umi_property: PercentMetric,
+    polyt_suffix_umi_property: PercentMetric,
+    miss_whitelist_barcode_property: PercentMetric,
+
+    /// If there are a total of `r1` read pairs in the input fastqs, we process `r2` read pairs
+    /// through `MAKE_SHARD`. `r2` is the minimum of these numbers:
+    /// - `r1` read pairs subsampled at a rate specified in the top level mro or `SampleDef` (PD)
+    /// - `initial_read_pairs` specified at the top level mro
+    ///
+    /// Among the `r2` read pairs, we end up carrying `r3` reads forward from `MAKE_SHARD`, where
+    /// `r3` is the number of reads among `r2` which are valid `RnaRead`s. The reads which are
+    /// ignored are the ones which are too short. Typically, for customer data, `r1 = r2 = r3`
+    ///
+    /// The metric name is probably a misnomer, but by `sequenced_reads`, here we mean `r3`. This
+    /// appears under the key `sequenced_reads_count` with the appropriate library type prefix
+    /// in the metrics summary json
+    ///
+    /// There is a related metric, `total_read_pairs` in the metrics summary json which we have
+    /// used historically for `r3`. `total_read_pairs` metric was originally computed in this stage,
+    /// but has been moved to `ALIGN_AND_COUNT` except for VDJ which is why we have a
+    /// `vdj_total_read_pairs` metric in this struct. In cellranger vdj/count,
+    /// `total_read_pairs` = `sequenced_reads_count`. In spaceranger, there is an additional reads
+    /// per spot subsampling (in targeted mode) -- in such a case `total_read_pairs` is the
+    /// number of `sequenced_reads_count` read pairs analyzed after this subsampling step.
+    sequenced_reads: CountMetric,
+
+    /// Number of read pairs skipped because it cannot be a valid RnaRead, typically due to
+    /// insufficient length. Equal to r2 - r3 (see comment above)
+    unprocessed_read_pairs: i64,
+
+    /// See the comment on `sequenced_reads`. Only reported for VDJ library types
+    #[json_report(skip)]
+    vdj_total_read_pairs: i64,
+
+    #[json_report(skip)]
+    total_read_pairs_per_library: TxHashMap<String, CountMetric>,
+}
+
+impl MakeShardMetrics {
+    /// Emit total_read_pairs_per_library without the default _count suffix.
+    fn extra_reports(&self) -> JsonReporter {
+        let mut metrics = JsonReporter::new();
+        // CellRanger 3.0 has these prefixed by library_id and without _count suffix
+        for (library_id, count) in &self.total_read_pairs_per_library {
+            metrics.insert(
+                format!("{library_id}_total_read_pairs_per_library"),
+                count.count(),
+            );
+        }
+        if self.vdj_total_read_pairs > 0 {
+            metrics.insert("total_read_pairs", self.vdj_total_read_pairs);
+        }
+        metrics
+    }
+
+    pub fn sequencing_metrics_row(&self, fastq_id: String) -> SequencingMetricsRow {
+        // Only populate muli-part barcode metrics if both GEM and probe barcode are present
+        let (q30_gem, q30_probe) = match self.bc_bases_with_q30_in.inner() {
+            Some(BarcodeConstruct::GelBeadAndProbe(c)) => (
+                Some(PercentF1::from(c.gel_bead)),
+                Some(PercentF1::from(c.probe)),
+            ),
+            _ => (None, None),
+        };
+
+        SequencingMetricsRow {
+            fastq_id: Some(fastq_id),
+            number_of_reads: Some(self.sequenced_reads.count() as usize),
+            q30_barcode: Some(self.bc_bases_with_q30.into()),
+            q30_gem_barcode: q30_gem,
+            q30_probe_barcode: q30_probe,
+            q30_umi: Some(self.umi_bases_with_q30.into()),
+            q30_read1: Some(self.read_bases_with_q30.into()),
+            unprocessed_reads: Some(self.unprocessed_read_pairs as usize),
+            q30_read2: self.read2_bases_with_q30.map(Into::into),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MakeShardHistograms {
+    pub(crate) valid_bc_counts: SimpleHistogram<Barcode>,
+    pub(crate) valid_bc_segment_counts: BarcodeConstruct<SimpleHistogram<BcSegSeq>>,
+    pub(crate) r1_lengths: SimpleHistogram<usize>,
+}
+
+impl MakeShardHistograms {
+    pub fn new(chemistry_def: &ChemistryDef) -> Self {
+        MakeShardHistograms {
+            valid_bc_counts: SimpleHistogram::new(),
+            r1_lengths: SimpleHistogram::new(),
+            valid_bc_segment_counts: chemistry_def
+                .barcode_read_type()
+                .map(|_| SimpleHistogram::new()),
+        }
+    }
+    pub fn merge(&mut self, other: Self) {
+        // NOTE: The functions new() and merge() look eerily similar to the
+        // `Metric` trait. However` valid_bc_segment_counts` require a context
+        // to define a `new()`. We expand the fields in the struct here explicitly
+        // so that the compiler will remind you to update this function when
+        // adding/removing fields from the struct.
+        //
+        // TODO: `Metric` can be defined for `Option<BarcodeConstruct<Metric>>`
+        // in which case we can derive the trait
+        let MakeShardHistograms {
+            valid_bc_counts,
+            valid_bc_segment_counts,
+            r1_lengths,
+        } = other;
+        self.valid_bc_counts.merge(valid_bc_counts);
+        self.r1_lengths.merge(r1_lengths);
+        self.valid_bc_segment_counts
+            .as_mut_ref()
+            .zip(valid_bc_segment_counts)
+            .iter()
+            .for_each(|(this, that)| this.merge(that));
+    }
+    fn observe(&mut self, rna_read: &RnaRead) {
+        if rna_read.barcode().is_valid() {
+            self.valid_bc_counts.observe_owned(rna_read.barcode());
+        }
+        if let Some(r1) = rna_read.read.get(WhichRead::R1, ReadPart::Seq) {
+            self.r1_lengths.observe(&r1.len());
+        }
+        rna_read
+            .segmented_barcode()
+            .segments()
+            .zip(self.valid_bc_segment_counts.as_mut_ref())
+            .iter()
+            .for_each(|(segment, hist)| {
+                if segment.is_valid() {
+                    hist.observe_owned(segment.sequence)
+                }
+            });
+    }
+}
+
+pub struct MakeShardVisitor<'a> {
+    poly_a_pattern: PatternCheck,
+    poly_c_pattern: PatternCheck,
+    poly_g_pattern: PatternCheck,
+    poly_t_pattern: PatternCheck,
+    metrics: MakeShardMetrics,
+    histograms: MakeShardHistograms,
+    read_chunks: &'a [RnaChunk],
+    pub(crate) feature_counts: Vec<i64>,
+    feature_extractor: Option<FeatureExtractor>,
+}
+
+impl<'a> MakeShardVisitor<'a> {
+    pub fn new(
+        reference: Option<FeatureReference>,
+        read_chunks: &'a [RnaChunk],
+        chunk_id: usize,
+        chemistry_def: &ChemistryDef,
+    ) -> Result<Self> {
+        let (feature_counts, feature_extractor) = if let Some(reference) = reference {
+            (
+                vec![0i64; reference.feature_defs.len()],
+                Some(FeatureExtractor::new(Arc::new(reference), None, None)?),
+            )
+        } else {
+            (vec![], None)
+        };
+        // Handle edge case where a library has no read counts (possibly because it wasn't sequenced
+        // far enough to have a parseable read) and so would not be initialized with a count.
+        let mut metrics: MakeShardMetrics = Metric::new();
+        metrics
+            .total_read_pairs_per_library
+            .insert(read_chunks[chunk_id].library_id().to_string(), 0.into());
+        Ok(MakeShardVisitor {
+            poly_a_pattern: PatternCheck::new(&[b'A'; HOMOPOLYMER_LENGTH]),
+            poly_c_pattern: PatternCheck::new(&[b'C'; HOMOPOLYMER_LENGTH]),
+            poly_g_pattern: PatternCheck::new(&[b'G'; HOMOPOLYMER_LENGTH]),
+            poly_t_pattern: PatternCheck::new(&[b'T'; HOMOPOLYMER_LENGTH]),
+            metrics,
+            feature_counts,
+            feature_extractor,
+            read_chunks,
+            histograms: MakeShardHistograms::new(chemistry_def),
+        })
+    }
+
+    /// Return the associated metrics.
+    pub fn metrics(&self) -> &MakeShardMetrics {
+        &self.metrics
+    }
+
+    /// Return the various histograms.
+    pub fn histograms(&self) -> &MakeShardHistograms {
+        &self.histograms
+    }
+}
+
+impl<'a> ReadVisitor for MakeShardVisitor<'a> {
+    type ReadType = RnaRead;
+
+    fn visit_processed_read(&mut self, rna_read: &mut Self::ReadType) -> Result<()> {
+        let homopolymer_metric = |pattern_check: &PatternCheck,
+                                  read: &[u8],
+                                  read2_option: Option<&[u8]>|
+         -> PercentMetric {
+            let mut exists = pattern_check.exists(read);
+            if let Some(read2) = read2_option {
+                exists = exists || pattern_check.exists(read2)
+            }
+            exists.into()
+        };
+
+        let read_metrics = MakeShardMetrics {
+            bc_N_bases: frac_n_bases(rna_read.raw_bc_construct_seq().flat_iter()),
+            umi_N_bases: frac_n_bases(rna_read.raw_umi_seq()),
+            read_N_bases: frac_n_bases(rna_read.r1_seq()),
+            read2_N_bases: rna_read.r2_seq().map(frac_n_bases),
+            i1_N_bases: rna_read.raw_illumina_i1_seq().map(frac_n_bases),
+            i2_N_bases: rna_read.raw_illumina_i2_seq().map(frac_n_bases),
+
+            bc_bases_with_q30: frac_q30_bases(rna_read.raw_bc_construct_qual().flat_iter()),
+            bc_bases_with_q30_in: rna_read.raw_bc_construct_qual().map(frac_q30_bases).into(),
+            umi_bases_with_q30: frac_q30_bases(rna_read.raw_umi_qual()),
+            read_bases_with_q30: frac_q30_bases(rna_read.r1_qual()),
+            read2_bases_with_q30: rna_read.r2_qual().map(frac_q30_bases),
+            i1_bases_with_q30: rna_read.raw_illumina_i1_qual().map(frac_q30_bases),
+            i2_bases_with_q30: rna_read.raw_illumina_i2_qual().map(frac_q30_bases),
+
+            A_perfect_homopolymer: homopolymer_metric(
+                &self.poly_a_pattern,
+                rna_read.r1_seq(),
+                rna_read.r2_seq(),
+            ),
+            C_perfect_homopolymer: homopolymer_metric(
+                &self.poly_c_pattern,
+                rna_read.r1_seq(),
+                rna_read.r2_seq(),
+            ),
+            G_perfect_homopolymer: homopolymer_metric(
+                &self.poly_g_pattern,
+                rna_read.r1_seq(),
+                rna_read.r2_seq(),
+            ),
+            T_perfect_homopolymer: homopolymer_metric(
+                &self.poly_t_pattern,
+                rna_read.r1_seq(),
+                rna_read.r2_seq(),
+            ),
+
+            good_umi: rna_read.umi().is_valid().into(),
+            has_n_barcode_property: rna_read
+                .segmented_barcode()
+                .sseq()
+                .iter()
+                .any(|s| s.has_n())
+                .into(),
+            has_n_umi_property: rna_read.umi().sseq().has_n().into(),
+            homopolymer_barcode_property: rna_read
+                .segmented_barcode()
+                .sseq()
+                .iter()
+                .any(|s| s.is_homopolymer())
+                .into(),
+            homopolymer_umi_property: rna_read.umi().sseq().is_homopolymer().into(),
+            low_min_qual_barcode_property: (rna_read.barcode_min_qual()
+                < BARCODE_MIN_QUAL_THRESHOLD)
+                .into(),
+            low_min_qual_umi_property: (rna_read.umi_min_qual() < UMI_MIN_QUAL_THRESHOLD).into(),
+            polyt_suffix_umi_property: rna_read
+                .umi()
+                .sseq()
+                .has_polyt_suffix(UMI_POLYT_SUFFIX_LENGTH)
+                .into(),
+            miss_whitelist_barcode_property: (!rna_read.barcode().is_valid()).into(),
+            sequenced_reads: 1.into(),
+            vdj_total_read_pairs: {
+                i64::from(matches!(rna_read.library_feats(), LibraryFeatures::Vdj(_)))
+            },
+            total_read_pairs_per_library: {
+                let mut x = TxHashMap::default();
+                x.insert(
+                    rna_read
+                        .read_chunk(self.read_chunks)
+                        .library_id()
+                        .to_string(),
+                    1.into(),
+                );
+                x
+            },
+
+            unprocessed_read_pairs: 0,
+        };
+        self.metrics.merge(read_metrics);
+        self.histograms.observe(rna_read);
+
+        // collect initial feature barcode counts
+        if let Some(res) = self
+            .feature_extractor
+            .as_ref()
+            .and_then(|e| e.match_read(rna_read))
+        {
+            if res.ids.len() == 1 {
+                self.feature_counts[res.ids[0].0] += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn visit_unprocessed_read(&mut self, _: ReadPair, _: String) -> Result<()> {
+        self.metrics.unprocessed_read_pairs += 1;
+        Ok(())
+    }
+}
+
+/// Compute the fraction of 'N' bases in the input sequence
+/// as a PercentMetric
+#[inline(always)]
+fn frac_n_bases<C, D>(seq: D) -> PercentMetric
+where
+    C: Borrow<u8>,
+    D: IntoIterator<Item = C>,
+{
+    let mut result = PercentMetric::new();
+    for base in seq {
+        result.increment(*base.borrow() == b'N')
+    }
+    result
+}
+
+/// Compute the fraction of Q30 bases in the input sequence
+/// quality as a PercentMetric
+/// Only bases with quality > 2 is counted in the denominator
+fn frac_q30_bases<C, D>(qual: D) -> PercentMetric
+where
+    C: Borrow<u8>,
+    D: IntoIterator<Item = C>,
+{
+    let mut num = 0;
+    let mut den = 0;
+    for q in qual {
+        let q = *q.borrow();
+        if q > 2 + ILLUMINA_QUAL_OFFSET {
+            den += 1;
+            if q >= 30 + ILLUMINA_QUAL_OFFSET {
+                num += 1;
+            }
+        }
+    }
+    (num, den).into()
+}

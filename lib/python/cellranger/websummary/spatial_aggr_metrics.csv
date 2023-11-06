@@ -1,0 +1,5 @@
+key,summary,category,full_name,alert_warn_detail,alert_error_detail,acceptable,targeted,alert_warn_detail_cs,alert_error_detail_cs,acceptable_cs,targeted_cs,evaluate_type,format_type,is_species_specific,include_cumulative,alert_warn_name,alert_error_name,help_description
+# These are overrides for metrics in spatial_metrics.csv which change the messages/alerts for aggr,,,,,,,,,,,,,,,,,,
+filtered_bcs_transcriptome_union,TRUE,Spot Calling,Number of Spots Under Tissue,,,,,,,,,,int,FALSE,FALSE,,,The number of tissue-covered spots.
+# ANTIBODY Cells,,,,,,,,,,,,,,,,,,
+ANTIBODY_filtered_bcs_transcriptome_union,TRUE,Cell Calling,Number of Spots Under Tissue,,,,,,,,,,int,FALSE,FALSE,,,The number of tissue-covered spots.

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) 2016 10x Genomics, Inc. All rights reserved.
+#
+# Generate Martian info file (mri.tgz) for mrp pipestances.
+#
+
+folder="${1%/}"
+ecode="$2"
+cmdline="$3"
+email="support@10xgenomics.com"
+tarfile="$(basename "$folder").mri.tgz"
+files="samplesheet.csv input_samplesheet.csv summary_cs.csv summary.json summary.txt summary_cs.txt metrics_summary_csv.csv metrics_summary_json.json web_summary.html Log.out feature_reference.csv _finalstate"
+limit_filesize_patterns=(.json)
+
+# Save the non-truncated version of these files if < 30M
+do_not_truncate="$folder/CNV_CALLER_SINGLECELL_CS*DETECT_BREAKPOINTS*join*_stdout"
+
+if [ -d "$folder" ]; then
+    # Capture commandline into pipestance.
+    echo "$cmdline" > "$folder/_cmdline"
+
+    # Capture sitecheck into pipestance.
+    sitecheck > "$folder/_sitecheck"
+
+    # Capture data file paths into pipestance.
+    find "$folder" -path "*files*" -ls > "$folder/_filelist"
+
+    # Format summary file arguments.
+    for f in $files; do
+	# Limit filesize for a set of patterns
+	more_options=""
+	for pattern in "${limit_filesize_patterns[@]}"; do
+	    if [[ "$f" =~ "$pattern" ]]; then
+		more_options="-a -size -1024k"
+	    fi
+	done
+	files_options="$files_options -o -name $f ${more_options}"
+    done
+
+    # Find large metadata files and make truncated versions of them.
+    truncated_files=""
+    for f in $(find "$folder" -type f \( -size +1024k -not -name "$tarfile" \
+        -not -path "*files*" -not -path "*journal*" \
+        -not -name "_finalstate" \
+        -not -path "$do_not_truncate" -name '_*' \)); do
+        _truncate "$f" > "$f._truncated_"
+        truncated_files="$truncated_files \"$f._truncated_\""
+    done
+
+    # Generate log tar file.
+    echo -e "Saving pipestance info to \"$folder/$tarfile\""
+
+    # Use transform option if it exists to rewrite truncated file names to
+    # their originals. CentOS 5's tar version lacks the --transform option,
+    # however, so in that case we just leave the file names alone.
+    tar --help | grep -e --transform > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        find "$folder" -type f -not -name "$tarfile" -not -path "*files*" \
+        -not -path "*journal*" \( \( -size -1024k  $files_options \) -o  \
+        \( -path "$do_not_truncate" -size -30M \) \) -print0 | \
+        tar zcf "$tarfile" --null --transform='s/\._truncated_$//' -T -
+    else
+        find "$folder" -type f -not -name "$tarfile" -not -path "*files*" \
+        -not -path "*journal*" \( \( -size -1024k  $files_options \) -o  \
+        \( -path "$do_not_truncate" -size -30M \) \) -print0 | \
+        tar zcf "$tarfile" --null -T -
+    fi
+
+    # Clean up truncated versions of files, if any were created.
+    if [ -n "$truncated_files" ]; then
+        for f in $truncated_files; do
+            rm -f "$f"
+        done
+    fi
+    mv -t "$folder" "$tarfile"
+
+    if [ -n "$TENX_AUTOSUPPORT_SENDER" ]; then
+        echo -e "Automatically sending diagnostics to 10x Genomics."
+        "$TENX_PRODUCT" upload "$TENX_AUTOSUPPORT_SENDER" "$folder/$tarfile"
+    else
+        # Help instructions if exit code is nonzero.
+        if [ "$ecode" != "0" ]; then
+            echo -e "For assistance, upload this file to 10x Genomics by running:\n\n$TENX_PRODUCT upload <your_email> \"$folder/$tarfile\"\n"
+        fi
+    fi
+fi

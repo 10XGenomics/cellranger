@@ -1,0 +1,271 @@
+#
+# Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
+#
+
+@include "sc_rna_aggregator.mro"
+@include "sc_vdj_aggregator.mro"
+@include "_common_cloupe_stages.mro"
+@include "_cr_aggr_stages.mro"
+@include "_cr_vdj_stages.mro"
+
+struct CountAggrOutputs(
+    json        summary                       "Aggregation metrics summary JSON",
+    path        analysis                      "Secondary analysis output CSV",
+    path        crispr_analysis               "Crispr analysis output",
+    path        filtered_feature_bc_matrix    "Filtered feature-barcode matrices MEX",
+    h5          filtered_feature_bc_matrix_h5 "Filtered feature-barcode matrices HDF5" "filtered_feature_bc_matrix.h5",
+    cloupe      cloupe                        "Loupe Browser file",
+    string      beam_mode                     "Beam mode",
+    map<string> antigen_specificity_controls  "Antigen Specificity Controls",
+    csv         feature_reference             "feature_reference",
+    bool        disable_antigen_aggr          "Disable antigen aggregation",
+)
+
+struct VdjAggrOutputs(
+    tsv    airr_rearrangement              "AIRR Rearrangement TSV",
+    csv    clonotypes                      "Clonotypes csv",
+    fasta  consensus_fasta                 "Clonotype consensus FASTA"                                   "consensus.fasta",
+    csv    filtered_contig_annotations_csv "Annotations of filtered contigs with library metadata (CSV)" "filtered_contig_annotations.csv",
+    csv    consensus_annotations_csv       "Clonotype consensus annotations (CSV)"                       "consensus_annotations.csv",
+    vloupe vloupe                          "Loupe VDJ Browser file",
+)
+
+stage BUILD_COMBINED_WEB_SUMMARY(
+    in  json vdj_t_data,
+    in  json vdj_b_data,
+    in  json vdj_t_gd_data,
+    in  json count_data,
+    in  json antigen_data,
+    out html web_summary,
+    out json web_summary_data,
+    src py   "stages/aggregator/build_combined_web_summary",
+)
+
+pipeline COUNT_AGGR(
+    in  string           sample_id,
+    in  string           sample_desc,
+    in  map[]            sample_defs,
+    in  csv              aggregation_csv,
+    in  string           normalization_mode,
+    in  bool             no_secondary_analysis,
+    in  bool             is_pd,
+    out map              gem_group_index,
+    out CountAggrOutputs aggr_outputs,
+    out json             ws_data,
+)
+{
+    call SC_RNA_AGGREGATOR(
+        sample_id             = self.sample_id,
+        sample_desc           = self.sample_desc,
+        sample_defs           = self.sample_defs,
+        normalization_mode    = self.normalization_mode,
+        no_secondary_analysis = self.no_secondary_analysis,
+        num_analysis_bcs      = null,
+        num_pca_bcs           = null,
+        num_pca_genes         = null,
+        num_principal_comps   = null,
+        cbc_knn               = null,
+        cbc_alpha             = null,
+        cbc_sigma             = null,
+        cbc_realign_panorama  = null,
+        max_clusters          = null,
+        graphclust_neighbors  = null,
+        neighbor_a            = null,
+        neighbor_b            = null,
+        tsne_perplexity       = null,
+        tsne_input_pcs        = null,
+        tsne_theta            = null,
+        random_seed           = null,
+        tsne_max_dims         = null,
+        tsne_max_iter         = null,
+        tsne_stop_lying_iter  = null,
+        tsne_mom_switch_iter  = null,
+        product_type          = "sc",
+        is_pd                 = self.is_pd,
+    )
+
+    call CLOUPE_PREPROCESS(
+        pipestance_type              = "SC_RNA_AGGREGATOR_CS",
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        analysis                     = SC_RNA_AGGREGATOR.analysis,
+        filtered_gene_bc_matrices_h5 = SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_h5,
+        metrics_json                 = SC_RNA_AGGREGATOR.summary,
+        aggregation_csv              = self.aggregation_csv,
+        gem_group_index_json         = SC_RNA_AGGREGATOR.gem_group_index_json,
+        image_page_names             = null,
+        tissue_image_paths           = null,
+        dark_images                  = null,
+        tissue_positions             = null,
+        fiducial_positions_list      = null,
+        dzi_info                     = null,
+        dzi_tiles_paths              = null,
+        scale_factors_json           = null,
+        no_secondary_analysis        = self.no_secondary_analysis,
+        barcode_whitelist            = null,
+        hd_slide_name                = null,
+        loupe_map                    = null,
+        product_type                 = "sc",
+        cells_per_sample             = null,
+        cells_per_tag                = null,
+        cells_per_protospacer        = SC_RNA_AGGREGATOR.cells_per_protospacer,
+        spatial_enrichment           = null,
+        spatial_deconvolution_path   = null,
+    )
+
+    return (
+        gem_group_index = SC_RNA_AGGREGATOR.gem_group_index,
+        ws_data         = SC_RNA_AGGREGATOR.web_summary_data,
+        aggr_outputs    = {
+            analysis:                      SC_RNA_AGGREGATOR.analysis_csv,
+            antigen_specificity_controls:  SC_RNA_AGGREGATOR.antigen_specificity_controls,
+            beam_mode:                     SC_RNA_AGGREGATOR.beam_mode,
+            cloupe:                        CLOUPE_PREPROCESS.output_for_cloupe,
+            crispr_analysis:               SC_RNA_AGGREGATOR.crispr_analysis,
+            disable_antigen_aggr:          SC_RNA_AGGREGATOR.disable_antigen_aggr,
+            feature_reference:             SC_RNA_AGGREGATOR.feature_reference,
+            filtered_feature_bc_matrix:    SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_mex,
+            filtered_feature_bc_matrix_h5: SC_RNA_AGGREGATOR.filtered_gene_bc_matrices_h5,
+            summary:                       SC_RNA_AGGREGATOR.summary,
+        },
+    )
+}
+
+pipeline VDJ_AGGR(
+    in  VdjAggrInput[]     aggr_inputs,
+    in  map                gem_group_index,
+    in  h5                 filtered_feature_bc_matrix_h5,
+    in  csv                feature_reference,
+    in  string             sample_id,
+    in  string             sample_desc,
+    in  string             beam_mode,
+    in  bool               disable_antigen_aggr,
+    in  bool               disable_count_aggr,
+    in  map<string>        antigen_specificity_controls,
+    out VdjAggrOutputs     vdj_t_outputs,
+    out json               vdj_t_ws_data,
+    out VdjAggrOutputs     vdj_t_gd_outputs,
+    out json               vdj_t_gd_ws_data,
+    out VdjAggrOutputs     vdj_b_outputs,
+    out json               vdj_b_ws_data,
+    out VdjRefFolder       vdj_reference,
+    out AntigenAggrResults antigen_analysis,
+    out json               antigen_aggr_web_summary_data,
+)
+{
+    map call SC_VDJ_AGGREGATOR(
+        aggr_input                    = split self.aggr_inputs,
+        count_gem_well_map            = self.gem_group_index,
+        filtered_feature_bc_matrix_h5 = self.filtered_feature_bc_matrix_h5,
+        feature_reference             = self.feature_reference,
+        sample_id                     = self.sample_id,
+        sample_desc                   = self.sample_desc,
+        beam_mode                     = self.beam_mode,
+        antigen_specificity_controls  = self.antigen_specificity_controls,
+        disable_antigen_aggr          = self.disable_antigen_aggr,
+        disable_count_aggr            = self.disable_count_aggr,
+    )
+
+    call MATCH_VDJ_AGGR_OUTS(
+        receptors                  = SC_VDJ_AGGREGATOR.receptor,
+        clonotypes                 = SC_VDJ_AGGREGATOR.clonotypes,
+        donor_ref_fas              = SC_VDJ_AGGREGATOR.donor_ref_fa,
+        consensus_fastas           = SC_VDJ_AGGREGATOR.consensus_fasta,
+        vdj_reference_paths        = SC_VDJ_AGGREGATOR.vdj_reference_path,
+        filtered_contig_annotations_csvs = SC_VDJ_AGGREGATOR.filt_ann_csv,
+        consensus_annotations_csvs = SC_VDJ_AGGREGATOR.consensus_ann_csv,
+        web_summary_data           = SC_VDJ_AGGREGATOR.web_summary_data,
+        vloupes                    = SC_VDJ_AGGREGATOR.vloupe,
+        antigen_analysis           = SC_VDJ_AGGREGATOR.antigen_analysis,
+        antigen_aggr_web_summary_data_in = SC_VDJ_AGGREGATOR.antigen_aggr_web_summary_data,
+        airr_rearrangements        = SC_VDJ_AGGREGATOR.airr_rearrangement,
+    )
+
+    call COPY_VDJ_REFERENCE(
+        vdj_reference_path    = MATCH_VDJ_AGGR_OUTS.vdj_reference_path,
+        vdj_t_donor_ref_fa    = MATCH_VDJ_AGGR_OUTS.vdj_t_results.donor_ref_fa,
+        vdj_t_gd_donor_ref_fa = MATCH_VDJ_AGGR_OUTS.vdj_t_gd_results.donor_ref_fa,
+        vdj_b_donor_ref_fa    = MATCH_VDJ_AGGR_OUTS.vdj_b_results.donor_ref_fa,
+    )
+
+    return (
+        vdj_t_outputs                 = MATCH_VDJ_AGGR_OUTS.vdj_t_results,
+        vdj_t_ws_data                 = MATCH_VDJ_AGGR_OUTS.vdj_t_results.web_summary_data,
+        vdj_t_gd_outputs              = MATCH_VDJ_AGGR_OUTS.vdj_t_gd_results,
+        vdj_t_gd_ws_data              = MATCH_VDJ_AGGR_OUTS.vdj_t_gd_results.web_summary_data,
+        vdj_b_outputs                 = MATCH_VDJ_AGGR_OUTS.vdj_b_results,
+        vdj_b_ws_data                 = MATCH_VDJ_AGGR_OUTS.vdj_b_results.web_summary_data,
+        vdj_reference                 = COPY_VDJ_REFERENCE.vdj_reference,
+        antigen_analysis              = MATCH_VDJ_AGGR_OUTS.antigen_results,
+        antigen_aggr_web_summary_data = MATCH_VDJ_AGGR_OUTS.antigen_aggr_web_summary_data,
+    )
+}
+
+pipeline SC_RNA_AGGREGATOR_CS(
+    in  string             sample_id,
+    in  string             sample_desc,
+    in  path               pipestance_root,
+    in  csv                aggregation_csv,
+    in  string             normalization_mode,
+    in  bool               no_secondary_analysis,
+    out csv                aggregation_csv        "Copy of the input aggregation CSV"  "aggregation.csv",
+    out html               web_summary            "Aggregation metrics summary HTML",
+    out CountAggrOutputs   count,
+    out VdjAggrOutputs     vdj_t,
+    out VdjAggrOutputs     vdj_t_gd,
+    out VdjAggrOutputs     vdj_b,
+    out VdjRefFolder       vdj_reference          "V(D)J reference",
+    out AntigenAggrResults antigen_analysis,
+)
+{
+    call PARSE_AGGR_CSV(
+        pipestance_root = self.pipestance_root,
+        aggregation_csv = self.aggregation_csv,
+    )
+
+    call COUNT_AGGR(
+        sample_id             = self.sample_id,
+        sample_desc           = self.sample_desc,
+        sample_defs           = PARSE_AGGR_CSV.count_libraries,
+        aggregation_csv       = self.aggregation_csv,
+        normalization_mode    = self.normalization_mode,
+        no_secondary_analysis = self.no_secondary_analysis,
+        is_pd                 = false,
+    ) using (
+        disabled = PARSE_AGGR_CSV.disable_count_aggr,
+    )
+
+    call VDJ_AGGR(
+        aggr_inputs                   = PARSE_AGGR_CSV.vdj_aggr_inputs,
+        gem_group_index               = COUNT_AGGR.gem_group_index,
+        filtered_feature_bc_matrix_h5 = COUNT_AGGR.aggr_outputs.filtered_feature_bc_matrix_h5,
+        feature_reference             = COUNT_AGGR.aggr_outputs.feature_reference,
+        sample_id                     = self.sample_id,
+        sample_desc                   = self.sample_desc,
+        beam_mode                     = COUNT_AGGR.aggr_outputs.beam_mode,
+        antigen_specificity_controls  = COUNT_AGGR.aggr_outputs.antigen_specificity_controls,
+        disable_antigen_aggr          = COUNT_AGGR.aggr_outputs.disable_antigen_aggr,
+        disable_count_aggr            = PARSE_AGGR_CSV.disable_count_aggr,
+    ) using (
+        disabled = PARSE_AGGR_CSV.disable_vdj_aggr,
+    )
+
+    call BUILD_COMBINED_WEB_SUMMARY(
+        vdj_t_data    = VDJ_AGGR.vdj_t_ws_data,
+        vdj_t_gd_data = VDJ_AGGR.vdj_t_gd_ws_data,
+        vdj_b_data    = VDJ_AGGR.vdj_b_ws_data,
+        count_data    = COUNT_AGGR.ws_data,
+        antigen_data  = VDJ_AGGR.antigen_aggr_web_summary_data,
+    )
+
+    return (
+        aggregation_csv  = PARSE_AGGR_CSV.aggregation_csv,
+        web_summary      = BUILD_COMBINED_WEB_SUMMARY.web_summary,
+        count            = COUNT_AGGR.aggr_outputs,
+        vdj_t            = VDJ_AGGR.vdj_t_outputs,
+        vdj_t_gd         = VDJ_AGGR.vdj_t_gd_outputs,
+        vdj_b            = VDJ_AGGR.vdj_b_outputs,
+        vdj_reference    = VDJ_AGGR.vdj_reference,
+        antigen_analysis = VDJ_AGGR.antigen_analysis,
+    )
+}

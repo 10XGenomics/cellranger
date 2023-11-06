@@ -1,0 +1,40 @@
+#
+# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+#
+
+@include "_sc_antibody_analyzer_stages.mro"
+
+filetype pdf;
+filetype csv;
+filetype h5;
+filetype json;
+
+pipeline _ANTIBODY_ANALYZER(
+    in  h5   filtered_feature_counts_matrix,
+    in  h5   molecule_info,
+    in  csv  aggregate_barcodes,
+    in  bool is_antibody,
+    out path antibody_analysis,
+    out json antibody_histograms_json,
+    out json antibody_treemap_json,
+)
+{
+    # Currently makes histograms
+    call CALL_ANTIBODIES(
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        molecule_info = self.molecule_info,
+        is_antibody   = self.is_antibody,
+    )
+
+    # Currently copies this file
+    call SUMMARIZE_ANTIBODY_ANALYSIS(
+        aggregate_barcodes = self.aggregate_barcodes,
+        is_antibody        = self.is_antibody,
+    )
+
+    return (
+        antibody_analysis        = SUMMARIZE_ANTIBODY_ANALYSIS.antibody_analysis,
+        antibody_histograms_json = CALL_ANTIBODIES.antibody_histograms_json,
+        antibody_treemap_json    = CALL_ANTIBODIES.antibody_treemap_json,
+    )
+}

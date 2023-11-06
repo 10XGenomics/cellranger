@@ -1,0 +1,42 @@
+#
+# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+#
+
+filetype csv;
+filetype json;
+filetype h5;
+filetype html;
+filetype tps.json;
+
+stage SUMMARIZE_REPORTS(
+    in  json[]   summaries,
+    in  string   sample_id,
+    in  string   sample_desc,
+    in  path     reference_path,
+    in  path     analysis,
+    in  h5       barcode_summary_h5,
+    in  h5       filtered_gene_bc_matrices_h5,
+    in  csv      filtered_barcodes,
+    in  tps.json target_panel_summary,
+    in  string   barcode_whitelist,
+    in  json     antibody_histograms,
+    in  json     antibody_treemap,
+    in  json     antigen_histograms,
+    in  json     antigen_treemap,
+    in  csv      feature_reference,
+    in  string   target_set_name,
+    in  csv      per_feature_metrics_csv,
+    in  bool     include_introns,
+    in  string   throughput,
+    out json     metrics_summary_json,
+    out csv      metrics_summary_csv,
+    out html     web_summary,
+    out csv      feature_reference,
+    out json     ws_data,
+    src py       "stages/counter/summarize_reports",
+) using (
+    mem_gb   = 16,
+    volatile = strict,
+) retain (
+    metrics_summary_json,
+)

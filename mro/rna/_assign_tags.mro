@@ -1,0 +1,131 @@
+#
+# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+#
+
+@include "_cr_lib_stages.mro"
+@include "_assign_tags_stages.mro"
+
+filetype csv;
+filetype h5;
+filetype json;
+filetype html;
+filetype pickle;
+
+pipeline _ASSIGN_TAGS(
+    in  ChemistryDef       chemistry_def,
+    in  csv                filtered_barcodes,
+    in  h5                 filtered_feature_counts_matrix,
+    in  h5                 raw_feature_bc_matrix,
+    in  h5                 molecule_info,
+    in  BarcodeAssignments force_sample_barcodes,
+    in  json               multi_graph,
+    in  int                gem_well,
+    in  float              min_assignment_confidence,
+    in  string             throughput,
+    in  string             library_type,
+    in  json               inferred_throughputs,
+    out AssignTagsOuts     assign_tags_outs,
+)
+{
+    call MULTIPLEXING_METHOD(
+        multi_graph = self.multi_graph,
+    )
+
+    call CALL_TAGS_MARGINAL(
+        filtered_barcodes = self.filtered_barcodes,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        throughput        = self.throughput,
+        library_type      = self.library_type,
+    ) using (
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo,
+    )
+
+    call CALL_TAGS_JIBES(
+        marginal_tag_calls_per_cell = CALL_TAGS_MARGINAL.marginal_tag_calls_per_cell,
+        filtered_barcodes           = self.filtered_barcodes,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        molecule_info               = self.molecule_info,
+        marginal_tag_frequencies    = CALL_TAGS_MARGINAL.marginal_tag_frequencies,
+        throughput                  = self.throughput,
+        min_assignment_confidence   = self.min_assignment_confidence,
+        library_type                = self.library_type,
+    ) using (
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo,
+    )
+
+    call CALL_TAGS_RTL(
+        chemistry_def              = self.chemistry_def,
+        raw_feature_bc_matrix      = self.raw_feature_bc_matrix,
+        filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
+        multi_graph                = self.multi_graph,
+    ) using (
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_rtl,
+    )
+
+    call CALL_TAGS_OH(
+        chemistry_def         = self.chemistry_def,
+        raw_feature_bc_matrix = self.raw_feature_bc_matrix,
+    ) using (
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_oh,
+    )
+
+    call DETERMINE_SAMPLE_ASSIGNMENTS(
+        barcodes_per_tag      = [
+            CALL_TAGS_JIBES.cells_per_tag,
+            CALL_TAGS_RTL.barcodes_per_tag,
+            CALL_TAGS_OH.barcodes_per_tag,
+        ],
+        force_sample_barcodes = self.force_sample_barcodes,
+        filtered_barcodes     = self.filtered_barcodes,
+        multi_graph           = self.multi_graph,
+        non_singlet_barcodes  = CALL_TAGS_JIBES.non_singlet_barcodes,
+        gem_well              = self.gem_well,
+        raw_feature_bc_matrix = self.raw_feature_bc_matrix,
+    )
+
+    call COMPUTE_EXTRA_MULTIPLEXING_METRICS(
+        molecule_info        = self.molecule_info,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        multi_graph          = self.multi_graph,
+        sample_cell_barcodes = DETERMINE_SAMPLE_ASSIGNMENTS.sample_cell_barcodes,
+        non_singlet_barcodes = DETERMINE_SAMPLE_ASSIGNMENTS.non_singlet_barcodes,
+    )
+
+    call MERGE_METRICS(
+        summaries = [
+            CALL_TAGS_JIBES.tag_call_metrics,
+            CALL_TAGS_RTL.summary,
+            CALL_TAGS_OH.summary,
+            DETERMINE_SAMPLE_ASSIGNMENTS.summary,
+            COMPUTE_EXTRA_MULTIPLEXING_METRICS.summary,
+        ],
+    )
+
+    return (
+        assign_tags_outs = {
+            assignment_confidence_table:   CALL_TAGS_JIBES.assignment_confidence_table,
+            cells_per_tag:                 DETERMINE_SAMPLE_ASSIGNMENTS.cells_per_tag,
+            force_sample_barcodes:         self.force_sample_barcodes,
+            frp_gem_barcode_overlap:       CALL_TAGS_RTL.frp_gem_barcode_overlap,
+            gem_well_inferred_throughputs: self.inferred_throughputs,
+            gem_well_throughput:           self.throughput,
+            jibes_model_summary:           CALL_TAGS_JIBES.jibes_model_summary,
+            jibes_parameters:              CALL_TAGS_JIBES.jibes_parameters,
+            jibes_summary_data:            CALL_TAGS_JIBES.jibes_summary_data,
+            marginal_tag_frequencies:      CALL_TAGS_MARGINAL.marginal_tag_frequencies,
+            multiplexing_is_not_cmo:       MULTIPLEXING_METHOD.multiplexing_is_not_cmo,
+            non_singlet_barcodes:          DETERMINE_SAMPLE_ASSIGNMENTS.non_singlet_barcodes,
+            output_per_sample_raw_matrix:  MULTIPLEXING_METHOD.output_per_sample_raw_matrix,
+            sample_assignment_metrics:     DETERMINE_SAMPLE_ASSIGNMENTS.sample_summaries,
+            sample_barcodes:               DETERMINE_SAMPLE_ASSIGNMENTS.sample_barcodes,
+            sample_cell_barcodes:          DETERMINE_SAMPLE_ASSIGNMENTS.sample_cell_barcodes,
+            tag_assigner_pickle:           CALL_TAGS_JIBES.tag_assigner_pickle,
+            tag_call_metrics:              MERGE_METRICS.summary,
+            tag_calls_per_cell:            CALL_TAGS_JIBES.tag_calls_per_cell,
+            tag_calls_summary:             CALL_TAGS_JIBES.tag_calls_summary,
+            tag_contaminant_info:          CALL_TAGS_MARGINAL.tag_contaminant_info,
+            tag_umi_thresholds_csv:        CALL_TAGS_JIBES.tag_umi_thresholds_csv,
+            tag_umi_thresholds_json:       CALL_TAGS_JIBES.tag_umi_thresholds_json,
+        },
+    )
+}

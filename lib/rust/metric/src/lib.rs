@@ -1,0 +1,824 @@
+#![deny(
+    missing_docs,
+    missing_copy_implementations,
+    non_upper_case_globals,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unstable_features,
+    unused_extern_crates,
+    unused_import_braces,
+    unused_qualifications
+)]
+
+//!
+//! This is documentation for the `metric` crate.
+//!
+//! This crate defines a number of data structures used for tracking
+//! various metrics in a pipeline. `Metric` trait forms the core of this
+//! crate and all the data structure which represents a metric implements
+//! this trait. The crate `metric_derive` allows one to derive the `Metric`
+//! trait. The data structures and their intended uses are noted below:
+//!
+//!
+
+#[macro_use]
+extern crate serde_derive;
+
+#[macro_use]
+extern crate metric_derive;
+
+#[cfg(test)]
+#[macro_use]
+extern crate proptest;
+
+use ahash::AHasher;
+use anyhow::{Context, Error};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::hash_map;
+use std::fs::File;
+use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
+use std::iter::FromIterator;
+use std::path::Path;
+
+pub mod count_metric;
+pub use crate::count_metric::CountMetric;
+pub mod percent_metric;
+pub use crate::percent_metric::PercentMetric;
+pub mod histogram;
+pub use crate::histogram::SimpleHistogram;
+pub mod mean_metric;
+pub use crate::mean_metric::MeanMetric;
+pub mod collections;
+pub mod num;
+pub mod option;
+
+/// A default Hasher for some faster hashing scheme (deterministic)
+pub struct TxHasher(AHasher);
+
+impl Hasher for TxHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0.finish()
+    }
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.write(bytes)
+    }
+}
+
+impl Default for TxHasher {
+    fn default() -> Self {
+        // just some random keys I came up with, need to be deterministic
+        TxHasher(AHasher::new_with_keys(
+            0x6c62_272e_07bb_0142,
+            0x517c_c1b7_2722_0a95,
+        ))
+    }
+}
+
+/// A default BuildHasher using some faster hashing scheme (faster than SipHash)
+pub type BuildHasher = std::hash::BuildHasherDefault<TxHasher>;
+
+/// A default HashMap using some faster hashing scheme
+pub type TxHashMap<K, V> = std::collections::HashMap<K, V, BuildHasher>;
+
+/// A default HashSet using some faster hashing scheme
+pub type TxHashSet<K> = std::collections::HashSet<K, BuildHasher>;
+
+/// Create a TxHashSet with the given elements. Similar to a `vec![]`
+#[macro_export]
+macro_rules! set {
+    ( $( $x:expr ),* ) => {
+        {
+            let mut result = TxHashSet::default();
+            $(result.insert($x);)*
+            result
+        }
+    };
+    ( $( $x:expr, )* ) => {set!($( $x:expr ),*)};
+}
+
+/// A default hash function for when you need a quick hash
+#[inline]
+pub fn hash64<T: Hash + ?Sized>(v: &T) -> u64 {
+    let mut state = TxHasher::default();
+    v.hash(&mut state);
+    state.finish()
+}
+
+/// This enum defines the format for serializing/deserializing a metric
+/// Supported formats are
+/// * `Json` using the `serde_json` crate
+/// * `Binary` using the `bincode` crate
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SerdeFormat {
+    /// Use serde_json to write the output in json format
+    Json,
+    /// Use `bincode` to write the output in binary format
+    Binary,
+}
+
+/// The core trait in this crate. Any data structure representing a metric
+/// will implement this trait. It may be auto derived using the macros in
+/// `metric_derive`
+pub trait Metric: Serialize + for<'de> Deserialize<'de> {
+    /// Returns a new Metric object
+    fn new() -> Self;
+
+    /// Combined two Metric objects, modifying self in place,
+    /// consuming the `other`
+    fn merge(&mut self, other: Self);
+
+    /// Write(Serialize) the `Metric` to a file using serde
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - Output will be written to this file. It may be of any type
+    /// which can be interpreted as a `Path`, typically a `String`
+    /// * `serde_format` - Defines the format for serialization, typically
+    /// `SerdeFormat::Json`
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use metric::{Metric, CountMetric};
+    /// use metric::SerdeFormat;
+    /// let file = "example1.json";
+    /// let c1 = CountMetric::from(10); // Initialize to 10
+    /// c1.to_file(file, SerdeFormat::Json);
+    /// let c2 = CountMetric::from_file(file, SerdeFormat::Json);
+    /// assert!(c1==c2);
+    /// std::fs::remove_file(file);
+    /// ```
+    fn to_file<P>(&self, filename: P, serde_format: SerdeFormat) -> Result<(), Error>
+    where
+        P: AsRef<Path>,
+    {
+        let writer = File::create(filename.as_ref()).with_context(|| {
+            format!(
+                "Could not open file '{:?}' for writing in Metric::to_file()",
+                filename.as_ref()
+            )
+        })?;
+        self.to_writer(writer, serde_format)
+    }
+
+    /// Write(Serialize) the `Metric` to an implementor of `Write`
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - An object which implements `Write` trait. `File`, `Stdout`, `Stderr` etc
+    /// * `serde_format` - Defines the format for serialization, typically `SerdeFormat::Json`
+    fn to_writer<W>(&self, writer: W, serde_format: SerdeFormat) -> Result<(), Error>
+    where
+        W: Write,
+    {
+        match serde_format {
+            SerdeFormat::Json => serde_json::to_writer_pretty(writer, &self)
+                .with_context(|| "Could not write JSON in Metric::to_writer()")?,
+            SerdeFormat::Binary => bincode::serialize_into(writer, &self)
+                .with_context(|| "Could not write Binary in Metric::to_writer()")?,
+        }
+
+        Ok(())
+    }
+
+    /// Read(Deserialize) the `Metric` from a file using serde
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - Read from this file. It may be of any type
+    /// which can be interpreted as a `Path`, typically a `String`
+    /// * `serde_format` - Defines the format for deserialization, typically
+    /// `SerdeFormat::Json`
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use metric::{Metric, CountMetric};
+    /// use metric::SerdeFormat;
+    /// let file = "example2.json";
+    /// let c1 = CountMetric::from(10);
+    /// c1.to_file(file, SerdeFormat::Json);
+    /// let c2 = CountMetric::from_file(file, SerdeFormat::Json);
+    /// assert!(c1==c2);
+    /// std::fs::remove_file(file);
+    /// ```
+    fn from_file<P>(filename: P, serde_format: SerdeFormat) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        let reader =
+            File::open(filename).expect("Could not open file for reading in Metric::from_file()");
+        Metric::from_reader(reader, serde_format)
+    }
+
+    /// Read(Deserialize) the `Metric` from a set of files using serde
+    ///
+    /// # Arguments
+    ///
+    /// * `filenames` - Read from this set of file. It may be a slice/vector of any type
+    /// which can be interpreted as a `Path`, typically a `String`
+    /// * `serde_format` - Defines the format for deserialization, typically
+    /// `SerdeFormat::Json` or `SerdeFormat::Binary`
+    ///
+    /// # Example
+    /// ```rust
+    /// use metric::{Metric, CountMetric};
+    /// use metric::SerdeFormat;
+    /// let files = ["example3.json", "example4.json"];
+    /// let c0 = CountMetric::from(10);
+    /// c0.to_file(files[0], SerdeFormat::Json);
+    /// let c1 = CountMetric::from(6);
+    /// c1.to_file(files[1], SerdeFormat::Json);
+    ///
+    /// let c2 = CountMetric::from_files(&files, SerdeFormat::Json);
+    /// assert!(c2 == 16.into());
+    /// for file in files.iter() {
+    ///     std::fs::remove_file(file);
+    /// }
+    /// ```
+    fn from_files<I, P>(filenames: I, serde_format: SerdeFormat) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        filenames
+            .into_iter()
+            .map(|f| Metric::from_file(f, serde_format))
+            .fold(Metric::new(), |mut merged, this| {
+                merged.merge(this);
+                merged
+            })
+    }
+
+    /// Read(Deserialize) the `Metric` from an implementor of `Read`
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - An object which implements `Read` trait. `File`, `Stdin` etc
+    /// * `serde_format` - Defines the format for serialization, typically `SerdeFormat::Json`
+    fn from_reader<R>(reader: R, serde_format: SerdeFormat) -> Self
+    where
+        R: Read,
+    {
+        match serde_format {
+            SerdeFormat::Json => serde_json::from_reader(reader)
+                .expect("Could not deserialize JSON in Metric::from_reader()"),
+            SerdeFormat::Binary => bincode::deserialize_from(reader)
+                .expect("Could not deserialize Binary in Metric::from_reader()"),
+        }
+    }
+
+    ///
+    fn from_chunks<I>(chunks: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        chunks.into_iter().fold(Metric::new(), |mut merged, this| {
+            merged.merge(this);
+            merged
+        })
+    }
+}
+
+/// `JsonReporter` is just a hashmap from `String` to `serde_json::Value`.
+/// It represents a json summary file. Concretely, a serialized json output
+/// of this data structure would correspond to the json report file. All
+/// metrics which can be reported will implement the `JsonReport` trait, which
+/// converts the Metric into a `JsonReporter` object.
+///
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct JsonReporter {
+    hashmap: TxHashMap<String, Value>,
+}
+
+impl Serialize for JsonReporter {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut xs: Vec<_> = self.iter().collect();
+        xs.sort_by_key(|&(k, _v)| k);
+        let mut map = serializer.serialize_map(Some(xs.len()))?;
+        for (k, v) in xs {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
+
+/// `JsonReport` trait defines how a structure would be written out to a
+/// metric summary json file. It has a single function `to_json_reporter` which
+/// creats a `JsonReporter` object from the data structure
+pub trait JsonReport {
+    /// Convert `self` into a `JsonReporter` object
+    fn to_json_reporter(&self) -> JsonReporter;
+
+    /// Generate a report by converting `self` into a `JsonReporter` and
+    /// serializing it
+    ///
+    /// # Arguments
+    /// * `filename` - Output will be written to this file. It may be of any type
+    /// which can be interpreted as a `Path`, typically a `String`
+    fn report(&self, filename: &dyn AsRef<Path>) -> Result<(), Error> {
+        let reporter = self.to_json_reporter();
+        reporter.to_file(filename, SerdeFormat::Json)
+    }
+}
+
+impl JsonReport for JsonReporter {
+    fn to_json_reporter(&self) -> JsonReporter {
+        self.clone()
+    }
+}
+
+impl<K, V> From<(K, V)> for JsonReporter
+where
+    K: Eq + Hash + ToString,
+    Value: From<V>,
+{
+    /// Convert a (key, value) tuple into a JsonReporter.
+    fn from((key, value): (K, V)) -> JsonReporter {
+        let mut reporter = JsonReporter::default();
+        reporter.insert(key, Value::from(value));
+        reporter
+    }
+}
+
+impl<K, V> Extend<(K, V)> for JsonReporter
+where
+    K: Eq + Hash + ToString,
+    V: Serialize,
+{
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        self.hashmap.extend(
+            iter.into_iter()
+                .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap())),
+        )
+    }
+}
+
+impl<K, V> FromIterator<(K, V)> for JsonReporter
+where
+    K: Eq + Hash + ToString,
+    V: Serialize,
+{
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> JsonReporter {
+        let mut reporter = JsonReporter::default();
+        reporter.extend(iter);
+        reporter
+    }
+}
+
+impl<'a> IntoIterator for &'a JsonReporter {
+    type Item = (&'a String, &'a Value);
+    type IntoIter = hash_map::Iter<'a, String, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut JsonReporter {
+    type Item = (&'a String, &'a mut Value);
+    type IntoIter = hash_map::IterMut<'a, String, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl IntoIterator for JsonReporter {
+    type Item = (String, Value);
+    type IntoIter = hash_map::IntoIter<String, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.hashmap.into_iter()
+    }
+}
+
+impl JsonReporter {
+    /// Insert a new (key, value) pair into the JsonReporter. The key could be
+    /// any type which can be casted into a `String` and value can be any type
+    /// which can be casted into `serde_json::Value`
+    pub fn insert<K, V>(&mut self, key: K, value: V)
+    where
+        K: ToString,
+        V: Into<Value>,
+    {
+        let key_str = key.to_string();
+        assert!(!self.hashmap.contains_key(&key_str));
+        self.hashmap.insert(key_str, value.into());
+    }
+
+    /// Removes any (key, value) pair from the `JsonReporter`. The value is
+    /// returned as an `Option<Value>` if the key existed in the `JsonReporter`.
+    pub fn remove<K>(&mut self, key: K) -> Option<Value>
+    where
+        K: ToString,
+    {
+        let key_str = key.to_string();
+        self.hashmap.remove(&key_str)
+    }
+
+    /// Add `prefix` to all the keys in the `JsonReporter`
+    /// We replace each "key" with "prefix_key". The extra underscore is
+    /// added after `prefix`.
+    ///
+    /// ## NOTE
+    /// A `prefix` that starts with or ends with an underscore is ignored.
+    ///
+    pub fn add_prefix<T: ToString + ?Sized>(&mut self, prefix: &T) {
+        let prefix_string: String = prefix.to_string();
+        if prefix_string.starts_with('_') || prefix_string.ends_with('_') {
+            return;
+        }
+        let mut flatmap = Vec::new();
+        for (key, val) in self.drain() {
+            let new_key = if key.is_empty() {
+                prefix_string.clone()
+            } else {
+                prefix_string.clone() + "_" + &key
+            };
+            flatmap.push((new_key, val))
+        }
+        for (k, v) in flatmap {
+            self.insert(k, v);
+        }
+    }
+
+    /// Get a reference to the value corresponding to the key from the reporter
+    pub fn get<K>(&self, key: K) -> Option<&Value>
+    where
+        K: ToString,
+    {
+        let key_str = key.to_string();
+        self.hashmap.get(&key_str)
+    }
+
+    /// Get a mutable reference to the value corresponding to the key from the reporter
+    pub fn get_mut<K>(&mut self, key: K) -> Option<&mut Value>
+    where
+        K: ToString,
+    {
+        let key_str = key.to_string();
+        self.hashmap.get_mut(&key_str)
+    }
+
+    /// Iterates over the `JsonReporter`, draining it along the way
+    pub fn drain(&mut self) -> hash_map::Drain<'_, String, Value> {
+        self.hashmap.drain()
+    }
+
+    /// Iterates over pairs of references to the keys and values of the `JsonReporter`
+    pub fn iter(&self) -> hash_map::Iter<'_, String, Value> {
+        self.hashmap.iter()
+    }
+
+    /// Iterates over pairs of references to the keys and (mutable) values of the `JsonReporter`
+    pub fn iter_mut(&mut self) -> hash_map::IterMut<'_, String, Value> {
+        self.hashmap.iter_mut()
+    }
+
+    /// Serialize to a serde_json::Value
+    pub fn block_value(&self) -> Value {
+        serde_json::to_value(self).unwrap()
+    }
+}
+
+impl Metric for JsonReporter {
+    /// Returns a new empty `JsonReporter`
+    fn new() -> Self {
+        JsonReporter::default()
+    }
+
+    /// Merges two `JsonReporter` objects, consuming the `other` reporter.
+    ///
+    /// # Panics
+    /// Both reporters need to be disjoint. If there is any key shared
+    /// between the two reporters, this function panics with an assertion failed.
+    fn merge(&mut self, other: Self) {
+        // The `merge` operation for the underlying `HashMap` is different
+        // from the `Metric::merge()` implemented for `HashMap`
+        for (key, val) in other {
+            assert!(
+                !self.hashmap.contains_key(&key),
+                "Common key ({key}) found when merging reporters"
+            );
+            self.insert(key, val);
+        }
+    }
+
+    /// Write(Serialize) the underlying `HashMap` to an implementor of `Write`
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - An object which implements `Write` trait. `File`, `Stdout`, `Stderr` etc
+    /// * `serde_format` - Defines the format for serialization, typically `SerdeFormat::Json`
+    fn to_writer<W>(&self, writer: W, serde_format: SerdeFormat) -> Result<(), Error>
+    where
+        W: Write,
+    {
+        match serde_format {
+            SerdeFormat::Json => serde_json::to_writer_pretty(writer, &self)
+                .context("Could not write JSON in JsonReporter::to_writer()")?,
+            SerdeFormat::Binary => bincode::serialize_into(writer, &self)
+                .context("Could not write Binary in Metric::to_writer()")?,
+        }
+
+        Ok(())
+    }
+
+    /// Read(Deserialize) the underlying `Hashmap` from an implementor of `Read` and
+    /// create an instance of `JsonReporter`
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - An object which implements `Read` trait. `File`, `Stdin` etc
+    /// * `serde_format` - Defines the format for serialization, typically `SerdeFormat::Json`
+    fn from_reader<R>(reader: R, serde_format: SerdeFormat) -> Self
+    where
+        R: Read,
+    {
+        let hashmap = match serde_format {
+            SerdeFormat::Json => serde_json::from_reader(reader)
+                .expect("Could not deserialize JSON in Metric::from_reader()"),
+            SerdeFormat::Binary => bincode::deserialize_from(reader)
+                .expect("Could not deserialize Binary in Metric::from_reader()"),
+        };
+        JsonReporter { hashmap }
+    }
+}
+
+/// Impl Add trait to overload the + operator.
+/// Maybe useful to have a macro if this pattern needs to be repeated >3 times
+///
+/// ## Tests
+///
+/// * test_add_simple() - Adds two simple JsonReporters and make sure that the outputs match
+impl ::std::ops::Add for JsonReporter {
+    type Output = JsonReporter;
+    fn add(mut self, other: JsonReporter) -> JsonReporter {
+        self.merge(other);
+        self
+    }
+}
+
+/// Impl AddAssign trait to overload the += operator.
+/// Maybe useful to have a macro if this pattern needs to be repeated >3 times
+///
+/// ## Tests
+///
+/// * test_addassign_simple() - Adds two simple JsonReporters and make sure that the outputs match
+impl ::std::ops::AddAssign for JsonReporter {
+    fn add_assign(&mut self, other: JsonReporter) {
+        self.merge(other);
+    }
+}
+
+/// Impl `Sum` trait for an iterator which yields a `JsonReporter`
+/// Maybe useful to have a macro if this pattern needs to be repeated >3 times
+///
+/// ## Tests
+///
+/// * test_json_reporter_sum() - Merge a vector of JsonReporters
+impl ::std::iter::Sum for JsonReporter {
+    fn sum<I: Iterator<Item = JsonReporter>>(iter: I) -> JsonReporter {
+        iter.fold(JsonReporter::new(), |a, b| a + b)
+    }
+}
+
+impl ::std::fmt::Display for JsonReporter {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        write!(f, "{}", serde_json::to_string_pretty(&self).unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Serialize, Deserialize, Metric)]
+    struct NamedMetric {
+        named: CountMetric,
+    }
+
+    impl NamedMetric {
+        pub fn increment(&mut self) {
+            self.named.increment();
+        }
+        pub fn increment_by(&mut self, v: i64) {
+            self.named.increment_by(v);
+        }
+        pub fn count(&self) -> i64 {
+            self.named.count()
+        }
+    }
+
+    #[test]
+    fn test_derive_named_struct() {
+        let mut m1 = NamedMetric::new();
+        let mut m2 = NamedMetric::new();
+        assert_eq!(m1.count(), 0);
+        assert_eq!(m2.count(), 0);
+        m1.increment();
+        m2.increment_by(2);
+        assert_eq!(m1.count(), 1);
+        assert_eq!(m2.count(), 2);
+        m1.merge(m2);
+        assert_eq!(m1.count(), 3);
+        let m3 = NamedMetric { named: 20.into() };
+        m1 += m3;
+        assert_eq!(m1.count(), 23);
+        m1 += NamedMetric { named: 10.into() };
+        assert_eq!(m1.count(), 33);
+    }
+
+    #[derive(Serialize, Deserialize, Metric)]
+    struct TupleMetric(CountMetric);
+
+    impl TupleMetric {
+        pub fn increment(&mut self) {
+            self.0.increment()
+        }
+        pub fn increment_by(&mut self, v: i64) {
+            self.0.increment_by(v);
+        }
+        pub fn count(&self) -> i64 {
+            self.0.count()
+        }
+    }
+
+    #[test]
+    fn test_derive_tuple_struct() {
+        let mut m1 = TupleMetric::new();
+        let mut m2 = TupleMetric::new();
+        assert_eq!(m1.count(), 0);
+        assert_eq!(m2.count(), 0);
+        m1.increment();
+        m2.increment_by(2);
+        assert_eq!(m1.count(), 1);
+        assert_eq!(m2.count(), 2);
+        m1.merge(m2);
+        assert_eq!(m1.count(), 3);
+        let m3 = TupleMetric(20.into());
+        m1 += m3;
+        assert_eq!(m1.count(), 23);
+        m1 += TupleMetric(10.into());
+        assert_eq!(m1.count(), 33);
+    }
+
+    #[test]
+    fn test_add_prefix() {
+        let mut report = JsonReporter::new();
+        report.insert("Hello", 10);
+        report.insert("World", "Foo");
+        report.add_prefix("Bar");
+        report.add_prefix("IGNORE_"); // ignored because it ends with `_`
+        report.add_prefix("_IGNORE"); // ignored because it starts with `_`
+
+        let mut expected_report = JsonReporter::new();
+        expected_report.insert("Bar_Hello", 10);
+        expected_report.insert("Bar_World", "Foo");
+
+        assert_eq!(report, expected_report);
+    }
+
+    #[test]
+    fn test_add_prefix_blank_key() {
+        let mut report = JsonReporter::new();
+        report.insert("", 10);
+        report.insert("World", "Foo");
+        report.add_prefix("Bar");
+
+        let mut expected_report = JsonReporter::new();
+        expected_report.insert("Bar", 10); // No trailing `_`
+        expected_report.insert("Bar_World", "Foo");
+
+        assert_eq!(report, expected_report);
+    }
+
+    #[test]
+    fn test_combine_simple() {
+        let mut report1 = JsonReporter::new();
+        report1.insert("Hello", 10);
+        report1.insert("World", "Foo");
+
+        let mut report2 = JsonReporter::new();
+        report2.insert("Bar", 20);
+
+        report1.merge(report2);
+
+        let mut expected_report = JsonReporter::new();
+        expected_report.insert("Hello", 10);
+        expected_report.insert("World", "Foo");
+        expected_report.insert("Bar", 20);
+
+        assert_eq!(report1, expected_report);
+    }
+
+    #[test]
+    fn test_add_simple() {
+        let mut report1 = JsonReporter::new();
+        report1.insert("Hello", 10);
+        report1.insert("World", "Foo");
+
+        let mut report2 = JsonReporter::new();
+        report2.insert("Bar", 20);
+
+        let report = report1 + report2;
+
+        let mut expected_report = JsonReporter::new();
+        expected_report.insert("Hello", 10);
+        expected_report.insert("World", "Foo");
+        expected_report.insert("Bar", 20);
+
+        assert_eq!(report, expected_report);
+    }
+
+    #[test]
+    fn test_addassign_simple() {
+        let mut report1 = JsonReporter::new();
+        report1.insert("Hello", 10);
+        report1.insert("World", "Foo");
+
+        let mut report2 = JsonReporter::new();
+        report2.insert("Bar", 20);
+
+        report1 += report2;
+
+        let mut expected_report = JsonReporter::new();
+        expected_report.insert("Hello", 10);
+        expected_report.insert("World", "Foo");
+        expected_report.insert("Bar", 20);
+
+        assert_eq!(report1, expected_report);
+    }
+
+    #[test]
+    fn test_json_reporter_sum() {
+        let report = {
+            let mut report1 = JsonReporter::new();
+            report1.insert("Hello", 10);
+            report1.insert("World", "Foo");
+
+            let mut report2 = JsonReporter::new();
+            report2.insert("Bar", 20);
+            vec![report1, report2]
+        };
+
+        let merged: JsonReporter = report.into_iter().sum();
+        let mut expected_report = JsonReporter::new();
+        expected_report.insert("Hello", 10);
+        expected_report.insert("World", "Foo");
+        expected_report.insert("Bar", 20);
+
+        assert_eq!(merged, expected_report);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_combine_panic() {
+        let mut report1 = JsonReporter::new();
+        report1.insert("Hello", 10);
+        report1.insert("World", "Foo");
+
+        let mut report2 = JsonReporter::new();
+        report2.insert("Hello", 20);
+
+        report1.merge(report2);
+    }
+    #[test]
+    fn test_json_report_serialize_order() {
+        let mut reporter = JsonReporter::new();
+        reporter.insert("umi_bases_with_q30_frac", 0.97);
+        reporter.insert("bc_bases_with_q30_frac", 0.92);
+        reporter.insert("A_homopolymer_frac", 0.01);
+        reporter.insert("reference_genomes", "GRCh38");
+        reporter.insert("total_read_pairs", 1000);
+        let mut writer = Vec::new();
+        reporter.to_writer(&mut writer, SerdeFormat::Json).unwrap();
+        let expected = r#"{
+  "A_homopolymer_frac": 0.01,
+  "bc_bases_with_q30_frac": 0.92,
+  "reference_genomes": "GRCh38",
+  "total_read_pairs": 1000,
+  "umi_bases_with_q30_frac": 0.97
+}"#;
+        assert_eq!(std::str::from_utf8(&writer).unwrap(), expected);
+        assert_eq!(serde_json::to_string_pretty(&reporter).unwrap(), expected);
+        let deserialized: JsonReporter = serde_json::from_str(expected).unwrap();
+        assert_eq!(deserialized, reporter);
+    }
+
+    #[test]
+    fn test_set_macro() {
+        assert_eq!(set![1, 2, 3, 4], vec![1, 2, 3, 4].into_iter().collect());
+    }
+}

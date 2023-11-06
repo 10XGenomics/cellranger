@@ -1,0 +1,76 @@
+[dependencies]
+bio = '>=0.53'
+csv = '1.2'
+fxhash = '0.2.1'
+lazy_static = '1.4'
+serde_bytes = '0.11'
+sha1 = '0.10.5'
+shardio = '0.8.2'
+thiserror = '1'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.arrayvec]
+workspace = true
+
+[dependencies.barcode]
+path = '../barcode'
+
+[dependencies.fastq_set]
+workspace = true
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.regex]
+default-features = false
+features = ['std', 'perf']
+version = '1'
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.slide_design]
+path = '../slide_design'
+
+[dependencies.strum]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
+[dependencies.transcriptome]
+path = '../transcriptome'
+
+[dependencies.umi]
+path = '../umi'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'cr_types'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['serde_bytes']

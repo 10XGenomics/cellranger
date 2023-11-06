@@ -1,0 +1,250 @@
+#
+# Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
+#
+
+@include "_basic_sc_rna_counter_stages.mro"
+@include "_cr_lib_stages.mro"
+@include "_slfe_partial_first_pass.mro"
+
+pipeline MAKE_READ_SHARDS_STRUCT(
+    in  shard[]    valid_reads,
+    in  shard[]    corrected_reads,
+    in  shard[]    invalid_reads,
+    out ReadShards read_shards,
+)
+{
+    return (
+        read_shards = {
+            corrected_reads: self.corrected_reads,
+            invalid_reads:   self.invalid_reads,
+            valid_reads:     self.valid_reads,
+        },
+    )
+}
+
+pipeline _SLFE_MATRIX_COMPUTER(
+    in  string          sample_id,
+    in  ChemistryDef    chemistry_def,
+    in  json            barcodes_under_tissue,
+    in  bool            is_pd,
+    in  map[]           chunks,
+    in  path            reference_path,
+    in  string[]        libraries_to_translate,
+    in  float           subsample_rate,
+    in  int             initial_reads,
+    in  int             r1_length,
+    in  int             r2_length,
+    in  int             trim_polya_min_score,
+    in  int             trim_tso_min_score,
+    in  int             min_reads_to_report_bc,
+    in  csv             feature_reference,
+    in  csv             target_features,
+    in  csv             target_set,
+    in  string          target_set_name,
+    in  bool            include_exons,
+    in  bool            include_introns,
+    in  bool            no_bam,
+    in  string          aligner,
+    in  bool            disable_target_umi_filter,
+    in  int             rps_limit,
+    in  FeatureConfig   feature_config,
+    # Note: _SLFE_MATRIX_COMPUTER processes data from a single gem well.
+    in  int             gem_well,
+    in  h5              v1_filtered_fbm,
+    out frf.bincode     slfe_feature_reference,
+    out csv             barcode_correction_csv,
+    out h5              barcode_summary,
+    out h5              raw_gene_bc_matrices_h5,
+    out path            raw_gene_bc_matrices_mex,
+    out ReadShards      read_shards,
+    out csf[]           counts_bc_order,
+    out bui[]           report_mol_inputs,
+    out json            summary,
+    out AnnotationFiles annotation_files,
+    out csv             per_barcode_metrics,
+    out bmsf[]          per_barcode_metrics_shard,
+    out bui[]           bc_umi_info,
+    out csf[]           probe_barcode_counts,
+    out path            bam_header,
+    out asf[]           alignments,
+    out map[]           read_chunks,
+    out SampleMetrics[] multi_metrics,
+    out json            gem_well_alignment_metrics,
+    out bi.bincode      barcode_index,
+    out smf.json        sequencing_metrics,
+    ### One file has bc_counts from MAKE_SHARD for use by ATAC
+    out bcc.bincode     make_shard_bc_counts,
+    ### This has total barcodes from BARCODE_CORRECTION for use in Spatial
+    out tbcc.bincode    barcode_counts,
+    out bool            no_star_alignments,
+)
+{
+    call MAKE_SHARD(
+        gem_well               = self.gem_well,
+        chemistry_def          = self.chemistry_def,
+        read_chunks            = self.chunks,
+        r1_length              = self.r1_length,
+        r2_length              = self.r2_length,
+        subsample_rate         = self.subsample_rate,
+        initial_read_pairs     = self.initial_reads,
+        reference_path         = self.reference_path,
+        target_features        = self.target_features,
+        # TODO: Replace these with the target_panel_summary
+        target_set             = self.target_set,
+        target_set_name        = self.target_set_name,
+        feature_reference_path = self.feature_reference,
+        libraries_to_translate = self.libraries_to_translate,
+        feature_config         = self.feature_config,
+    )
+
+    call MAKE_CORRECTION_MAP(
+        chemistry_def          = self.chemistry_def,
+        barcode_segment_counts = MAKE_SHARD.barcode_segment_counts,
+    )
+
+    call BARCODE_CORRECTION(
+        gem_well               = self.gem_well,
+        barcode_counts         = MAKE_SHARD.barcode_counts,
+        barcode_segment_counts = MAKE_SHARD.barcode_segment_counts,
+        chemistry_def          = self.chemistry_def,
+        invalid_uncorrected    = MAKE_SHARD.invalid,
+        valid_read_metrics     = MAKE_SHARD.bc_correct_summary,
+        libraries_to_translate = self.libraries_to_translate,
+        min_reads_to_report_bc = self.min_reads_to_report_bc,
+        correction_map         = MAKE_CORRECTION_MAP.correction_map,
+    )
+
+    call MAKE_READ_SHARDS_STRUCT(
+        valid_reads     = MAKE_SHARD.valid,
+        corrected_reads = BARCODE_CORRECTION.valid_corrected,
+        invalid_reads   = BARCODE_CORRECTION.invalid,
+    )
+
+    call _SLFE_PARTIAL_FIRST_PASS(
+        gem_well                 = self.gem_well,
+        read_chunks              = self.chunks,
+        reference_path           = self.reference_path,
+        read_shards              = MAKE_READ_SHARDS_STRUCT.read_shards,
+        feature_counts           = MAKE_SHARD.feature_counts,
+        feature_reference        = MAKE_SHARD.feature_reference,
+        target_set               = self.target_set,
+        chemistry_def            = self.chemistry_def,
+        include_introns          = self.include_introns,
+        aligner                  = self.aligner,
+        is_pd                    = self.is_pd,
+        trim_polya_min_score     = self.trim_polya_min_score,
+        trim_tso_min_score       = self.trim_tso_min_score,
+        total_barcode_counts     = BARCODE_CORRECTION.total_barcode_counts,
+        corrected_barcode_counts = BARCODE_CORRECTION.corrected_barcode_counts,
+    ) using (
+        disabled = self.disable_target_umi_filter,
+    )
+
+    call SET_ALIGNER_SUBSAMPLE_RATE(
+        rps_limit                = self.rps_limit,
+        barcodes_under_tissue    = self.barcodes_under_tissue,
+        corrected_barcode_counts = BARCODE_CORRECTION.corrected_barcode_counts,
+    )
+
+    call COMPUTE_CORRECTION_FACTOR(
+        v1_filtered_fbm       = self.v1_filtered_fbm,
+        barcodes_under_tissue = self.barcodes_under_tissue,
+    )
+
+    call ALIGN_AND_COUNT(
+        gem_well                    = self.gem_well,
+        read_chunks                 = self.chunks,
+        reference_path              = self.reference_path,
+        read_shards                 = MAKE_READ_SHARDS_STRUCT.read_shards,
+        feature_counts              = MAKE_SHARD.feature_counts,
+        feature_reference           = MAKE_SHARD.feature_reference,
+        target_set                  = self.target_set,
+        chemistry_def               = self.chemistry_def,
+        include_exons               = self.include_exons,
+        include_introns             = self.include_introns,
+        no_bam                      = self.no_bam,
+        aligner                     = self.aligner,
+        aligner_subsample_rate      = SET_ALIGNER_SUBSAMPLE_RATE.aligner_subsample_rate,
+        is_pd                       = self.is_pd,
+        transcriptome_min_score     = 30,
+        trim_polya_min_score        = self.trim_polya_min_score,
+        trim_tso_min_score          = self.trim_tso_min_score,
+        targeted_umi_min_read_count = _SLFE_PARTIAL_FIRST_PASS.umi_read_count_threshold,
+        total_barcode_counts        = BARCODE_CORRECTION.total_barcode_counts,
+        barcode_subset              = null,
+        chevron_correction_factor   = COMPUTE_CORRECTION_FACTOR.correction_factor,
+        chevron_affected_barcodes   = COMPUTE_CORRECTION_FACTOR.affected_barcodes,
+    )
+
+    call COLLATE_METRICS(
+        per_barcode_metrics = ALIGN_AND_COUNT.per_barcode_metrics,
+        reference_path      = self.reference_path,
+        feature_reference   = MAKE_SHARD.feature_reference,
+        filtered_barcodes   = null,
+        aggregate_barcodes  = null,
+        sample_barcodes     = null,
+    )
+
+    call WRITE_BARCODE_INDEX(
+        barcode_counts        = BARCODE_CORRECTION.corrected_barcode_counts,
+        barcodes_under_tissue = self.barcodes_under_tissue,
+    )
+
+    call WRITE_BARCODE_SUMMARY(
+        per_barcode_metrics = ALIGN_AND_COUNT.per_barcode_metrics,
+        feature_reference   = MAKE_SHARD.feature_reference,
+        barcode_index       = WRITE_BARCODE_INDEX.barcode_index,
+    )
+
+    call WRITE_H5_MATRIX(
+        gem_well          = self.gem_well,
+        counts            = ALIGN_AND_COUNT.counts_bc_order,
+        feature_reference = MAKE_SHARD.feature_reference,
+        chemistry_def     = self.chemistry_def,
+        sample_id         = self.sample_id,
+        barcode_index     = WRITE_BARCODE_INDEX.barcode_index,
+    )
+
+    call WRITE_MATRIX_MARKET(
+        counts            = ALIGN_AND_COUNT.counts_bc_order,
+        feature_reference = MAKE_SHARD.feature_reference,
+        barcode_index     = WRITE_BARCODE_INDEX.barcode_index,
+    )
+
+    call MERGE_METRICS(
+        summaries = [
+            MAKE_SHARD.summary,
+            BARCODE_CORRECTION.summary,
+            _SLFE_PARTIAL_FIRST_PASS.umi_filtering_summary,
+            ALIGN_AND_COUNT.summary,
+            COLLATE_METRICS.summary,
+        ],
+    )
+
+    return (
+        barcode_correction_csv     = ALIGN_AND_COUNT.barcode_summary,
+        barcode_summary            = WRITE_BARCODE_SUMMARY.barcode_summary,
+        raw_gene_bc_matrices_h5    = WRITE_H5_MATRIX.matrix,
+        raw_gene_bc_matrices_mex   = WRITE_MATRIX_MARKET.feature_bc_matrix,
+        read_shards                = MAKE_READ_SHARDS_STRUCT.read_shards,
+        counts_bc_order            = ALIGN_AND_COUNT.counts_bc_order,
+        report_mol_inputs          = ALIGN_AND_COUNT.bc_umi_info,
+        summary                    = MERGE_METRICS.summary,
+        slfe_feature_reference     = MAKE_SHARD.feature_reference,
+        annotation_files           = ALIGN_AND_COUNT.annotation_files,
+        per_barcode_metrics        = COLLATE_METRICS.per_barcode_metrics,
+        per_barcode_metrics_shard  = ALIGN_AND_COUNT.per_barcode_metrics,
+        bc_umi_info                = ALIGN_AND_COUNT.bc_umi_info,
+        bam_header                 = ALIGN_AND_COUNT.bam_header,
+        alignments                 = ALIGN_AND_COUNT.pos_sorted,
+        read_chunks                = self.chunks,
+        multi_metrics              = COLLATE_METRICS.multi_metrics,
+        gem_well_alignment_metrics = COLLATE_METRICS.summary,
+        barcode_index              = WRITE_BARCODE_INDEX.barcode_index,
+        sequencing_metrics         = MAKE_SHARD.sequencing_metrics,
+        make_shard_bc_counts       = MAKE_SHARD.barcode_counts,
+        barcode_counts             = BARCODE_CORRECTION.total_barcode_counts,
+        probe_barcode_counts       = ALIGN_AND_COUNT.probe_barcode_counts,
+        no_star_alignments         = ALIGN_AND_COUNT.no_star_alignments,
+    )
+}
