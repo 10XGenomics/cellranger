@@ -1,0 +1,1 @@
+Thank you for your interest in Cell Ranger. GitHub Pull Requests are not monitored by our support team. Please e-mail <support@10xgenomics.com> for support with Cell Ranger or visit our documentation site at <https://www.10xgenomics.com/support/software/cell-ranger>.

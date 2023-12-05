@@ -1,0 +1,28 @@
+name: Issues
+
+on:
+  issues:
+    types: opened
+  pull_request_target:
+    types: opened
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dessant/repo-lockdown@v4
+        with:
+          issue-comment: >
+            Thank you for your interest in Cell Ranger. GitHub Issues are not monitored
+            by our support team. Please e-mail support@10xgenomics.com for support with
+            Cell Ranger or visit our documentation site at
+            https://www.10xgenomics.com/support/software/cell-ranger.
+          pr-comment: >
+            Thank you for your interest in Cell Ranger. GitHub Pull Requests are not monitored
+            by our support team. Please e-mail support@10xgenomics.com for support with
+            Cell Ranger or visit our documentation site at
+            https://www.10xgenomics.com/support/software/cell-ranger.
