@@ -12,7 +12,7 @@ import martian
 import cellranger.constants as cr_constants
 import cellranger.hdf5 as cr_h5
 import cellranger.molecule_counter as cr_mol_counter
-from cellranger.chemistry import SC3P_CHEMISTRIES, SC5P_CHEMISTRIES
+from cellranger.chemistry import CHEMISTRY_SC3P_LT, SC3P_CHEMISTRIES, SC5P_CHEMISTRIES
 from cellranger.molecule_counter import TARGETING_METHOD_METRIC
 from cellranger.molecule_counter_converter import convert_v2_to_v4
 from cellranger.rna.library import (
@@ -79,15 +79,18 @@ def _get_filter_probes(analysis_parameters):
     return cr_mol_counter.FILTER_PROBES_PARAM_DEFAULT
 
 
-def convert_v2_to_v4_if_needed(filename: str) -> str:
+def convert_v2_to_v4_if_needed(filename: str, is_pd: bool) -> str:
     """Convert v2 to v4 molecule_info.h5 if necessary, otherwise return the original filename."""
     _mc_h5, file_version = cr_mol_counter.get_h5py_file_and_version(filename)
-    if file_version < 2:
-        raise ValueError(
+    min_version = 2 if is_pd else 3
+    if file_version < min_version:
+        martian.exit(
             f"The molecule info HDF5 file (file: {filename}, format version {file_version}) "
-            "was produced by an older software version. Reading these files is unsupported."
+            "was produced by an older software version. Reading these files is unsupported. "
+            "Please use Cell Ranger 3.0 or newer to generate a supported molecule info file."
         )
     elif file_version == 2:
+        assert is_pd
         # Convert v2 to v4, because MoleculeCounter.open does not support opening v2.
         v4_filename = "molecule_info.h5"
         convert_v2_to_v4(filename, v4_filename)
@@ -125,6 +128,9 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
     include_introns = None
     filter_probes = None
 
+    # Gather antigen control info
+    observed_ag_control_features = set()
+
     # check that all molecule files conform to spec
     libraries_seen = set()
     for sample in args.sample_defs:
@@ -154,7 +160,7 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 % sample[cr_constants.AGG_H5_FIELD]
             )
         mol_h5 = sample[cr_constants.AGG_H5_FIELD]
-        converted_mol_h5 = convert_v2_to_v4_if_needed(sample[cr_constants.AGG_H5_FIELD])
+        converted_mol_h5 = convert_v2_to_v4_if_needed(mol_h5, args.is_pd)
         try:
             counter = cr_mol_counter.MoleculeCounter.open(converted_mol_h5, "r")
         except ValueError as err:
@@ -171,6 +177,11 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 if any(counter.is_targeted_library(x) for x in library_info)
                 else None,
             )
+
+            if targeting_method == TARGETING_METHOD_HC:
+                martian.exit(
+                    f"Hybrid capture targeted analysis is no longer supported by Cell Ranger; please use Cell Ranger 7.1 or earlier: {mol_h5}"
+                )
 
             if not mol_cr_version:
                 martian.exit(
@@ -206,6 +217,12 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 )
 
             chemistry_name = counter.get_metric("chemistry_name")
+
+            if chemistry_name == CHEMISTRY_SC3P_LT["name"]:
+                martian.exit(
+                    f"Library {library_id} was created with the {CHEMISTRY_SC3P_LT['name']} chemistry, which is no longer supported."
+                )
+
             chemistry_endedness = counter.get_metric("chemistry_endedness")
             if chemistry_endedness is not None:
                 observed_ends.add(chemistry_endedness)
@@ -252,10 +269,14 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 martian.exit(incompat_msg("feature reference"))
 
             antigen_equals, antigen_equals_msg = global_feature_ref.equals_antigen_capture_content(
-                mol_feature_ref
+                mol_feature_ref, args.is_pd
             )
             if not antigen_equals:
                 martian.exit(antigen_equals_msg)
+
+            antigen_control_this_sample = mol_feature_ref.get_antigen_control()
+            if antigen_control_this_sample is not None:
+                observed_ag_control_features.add(antigen_control_this_sample)
 
             if counter.is_aggregated():
                 martian.exit(
@@ -352,4 +373,9 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
     ):
         martian.exit(
             "Aggr of Fixed RNA Profiling and Gene Expression with Feature Barcode requires that all input analyses include the same probe-set. Please rerun the Gene Expression with Feature Barcode analyses with the same probe-set parameter as used for the Fixed RNA Profiling analyses."
+        )
+
+    if len(observed_ag_control_features) > 1:
+        martian.exit(
+            "The datasets you are trying to aggregate have incompatible control feature ids. Please re-run the original multi pipelines with uniform [antigen-specificity] sections."
         )

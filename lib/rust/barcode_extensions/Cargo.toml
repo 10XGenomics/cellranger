@@ -24,7 +24,7 @@ path = '../metric'
 
 [dependencies.rayon]
 optional = true
-version = '1.7'
+version = '1'
 
 [dependencies.serde]
 workspace = true
@@ -34,12 +34,12 @@ path = '../slide_design'
 
 [dependencies.triple_accel]
 optional = true
-version = '0.4.0'
+version = '0.4'
 
 [features]
-default = ['tenx_oss']
+default = ['tenx_source_available']
 tenx_internal = ['triple_accel', 'rayon', 'fst', 'fastq_set']
-tenx_oss = []
+tenx_source_available = []
 
 [lib]
 test = false

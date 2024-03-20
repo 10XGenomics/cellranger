@@ -6,7 +6,7 @@ serde_derive = '1'
 [dependencies.ahash]
 default-features = false
 features = ['std']
-version = '0.7'
+version = '0.8'
 
 [dependencies.anyhow]
 workspace = true

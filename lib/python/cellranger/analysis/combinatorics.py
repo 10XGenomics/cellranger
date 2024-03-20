@@ -57,7 +57,7 @@ def generate_all_multiplets(n_tags: int, max_multiplets: int, add_unit_vector_at
         x_1 + x_2 + x_3 + ... = k for k = 1..max_multiplets
     """
     solutions: list[list[int]] = []
-    for k in range(0, max_multiplets + 1):
+    for k in range(max_multiplets + 1):
         cur_solutions = list(generate_solutions(n_tags, k))
         assert int(calc_all_possible_nonnegative_solutions(n_tags, k)) == len(cur_solutions)
         solutions += cur_solutions

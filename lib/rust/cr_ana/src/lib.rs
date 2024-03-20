@@ -45,7 +45,9 @@
     while_true
 )]
 
-mod feature_type;
+use cr_types::reference::feature_reference::FeatureType;
+use cr_types::FeatureBarcodeType;
+
 mod hclust_utils;
 mod io;
 mod louvain;
@@ -57,7 +59,5 @@ pub mod stages;
 mod test_pipeline;
 mod types;
 
-pub(crate) const ANTIBODY_CAPTURE: &str = "Antibody Capture";
-pub(crate) const GENE_EXPRESSION: &str = "Gene Expression";
-pub(crate) const EXCLUDED_FEATURE_TYPES: &[feature_type::FeatureType] =
-    &[feature_type::FeatureType::Antigen];
+pub(crate) const EXCLUDED_FEATURE_TYPES: &[FeatureType] =
+    &[FeatureType::Barcode(FeatureBarcodeType::Antigen)];

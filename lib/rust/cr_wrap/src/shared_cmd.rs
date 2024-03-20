@@ -4,14 +4,13 @@ use crate::mkref::Mkref;
 use crate::utils::{external_subcommand, AllArgs};
 use anyhow::Result;
 use clap::{self, Parser};
-use std::iter::FromIterator;
 use std::process::ExitCode;
 
 // Shared between spaceranger/cellranger
 #[derive(Parser, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum RnaSharedCmd {
-    /// Convert a gene count matrix to CSV format
+    /// Convert a feature-barcode matrix to CSV format
     #[clap(name = "mat2csv")]
     Mat2csv(AllArgs),
 
@@ -31,7 +30,7 @@ pub enum SharedCmd {
     #[clap(name = "upload")]
     Upload(AllArgs),
 
-    /// Collect linux system configuration information.
+    /// Collect Linux system configuration information.
     #[clap(name = "sitecheck")]
     Sitecheck(AllArgs),
 }
@@ -75,7 +74,7 @@ pub fn run_rna_shared(pkg_env: &PkgEnv, args: RnaSharedCmd) -> Result<ExitCode> 
     match args {
         RnaSharedCmd::Mat2csv(args) => pkg_env.run_subcmd("bin/rna/mat2csv", &args),
         RnaSharedCmd::Mkref(mut args) => {
-            args.shared.populate_version(pkg_env);
+            args.shared.populate_version(pkg_env.tenx_version);
             args.execute()
         }
         RnaSharedCmd::Mkgtf(args) => pkg_env.run_subcmd("bin/rna/mkgtf", &args),
@@ -103,9 +102,10 @@ pub fn run_hidden(args: HiddenCmd) -> Result<ExitCode> {
         HiddenCmd::Pass(args) => {
             if !args.input.is_empty() {
                 let cmd = args.input[0].clone();
-                let input = Vec::from_iter(args.input.into_iter().skip(1));
-                let rest_args = AllArgs { input };
-                external_subcommand(&cmd, &rest_args)
+                let args = AllArgs {
+                    input: args.input.into_iter().skip(1).collect(),
+                };
+                external_subcommand(&cmd, &args)
             } else {
                 Ok(ExitCode::SUCCESS)
             }

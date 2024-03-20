@@ -1,5 +1,6 @@
-pub(crate) use crate::feature_type::FeatureType;
 use anyhow::{anyhow, bail, Result};
+use cr_types::reference::feature_reference::FeatureType;
+use cr_types::FeatureBarcodeType;
 use martian_derive::{martian_filetype, MartianStruct};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
@@ -29,14 +30,9 @@ impl<'a> PcaResult<'a> {
         features_selected: Vec<&'a str>,
         transformed_pca_matrix: Array2<f64>,
         variance_explained: Array1<f64>,
-        is_feature_prefixed: bool,
     ) -> Self {
         let num_pcs = transformed_pca_matrix.dim().1;
-        let key = if !is_feature_prefixed {
-            format!("{num_pcs}")
-        } else {
-            format!("{}_{num_pcs}", feature_type.lc())
-        };
+        let key = format!("{}_{num_pcs}", feature_type.as_snake_case());
         PcaResult {
             components,
             dispersion,
@@ -146,7 +142,7 @@ impl FromStr for ClusteringKey {
                 feature_type: FeatureType::Gene,
             },
             Some(i) => {
-                let feature_type = parts[0..i].join("_").parse::<FeatureType>()?;
+                let feature_type = FeatureType::from_snake_case(&parts[0..i].join("_"))?;
                 let clustering_type = parts[i..].join("_").parse::<ClusteringType>()?;
                 ClusteringKey {
                     clustering_type,
@@ -165,22 +161,8 @@ pub(crate) struct ClusteringResult {
     pub key: String,
 }
 
-pub(crate) fn feature_prefixed(_is_antibody_only: bool, _feature_type: FeatureType) -> bool {
-    true
-    // let is_antibody_only = false;
-    // !(is_antibody_only || feature_type == FeatureType::Gene)
-}
-
-pub(crate) fn clustering_key(
-    clustering_type: ClusteringType,
-    feature_type: FeatureType,
-    is_feature_prefixed: bool,
-) -> String {
-    if !is_feature_prefixed {
-        clustering_type.lc().into_owned()
-    } else {
-        format!("{}_{}", feature_type.lc(), clustering_type.lc())
-    }
+pub(crate) fn clustering_key(clustering_type: ClusteringType, feature_type: FeatureType) -> String {
+    format!("{}_{}", feature_type.as_snake_case(), clustering_type.lc())
 }
 
 impl ClusteringResult {
@@ -188,9 +170,8 @@ impl ClusteringResult {
         clustering_type: ClusteringType,
         feature_type: FeatureType,
         labels: Vec<i64>,
-        is_feature_prefixed: bool,
     ) -> Self {
-        let key = clustering_key(clustering_type, feature_type, is_feature_prefixed);
+        let key = clustering_key(clustering_type, feature_type);
         ClusteringResult {
             clustering_type,
             feature_type,
@@ -205,10 +186,10 @@ impl ClusteringResult {
     pub(crate) fn desc(&self) -> Cow<'static, str> {
         match self.feature_type {
             FeatureType::Gene => self.clustering_type.desc(),
-            FeatureType::Antibody => {
+            FeatureType::Barcode(FeatureBarcodeType::Antibody) => {
                 Cow::Owned(format!("Antibody {}", self.clustering_type.desc()))
             }
-            _ => unimplemented!(),
+            FeatureType::Barcode(_) => unimplemented!(),
         }
     }
 }
@@ -244,23 +225,14 @@ pub(crate) struct EmbeddingResult<'a> {
 }
 
 impl<'a> EmbeddingResult<'a> {
-    fn make_key(feature_type: FeatureType, dims: usize, is_feature_prefixed: bool) -> String {
-        if !is_feature_prefixed {
-            format!("{dims}")
-        } else {
-            format!("{}_{dims}", feature_type.lc())
-        }
-    }
-
     pub(crate) fn new(
         barcodes: &'a [String],
         embedding: Array2<f64>,
         embedding_type: EmbeddingType,
         feature_type: FeatureType,
-        is_feature_prefixed: bool,
     ) -> Self {
         let dims = embedding.dim().1;
-        let key = EmbeddingResult::make_key(feature_type, dims, is_feature_prefixed);
+        let key = format!("{}_{dims}", feature_type.as_snake_case());
         EmbeddingResult {
             barcodes: barcodes.iter().map(Cow::Borrowed).collect::<Vec<_>>(),
             embedding,

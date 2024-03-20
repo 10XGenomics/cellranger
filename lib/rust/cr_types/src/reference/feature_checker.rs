@@ -1,5 +1,4 @@
 use crate::reference::feature_reference::FeatureReference;
-use crate::types::FeatureType;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::iter::zip;
@@ -39,7 +38,6 @@ pub fn compute_feature_dist(raw_counts: Vec<i64>, feat_ref: &FeatureReference) -
     let fbc_feature_indices = feat_ref
         .feature_defs
         .iter()
-        .filter(|fd| fd.feature_type != FeatureType::Gene)
         .map(|fd| fd.index)
         .collect::<Vec<_>>();
     if fbc_feature_indices.iter().all(|&i| proportions[i] == 0.0) {

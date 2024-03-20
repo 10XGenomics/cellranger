@@ -13,7 +13,6 @@ import cellranger.feature.crispr.measure_perturbations as measure_perturbations
 pd.set_option("compute.use_numexpr", False)
 import cellranger.analysis.diffexp as cr_diffexp
 import cellranger.feature.utils as feature_utils
-import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
 
@@ -35,23 +34,15 @@ stage MEASURE_PERTURBATIONS(
 
 
 def split(args):
-    #   Note that the complex data flow here makes it very difficult to
-    #   precisely determine the memory usage as a function of the inputs.
-    #   Adding 1 to make the `int` act as `np.ceil`
-    mem_gb = 1 + 2 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(
-        args.filtered_feature_counts_matrix
+    # Note that the complex data flow here makes it very difficult to
+    # precisely determine the memory usage as a function of the inputs.
+    mem_gib = 1 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(
+        args.filtered_feature_counts_matrix, scale=10
     )
-    mem_gb = int(max(mem_gb, h5_constants.MIN_MEM_GB))
 
-    # Sometimes this stage uses a lot of vmem and this has proven difficult to
-    # reproduce and measure.  Allow twice the RSS or an extra 3GB, whichever is
-    # larger.
-    vmem_gb = max(mem_gb + 3, mem_gb * 2)
-    return {"chunks": [], "join": {"__mem_gb": mem_gb, "__threads": 2, "__vmem_gb": vmem_gb}}
-
-
-def main(args, outs):
-    pass
+    # Sometimes this stage uses a lot of vmem. It has proven difficult to reproduce and measure.
+    vmem_gib = 6 + 2 * mem_gib
+    return {"chunks": [], "join": {"__mem_gb": mem_gib, "__threads": 2, "__vmem_gb": vmem_gib}}
 
 
 def join(args, outs, _chunk_defs, _chunk_outs):
@@ -68,7 +59,7 @@ def join(args, outs, _chunk_defs, _chunk_outs):
     gex_count_matrix = feature_count_matrix.select_features_by_type(
         rna_library.GENE_EXPRESSION_LIBRARY_TYPE
     )
-    feature_ref_table = pd.read_csv(ensure_str(args.feature_reference))
+    feature_ref_table = pd.read_csv(ensure_str(args.feature_reference), na_filter=False)
 
     protospacers_per_cell = pd.read_csv(
         ensure_str(args.protospacer_calls_per_cell), index_col=0, na_filter=False

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import enum
+import itertools
 from collections import Counter, OrderedDict
 from collections.abc import Collection, Container, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import martian
 import numpy as np
@@ -25,6 +26,9 @@ from cellranger.pandas_utils import sanitize_dataframe
 from cellranger.rna.report_matrix import load_per_barcode_metrics
 from tenkit.stats import robust_divide
 
+if TYPE_CHECKING:
+    from cellranger import matrix as cr_matrix
+
 ## Cell calling constants
 ORDMAG_NUM_BOOTSTRAP_SAMPLES = 100
 ORDMAG_RECOVERED_CELLS_QUANTILE = 0.99
@@ -38,6 +42,62 @@ MAX_RECOVERED_CELLS_PER_GEM_GROUP = 1 << 18
 ## High occupancy GEM filtering constants (multiplex FRP only)
 RECOVERY_FACTOR = 1 / 1.65  # suggested by assaydev
 TOTAL_INSTRUMENT_PARTITIONS = 115000  # assumes typical standard kit run
+
+
+class MitoStats:  # pylint: disable=too-few-public-methods
+    """Holds mitochondrial stats for diagnotic plots to be used in the websummary."""
+
+    def __init__(self, matrix: cr_matrix.CountMatrix):
+        """Class initialized with various stats.
+
+        Args:
+            matrix (cr_matrix.CountMatrix): Count matrix.
+            mt_index (list): List of indices of mitochondrial genes in the count matrix.
+        """
+        self._get_mito_loc(matrix)
+        self.total_umi = matrix.get_counts_per_bc()
+        self.mt_umi = matrix.select_features(self.mt_index).get_counts_per_bc()
+        self.mt_pct = (
+            100.0 * self.mt_umi / self.total_umi
+        )  # Percentage of UMIs per cell mapping to MT genes
+        self.total_umi_log = np.log1p(self.total_umi) / np.log(10)
+        # TO DO: add genome information for BY samples.
+
+    def _get_mito_loc(self, matrix: cr_matrix.CountMatrix):
+        """Function to get indices of mitochondrial genes."""
+        mt_ensembl_ids = [
+            # human
+            "ENSG00000198888",
+            "ENSG00000198763",
+            "ENSG00000198804",
+            "ENSG00000198712",
+            "ENSG00000228253",
+            "ENSG00000198899",
+            "ENSG00000198938",
+            "ENSG00000198840",
+            "ENSG00000212907",
+            "ENSG00000198886",
+            "ENSG00000198786",
+            "ENSG00000198695",
+            "ENSG00000198727",
+            # mouse
+            "ENSMUSG00000064341",
+            "ENSMUSG00000064345",
+            "ENSMUSG00000064351",
+            "ENSMUSG00000064354",
+            "ENSMUSG00000064356",
+            "ENSMUSG00000064357",
+            "ENSMUSG00000064358",
+            "ENSMUSG00000064360",
+            "ENSMUSG00000065947",
+            "ENSMUSG00000064363",
+            "ENSMUSG00000064367",
+            "ENSMUSG00000064368",
+            "ENSMUSG00000064370",
+        ]
+        # The split on the underscore is to accommodate barnyard samples with prefixes on feature IDs
+        ensembl_ids = [x.id.decode("UTF-8").split("_")[-1] for x in matrix.feature_ref.feature_defs]
+        self.mt_index = [idx for idx, eid in enumerate(ensembl_ids) if eid in mt_ensembl_ids]
 
 
 @dataclass
@@ -418,6 +478,7 @@ def call_initial_cells(
         # Make initial cell calls for each gem group individually
         for gem_group in unique_gem_groups:
             gg_matrix = genome_matrix.select_barcodes_by_gem_group(gem_group)
+
             gg_filtered_metrics, gg_filtered_bcs = _call_cells_by_gem_group(
                 gg_matrix,
                 method,
@@ -453,7 +514,10 @@ def _call_cells_by_gem_group(
 
     if method == FilterMethod.ORDMAG or method == FilterMethod.ORDMAG_NONAMBIENT:
         gg_filtered_indices, gg_filtered_metrics, msg = filter_cellular_barcodes_ordmag(
-            gg_bc_counts, gg_recovered_cells, chemistry_description, num_probe_barcodes
+            gg_bc_counts,
+            gg_recovered_cells,
+            chemistry_description,
+            num_probe_barcodes,
         )
         gg_filtered_bcs = gg_matrix.ints_to_bcs(gg_filtered_indices)
 
@@ -537,6 +601,7 @@ def call_additional_cells(
     nonambient_arrays = []
     genome_call_arrays = []
 
+    emptydrops_threshold = dict()
     matrix = matrix.select_features_by_types(feature_types)
 
     # Do it by gem group and genome
@@ -570,6 +635,7 @@ def call_additional_cells(
 
             umis_per_bc = gg_matrix.get_counts_per_bc()
 
+            emptydrops_threshold[(genome, gg)] = result.emptydrops_minimum_umis
             eval_bcs_arrays.append(np.array(gg_matrix.bcs)[result.eval_bcs])
             umis_per_bc_arrays.append(umis_per_bc[result.eval_bcs])
             loglk_arrays.append(result.log_likelihood)
@@ -599,7 +665,124 @@ def call_additional_cells(
     else:
         nonambient_summary = pd.DataFrame()
 
-    return filtered_bcs_groups, nonambient_summary
+    return filtered_bcs_groups, nonambient_summary, emptydrops_threshold
+
+
+def apply_mitochondrial_threshold(
+    matrix: cr_matrix.CountMatrix,
+    genomes: list[str],
+    unique_gem_groups: list[int],
+    filtered_bcs_groups: OrderedDict,
+    max_mito_percent: float,
+) -> tuple[OrderedDict, pd.DataFrame]:
+    """Subsets to barcodes that do not exceed set threshold of mitochondrial read percentage.
+
+    Args:
+        matrix (cr_matrix.CountMatrix): feature barcode matrix
+        genomes (list[str]): list of genomes
+        unique_gem_groups (list[int]): list of gem groups
+        filtered_bcs_groups (OrderedDict): list of filtered barcodes
+        max_mito_percent (float): mitochondrial read percentage threshold
+
+    Returns:
+        tuple[OrderedDict, pd.DataFrame]: updated list of filtered barcodes, summary information dataframe
+    """
+    matrix = matrix.select_features_by_type(rna_library.GENE_EXPRESSION_LIBRARY_TYPE)
+
+    bcs_removed = []
+    total_umis = []
+    mt_pct = []
+    genome_list = []
+    gem_group_list = []
+
+    # Do it by gem group and genome
+    for genome in genomes:
+        genome_matrix = matrix.select_features_by_genome(genome)
+        for gem_group in unique_gem_groups:
+            gem_group_matrix = genome_matrix.select_barcodes_by_gem_group(gem_group)
+            # Subset matrix to barcodes that have already been called as cells
+            gem_group_matrix = gem_group_matrix.select_barcodes_by_seq(
+                filtered_bcs_groups[(gem_group, genome)]
+            )
+            mito_stats = MitoStats(gem_group_matrix)
+            filtered_barcode_index = [
+                idx for idx, mt in enumerate(mito_stats.mt_pct) if (mt > max_mito_percent)
+            ]
+
+            n_filtered_barcodes = len(filtered_barcode_index)
+
+            if n_filtered_barcodes > 0:
+                # Update the lists of cell-associated barcodes
+                filtered_bcs_groups[(gem_group, genome)] = np.delete(
+                    arr=np.array(gem_group_matrix.bcs), obj=np.array(filtered_barcode_index)
+                )
+                bcs_removed.append(np.array(gem_group_matrix.bcs)[np.array(filtered_barcode_index)])
+                total_umis.append(np.array(mito_stats.total_umi)[np.array(filtered_barcode_index)])
+                mt_pct.append(np.array(mito_stats.mt_pct)[np.array(filtered_barcode_index)])
+                genome_list.append(np.repeat(genome, n_filtered_barcodes))
+                gem_group_list.append(np.repeat(gem_group, n_filtered_barcodes))
+
+    all_bcs_removed = list(itertools.chain.from_iterable(bcs_removed))
+    if len(all_bcs_removed) > 0:
+        mitochondrial_summary = pd.DataFrame(
+            {
+                "Barcodes removed": all_bcs_removed,
+                "Total UMIs": list(itertools.chain.from_iterable(total_umis)),
+                "MT percent": list(itertools.chain.from_iterable(mt_pct)),
+                "threshold": max_mito_percent,
+                "genome": list(itertools.chain.from_iterable(genome_list)),
+                "gem_group": list(itertools.chain.from_iterable(gem_group_list)),
+            }
+        )
+    else:
+        mitochondrial_summary = pd.DataFrame(
+            {
+                "Barcodes removed": [-1],
+                "Total UMIs": [-1],
+                "MT percent": [-1],
+                "threshold": max_mito_percent,
+            }
+        )
+    return filtered_bcs_groups, mitochondrial_summary
+
+
+def apply_global_minimum_umis_threshold(
+    matrix,
+    unique_gem_groups: list[int],
+    genomes: list[str],
+    filtered_bcs_groups,
+    feature_types,
+    global_minimum_umis: dict[tuple[str, int], int] | int,
+):
+    """Apply a global minimum UMI threshold on cell calls."""
+    matrix = matrix.select_features_by_types(feature_types)
+
+    # Do it by gem group and genome
+    for genome in genomes:
+        genome_matrix = matrix.select_features_by_genome(genome)
+        for gg in unique_gem_groups:
+            gg_matrix = genome_matrix.select_barcodes_by_gem_group(gg)
+            orig_cell_bcs = set(filtered_bcs_groups[(gg, genome)])
+            orig_cell_idx = np.flatnonzero(
+                np.fromiter(
+                    (bc in orig_cell_bcs for bc in gg_matrix.bcs),
+                    count=len(gg_matrix.bcs),
+                    dtype=bool,
+                )
+            )
+
+            if isinstance(global_minimum_umis, int):
+                minimum_umis = global_minimum_umis
+            else:
+                minimum_umis = global_minimum_umis[(genome, gg)]
+
+            umis_per_cell_bc = gg_matrix.get_counts_per_bc()[orig_cell_idx]
+            final_cell_idx = orig_cell_idx[umis_per_cell_bc >= minimum_umis]
+
+            # Update the lists of cell-associated barcodes
+            filtered_bcs_groups[(gg, genome)] = np.array(gg_matrix.bcs)[final_cell_idx]
+
+    return filtered_bcs_groups
 
 
 ################################################################################
@@ -668,14 +851,13 @@ def summarize_bootstrapped_top_n(top_n_boot, nonzero_counts):
 
         cutoff = sorted_counts[nbcs - 1]
         index = nbcs - 1
-        if cutoff > 0:
-            while (index + 1) < len(sorted_counts) and sorted_counts[index] == cutoff:
-                index += 1
-                # if we end up grabbing too many barcodes, revert to initial estimate
-                if (index + 1 - nbcs) > 0.20 * nbcs:
-                    return result
-        result.filtered_bcs = index + 1
-
+        while (index + 1) < len(sorted_counts) and sorted_counts[index] == cutoff:
+            index += 1
+            # if we end up grabbing too many barcodes, revert to initial estimate
+            if (index + 1 - nbcs) > 0.20 * nbcs:
+                return result
+            result.filtered_bcs = index + 1
+            result.filtered_bcs_cutoff = cutoff
     return result
 
 
@@ -778,6 +960,7 @@ def filter_cellular_barcodes_fixed_cutoff(bc_counts, cutoff: int):
     top_n = min(cutoff, nonzero_bcs)
     top_bc_idx = np.sort(np.argsort(bc_counts, kind=NP_SORT_KIND)[::-1][0:top_n])
     metrics = BarcodeFilterResults.init_with_constant_call(top_n)
+    metrics.filtered_bcs_cutoff = np.sort(bc_counts)[::-1][top_n]
     return top_bc_idx, metrics, None
 
 
@@ -802,6 +985,7 @@ def filter_cellular_barcodes_targeted(
     targ_cells_idx = [idx for idx in grad_cells_idx if bc_counts_targeted[idx] >= min_targeted_umis]
     num_targ_cells = len(targ_cells_idx)
     metrics = BarcodeFilterResults.init_with_constant_call(num_targ_cells)
+    metrics.filtered_bcs_cutoff = min_targeted_umis
     return targ_cells_idx, metrics, None
 
 
@@ -924,8 +1108,8 @@ def get_spline_num_knots(n):
 class CellCallingParam:
     """Python equivalent of CellCallingParam struct."""
 
-    per_gem_well: int | None = None
-    per_sample: dict[str, int] | None = None
+    per_gem_well: float | None = None
+    per_sample: dict[str, float] | None = None
 
     def __init__(self, data):
         """Initialize with data provided by martian."""
@@ -945,6 +1129,8 @@ class CellCalling:
     recovered_cells: CellCallingParam | None = CellCallingParam(None)
     force_cells: CellCallingParam | None = CellCallingParam(None)
     emptydrops_minimum_umis: CellCallingParam | None = CellCallingParam(None)
+    global_minimum_umis: CellCallingParam | None = CellCallingParam(None)
+    max_mito_percent: CellCallingParam | None = CellCallingParam(None)
     cell_barcodes: str | None = None  # A JSON file path
     override_mode: str | None = None
     override_library_types: list[str] | None = None
@@ -964,6 +1150,8 @@ class CellCalling:
             self.recovered_cells = CellCallingParam(args["recovered_cells"])
             self.force_cells = CellCallingParam(args["force_cells"])
             self.emptydrops_minimum_umis = CellCallingParam(args["emptydrops_minimum_umis"])
+            self.max_mito_percent = CellCallingParam(args["max_mito_percent"])
+            self.global_minimum_umis = CellCallingParam(args["global_minimum_umis"])
             self.override_mode = args["override_mode"]
             self.override_library_types = args["override_library_types"]
 
@@ -976,16 +1164,20 @@ def get_recovered_cells(recovered_cells: CellCallingParam, sample=None) -> int |
     c. The value for a specific multiplex FRP sample
     """
     if recovered_cells.per_gem_well is not None:
-        return recovered_cells.per_gem_well
+        return int(recovered_cells.per_gem_well)
     elif recovered_cells.per_sample is not None and sample is None:
         acc = 0
         for val in recovered_cells.per_sample.values():
             if val is None:
                 return None
             acc += val
-        return acc
+        return int(acc)
     elif recovered_cells.per_sample is not None and sample is not None:
-        return recovered_cells.per_sample.get(sample, None)
+        return (
+            int(recovered_cells.per_sample.get(sample))
+            if recovered_cells.per_sample.get(sample)
+            else None
+        )
     else:
         return None
 
@@ -993,19 +1185,46 @@ def get_recovered_cells(recovered_cells: CellCallingParam, sample=None) -> int |
 def get_force_cells(force_cells: CellCallingParam, sample=None) -> int | None:
     """Extracts a value for force_cells from the CellCallingParam struct."""
     if force_cells.per_gem_well is not None:
-        return force_cells.per_gem_well
+        return int(force_cells.per_gem_well)
     elif force_cells.per_sample is not None and sample is not None:
-        return force_cells.per_sample.get(sample, None)
+        return (
+            int(force_cells.per_sample.get(sample)) if force_cells.per_sample.get(sample) else None
+        )
     else:
         return None
+
+
+def get_global_minimum_umis(global_minimum_umis: CellCallingParam, sample=None) -> int:
+    """Extracts a value for global_minimum_umis from the CellCallingParam struct."""
+    if global_minimum_umis.per_gem_well is not None:
+        return int(global_minimum_umis.per_gem_well)
+    elif global_minimum_umis.per_sample is not None and sample is not None:
+        return int(global_minimum_umis.per_sample.get(sample) or cr_cell.MIN_GLOBAL_UMIS)
+    else:
+        return cr_cell.MIN_GLOBAL_UMIS
+
+
+def get_max_mito_percent(
+    max_mito_percent: (CellCallingParam | None), sample: (str | None) = None
+) -> float:
+    """Extracts a value for maximum mitochondrial percentage from the CellCallingParam struct."""
+    if max_mito_percent is not None:
+        if max_mito_percent.per_gem_well is not None:
+            return max_mito_percent.per_gem_well
+        elif max_mito_percent.per_sample is not None and sample is not None:
+            return max_mito_percent.per_sample.get(sample) or cr_cell.MAX_MITO_PCT
+        else:
+            return cr_cell.MAX_MITO_PCT
+    else:
+        return cr_cell.MAX_MITO_PCT
 
 
 def get_emptydrops_minimum_umis(emptydrops_minimum_umis: CellCallingParam, sample=None) -> int:
     """Extracts a value for emptydrops_minimum_umis from the CellCallingParam struct."""
     if emptydrops_minimum_umis.per_gem_well is not None:
-        return emptydrops_minimum_umis.per_gem_well
+        return int(emptydrops_minimum_umis.per_gem_well)
     elif emptydrops_minimum_umis.per_sample is not None and sample is not None:
-        return emptydrops_minimum_umis.per_sample.get(sample) or cr_cell.MIN_UMIS
+        return int(emptydrops_minimum_umis.per_sample.get(sample) or cr_cell.MIN_UMIS)
     else:
         return cr_cell.MIN_UMIS
 

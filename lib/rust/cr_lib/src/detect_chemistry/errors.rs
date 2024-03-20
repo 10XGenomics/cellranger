@@ -3,7 +3,7 @@ use super::length_filter::{LengthStats, WHICH_LEN_READS};
 use super::mapping_filter::MappingStats;
 use barcode::whitelist::BarcodeId;
 use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryDef, ChemistryName};
-use cr_types::FeatureType;
+use cr_types::reference::feature_reference::FeatureType;
 use fastq_set::WhichRead;
 use itertools::{multizip, Itertools};
 use metric::{TxHashMap, TxHashSet};
@@ -43,10 +43,6 @@ pub(crate) enum DetectChemistryErrors {
         chems: TxHashSet<ChemistryName>,
         max_lengths: TxHashMap<WhichRead, usize>,
     },
-    UnsupportedMixture {
-        mixture: TxHashSet<ChemistryName>,
-        specify: ChemistryName,
-    },
     MissingParametersToml(anyhow::Error),
     FeatureTypeNotEnoughReadLength {
         stats: LengthStats,
@@ -69,7 +65,6 @@ impl fmt::Display for DetectChemistryErrors {
             ChemistryNotAllowed, ConflictingChemistries, FeatureTypeNotEnoughReadLength,
             FeatureTypeNotInReference, MissingParametersToml, NotEnoughMapping,
             NotEnoughReadLength, NotEnoughReads, NotEnoughWhitelistMatch, ProbeBarcodeMixture,
-            UnsupportedMixture,
         };
         let msg = match self {
             NotEnoughReads {
@@ -83,9 +78,8 @@ impl fmt::Display for DetectChemistryErrors {
                 - Number of reads available = {num_reads}"
             ),
             ChemistryNotAllowed { input, allowed } => format!(
-                "The chemistry name '{}' is not allowed in this pipeline. Allowed values:\n{}",
-                input,
-                allowed.iter().join("\n")
+                "The chemistry name '{input}' is not allowed in this pipeline. Allowed values:\n{}",
+                allowed.iter().format("\n")
             ),
             NotEnoughWhitelistMatch { frac_matches, unit } => {
                 if frac_matches.len() == 1 {
@@ -195,11 +189,6 @@ impl fmt::Display for DetectChemistryErrors {
                             .join("\n")
                     )
                 }
-            ),
-            UnsupportedMixture { mixture, specify } => format!(
-                "We detected an unsupported chemistry combination ({}). To process this combination of data \
-                you will need to specify {specify} via the --chemistry argument.\n",
-                mixture.iter().sorted().join(", ")
             ),
             MissingParametersToml(err) => format!("Failed to load parameters.toml: {err}",),
             FeatureTypeNotEnoughReadLength {

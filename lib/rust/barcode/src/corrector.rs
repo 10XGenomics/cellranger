@@ -116,7 +116,7 @@ impl CorrectBarcode for Posterior {
         observed_segment: BarcodeSegment,
         qual: Option<BcSegQual>,
     ) -> Option<(BarcodeSegment, u16)> {
-        let mut a = observed_segment.sequence.seq().to_owned(); // Create a copy
+        let mut a = observed_segment.sequence().seq().to_owned(); // Create a copy
         assert!(observed_segment.state == BarcodeSegmentState::Invalid);
 
         let mut best_option: Option<(Of64, BarcodeSegment)> = None;
@@ -130,11 +130,11 @@ impl CorrectBarcode for Posterior {
                     continue;
                 }
                 a[pos] = val;
-                let mut trial_bc = BarcodeSegment::new(&a, observed_segment.state);
+                let mut trial_bc = BarcodeSegment::with_sequence(&a, observed_segment.state);
 
-                if whitelist.check(&mut trial_bc) {
+                if whitelist.check_and_update(&mut trial_bc) {
                     // Apply additive (Laplace) smoothing.
-                    let raw_count = bc_counts.get(&trial_bc.sequence);
+                    let raw_count = bc_counts.get(trial_bc.sequence());
                     let bc_count = 1 + raw_count;
                     let prob_edit = Of64::try_from(probability(qv)).unwrap();
                     let likelihood = prob_edit * Of64::try_from(bc_count as f64).unwrap();
@@ -151,9 +151,7 @@ impl CorrectBarcode for Posterior {
 
         let thresh = Of64::try_from(self.bc_confidence_threshold).ok()?;
 
-        let expected_errors: f64 = qual
-            .map(|q| q.iter().copied().map(probability).sum())
-            .unwrap_or(0.0);
+        let expected_errors: f64 = qual.map_or(0.0, |q| q.iter().copied().map(probability).sum());
 
         if let Some((best_like, best_bc)) = best_option {
             if expected_errors < self.max_expected_barcode_errors
@@ -175,7 +173,8 @@ pub fn probability(qual: u8) -> f64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use metric::{Metric, SimpleHistogram, TxHashSet};
+    use crate::BcSegSeq;
+    use metric::{SimpleHistogram, TxHashSet};
     use proptest::proptest;
 
     fn posterior(
@@ -208,7 +207,7 @@ mod test {
         wl.insert(b3);
         wl.insert(b4);
 
-        let mut bc_counts = SimpleHistogram::new();
+        let mut bc_counts = SimpleHistogram::default();
         bc_counts.insert(b1, 100);
         bc_counts.insert(b2, 11);
         bc_counts.insert(b3, 2);
@@ -216,7 +215,7 @@ mod test {
         let corrector = posterior(Whitelist::Plain(wl), bc_counts, 1.0, 0.95);
 
         // Easy
-        let mut t1 = BarcodeSegment::new(b"AAAAA", BarcodeSegmentState::Invalid);
+        let mut t1 = BarcodeSegment::with_sequence(b"AAAAA", BarcodeSegmentState::Invalid);
         // Low quality
         assert_eq!(
             corrector
@@ -228,28 +227,28 @@ mod test {
             .is_none());
         assert_eq!(
             t1,
-            BarcodeSegment::new(b"AAAAA", BarcodeSegmentState::Invalid)
+            BarcodeSegment::with_sequence(b"AAAAA", BarcodeSegmentState::Invalid)
         );
 
         // Trivial correction
-        let mut t2 = BarcodeSegment::new(b"AAAAT", BarcodeSegmentState::Invalid);
+        let mut t2 = BarcodeSegment::with_sequence(b"AAAAT", BarcodeSegmentState::Invalid);
         assert_eq!(
             corrector
                 .correct_barcode_helper(t2, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])))
                 .unwrap()
                 .0,
-            BarcodeSegment::new(b1.seq(), BarcodeSegmentState::ValidAfterCorrection)
+            BarcodeSegment::new(b1.into(), BarcodeSegmentState::ValidAfterCorrection)
         );
         assert!(corrector
             .correct_barcode(&mut t2, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])),)
             .is_some());
         assert_eq!(
             t2,
-            BarcodeSegment::new(b1.seq(), BarcodeSegmentState::ValidAfterCorrection)
+            BarcodeSegment::new(b1.into(), BarcodeSegmentState::ValidAfterCorrection)
         );
 
         // Pseudo-count kills you
-        let t3 = BarcodeSegment::new(b"ACGAT", BarcodeSegmentState::Invalid);
+        let t3 = BarcodeSegment::with_sequence(b"ACGAT", BarcodeSegmentState::Invalid);
         assert_eq!(
             corrector
                 .correct_barcode_helper(t3, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 66]))),
@@ -257,23 +256,23 @@ mod test {
         );
 
         // Quality help you
-        let t4 = BarcodeSegment::new(b"ACGAT", BarcodeSegmentState::Invalid);
+        let t4 = BarcodeSegment::with_sequence(b"ACGAT", BarcodeSegmentState::Invalid);
         assert_eq!(
             corrector
                 .correct_barcode_helper(t4, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])))
                 .unwrap()
                 .0,
-            BarcodeSegment::new(b3.seq(), BarcodeSegmentState::ValidAfterCorrection)
+            BarcodeSegment::new(b3.into(), BarcodeSegmentState::ValidAfterCorrection)
         );
 
         // Counts help you
-        let t5 = BarcodeSegment::new(b"ACAAA", BarcodeSegmentState::Invalid);
+        let t5 = BarcodeSegment::with_sequence(b"ACAAA", BarcodeSegmentState::Invalid);
         assert_eq!(
             corrector
                 .correct_barcode_helper(t5, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])))
                 .unwrap()
                 .0,
-            BarcodeSegment::new(b1.seq(), BarcodeSegmentState::ValidAfterCorrection)
+            BarcodeSegment::new(b1.into(), BarcodeSegmentState::ValidAfterCorrection)
         );
     }
 
@@ -291,12 +290,12 @@ mod test {
         wl.insert(b3);
         wl.insert(b4);
 
-        let bc_counts = SimpleHistogram::new();
+        let bc_counts = SimpleHistogram::default();
 
         let val = posterior(Whitelist::Plain(wl), bc_counts, 1.0, 0.95);
 
         // Easy
-        let t1 = BarcodeSegment::new(b"AAAAA", BarcodeSegmentState::Invalid);
+        let t1 = BarcodeSegment::with_sequence(b"AAAAA", BarcodeSegmentState::Invalid);
         // Low quality
         assert_eq!(
             val.correct_barcode_helper(t1, Some(BcSegQual::from_bytes(&[34, 34, 34, 66, 66]))),
@@ -304,12 +303,12 @@ mod test {
         );
 
         // Trivial correction
-        let t2 = BarcodeSegment::new(b"AAAAT", BarcodeSegmentState::Invalid);
+        let t2 = BarcodeSegment::with_sequence(b"AAAAT", BarcodeSegmentState::Invalid);
         assert_eq!(
             val.correct_barcode_helper(t2, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])))
                 .unwrap()
                 .0,
-            BarcodeSegment::new(b1.seq(), BarcodeSegmentState::ValidAfterCorrection)
+            BarcodeSegment::with_sequence(b1.seq(), BarcodeSegmentState::ValidAfterCorrection)
         );
     }
 
@@ -322,17 +321,17 @@ mod test {
             let bc = BcSegSeq::from_bytes(b"GCGATTGACCCAAAGG");
             wl.insert(bc);
 
-            let corrector = posterior(Whitelist::Plain(wl), SimpleHistogram::new(), 1.0, 0.975);
+            let corrector = posterior(Whitelist::Plain(wl), SimpleHistogram::default(), 1.0, 0.975);
 
             let mut bc_seq_with_n = bc.seq().to_vec();
             bc_seq_with_n[n_pos] = b'N';
             let mut qual = vec![53; bc_seq_with_n.len()];
             qual[n_pos] = 35;
-            let bc_with_n = BarcodeSegment::new(&bc_seq_with_n, BarcodeSegmentState::Invalid);
+            let bc_with_n = BarcodeSegment::with_sequence(&bc_seq_with_n, BarcodeSegmentState::Invalid);
 
             assert_eq!(
                 corrector.correct_barcode_helper(bc_with_n, Some(BcSegQual::from_bytes(&qual))),
-                Some((BarcodeSegment::new(
+                Some((BarcodeSegment::with_sequence(
                     bc.seq(),
                     BarcodeSegmentState::ValidAfterCorrection
                 ), 1))

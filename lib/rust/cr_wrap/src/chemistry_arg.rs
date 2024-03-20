@@ -1,94 +1,79 @@
 use anyhow::{bail, Result};
+use cr_types::chemistry::{AutoChemistryName, AutoOrRefinedChemistry, ChemistryName};
 use itertools::Itertools;
-use serde::Serialize;
-use std::fmt::{Debug, Formatter};
-use std::str::FromStr;
+#[allow(clippy::enum_glob_use)]
+use AutoChemistryName::*;
+#[allow(clippy::enum_glob_use)]
+use AutoOrRefinedChemistry::*;
+#[allow(clippy::enum_glob_use)]
+use ChemistryName::*;
 
-// The help text when user inputs an invalid
-// chemistry
-enum UserHelp {
-    Visible(&'static str),
-    Hidden,
-}
-
-const ALLOWED_COUNT_CHEM_INPUTS: [(&str, UserHelp); 17] = [
-    ("auto", UserHelp::Visible("auto detection (default)")),
-    ("threeprime", UserHelp::Visible("Single Cell 3'")),
-    ("fiveprime", UserHelp::Visible("Single Cell 5'")),
-    ("SC3P_auto", UserHelp::Hidden),
-    ("SC5P_auto", UserHelp::Hidden),
-    ("SC3Pv1", UserHelp::Visible("Single Cell 3'v1")),
-    ("SC3Pv2", UserHelp::Visible("Single Cell 3'v2")),
-    ("SC3Pv3", UserHelp::Visible("Single Cell 3'v3")),
-    ("SC3Pv3LT", UserHelp::Visible("Single Cell 3'v3 LT")),
-    ("SC3Pv3HT", UserHelp::Visible("Single Cell 3'v3 HT")),
-    ("SC5P-PE", UserHelp::Visible("Single Cell 5' paired end")),
-    ("SC5P-R2", UserHelp::Visible("Single Cell 5' R2-only")),
-    ("SC5PHT", UserHelp::Hidden),
-    ("SC5P-R1", UserHelp::Hidden),
+const ALLOWED_COUNT_CHEM_INPUTS: [(AutoOrRefinedChemistry, Option<&str>); 17] = [
+    (Auto(Count), Some("auto detection (default)")),
+    (Auto(ThreePrime), Some("Single Cell 3'")),
+    (Auto(FivePrime), Some("Single Cell 5'")),
+    (Refined(ThreePrimeV1), Some("Single Cell 3'v1")),
+    (Refined(ThreePrimeV2), Some("Single Cell 3'v2")),
+    (Refined(ThreePrimeV3), Some("Single Cell 3'v3")),
+    (Refined(ThreePrimeV3HT), Some("Single Cell 3'v3 HT")),
+    (Refined(ThreePrimeV4), Some("Single Cell 3'v4")),
+    (Refined(FivePrimePE), Some("Single Cell 5' paired end")),
+    (Refined(FivePrimeR2), Some("Single Cell 5' R2-only")),
+    (Refined(FivePrimeR2V3), Some("Single Cell 5' R2-only v3")),
     (
-        "SC-FB",
-        UserHelp::Visible("Single Cell Antibody-only 3' v2 or 5'"),
+        Refined(FivePrimeR2OHV3),
+        Some("Single Cell 5' R2-only OH v3"),
     ),
-    ("SFRP", UserHelp::Hidden),
-    ("ARC-v1", UserHelp::Visible("GEX portion only of multiome")),
+    (Refined(FivePrimeHT), None),
+    (Refined(FivePrimeR2), None),
+    (
+        Refined(FeatureBarcodingOnly),
+        Some("Single Cell Antibody-only 3' v2 or 5'"),
+    ),
+    (Refined(SFRP), None),
+    (Refined(ArcV1), Some("GEX portion only of multiome")),
 ];
 
-#[derive(Serialize, Clone, PartialEq, Eq)]
-pub struct CountChemistryArg(pub String);
-
-impl FromStr for CountChemistryArg {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<CountChemistryArg> {
-        if ALLOWED_COUNT_CHEM_INPUTS.iter().any(|(chem, _)| *chem == s) {
-            Ok(CountChemistryArg(s.to_string()))
-        } else {
-            bail!(
-                "{s} is an invalid input to `--chemistry`. Supported options are:\n - {}",
-                ALLOWED_COUNT_CHEM_INPUTS
-                    .iter()
-                    .filter_map(|(chem, help)| match help {
-                        UserHelp::Visible(h) => Some(format!("{chem} for {h}")),
-                        UserHelp::Hidden => None,
-                    })
-                    .join("\n - ")
-            );
-        }
+/// Parse the provided chemistry and validate that it is of an allowed type.
+/// Return a user-facing clap-compatible error message.
+pub fn validate_chemistry(s: &str) -> Result<AutoOrRefinedChemistry> {
+    let parse_err = || {
+        format!(
+            "{s} is an invalid input to `--chemistry`. Supported options are:\n - {}",
+            ALLOWED_COUNT_CHEM_INPUTS
+                .iter()
+                .filter_map(|(chem, help)| help.as_ref().map(|h| format!("{chem} for {h}")))
+                .join("\n - ")
+        )
+    };
+    let Some(chem) = s.parse().ok() else {
+        bail!(parse_err());
+    };
+    if ALLOWED_COUNT_CHEM_INPUTS
+        .iter()
+        .any(|(option, _)| *option == chem)
+    {
+        return Ok(chem);
     }
-}
-
-impl Debug for CountChemistryArg {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        Debug::fmt(&self.0, f)
+    if chem.refined() == Some(ThreePrimeV3LT) {
+        bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
     }
+    bail!(parse_err());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cr_types::chemistry::AutoOrRefinedChemistry;
-    #[test]
-    fn test_parse_allowed() {
-        assert!(ALLOWED_COUNT_CHEM_INPUTS
-            .iter()
-            .all(|(chem, _)| chem.parse::<AutoOrRefinedChemistry>().is_ok()));
-    }
 
     #[test]
     fn test_parse_count_chemistry_arg() {
-        for chem in [
-            "SC3Pv3", "SC3Pv3LT", "SC3Pv3HT", "auto", "SC5P-R2", "SC5PHT", "ARC-v1",
-        ] {
+        for chem in ["SC3Pv3", "SC3Pv3HT", "auto", "SC5P-R2", "SC5PHT", "ARC-v1"] {
             assert_eq!(
-                chem.parse::<CountChemistryArg>().unwrap(),
-                CountChemistryArg(chem.to_string())
+                validate_chemistry(chem).unwrap().to_string(),
+                chem.to_string()
             );
         }
-        assert!("SCVDJ".parse::<CountChemistryArg>().is_err());
-        assert_eq!(
-            format!("{:?}", CountChemistryArg("fiveprime".into())),
-            r#""fiveprime""#
-        );
+        assert!(validate_chemistry("SCVDJ").is_err());
+        assert!(validate_chemistry("SC3Pv3LT").is_err());
     }
 }

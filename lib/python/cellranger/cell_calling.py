@@ -15,22 +15,27 @@ import numpy.ma as ma
 import cellranger.sgt as cr_sgt
 import cellranger.stats as cr_stats
 from cellranger.analysis.diffexp import adjust_pvalue_bh
-from cellranger.chemistry import CHEMISTRY_DESCRIPTION_FIELD, CHEMISTRY_SC3P_LT
+from cellranger.chemistry import (
+    CHEMISTRY_DESCRIPTION_FIELD,
+    CHEMISTRY_SC3P_LT,
+    SC3P_V4_CHEMISTRIES,
+    SC5P_V3_CHEMISTRIES,
+)
 
 # Drop this top fraction of the barcodes when estimating ambient.
 MAX_OCCUPIED_PARTITIONS_FRAC = 0.5
+
+# Minimum number of UMIs for a barcode to be called as a cell
+MIN_GLOBAL_UMIS = 0
+
+# Maximum percentage of mitochondrial reads allowed for a barcode to be called a cell
+MAX_MITO_PCT = 100.0
 
 # Minimum number of UMIS per barcode to consider after the initial cell calling
 MIN_UMIS = 500
 
 # Default number of background simulations to make
 NUM_SIMS = 10000
-
-# Minimum ratio of UMIs to the median (initial cell call UMI) to consider after the initial cell calling
-MIN_UMI_FRAC_OF_MEDIAN = 0.01
-
-# Maximum adjusted p-value to call a barcode as non-ambient
-MAX_ADJ_PVALUE = 0.01
 
 # Minimum number of UMIS per barcode to consider after the initial cell calling for targeted GEX
 TARGETED_CC_MIN_UMIS_ADDITIONAL_CELLS = 10
@@ -103,6 +108,15 @@ class NonAmbientBarcodeResult(NamedTuple):
     pvalues: np.ndarray  # pvalues (n)
     pvalues_adj: np.ndarray  # B-H adjusted pvalues (n)
     is_nonambient: np.ndarray  # Boolean nonambient calls (n)
+    emptydrops_minimum_umis: int  # Min UMI threshold for empty drops (1)
+
+
+def get_empty_drops_fdr(chemistry_description: str) -> float:
+    """Gets the maximum adjusted p-value to call a barcode as non-ambient."""
+    # The chips used with V4 have roughly double the GEMs as the older V3 chips
+    v4_chemistries = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
+    v4_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in v4_chemistries]
+    return 0.001 if chemistry_description in v4_chem_names else 0.01
 
 
 def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None) -> tuple[int, int]:
@@ -115,8 +129,13 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
         low_index:
         high_index:
     """
+    # The chips used with V4 have roughly double the GEMs as the older V3 chips
+    v4_chemistries = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
+    v4_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in v4_chemistries]
     if chemistry_description == CHEMISTRY_SC3P_LT[CHEMISTRY_DESCRIPTION_FIELD]:
         N_PARTITIONS = 9000
+    elif chemistry_description in v4_chem_names:
+        N_PARTITIONS = 80000 * num_probe_bcs if num_probe_bcs and num_probe_bcs > 1 else 160000
     else:
         N_PARTITIONS = 45000 * num_probe_bcs if num_probe_bcs and num_probe_bcs > 1 else 90000
     return (N_PARTITIONS // 2, N_PARTITIONS)
@@ -128,9 +147,7 @@ def find_nonambient_barcodes(
     chemistry_description,
     num_probe_bcs,
     *,
-    min_umi_frac_of_median=MIN_UMI_FRAC_OF_MEDIAN,
     emptydrops_minimum_umis=MIN_UMIS,
-    max_adj_pvalue=MAX_ADJ_PVALUE,
     num_sims=NUM_SIMS,
 ):
     """Call barcodes as being sufficiently distinct from the ambient profile.
@@ -148,6 +165,7 @@ def find_nonambient_barcodes(
     bc_order = np.argsort(umis_per_bc)
 
     low, high = get_empty_drops_range(chemistry_description, num_probe_bcs)
+    max_adj_pvalue = get_empty_drops_fdr(chemistry_description)
 
     # Take what we expect to be the barcodes associated w/ empty partitions.
     print(f"Range empty barcodes: {low} - {high}")
@@ -186,14 +204,11 @@ def find_nonambient_barcodes(
     eval_bcs = np.ma.array(np.arange(matrix.bcs_dim))
     eval_bcs[orig_cells] = ma.masked
 
-    median_initial_umis = np.median(umis_per_bc[orig_cells])
-    min_umis = int(
-        max(emptydrops_minimum_umis, np.ceil(median_initial_umis * min_umi_frac_of_median))
-    )
-    print(f"Median UMIs of initial cell calls: {median_initial_umis}")
-    print(f"Min UMIs: {min_umis}")
+    max_background_umis = np.max(umis_per_bc[empty_bcs], initial=0)
+    emptydrops_minimum_umis = max(emptydrops_minimum_umis, 1 + max_background_umis)
+    print(f"Max background UMIs: {max_background_umis}")
 
-    eval_bcs[umis_per_bc < min_umis] = ma.masked
+    eval_bcs[umis_per_bc < emptydrops_minimum_umis] = ma.masked
     n_unmasked_bcs = len(eval_bcs) - eval_bcs.mask.sum()
 
     eval_bcs = np.argsort(ma.masked_array(umis_per_bc, mask=eval_bcs.mask))[0:n_unmasked_bcs]
@@ -208,6 +223,7 @@ def find_nonambient_barcodes(
         return None
 
     assert not np.any(np.isin(eval_bcs, orig_cells))
+    assert not np.any(np.isin(eval_bcs, empty_bcs))
     print(f"Number of candidate bcs: {len(eval_bcs)}")
     print(f"Range candidate bc umis: {umis_per_bc[eval_bcs].min()}, {umis_per_bc[eval_bcs].max()}")
 
@@ -234,6 +250,7 @@ def find_nonambient_barcodes(
 
     pvalues_adj = adjust_pvalue_bh(pvalues)
 
+    print(f"Max adjusted P-value: {max_adj_pvalue}")
     is_nonambient = pvalues_adj <= max_adj_pvalue
 
     return NonAmbientBarcodeResult(
@@ -242,4 +259,5 @@ def find_nonambient_barcodes(
         pvalues=pvalues,
         pvalues_adj=pvalues_adj,
         is_nonambient=is_nonambient,
+        emptydrops_minimum_umis=emptydrops_minimum_umis,
     )

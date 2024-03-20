@@ -9,46 +9,13 @@ Components.
 
 from __future__ import annotations
 
-import base64
 import json
-import struct
 from dataclasses import dataclass
 
 import numpy as np
 
 import cellranger.websummary.plotly_tools as pltly
-from websummary import summarize
-
-
-def array_to_float32_base64(vals):
-    """Convert an array of doubles to a little endian base64 encoded ASCII string.
-
-    Args:
-        vals: a list of float values
-
-    Returns:
-        A byte string.
-    """
-    assert isinstance(vals, list)
-    for val in vals:
-        assert isinstance(val, float)
-    format_str = "<" + str(len(vals)) + "f"
-    return b"data:float32;base64," + base64.b64encode(struct.pack(format_str, *vals))
-
-
-def _round_float(x: float) -> float:
-    """Round a float to the nearest value which can be represented with 4 decimal digits.
-
-    In order to avoid representing floats with full precision, we convert them
-    to a lower precision string and then convert that back to a float for use by `json.dumps`
-    which will typically then output many fewer digits if possible.
-    """
-    return float(f"{x:.4g}")
-
-
-def round_floats_in_list(x):
-    """Lower the precision for a whole bunch of floats."""
-    return [_round_float(x) for x in x]
+from cellranger.websummary.numeric_converters import _round_float, round_floats_in_list
 
 
 class React10X:
@@ -768,24 +735,3 @@ class WebSummaryData(React10X):
     def spatial_tab(self):
         self._check_valid()
         return self._data[WebSummaryData._SPATIAL_TAB]
-
-
-def write_html_file(filename: str | bytes, websummary_data: WebSummaryData, contents=None):
-    """Write out a web summary to an HTML file.
-
-    Args:
-        filename: string of output filename
-        websummary_data: an instance of WebSummaryData
-        contents: A string with the component to render
-    """
-    isinstance(websummary_data, WebSummaryData)
-    if not contents:
-        contents = """<div data-key="summary" data-component="CellRangerSummary">"""
-    with open(filename, "w") as outfile:
-        summarize.generate_html_summary(
-            websummary_data,
-            contents,
-            None,
-            outfile,
-            cls=ReactComponentEncoder,
-        )

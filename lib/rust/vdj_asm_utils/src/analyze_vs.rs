@@ -40,20 +40,14 @@ fn read_vector_entry_from_json<R: BufRead>(json: &mut R) -> Option<Vec<u8>> {
     }
     if line == *"[\n" {
         line.clear();
-        if json.read_line(&mut line).is_err() {
-            panic!("json read failure 1");
-        }
+        assert!(json.read_line(&mut line).is_ok(), "json read failure 1");
     }
     let mut entry = Vec::<u8>::new();
     let (mut curlies, mut bracks, mut quotes) = (0_isize, 0_isize, 0_isize);
     let mut s = line.as_bytes();
     loop {
         if (s == b"]" || s == b"]\n") && curlies == 0 && bracks == 0 && quotes % 2 == 0 {
-            if !entry.is_empty() {
-                return Some(entry);
-            } else {
-                return None;
-            }
+            return (!entry.is_empty()).then_some(entry);
         }
         let mut cpos = -1_isize;
         for i in (0..s.len() - 1).rev() {
@@ -87,9 +81,7 @@ fn read_vector_entry_from_json<R: BufRead>(json: &mut R) -> Option<Vec<u8>> {
             entry.push(s[i]);
         }
         line.clear();
-        if json.read_line(&mut line).is_err() {
-            panic!("json read failure 2");
-        }
+        assert!(json.read_line(&mut line).is_ok(), "json read failure 2");
         s = line.as_bytes();
     }
 }
@@ -385,14 +377,13 @@ pub fn analyze_vs(
                     let t = to_t[&(feature_id as usize)];
                     let l = vstart as usize;
                     let n = refdata.refs[t].len();
-                    if n < 200 {
-                        panic!(
-                            "Reference V segment appears to have length {n}, which doesn't \
+                    assert!(
+                        n >= 200,
+                        "Reference V segment appears to have length {n}, which doesn't \
                              make sense.  Probably this function was called without the \
                              from_scratch option even though the reference has changed, or \
                              perhaps you supplied the wrong species."
-                        );
-                    }
+                    );
                     if l + n <= tig.len() {
                         make_report(refdata, t, l, n, i, tig, do_aff, &tigsx, r);
                     }

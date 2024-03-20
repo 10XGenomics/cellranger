@@ -5,16 +5,19 @@ use crate::preflight::{
     check_crispr_target_genes, check_resource_limits, check_target_panel,
     check_vdj_inner_enrichment_primers, check_vdj_known_enrichment_primers, hostname,
 };
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
+use cr_types::chemistry::ChemistryName;
+use cr_types::reference::feature_reference::FeatureType;
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::types::FileOrBytes;
+use cr_types::FeatureBarcodeType;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use multi::config::preflight::{
     build_feature_reference_with_cmos, check_gex_reference, check_libraries, check_samples,
     check_vdj_reference, SectionCtx,
 };
-use multi::config::{MultiConfigCsv, MultiConfigCsvFile};
+use multi::config::{multiconst, ChemistryParam, MultiConfigCsv, MultiConfigCsvFile};
 use parameters_toml::max_multiplexing_tags;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
@@ -64,6 +67,13 @@ impl MartianMain for MultiPreflight {
         }?;
         let gene_expression = cfg.gene_expression.as_ref();
         let (transcriptome, target_genes) = if let Some(gex) = gene_expression {
+            ensure!(
+                gex.chemistry != Some(ChemistryParam::Custom) || args.is_pd,
+                "Unknown chemistry {} in [{}] section.",
+                ChemistryName::Custom,
+                multiconst::GENE_EXPRESSION,
+            );
+
             let transcriptome = check_gex_reference(
                 &SectionCtx {
                     section: "gene-expression",
@@ -126,7 +136,36 @@ impl MartianMain for MultiPreflight {
             &hostname,
             max_multiplexing_tags,
         )?;
-        check_samples(&cfg, feature_reference, args.is_pd, max_multiplexing_tags)?;
+        check_samples(
+            &cfg,
+            feature_reference.clone(),
+            args.is_pd,
+            max_multiplexing_tags,
+        )?;
+        // TODO(CELLRANGER-7837) remove this check once PD support is removed
+        if !args.is_pd
+            && cfg
+                .chemistry_specs()?
+                .values()
+                .any(|chem| chem.refined() == Some(ChemistryName::ThreePrimeV3LT))
+        {
+            bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
+        }
+
+        // Check for CRISPR guide capture libraries and v4 of 3pGEX, which are incompatible.
+        if let Some(feature_reference) = feature_reference.as_ref() {
+            for feat in &feature_reference.feature_defs {
+                if feat.feature_type == FeatureType::Barcode(FeatureBarcodeType::Crispr)
+                    && cfg.chemistry_specs()?.values().any(|chem| {
+                        chem.refined() == Some(ChemistryName::ThreePrimeV4)
+                            || chem.refined() == Some(ChemistryName::ThreePrimeV4OH)
+                    })
+                {
+                    bail!("The chemistry SC3Pv4 (Single Cell 3'v4) is not supported with CRISPR Guide Capture libraries.")
+                }
+            }
+        }
+
         Ok(MultiPreflightOutputs {})
     }
 }
@@ -161,6 +200,16 @@ mod tests {
     fn test_gex_missing_gex_section() {
         let outs = test_run_stage("test/multi/invalid_csvs/gex_missing_gex_section.csv");
         insta::assert_display_snapshot!(outs.unwrap_err());
+    }
+
+    #[test]
+    fn test_3pgexv4_crispr_incompatible() {
+        if !refdata_available() {
+            return;
+        }
+
+        let outs = test_run_stage("test/multi/3pgexv4_crispr_incompatible.csv");
+        insta::assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -340,11 +389,7 @@ mod tests {
             return;
         }
 
-        assert!(test_run_stage_is_pd("test/multi/overhang_multi.csv", true).is_ok());
-        let outs = test_run_stage("test/multi/overhang_multi.csv");
-        assert_eq!(
-            outs.unwrap_err().to_string(),
-            "[samples] section contains an invalid column: overhang_ids"
-        )
+        let outs = test_run_stage("test/multi/invalid_csvs/invalid_overhang_ids.csv");
+        insta::assert_debug_snapshot!(&outs.unwrap_err().to_string());
     }
 }

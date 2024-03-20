@@ -17,6 +17,12 @@ workspace = true
 [dependencies.itertools]
 workspace = true
 
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
 [dependencies.metric]
 path = '../metric'
 
@@ -32,7 +38,13 @@ workspace = true
 [dependencies.rand_pcg]
 workspace = true
 
+[dependencies.serde]
+workspace = true
+
 [dependencies.serde_json]
+workspace = true
+
+[dependencies.shardio]
 workspace = true
 
 [dependencies.transcriptome]

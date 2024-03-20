@@ -361,7 +361,7 @@ mod tests {
             sample_desc: "Human PBMC".into(),
             multi_config_sha: "e96907faf862b9269bdd4649597778d2c44954dfa877095ceb934b8ce043bbca"
                 .into(),
-            protobuf_version: "".to_string(),
+            protobuf_version: String::new(),
         };
 
         let reference = VdjReferenceRaw {

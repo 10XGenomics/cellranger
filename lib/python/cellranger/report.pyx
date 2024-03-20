@@ -10,22 +10,19 @@ import operator
 import os.path
 import pickle
 import random
+from collections.abc import Iterable
 from sys import intern
-from typing import Dict, Iterable, List, Optional, Set, Tuple, Type, Union
 
 import numpy as np
 
 import cellranger.constants as cr_constants
-import cellranger.hdf5 as cr_h5
-import cellranger.reference as cr_reference
 import cellranger.rna.library as rna_library
 import cellranger.stats as cr_stats
 import cellranger.utils as cr_utils
-import tenkit.fasta as tk_fasta
 import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
 import tenkit.stats as tk_stats
-from cellranger.reference_paths import get_reference_genomes
+from cellranger.reference_paths import get_ref_name_from_genomes, get_reference_genomes
 
 DEFAULT_REPORT_TYPE = "summary"
 
@@ -42,7 +39,7 @@ class Metric:
     def merge(self, metric: "Metric") -> None:
         raise NotImplementedError
 
-    def report(self) -> Union[int, float, dict]:
+    def report(self) -> int | float | dict:
         raise NotImplementedError
 
 
@@ -83,7 +80,7 @@ class CountDistinctIntegerMetric(Metric):
         raise NotImplementedError
 
     def add_many(self, counts):
-        """Takes an array of integer counts"""
+        """Takes an array of integer counts."""
         if self.counts is None:
             self.counts = np.copy(counts)
         else:
@@ -117,7 +114,7 @@ class HistogramMetric(DictionaryMetric):
 
 
 class NumpyHistogramMetric(Metric):
-    """A histogram with bins of size 1 and a final bin containing elements > max_value"""
+    """A histogram with bins of size 1 and a final bin containing elements > max_value."""
 
     def __init__(self, max_value=10, **kwargs):
         Metric.__init__(self, **kwargs)
@@ -142,14 +139,14 @@ class NumpyHistogramMetric(Metric):
         assert self.max_value == metric.max_value
         self.counts += metric.counts
 
-    def report(self) -> Dict[str, int]:
-        d = {str(k): int(v) for k, v in zip(range(0, 1 + self.max_value), self.counts)}
+    def report(self) -> dict[str, int]:
+        d = {str(k): int(v) for k, v in zip(range(1 + self.max_value), self.counts)}
         d[">%d" % self.max_value] = int(self.counts[-1])
         return d
 
 
 class SequenceDistributionMetric(Metric):
-    """Count base frequencies at k positions"""
+    """Count base frequencies at k positions."""
 
     def __init__(self, k, **kwargs):
         Metric.__init__(self, **kwargs)
@@ -166,7 +163,7 @@ class SequenceDistributionMetric(Metric):
     def merge(self, metric: "SequenceDistributionMetric") -> None:
         self.counts += metric.counts
 
-    def report(self) -> Dict[str, Dict[bytes, int]]:
+    def report(self) -> dict[str, dict[bytes, int]]:
         d = collections.defaultdict(
             lambda: collections.defaultdict(int)
         )  # type: Dict[str, Dict[bytes, int]]
@@ -345,7 +342,7 @@ class MeanMetric(StatsMetric):
 
 
 class VarianceMetric(StatsMetric):
-    """Chan et. al (1979) parallel variance"""
+    """Chan et. al (1979) parallel variance."""
 
     def __init__(self, **kwargs):
         StatsMetric.__init__(self, **kwargs)
@@ -385,7 +382,7 @@ class VarianceMetric(StatsMetric):
 
 
 class CVMetric(VarianceMetric):
-    """Coeffcient of variation: sd/mean"""
+    """Coeffcient of variation: sd/mean."""
 
     def report(self):
         if self.m0 < 2:
@@ -396,7 +393,7 @@ class CVMetric(VarianceMetric):
 
 
 class DispersionMetric(VarianceMetric):
-    """Method of moments estimator for negative binomial 1/r"""
+    """Method of moments estimator for negative binomial 1/r."""
 
     def report(self):
         if self.m0 < 2:
@@ -461,18 +458,13 @@ _ALWAYS_ACTIVE = intern("always_active")
 
 
 def _make_default_metrics() -> (
-    Dict[
+    dict[
         str,
-        Tuple[
-            Type[Metric],
-            Dict[
+        tuple[
+            type[Metric],
+            dict[
                 str,
-                Union[
-                    Dict[str, Union[str, bool]],
-                    List[str],
-                    List[Union[int, float]],
-                    List[Union[range, List[int]]],
-                ],
+                dict[str, str | bool] | list[str] | list[int | float] | list[range | list[int]],
             ],
         ],
     ]
@@ -637,78 +629,25 @@ BARCODE_MIN_QUAL_THRESHOLD: int = 10
 UMI_POLYT_SUFFIX_LENGTH: int = 5
 
 
-def get_hamming_distance(kmer1, kmer2) -> int:
-    kmer1_len, kmer2_len = len(kmer1), len(kmer2)
-
-    hamming_distance = abs(kmer1_len - kmer2_len)
-    for i in range(min(kmer1_len, kmer2_len)):
-        if kmer1[i] != kmer2[i]:
-            hamming_distance += 1
-    return hamming_distance
-
-
-def get_kmers_hamming_distance(kmers) -> Optional[int]:
-    min_hamming_distance = None
-    for i, kmer1 in enumerate(kmers):
-        for kmer2 in kmers[i + 1 :]:
-            hamming_distance = get_hamming_distance(kmer1, kmer2)
-            min_hamming_distance = (
-                min(min_hamming_distance, hamming_distance)
-                if min_hamming_distance is not None
-                else hamming_distance
-            )
-            if min_hamming_distance == 0:
-                return min_hamming_distance
-    return min_hamming_distance
-
-
-def is_barcode_on_whitelist(seq: bytes, whitelist: List[bytes]) -> bool:
-    if whitelist is None:
-        return b"N" not in seq
-    else:
-        return seq in whitelist
-
-
-def is_umi_corrected(raw_umi_seq, processed_umi_seq) -> bool:
-    if processed_umi_seq is None:
-        return False
-
-    return raw_umi_seq != processed_umi_seq
-
-
-def min_qual_below(qual, threshold) -> bool:
-    """Return true if the min qual is below the threshold.
-
-    Args:
-         qual: a read's qual string.
-    """
-    return threshold is not None and tk_fasta.get_min_qual(qual) < threshold
-
-
 class Reporter:
     def __init__(
         self,
-        umi_length: Optional[int] = None,
+        umi_length: int | None = None,
         primers=None,
-        reference_path: Optional[str] = None,
+        reference_path: str | None = None,
         high_conf_mapq=None,
         chroms=None,
-        barcode_whitelist: Optional[List[bytes]] = None,
+        barcode_whitelist: list[bytes] | None = None,
         barcode_summary=None,
         barcode_dist=None,
         gem_groups=None,
-        metrics_dict: Dict[
+        metrics_dict: dict[
             str,
-            Tuple[
-                Type[Metric],
-                Dict[
+            tuple[
+                type[Metric],
+                dict[
                     str,
-                    Union[
-                        Dict[str, Union[str, bool]],
-                        List[str],
-                        List[Union[int, float]],
-                        List[Union[range, List[int]]],
-                    ],
+                    dict[str, str | bool] | list[str] | list[int | float] | list[range | list[int]],
                 ],
             ],
         ] = METRICS,
@@ -716,9 +655,9 @@ class Reporter:
         umi_min_qual_threshold: int = 0,
         subsample_types=None,
         subsample_depths=None,
-        genomes: List[str] = None,
+        genomes: list[str] | None = None,
         library_types=None,
-        num_libraries: Optional[int] = None,
+        num_libraries: int | None = None,
     ):
         self.chroms = chroms
         self.umi_length = umi_length
@@ -836,7 +775,7 @@ class Reporter:
 
         self.metrics_dict = metrics_dict
         self.metrics_data = {}
-        prefixes: List[List[str]] = []
+        prefixes: list[list[str]] = []
         for base, (metric_cls, metric_dict) in self.metrics_dict.items():
             # Track prefixes for passing to the webshim
             prefixes.extend(metric_dict.get(_PREFIX_KEY, []))
@@ -852,10 +791,10 @@ class Reporter:
         self.reference_path = reference_path
         self.metadata = {}
 
-    def _get_metric_keys(self, name: str) -> Set[Tuple[str]]:
+    def _get_metric_keys(self, name: str) -> set[tuple[str]]:
         metric_cls, metric_dict = self.metrics_dict[name]
-        prefixes: List[str] = metric_dict.get(_PREFIX_KEY, [])
-        kwargs: Dict[str, Union[str, bool]] = metric_dict.get(_KWARGS_KEY, {})
+        prefixes: list[str] = metric_dict.get(_PREFIX_KEY, [])
+        kwargs: dict[str, str | bool] = metric_dict.get(_KWARGS_KEY, {})
 
         always_active = kwargs.get(_ALWAYS_ACTIVE, False)
 
@@ -896,11 +835,10 @@ class Reporter:
             ref_type (str): e.g., 'Transcriptome'
             metric_prefix (str): e.g., 'vdj'
         """
-
         if self.metadata is None:
             self.metadata = {}
 
-        with open(os.path.join(reference_path, cr_constants.REFERENCE_METADATA_FILE), "r") as f:
+        with open(os.path.join(reference_path, cr_constants.REFERENCE_METADATA_FILE)) as f:
             ref_metadata = json.load(f)
 
         for key in [
@@ -919,21 +857,21 @@ class Reporter:
 
             # Backward compatibility with old reference metadata jsons that don't contain the type field
             if key == cr_constants.REFERENCE_TYPE_KEY and value == "":
-                self.metadata["%s%s" % (metric_prefix, cr_constants.REFERENCE_TYPE_KEY)] = ref_type
+                self.metadata[f"{metric_prefix}{cr_constants.REFERENCE_TYPE_KEY}"] = ref_type
                 continue
 
             if np.isscalar(value):
-                self.metadata["%s%s" % (metric_prefix, key)] = value
+                self.metadata[f"{metric_prefix}{key}"] = value
             elif key == cr_constants.REFERENCE_GENOMES_KEY:
                 # Special case for genome key
                 self.metadata[
-                    "%s%s" % (metric_prefix, key)
-                ] = cr_reference.get_ref_name_from_genomes(value)
+                    f"{metric_prefix}{key}"
+                ] = get_ref_name_from_genomes(value)
             else:
-                self.metadata["%s%s" % (metric_prefix, key)] = ", ".join(str(x) for x in value)
+                self.metadata[f"{metric_prefix}{key}"] = ", ".join(str(x) for x in value)
 
     def store_chemistry_metadata(self, chemistry_def: dict):
-        """Store the chemistry definition as metrics in the summary json"""
+        """Store the chemistry definition as metrics in the summary json."""
         if self.metadata is None:
             self.metadata = {}
         for key, value in chemistry_def.items():
@@ -963,11 +901,11 @@ class Reporter:
         return summary
 
     def to_json(self):
-        """Return data as safe-for-json dictionary"""
+        """Return data as safe-for-json dictionary."""
         return tk_safe_json.json_sanitize(self.report(DEFAULT_REPORT_TYPE))
 
     def report_summary_json(self, filename):
-        """Write to JSON file"""
+        """Write to JSON file."""
         with open(filename, "w") as f:
             tk_safe_json.dump_numpy(self.to_json(), f, pretty=True)
 
@@ -977,29 +915,6 @@ class Reporter:
             for bc in barcodes:
                 f.write(bc)
                 f.write("\n")
-
-    def report_barcodes_h5(self, filename):
-        data = self.report(_BARCODES)
-
-        if self.barcode_whitelist:
-            bc_sequences = cr_utils.format_barcode_seqs(self.barcode_whitelist, self.gem_groups)
-        elif self.barcode_summary is not None:
-            bc_sequences = self.barcode_summary
-        else:
-            # Get all observed bc sequences
-            bc_sequences = set()
-            for seqs in data.values():
-                bc_sequences.update(seqs.keys())
-            bc_sequences = sorted(bc_sequences)
-
-        # Build the columns for the table
-        bc_table_cols = {cr_constants.H5_BC_SEQUENCE_COL: bc_sequences}
-
-        for metric_name, metric_data in data.items():
-            counts = np.array([metric_data.get(bc, 0) for bc in bc_sequences], dtype=np.uint32)
-            bc_table_cols[metric_name] = counts
-
-        cr_h5.write_h5(filename, bc_table_cols)
 
     def save(self, filename):
         with open(filename, "wb") as f:

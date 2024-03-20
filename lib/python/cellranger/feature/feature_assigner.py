@@ -210,28 +210,24 @@ def _calculate_n_let_diversity_probs(n_let: int, n_tags: int) -> np.ndarray:
     return probs
 
 
-def call_presence_with_gmm_ab(umi_counts: np.ndarray, n_components: int = 2) -> np.ndarray:
-    """Given the UMI counts for a specific antibody, separate signal from background."""
+def call_presence_with_gmm_ab(umi_counts: np.ndarray, *, umi_threshold: int = 1) -> np.ndarray:
+    """Given the UMI counts for a specific antibody, separate signal from background.
+
+    A cell must have at least `umi_threshold` UMIs for this feature to be considered positive.
+    """
     if np.max(umi_counts) == 0 or max(umi_counts.shape) < 2:
         # there are no UMIs, or only one UMI, each barcode has 0 count
         return np.repeat(False, len(umi_counts))
 
-    # Turn the numpy array into 2D log scale array
-    umi_counts = np.reshape(umi_counts, (len(umi_counts), 1))
-    log_ab = np.log10(umi_counts + 1.0)
+    log_umi_counts = np.log10(1 + umi_counts).reshape(-1, 1)
 
     # Initialize and fit the gaussian Mixture Model
-    gmm = mixture.GaussianMixture(n_components, n_init=10, covariance_type="tied", random_state=0)
-    gmm.fit(log_ab)
+    gmm = mixture.GaussianMixture(n_components=2, n_init=10, covariance_type="tied", random_state=0)
+    gmm.fit(log_umi_counts)
+    positive_component = np.argmax(gmm.means_)
 
-    # Calculate the threshold
-    umi_posterior = gmm.predict_proba(log_ab)
-    high_umi_component = np.argmax(gmm.means_)
-
-    in_high_umi_component = umi_posterior[:, high_umi_component] > 0.5
-    # umi_threshold = np.power(10, np.min(logAb[in_high_umi_component]))
-
-    return in_high_umi_component
+    # Classify each cell
+    return (umi_counts >= umi_threshold) & (gmm.predict(log_umi_counts) == positive_component)
 
 
 # This cannot use a namedtuple because those are immutable.
@@ -645,7 +641,7 @@ class FeatureAssigner:
         if self.assignments is None:
             self.assignments = self.get_feature_assignments()
 
-        feature_assignments_df = pd.DataFrame()
+        feature_assignments_dict = {}
         for f_id, asst in self.assignments.items():
             if not isinstance(f_id, bytes):
                 raise ValueError(f"Feature ID {f_id} must be bytes, but was {type(f_id)}")
@@ -659,10 +655,11 @@ class FeatureAssigner:
                 np.put(mask, asst.bc_indices, 1)
             # instead of creating a dense df and then putting it in a sparse matrix,
             # better to create sparse arrays and put those into sparse df
-            sparse_mask = SparseArray(mask, dtype="uint8")
-            feature_assignments_df[f_id] = sparse_mask
-            del mask
-
+            sparse_mask = SparseArray(mask, dtype=FeatureAssignmentsMatrix.FEATURE_ASSIGNMENT_DTYPE)
+            feature_assignments_dict[f_id] = sparse_mask
+            del mask, sparse_mask
+        feature_assignments_df = pd.DataFrame(feature_assignments_dict)
+        del feature_assignments_dict
         # when no assignments for whatever reason, simply return the object with empty df
         if len(feature_assignments_df) == 0:
             return FeatureAssignmentsMatrix(feature_assignments_df, self.matrix, self.feature_type)
@@ -704,14 +701,14 @@ class GuideAssigner(FeatureAssigner):
 
         assignments: dict[bytes, FeatureAssignments] = OrderedDict()
         feature_ids_this_type = self.matrix.get_feature_ids_by_type(self.feature_type)
-
+        self.matrix.tocsr()
         for feature_id in feature_ids_this_type:
             if not isinstance(feature_id, bytes):
                 raise ValueError(
                     f"Feature ID {feature_id} must be bytes but was {type(feature_id)}"
                 )
             umi_counts = self.matrix.get_subselected_counts(
-                log_transform=False, library_type=self.feature_type, list_feature_ids=[feature_id]
+                log_transform=False, list_feature_ids=[feature_id]
             )
 
             in_high_umi_component = GuideAssigner._call_presence(umi_counts, self.method)
@@ -722,17 +719,24 @@ class GuideAssigner(FeatureAssigner):
 
     @staticmethod
     def _call_presence(counts: np.ndarray, method: str = "GMM") -> np.ndarray:
-        """Calls the appropriate method on counts.
+        """Classify each cell as positive/negative for a CRISPR feature using a GMM.
+
+        A cell must have at least 3 UMIs for this CRISPR feature to be considered positive.
+        This threshold is used to exclude CRISPR features with only background signal and
+        no foreground signal. Without this filter, a CRISPR feature with 0 or 1 UMIs in each cell
+        would call all the cells with one UMI as positive, which renders meaningless the metric
+        `Cells with one or more protospacers detected`. The threshold value was chosen by being
+        the smallest sufficient value on experimental data.
 
         Args:
-            counts (np.array): feature counts (int32)
-            method (str): the method to use. Only supports GMMs right now
+            counts: feature counts
+            method: the method to use. Only supports GMMs right now
 
         Returns:
-            np.array: Booleans indicating whether feature is "truly present", above background
+            Booleans indicating whether feature is present above background
         """
         if method == "GMM":
-            return call_presence_with_gmm_ab(counts)
+            return call_presence_with_gmm_ab(counts, umi_threshold=3)
         raise ValueError(f"Method {method} is not supported")
 
     def create_guide_assignments_matrix(self) -> FeatureAssignmentsMatrix:

@@ -44,7 +44,7 @@ impl FilterLogger {
         })
     }
     pub fn log(&mut self, entry: &FilterLogEntry) {
-        self.writer.write_item(entry).unwrap()
+        self.writer.write_item(entry).unwrap();
     }
 }
 
@@ -246,8 +246,9 @@ pub enum AsmCellFilter {
         param_min_ratio_big: usize,
     },
 
-    /// The barcode is not called as a cell due to the use of force cells.
-    ForceCells { rank: usize },
+    /// The barcode is not called as a cell because its overhang does not match
+    /// the overhang ids specified for this sample. Only applies to multiplexed VDJ.
+    DifferentOverhang { overhang_id: String },
 }
 
 impl AsmCellFilter {
@@ -264,7 +265,7 @@ impl AsmCellFilter {
             AsmCellFilter::ChimericContig { .. } => "CHIMERIC",
             AsmCellFilter::CommonCloneShadow { .. } => "COMMON_CLONE",
             AsmCellFilter::CommonCloneShadowSingleUmi { .. } => "COMMON_CLONE",
-            AsmCellFilter::ForceCells { .. } => "FORCE_CELLS",
+            AsmCellFilter::DifferentOverhang { .. } => "DIFFERENT_OVERHANG",
         }
     }
 }

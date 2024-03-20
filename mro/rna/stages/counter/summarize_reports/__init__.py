@@ -8,7 +8,6 @@ import shutil
 
 import cellranger.report as cr_report
 import cellranger.webshim.common as cr_webshim
-import cellranger.websummary.cmdline as cml
 import cellranger.websummary.sample_properties as sp
 from cellranger.reference_paths import get_reference_genomes
 from cellranger.webshim.constants.shared import PIPELINE_COUNT
@@ -17,31 +16,30 @@ from cellranger.websummary.web_summary_builder import build_web_summary_html_sc
 
 __MRO__ = """
 stage SUMMARIZE_REPORTS(
-    in  json[]   summaries,
-    in  string   sample_id,
-    in  string   sample_desc,
-    in  path     reference_path,
-    in  path     analysis,
-    in  h5       barcode_summary_h5,
-    in  h5       filtered_gene_bc_matrices_h5,
-    in  csv      filtered_barcodes,
-    in  tps.json target_panel_summary,
-    in  string   barcode_whitelist,
-    in  json     antibody_histograms,
-    in  json     antibody_treemap,
-    in  json     antigen_histograms,
-    in  json     antigen_treemap,
-    in  csv      feature_reference,
-    in  string   target_set_name,
-    in  csv      per_feature_metrics_csv,
-    in  bool     include_introns,
-    in  string   throughput,
-    out json     metrics_summary_json,
-    out csv      metrics_summary_csv,
-    out html     web_summary,
-    out csv      feature_reference,
-    out json     ws_data,
-    src py       "stages/counter/summarize_reports",
+    in  map<ChemistryDef> chemistry_defs,
+    in  json[]            summaries,
+    in  string            sample_id,
+    in  string            sample_desc,
+    in  path              reference_path,
+    in  path              analysis,
+    in  h5                barcode_summary_h5,
+    in  h5                filtered_gene_bc_matrices_h5,
+    in  csv               filtered_barcodes,
+    in  tps.json          target_panel_summary,
+    in  json              antibody_histograms,
+    in  json              antibody_treemap,
+    in  json              antigen_histograms,
+    in  json              antigen_treemap,
+    in  csv               feature_reference,
+    in  string            target_set_name,
+    in  csv               per_feature_metrics_csv,
+    in  bool              include_introns,
+    out json              metrics_summary_json,
+    out csv               metrics_summary_csv,
+    out html              web_summary,
+    out csv               feature_reference,
+    out json              ws_data,
+    src py                "stages/counter/summarize_reports",
 ) using (
     mem_gb   = 16,
     volatile = strict,
@@ -53,8 +51,6 @@ stage SUMMARIZE_REPORTS(
 
 def main(args, outs):
     id_dict = {"sample_id": args.sample_id, "sample_desc": args.sample_desc}
-    if args.target_panel_summary is not None:
-        args.summaries.append(args.target_panel_summary)
     cr_report.merge_jsons(args.summaries, outs.metrics_summary_json, [id_dict])
 
     sample_data_paths = sp.SampleDataPaths(
@@ -69,23 +65,17 @@ def main(args, outs):
         antigen_treemap_path=args.antigen_treemap,
     )
 
-    cmdline = os.environ.get("CMDLINE")
-    if cmdline:
-        cmdline_parsed = cml.parse_cmdline_basename(cmdline)
-    else:
-        cmdline_parsed = "NA"
     genomes = get_reference_genomes(args.reference_path)
     sample_properties = sp.ExtendedCountSampleProperties(
         sample_id=args.sample_id,
         sample_desc=args.sample_desc,
-        barcode_whitelist=args.barcode_whitelist,
+        genomes=genomes,
         reference_path=args.reference_path,
+        chemistry_defs=args.chemistry_defs,
         include_introns=args.include_introns,
-        throughput=args.throughput,
         target_set=args.target_set_name,
         target_panel_summary=args.target_panel_summary,
-        genomes=genomes,
-        cmdline=cmdline_parsed,
+        cmdline=os.environ.get("CMDLINE", "NA"),
     )
 
     # TODO: Move metrics CSV somewhere else

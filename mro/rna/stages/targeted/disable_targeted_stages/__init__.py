@@ -10,10 +10,12 @@ import martian
 import cellranger.csv_io as cr_csv_io
 
 __MRO__ = """
-stage DISABLE_GDNA_STAGES(
+stage DISABLE_TARGETED_STAGES(
     in  csv  probe_set,
+    in  bool is_visium_hd,
     out bool disable_targeted_gdna,
-    src py   "stages/targeted/disable_gdna_stages",
+    out bool disable_sampling_stages,
+    src py   "stages/targeted/disable_targeted_stages",
 )
 """
 # also in Rust in cr_lib/stages/collate_probe_metrics.rs
@@ -30,8 +32,9 @@ def main(args, outs):
         args (An object with one input):
             args.probe_set : path to probe set reference
         outs (An object with one utput):
-            outs.disable_targeted_gdna: (bool) True if gDNA analysis should be disabled
+            outs.disable_targeted_gdna: (bool) True if gDNA analysis should be disable
     """
+    outs.disable_sampling_stages = bool(args.is_visium_hd)
     if (
         (args.probe_set is None)
         or ("region" not in cr_csv_io.load_csv_columnnames(args.probe_set))

@@ -3,7 +3,7 @@ use fastq_set::adapter_trimmer::{Adapter, AdapterLoc, ReadAdapterCatalog};
 use fastq_set::read_pair::WhichRead;
 use fastq_set::WhichEnd::{FivePrime, ThreePrime};
 use fxhash::FxHashMap;
-use metric::{Metric, PercentMetric};
+use metric::PercentMetric;
 
 const SPACER: &str = "TTTCTTATATGGG";
 const SPACER_RC: &str = "CCCATATAAGAAA";
@@ -69,7 +69,7 @@ impl<'a> VdjTrimmer<'a> {
         for (&which_read, adapters) in adapter_map {
             let mut adapter_frac = FxHashMap::default();
             for adapter in adapters {
-                adapter_frac.insert(adapter.name.clone(), PercentMetric::new());
+                adapter_frac.insert(adapter.name.clone(), PercentMetric::default());
             }
             metrics.insert(which_read, adapter_frac);
         }

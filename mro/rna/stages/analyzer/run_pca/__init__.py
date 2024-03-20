@@ -6,14 +6,10 @@
 import martian
 
 import cellranger.analysis.constants as analysis_constants
-
-# pylint: disable=wrong-import-position
 import cellranger.analysis.pca as cr_pca
-import cellranger.cr_io as cr_io
 import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
-from cellranger.hacks import get_thread_request_from_mem_gb
 
 __MRO__ = """
 stage RUN_PCA(
@@ -48,20 +44,10 @@ def split(args):
         nonzero_entries, feature_dim, bcs_dim, num_pcs
     )
     mem_gb = max(irlb_mem_gb, matrix_mem_gb, h5_constants.MIN_MEM_GB)
-
-    # HACK - give big jobs more threads in order to avoid overloading a node
-    threads = get_thread_request_from_mem_gb(mem_gb)
-
-    chunks = [
-        {
-            "__mem_gb": mem_gb,
-            "__threads": threads,
-        }
-    ]
-    return {"chunks": chunks, "join": {"__mem_gb": 1}}
+    return {"chunks": [], "join": {"__mem_gb": mem_gb}}
 
 
-def main(args, outs):
+def join(args, outs, _chunk_defs, _chunk_outs):
     matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
     if args.is_antibody_only:
         matrix = matrix.select_features_by_type(rna_library.ANTIBODY_LIBRARY_TYPE)
@@ -101,9 +87,3 @@ def main(args, outs):
     pca_map = {pca_key: pca}
     cr_pca.save_pca_h5(pca_map, outs.pca_h5)
     cr_pca.save_pca_csv(pca_map, matrix, outs.pca_csv)
-
-
-def join(args, outs, chunk_defs, chunk_outs):
-    chunk_out = chunk_outs[0]
-    cr_io.hardlink_with_fallback(chunk_out.pca_h5, outs.pca_h5)
-    cr_io.hardlink_with_fallback(chunk_out.pca_csv, outs.pca_csv)

@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
-use cr_types::reference::feature_reference::FeatureDef;
-use cr_types::types::FeatureType;
+use cr_types::reference::feature_reference::{FeatureDef, FeatureType};
+use cr_types::types::FeatureBarcodeType;
+use cr_types::GenomeName;
 use fastq_set::read_pair::WhichRead;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ pub struct CmoDef {
     pub read: WhichRead,
     pub pattern: String,
     pub sequence: String,
-    pub feature_type: FeatureType,
+    pub feature_type: FeatureBarcodeType,
 }
 
 impl CmoDef {
@@ -33,11 +34,11 @@ impl CmoDef {
             index,
             id,
             name,
-            genome: String::default(),
+            genome: GenomeName::default(),
             sequence,
             pattern,
             read,
-            feature_type,
+            feature_type: FeatureType::Barcode(feature_type),
             tags: HashMap::new(),
         }
     }
@@ -55,7 +56,7 @@ pub fn load_cmo_set<R: Read>(reader: R) -> Result<Vec<CmoDef>> {
         .enumerate()
         .map(|(i, record)| {
             let record: CmoDef = record?;
-            if record.feature_type != FeatureType::Multiplexing {
+            if record.feature_type != FeatureBarcodeType::Multiplexing {
                 bail!(
                     "CMO definition {} must have feature_type \"Multiplexing Capture\"",
                     i + 1

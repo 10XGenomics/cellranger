@@ -259,3 +259,68 @@ def touch(path: str | bytes) -> None:
     """Create an empty file."""
     with open(path, "wb"):
         pass
+
+
+def recursive_hard_link_dict(in_files, prefixes=None):
+    """Hard link files into this stage directory.
+
+    For a dict with type [String,path_or_file_or_dict], where the keys represent sample IDs
+    or other levels of nesting, create a dict with the same keys where all the path_or_file
+    values are hardlinked into this stage directory from their old paths.
+    If path_or_file_or_dict is a directory, recursively hardlink the contents of the directory.
+    When nesting the key used to access each upper level will be used as a prefix
+    when constructing the final file name.
+
+    For example,
+
+      {
+        "sample1": {
+          "gene_expression": "/mydir/gex.txt",
+          "antibody": "/mydir/ab.txt"
+        },
+        "sample2": {
+          "gene_expression": "/mydir/gex.txt",
+          "antibody": "/mydir/ab.txt"
+        },
+      }
+
+    would become
+
+      {
+        "sample1": {
+          "gene_expression": "sample1_gene_expression_gex.txt",
+          "antibody": "sample1_antibody.ab.txt"
+         },
+         "sample2": {
+           "gene_expression": "sample2_gene_expression_gex.txt",
+           "antibody": "sample2_antibody_ab.txt"
+         },
+      }
+    """
+    if in_files is None:
+        return None
+
+    if prefixes is None:
+        prefixes = []
+
+    out_files = {}
+    for k, path_or_dict in in_files.items():
+        if path_or_dict is None:
+            out_files[k] = None
+        else:
+            if isinstance(path_or_dict, dict):
+                out_files[k] = recursive_hard_link_dict(in_files[k], prefixes + [k])
+            elif isinstance(path_or_dict, (str)):
+                final_prefixes = prefixes + [k]
+                old_path = path_or_dict
+                new_path = martian.make_path(
+                    "_".join(final_prefixes) + "_" + os.path.basename(old_path)
+                ).decode("utf8")
+                hardlink_with_fallback(old_path, new_path)
+                out_files[k] = new_path
+            else:
+                raise ValueError(
+                    "Input dictionary may not contain any elements other than dict and string: %s"
+                    % path_or_dict
+                )
+    return out_files

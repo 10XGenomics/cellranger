@@ -24,39 +24,27 @@ from cellranger.reference_paths import get_reference_genomes
 
 __MRO__ = """
 stage INFER_GEM_WELL_THROUGHPUT(
-    in  string throughput,
-    in  string chemistry_description,
-    in  path   reference_path,
-    in  h5     filtered_feature_counts_matrix,
-    in  h5     barcode_summary_h5,
-    out string throughput,
-    out json   inferred_throughputs,
-    src py     "stages/feature/infer_gem_well_throughput",
-) split (
+    in  map<ChemistryDef> chemistry_defs,
+    in  string            throughput,
+    in  h5                filtered_feature_counts_matrix,
+    in  path              reference_path,
+    in  h5                barcode_summary_h5,
+    out string            throughput,
+    out json              inferred_throughputs,
+    src py                "stages/feature/infer_gem_well_throughput",
+) using (
+    mem_gb   = 2,
+    volatile = strict,
 )
 """
 
 
-def set_empty(outs):
-    """Exit with empty functional outs."""
-    outs.throughput = None
-    outs.inferred_throughputs = None
-
-
-def split(args):
-    return {"chunks": [], "join": {"__mem_gb": 2}}
-
-
-def join(args, outs, chunk_defs, chunk_outs):
+def main(args, outs):
     feature_ref = CountMatrix.load_feature_ref_from_h5_file(args.filtered_feature_counts_matrix)
     no_cmos = feature_ref.get_count_of_feature_type(rna_library.MULTIPLEXING_LIBRARY_TYPE) == 0
-    if no_cmos:
-        set_empty(outs)
-        return
-
-    # pylint: disable=too-many-function-args
-    if not feature_utils.all_files_present([args.barcode_summary_h5]):
-        set_empty(outs)
+    if no_cmos or not feature_utils.all_files_present([args.barcode_summary_h5]):
+        outs.throughput = None
+        outs.inferred_throughputs = None
         return
 
     # get barcode counts from barcode summary
@@ -88,8 +76,11 @@ def join(args, outs, chunk_defs, chunk_outs):
         else MT_THROUGHPUT
     )
 
+    gex_chemistry_def = args.chemistry_defs[rna_library.GENE_EXPRESSION_LIBRARY_TYPE]
+    gex_chemistry_description = gex_chemistry_def[CHEMISTRY_DESCRIPTION_FIELD]
+
     inferred_throughputs = {
-        "throughput_specified_by_chemistry": args.chemistry_description,
+        "throughput_specified_by_chemistry": gex_chemistry_description,
         "throughput_specified_by_user": args.throughput,
         "throughput_inferred_from_counts": throughput_counts,
         "throughput_inferred_from_gradient": throughput_gradient,
@@ -98,9 +89,9 @@ def join(args, outs, chunk_defs, chunk_outs):
     }
 
     # We now take throughput directly from --chemistry input
-    if args.chemistry_description == CHEMISTRY_SC3P_LT[CHEMISTRY_DESCRIPTION_FIELD]:
+    if gex_chemistry_def == CHEMISTRY_SC3P_LT:
         outs.throughput = LT_THROUGHPUT
-    elif args.chemistry_description.endswith("HT"):
+    elif gex_chemistry_description.endswith("HT"):
         outs.throughput = HT_THROUGHPUT
     else:
         outs.throughput = throughput_final

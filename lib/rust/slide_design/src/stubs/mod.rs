@@ -18,3 +18,6 @@ impl AsMartianPrimaryType for OligoPart {
 pub fn load_oligos(_: &Path, _: OligoPart) -> Result<Vec<String>> {
     unimplemented!()
 }
+pub fn spot_pitch(_: &Path) -> Result<u32> {
+    unimplemented!()
+}

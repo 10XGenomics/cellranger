@@ -1,7 +1,9 @@
 //! PCA analysis code
 
-use crate::types::{FeatureType, PcaResult};
+use crate::types::PcaResult;
 use anyhow::Result;
+use cr_types::reference::feature_reference::FeatureType;
+use cr_types::FeatureBarcodeType;
 use log::warn;
 use ndarray::linalg::Dot;
 use ndarray::{s, Array, Array1, Array2, Axis};
@@ -146,7 +148,7 @@ where
     M: MatrixMap<u32, u32>,
 {
     match (feature_type, is_spatial) {
-        (FeatureType::Antibody, true) => {
+        (FeatureType::Barcode(FeatureBarcodeType::Antibody), true) => {
             normalize_with_size_factor(filtered_matrix, Normalization::LogTransform, None)
         }
         _ => normalize_with_size_factor(filtered_matrix, Normalization::CellRanger, None),
@@ -204,7 +206,6 @@ pub(crate) fn run_pca<'a>(
         selected_feature_ids,
         transformed_pca_matrix,
         variance_explained,
-        true,
     ))
 }
 
@@ -251,7 +252,11 @@ mod tests {
             [0.92609909, 0.14507504, 0.25503138, 0.59722303, -1.92342854]
         ];
         let mtx = AdaptiveMatOwned::<u32>::from_dense(dense.view());
-        let norm_mat = get_normalized_matrix(FeatureType::Antibody, &true, mtx);
+        let norm_mat = get_normalized_matrix(
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+            &true,
+            mtx,
+        );
 
         assert!(expected_out_dense.abs_diff_eq(&norm_mat.to_dense(), 1e-6));
     }

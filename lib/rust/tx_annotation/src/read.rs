@@ -3,8 +3,6 @@ use crate::transcript::{
     AnnotationData, AnnotationParams, AnnotationRegion, PairAnnotationData, TranscriptAnnotator,
 };
 use anyhow::Result;
-use barcode::HasBarcode;
-use bio_types::strand::Strand;
 use cr_bam::bam_tags::{
     ExtraFlags, ANTISENSE_TAG, EXTRA_FLAGS_TAG, FEATURE_IDS_TAG, FEATURE_QUAL_TAG, FEATURE_RAW_TAG,
     FEATURE_SEQ_TAG, GENE_ID_TAG, GENE_NAME_TAG, MULTIMAPPER_TAG, PROBE_TAG, PROC_BC_SEQ_TAG,
@@ -17,11 +15,10 @@ use cr_types::chemistry::ChemistryDef;
 use cr_types::probe_set::MappedProbe;
 use cr_types::reference::feature_extraction::FeatureData;
 use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::reference::genome_of_chrom::GenomeName;
 use cr_types::rna_read::{RnaChunk, RnaRead, UmiPart, HIGH_CONF_MAPQ};
-use cr_types::types::{LibraryFeatures, ReqStrand};
 use cr_types::utils::calculate_median_of_sorted;
-use cr_types::UmiCount;
+use cr_types::{GenomeName, ReqStrand, UmiCount};
+use fastq_set::WhichEnd;
 use itertools::Itertools;
 use martian_derive::{martian_filetype, MartianStruct};
 use martian_filetypes::bin_file::BinaryFormat;
@@ -30,7 +27,7 @@ use rust_htslib::bam::record::{Aux, Record};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashSet;
-use std::iter::{zip, FromIterator};
+use std::iter::zip;
 use std::path::Path;
 use std::slice::Chunks;
 use transcriptome::Gene;
@@ -60,15 +57,9 @@ impl ReadAnnotator {
         include_exons: bool,
         include_introns: bool,
     ) -> Result<ReadAnnotator> {
-        // NOTE: `Strand` can be Unknown as well, but ReqStrand is Forward or Reverse
-        let chemistry_strandedness = match chemistry_def.strandedness {
-            ReqStrand::Forward => Strand::Forward,
-            ReqStrand::Reverse => Strand::Reverse,
-        };
-        let chemistry_fiveprime = chemistry_def.endedness == Some(fastq_set::WhichEnd::FivePrime);
         let params = AnnotationParams {
-            chemistry_strandedness,
-            chemistry_fiveprime,
+            chemistry_strandedness: chemistry_def.strandedness,
+            chemistry_endedness: chemistry_def.endedness.unwrap_or(WhichEnd::ThreePrime),
             intergenic_trim_bases: 0,
             intronic_trim_bases: 0,
             junction_trim_bases: 0,
@@ -236,9 +227,10 @@ fn rescue_alignments_pe(pairs: &mut [RecordAnnotation]) -> bool {
                 }
             }
             _ => {
-                if promote_index.unwrap() == i {
-                    panic!("attempted to promote invalid records!")
-                }
+                assert!(
+                    promote_index.unwrap() != i,
+                    "attempted to promote invalid records!"
+                );
             }
         }
     }
@@ -247,9 +239,6 @@ fn rescue_alignments_pe(pairs: &mut [RecordAnnotation]) -> bool {
 }
 
 pub trait AnnotationInfo {
-    /// Return whether the read was discarded by subsampling.
-    fn is_discarded(&self) -> bool;
-
     // Return whether the read is mapped.
     fn is_mapped(&self) -> bool;
 
@@ -426,6 +415,43 @@ impl ReadAnnotations {
         f(&mut self.primary);
     }
 
+    /// Attach tags needed for visium HD libraries
+    fn attach_hd_tags(&mut self) -> Result<()> {
+        assert!(!self.read.r2_exists());
+
+        let rec = self.primary.mut_rec().0;
+
+        // For HD libraries, the illumina read1 looks like
+        // UMI-xx-BC1-xx-BC2-xx
+        // where `xx` denotes an unknown (possibly zero length) sequence.
+        // For simplicity, we attach the entire read1 sequence in the 1R/1Y tag
+        // instead of having 5 additional tags (one each for `xx` and BC1/BC2).
+        rec.push_aux(
+            REST_R1_SEQ_TAG,
+            Aux::String(std::str::from_utf8(self.read.raw_illumina_read1_seq()).unwrap()),
+        )?;
+        rec.push_aux(
+            REST_R1_QUAL_TAG,
+            Aux::String(std::str::from_utf8(self.read.raw_illumina_read1_qual()).unwrap()),
+        )?;
+
+        // Attach the rest of R2, which follows the probe.
+        assert_eq!(self.read.r1_range().read(), fastq_set::WhichRead::R2);
+        assert_eq!(self.read.r1_range().offset(), 0);
+        if let Some(len) = self.read.r1_range().len() {
+            let read2_end = self.read.r1_range().offset() + len;
+            let read2_seq = self.read.raw_illumina_read2_seq();
+            if read2_seq.len() > read2_end {
+                let rest_r2_seq = std::str::from_utf8(&read2_seq[read2_end..]).unwrap();
+                let rest_r2_qual =
+                    std::str::from_utf8(&self.read.raw_illumina_read2_qual()[read2_end..]).unwrap();
+                rec.push_aux(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))?;
+                rec.push_aux(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Attach tags needed by bamtofastq for RTL libraries.
     fn attach_rtl_tags(&mut self) {
         assert!(!self.read.r2_exists());
@@ -445,8 +471,8 @@ impl ReadAnnotations {
 
         // Attach the rest of R1, which follows the UMI.
         let [UmiPart::Untranslated { range: umi }] = self.read.umi_parts.as_slice() else {
-                unreachable!()
-            };
+            unreachable!()
+        };
         assert_eq!(umi.read(), fastq_set::WhichRead::R1);
         let umi_end = umi.offset() + umi.len().unwrap();
         let rest_r1_seq =
@@ -463,16 +489,18 @@ impl ReadAnnotations {
         // Attach the rest of R2, which follows the probe.
         assert_eq!(self.read.r1_range().read(), fastq_set::WhichRead::R2);
         assert_eq!(self.read.r1_range().offset(), 0);
-        let probe_end = self.read.r1_range().offset() + self.read.r1_range().len().unwrap();
-        let rest_r2_seq =
-            std::str::from_utf8(&self.read.raw_illumina_read2_seq()[probe_end..]).unwrap();
-        if !rest_r2_seq.is_empty() {
-            let rest_r2_qual =
-                std::str::from_utf8(&self.read.raw_illumina_read2_qual()[probe_end..]).unwrap();
-            rec.push_aux(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))
-                .unwrap();
-            rec.push_aux(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))
-                .unwrap();
+        if let Some(len) = self.read.r1_range().len() {
+            let read2_end = self.read.r1_range().offset() + len;
+            let rest_r2_seq =
+                std::str::from_utf8(&self.read.raw_illumina_read2_seq()[read2_end..]).unwrap();
+            if !rest_r2_seq.is_empty() {
+                let rest_r2_qual =
+                    std::str::from_utf8(&self.read.raw_illumina_read2_qual()[read2_end..]).unwrap();
+                rec.push_aux(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))
+                    .unwrap();
+                rec.push_aux(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))
+                    .unwrap();
+            }
         }
     }
 
@@ -481,13 +509,13 @@ impl ReadAnnotations {
         let bc_seq = self.read.raw_bc_seq();
         self.primary.for_each_rec(|rec| {
             rec.push_aux(RAW_BARCODE_SEQ_TAG, Aux::String(bc_seq.as_str()))
-                .unwrap()
+                .unwrap();
         });
 
         let bc_qual = self.read.raw_bc_qual();
         self.primary.for_each_rec(|rec| {
             rec.push_aux(RAW_BARCODE_QUAL_TAG, Aux::String(bc_qual.as_str()))
-                .unwrap()
+                .unwrap();
         });
 
         if self.read.barcode().is_valid() {
@@ -498,6 +526,9 @@ impl ReadAnnotations {
 
         if self.read.has_probe_barcode() {
             self.attach_rtl_tags();
+        }
+        if self.read.has_two_part_barcode() {
+            self.attach_hd_tags().unwrap();
         }
     }
 
@@ -622,11 +653,6 @@ impl ReadAnnotations {
 }
 
 impl AnnotationInfo for ReadAnnotations {
-    /// Return whether the read was discarded by subsampling.
-    fn is_discarded(&self) -> bool {
-        self.primary.is_discarded()
-    }
-
     /// Return whether the read is mapped.
     fn is_mapped(&self) -> bool {
         self.primary.is_mapped()
@@ -699,8 +725,6 @@ impl AnnotationInfo for ReadAnnotations {
         self.iter_ann_info()
             .flat_map(AnnotationInfo::mapped_genes)
             .collect()
-        // let mut result = self.primary.mapped_genes();
-        // result
     }
 
     fn mapped_regions(&self) -> HashSet<(&GenomeName, AnnotationRegion)> {
@@ -708,10 +732,7 @@ impl AnnotationInfo for ReadAnnotations {
     }
 
     fn is_feature_read(&self) -> bool {
-        matches!(
-            self.read.library_feats(),
-            LibraryFeatures::FeatureBarcodes(_)
-        )
+        self.read.library_type.is_fb()
     }
 
     fn is_feature_extracted(&self) -> bool {
@@ -730,7 +751,6 @@ impl AnnotationInfo for ReadAnnotations {
 /// All data associated with a single BAM record
 #[derive(Serialize, Deserialize)]
 pub enum RecordAnnotation {
-    Discarded(Record),
     Unmapped(Record, Option<Record>),
     SeMapped(Record, AnnotationData),
     PeMapped(
@@ -745,10 +765,6 @@ pub enum RecordAnnotation {
 }
 
 impl AnnotationInfo for RecordAnnotation {
-    fn is_discarded(&self) -> bool {
-        matches!(self, RecordAnnotation::Discarded(_))
-    }
-
     fn is_mapped(&self) -> bool {
         match self {
             RecordAnnotation::SeMapped(_, _) => true,
@@ -756,7 +772,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_, data) => data.is_mapped(),
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
             RecordAnnotation::Unmapped(_, _) => false,
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -769,7 +784,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_, data) => data.is_conf_mapped(),
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
             RecordAnnotation::Unmapped(_, _) => false,
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -784,7 +798,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_rec, data) => data.mapq(),
             RecordAnnotation::FeatureExtracted(_, _, _) => 0,
             RecordAnnotation::Unmapped(_, _) => 0,
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -797,7 +810,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_, _) => false,
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
             RecordAnnotation::Unmapped(_, _) => false,
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -819,7 +831,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_, _) => false,
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
             RecordAnnotation::Unmapped(_, _) => false,
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -832,7 +843,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_, _) => false,
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
             RecordAnnotation::Unmapped(_, _) => false,
-            RecordAnnotation::Discarded(_) => false,
         }
     }
 
@@ -896,7 +906,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::Probe(_, data) => data.is_conf_mapped(),
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
             RecordAnnotation::Unmapped(_, _) => false,
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -932,7 +941,6 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => None,
             RecordAnnotation::Unmapped(_, _) => None,
-            RecordAnnotation::Discarded(_) => None,
         }
     }
 
@@ -966,7 +974,6 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => None,
             RecordAnnotation::Unmapped(_, _) => None,
-            RecordAnnotation::Discarded(_) => None,
         }
     }
 
@@ -1028,7 +1035,6 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => None,
             RecordAnnotation::Unmapped(_, _) => None,
-            RecordAnnotation::Discarded(_) => None,
         }
     }
 
@@ -1045,7 +1051,6 @@ impl AnnotationInfo for RecordAnnotation {
             RecordAnnotation::SeMapped(rec, _) => vec![rec],
             RecordAnnotation::PeMapped(rec1, _, rec2, _, _) => vec![rec1, rec2],
             RecordAnnotation::Probe(rec, _) => vec![rec],
-            RecordAnnotation::Discarded(rec) => vec![rec],
         }
     }
 
@@ -1055,7 +1060,11 @@ impl AnnotationInfo for RecordAnnotation {
         }
 
         let (ann1, ann2) = self.annotation();
-        HashSet::from_iter([ann1, ann2].iter().flatten().map(|ann| &ann.genome))
+        [ann1, ann2]
+            .iter()
+            .flatten()
+            .map(|ann| &ann.genome)
+            .collect()
     }
 
     fn mapped_genes(&self) -> HashSet<(&GenomeName, &Gene)> {
@@ -1064,32 +1073,27 @@ impl AnnotationInfo for RecordAnnotation {
         }
 
         let (ann1, ann2) = self.annotation();
-        HashSet::from_iter(
-            [ann1, ann2]
-                .iter()
-                .flatten()
-                .flat_map(|ann| ann.genes.iter().map(move |gene| (&ann.genome, gene))),
-        )
+        [ann1, ann2]
+            .iter()
+            .flatten()
+            .flat_map(|ann| ann.genes.iter().map(move |gene| (&ann.genome, gene)))
+            .collect()
     }
 
     fn mapped_regions(&self) -> HashSet<(&GenomeName, AnnotationRegion)> {
         if let RecordAnnotation::Probe(_, data) = self {
-            return if data.is_mapped() {
-                Some((data.genome().unwrap(), AnnotationRegion::Exonic))
-            } else {
-                None
-            }
-            .into_iter()
-            .collect();
+            return HashSet::from_iter(
+                data.is_mapped()
+                    .then(|| (data.genome().unwrap(), AnnotationRegion::Exonic)),
+            );
         }
 
         let (ann1, ann2) = self.annotation();
-        HashSet::from_iter(
-            [ann1, ann2]
-                .iter()
-                .flatten()
-                .map(|ann| (&ann.genome, ann.region)),
-        )
+        [ann1, ann2]
+            .into_iter()
+            .flatten()
+            .map(|ann| (&ann.genome, ann.region))
+            .collect()
     }
 
     fn is_feature_read(&self) -> bool {
@@ -1166,7 +1170,6 @@ impl RecordAnnotation {
             RecordAnnotation::PeMapped(ref rec1, _, ref rec2, _, _) => (rec1, Some(rec2)),
             RecordAnnotation::FeatureExtracted(ref rec1, _, ref rec2) => (rec1, rec2.as_ref()),
             RecordAnnotation::Probe(ref rec, _) => (rec, None),
-            RecordAnnotation::Discarded(rec) => (rec, None),
         }
     }
 
@@ -1185,7 +1188,6 @@ impl RecordAnnotation {
                 (rec1, rec2.as_mut())
             }
             RecordAnnotation::Probe(ref mut rec, _) => (rec, None),
-            RecordAnnotation::Discarded(rec) => (rec, None),
         }
     }
 
@@ -1196,7 +1198,6 @@ impl RecordAnnotation {
             RecordAnnotation::Probe(_, _) => unreachable!(),
             RecordAnnotation::FeatureExtracted(_, _, _) => (None, None),
             RecordAnnotation::Unmapped(_, _) => (None, None),
-            RecordAnnotation::Discarded(_) => (None, None),
         }
     }
 
@@ -1210,7 +1211,6 @@ impl RecordAnnotation {
             RecordAnnotation::Probe(_, _) => unreachable!(),
             RecordAnnotation::FeatureExtracted(_, _, _) => unreachable!(),
             RecordAnnotation::Unmapped(_, _) => panic!("Unmapped annotations cannot be rescued"),
-            RecordAnnotation::Discarded(_) => unreachable!(),
         }
     }
 
@@ -1230,7 +1230,6 @@ impl RecordAnnotation {
             RecordAnnotation::Probe(_, _) => {} // TODO
             RecordAnnotation::FeatureExtracted(_, _, _) => {}
             RecordAnnotation::Unmapped(_, _) => {}
-            RecordAnnotation::Discarded(_) => {}
         }
     }
 
@@ -1269,7 +1268,6 @@ impl RecordAnnotation {
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => {}
             RecordAnnotation::Unmapped(_, _) => {}
-            RecordAnnotation::Discarded(_) => {}
         }
     }
 
@@ -1286,7 +1284,7 @@ impl RecordAnnotation {
     ) {
         self.for_each_rec(|rec| {
             rec.push_aux(READ_GROUP_TAG, Aux::String(read_group))
-                .unwrap()
+                .unwrap();
         });
         self.attach_transcript_tag();
 
@@ -1365,7 +1363,6 @@ impl RecordAnnotation {
                 }
             }
             RecordAnnotation::Unmapped(_, _) => {}
-            RecordAnnotation::Discarded(_) => {}
         }
 
         self.attach_basic_tags();
@@ -1398,7 +1395,7 @@ impl RecordAnnotation {
                 is_low_support_umi,
                 is_filtered_target_umi,
                 is_valid_bc,
-            )
+            );
         });
     }
 }

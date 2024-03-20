@@ -8,15 +8,15 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 const REGEX_RELEASE: &[(&str, &str)] = &[
-    (r#" [56]\."#, "/etc/redhat-release"),
-    (r#" [56]\."#, "/etc/rocks-release"),
-    (r#" [56]\."#, "/etc/os-release"),
-    (r#" [56]\."#, "/etc/system-release"),
+    (r" [56]\.", "/etc/redhat-release"),
+    (r" [56]\.", "/etc/rocks-release"),
+    (r" [56]\.", "/etc/os-release"),
+    (r" [56]\.", "/etc/system-release"),
     // Ubuntu 13 or earlier
-    (r#" 1[0-3]\."#, "/etc/lsb-release"),
-    (r#" [1-9]\."#, "/etc/lsb-release"),
+    (r" 1[0-3]\.", "/etc/lsb-release"),
+    (r" [1-9]\.", "/etc/lsb-release"),
     // Suse 10 or 11
-    (r#"SUSE.* 1[01]\b"#, "/etc/SuSE-release"),
+    (r"SUSE.* 1[01]\b", "/etc/SuSE-release"),
     // Debian 7 or earlier
     (r#"PRETTY_NAME="[dD]ebian.*\b[1-7]\."#, "/etc/os-release"),
 ];
@@ -93,14 +93,11 @@ fn check_kernel_version() -> PlatformResult {
         ));
     }
     let release = to_str(&utsname.release[..]);
-    let re = Regex::new(r#"\D*(\d+)\.(\d+)"#).unwrap();
+    let re = Regex::new(r"\D*(\d+)\.(\d+)").unwrap();
     if let Some(caps) = re.captures(release) {
-        if let Ok(version) = (1..=2)
-            .map(|i| caps.get(i).unwrap().as_str().parse::<i64>())
-            .collect::<Result<Vec<_>, _>>()
-        {
-            let version = (version[0], version[1]);
-            if version < (3, 10) {
+        let version: Result<Vec<i64>, _> = (1..=2).map(|i| caps[i].parse()).collect();
+        if let Ok(&[major, minor, ..]) = version.as_deref() {
+            if (major, minor) < (3, 10) {
                 return PlatformResult::Err(Cow::from(format!(
                     "The kernel used by this operating system version is unsupported:
     {release}
@@ -133,12 +130,9 @@ fn check_libc_version() -> PlatformResult {
     let libc_version = to_str(&libc_version);
     let re = Regex::new(r"\D*(\d+)\.(\d+)").unwrap();
     if let Some(caps) = re.captures(libc_version) {
-        if let Ok(version) = (1..=2)
-            .map(|i| caps.get(i).unwrap().as_str().parse::<i64>())
-            .collect::<Result<Vec<_>, _>>()
-        {
-            let version = (version[0], version[1]);
-            if version < (2, 17) {
+        let version: Result<Vec<i64>, _> = (1..=2).map(|i| caps[i].parse()).collect();
+        if let Ok(&[major, minor, ..]) = version.as_deref() {
+            if (major, minor) < (2, 17) {
                 return PlatformResult::Err(Cow::from(format!(
                     "The glibc version of this operating system version is unsupported:
     {libc_version}

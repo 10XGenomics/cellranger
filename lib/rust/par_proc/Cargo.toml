@@ -1,6 +1,6 @@
 [dependencies]
-crossbeam-channel = '>=0.4'
-crossbeam-utils = '>=0.6'
+crossbeam-channel = '0.5'
+crossbeam-utils = '0.8'
 
 [dependencies.anyhow]
 workspace = true

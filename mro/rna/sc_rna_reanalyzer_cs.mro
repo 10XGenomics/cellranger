@@ -72,6 +72,7 @@ pipeline SC_RNA_REANALYZER_CS(
             force_cells:                self.force_cells,
             graphclust_neighbors:       PARSE_PARAM_CSV.graphclust_neighbors,
             graphclust_resolution:      null,
+            is_pd:                      true,
             is_spatial:                 false,
             is_visium_hd:               false,
             max_clusters:               PARSE_PARAM_CSV.max_clusters,
@@ -140,6 +141,7 @@ pipeline SC_RNA_REANALYZER_CS(
         cells_per_protospacer        = null,
         spatial_enrichment           = null,
         spatial_deconvolution_path   = null,
+        disable_cloupe               = null,
     )
 
     return (

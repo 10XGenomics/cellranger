@@ -1,12 +1,14 @@
 [dependencies]
-bitflags = '1.2'
-shardio = '0.8.2'
-wyhash = '>=0.4, <0.6'
+bitflags = '2'
+wyhash = '0.5'
 
 [dependencies.barcode]
 path = '../barcode'
 
 [dependencies.rust-htslib]
+workspace = true
+
+[dependencies.shardio]
 workspace = true
 
 [dependencies.umi]

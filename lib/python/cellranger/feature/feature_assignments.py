@@ -182,6 +182,9 @@ class FeatureAssignmentsMatrix:
     A (feature, barcode) pair has value 1 if that barcode is assigned that feature, else 0.
     """
 
+    # Dataype used for the dataframe
+    FEATURE_ASSIGNMENT_DTYPE = "uint8"
+
     def __init__(self, df: pd.DataFrame, matrix: CountMatrix, library_type: str):
         """Constructor for children classes."""
         self.df = df
@@ -230,8 +233,7 @@ class FeatureAssignmentsMatrix:
         Basically a dict of (feature_id: [cell]) pairs.
         """
         cells_per_feature = CellsPerFeature()
-        for row in self.df.itertuples():
-            feature = row[0]
+        for feature in self.df.index:
             barcodes_per_feature = self.get_barcodes_per_feature(feature)
             cells_per_feature[feature] = barcodes_per_feature.tolist()
         return cells_per_feature
@@ -245,11 +247,9 @@ class FeatureAssignmentsMatrix:
         """
         columns = [NUM_FEATURES, FEATURE_CALL, NUM_UMIS]
         features_per_cell_table = pd.DataFrame(columns=columns)
-
-        # apparently itertuples() is faster than iterrows()
-        for row in self.df.T.itertuples():
-            cell = row[0]
-            calls = np.asarray(np.array(row[1:]) > 0).nonzero()
+        self.matrix.tocsc()
+        for cell in self.df.columns.values:
+            calls = self.df[cell].to_numpy().nonzero()
             calls = self.df.index[calls].values
 
             num_features = len(calls)

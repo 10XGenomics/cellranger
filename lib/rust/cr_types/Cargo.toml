@@ -1,11 +1,13 @@
 [dependencies]
-bio = '>=0.53'
-csv = '1.2'
-fxhash = '0.2.1'
-lazy_static = '1.4'
+bio = '1'
+csv = '1'
+fxhash = '0.2'
+lazy_static = '1'
+proc-macro2 = '1'
+quote = '1'
 serde_bytes = '0.11'
-sha1 = '0.10.5'
-shardio = '0.8.2'
+serde_with = '2'
+sha1 = '0.10'
 thiserror = '1'
 
 [dependencies.anyhow]
@@ -16,6 +18,9 @@ workspace = true
 
 [dependencies.barcode]
 path = '../barcode'
+
+[dependencies.derive_more]
+workspace = true
 
 [dependencies.fastq_set]
 workspace = true
@@ -44,6 +49,9 @@ version = '1'
 workspace = true
 
 [dependencies.serde_json]
+workspace = true
+
+[dependencies.shardio]
 workspace = true
 
 [dependencies.slide_design]

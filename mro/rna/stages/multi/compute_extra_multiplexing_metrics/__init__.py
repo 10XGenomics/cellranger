@@ -13,18 +13,13 @@ and the sets of multiplet and singlet barcodes
 
 from __future__ import annotations
 
-import json
-
 import numpy as np
 
 import tenkit.safe_json as tk_safe_json
 import tenkit.stats as tk_stats
 from cellranger import matrix as cr_matrix
-from cellranger.fast_utils import (
-    tag_read_counts,  # pylint: disable=no-name-in-module,unused-import
-)
+from cellranger.fast_utils import MultiGraph, tag_read_counts
 from cellranger.feature.feature_assignments import SampleBarcodes
-from cellranger.multi import config as multi_config
 from cellranger.rna.library import MULTIPLEXING_LIBRARY_TYPE
 
 __MRO__ = """
@@ -106,8 +101,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.summary = None
         return
 
-    with open(args.multi_graph) as in_file:
-        config = multi_config.CrMultiGraph.from_json_val(json.load(in_file))
+    config = MultiGraph.from_path(args.multi_graph)
 
     metrics = {}
     singlet_metric_name = "MULTIPLEXING_median_cmo_umis_per_singlet"
@@ -139,10 +133,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         ) = tag_read_counts(mol_info, args.sample_cell_barcodes, args.non_singlet_barcodes)
 
         # get the list of tags from multi graph
-        tags = set()
-        for sample in config.samples:
-            for fingerprint in sample.fingerprints:
-                tags.add(fingerprint.tag_name)
+        tags = set(tag for names in config.sample_tag_ids().values() for tag in names)
 
         # Calculate tag reads in cells for each tag
         for i, tag in enumerate(tag_names):

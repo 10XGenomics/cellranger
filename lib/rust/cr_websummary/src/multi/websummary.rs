@@ -8,15 +8,15 @@ use crate::{
     MetricCard, PlotlyChart, RawChartWithHelp, Tab, TableRow, TitleWithHelp, WsSample,
 };
 use anyhow::Result;
-use cr_types::rna_read::LegacyLibraryType;
-use cr_types::{AlignerParam, TargetingMethod};
+use cr_types::websummary::MetricConfig;
+use cr_types::{AlignerParam, FeatureBarcodeType, LibraryType, TargetingMethod};
 use csv::Writer;
 use itertools::Itertools;
 use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::value::Value;
 use std::path::Path;
-use websummary_derive::{Alert, ToCsvRows};
+use websummary_derive::{Alert, ToCsvRows, ToJsonSummary};
 
 /// The threshold to trigger a web summary alert when an unexpected probe barcode is observed or
 /// an expected probe barcode is not observed.
@@ -42,6 +42,23 @@ pub trait ToCsvRows {
     }
 }
 
+#[derive(Clone, Serialize)]
+pub struct JsonMetricSummary {
+    pub key: String,
+    pub value: Value,
+    pub category: String,
+    pub library_type: String,
+    pub config: MetricConfig,
+}
+
+// Websummary structs implementing this trait know how to convert their contents
+// into a JSON summary containing all metrics data and metadata.
+pub trait ToJsonSummary {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        vec![]
+    }
+}
+
 impl<T> ToCsvRows for Option<T>
 where
     T: ToCsvRows,
@@ -49,6 +66,18 @@ where
     fn to_csv_rows(self) -> Vec<Vec<String>> {
         match self {
             Some(t) => t.to_csv_rows(),
+            None => vec![],
+        }
+    }
+}
+
+impl<T> ToJsonSummary for Option<T>
+where
+    T: ToJsonSummary,
+{
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        match self {
+            Some(t) => t.to_json_summary(),
             None => vec![],
         }
     }
@@ -86,8 +115,10 @@ pub struct CountParametersTable {
     pub target_set_name: Option<String>,
     pub targeting_method: Option<TargetingMethod>,
     pub filter_probes: Option<bool>,
+    pub disable_ab_aggregate_detection: bool,
+    pub disable_high_occupancy_gem_detection: bool,
     pub num_genes_on_target: Option<usize>,
-    pub library_type: LegacyLibraryType,
+    pub library_type: LibraryType,
     pub throughput: Option<String>,
     pub tenx_cmos: Option<bool>,
     pub aligner: AlignerParam,
@@ -112,6 +143,8 @@ impl From<CountParametersTable> for GenericTable {
             target_set_name,
             targeting_method,
             filter_probes,
+            disable_ab_aggregate_detection,
+            disable_high_occupancy_gem_detection,
             num_genes_on_target,
             library_type,
             throughput,
@@ -140,7 +173,7 @@ impl From<CountParametersTable> for GenericTable {
         let mut rows = vec![TableRow::two_col("Chemistry", chemistry_with_throughput)];
 
         // GEX tab
-        if library_type == LegacyLibraryType::GeneExpression {
+        if library_type.is_gex() {
             rows.extend([
                 TableRow::two_col("Reference Path", reference_path),
                 TableRow::two_col("Transcriptome", transcriptome),
@@ -163,32 +196,43 @@ impl From<CountParametersTable> for GenericTable {
                     n_genes.make_pretty(),
                 ));
             }
-            if let Some(filter_probes) = filter_probes {
-                rows.push(TableRow::two_col(
-                    "Filter Probes",
-                    if filter_probes { "On" } else { "Off" },
-                ));
+            if filter_probes == Some(false) {
+                rows.push(TableRow::two_col("Filter Probes", "Disabled"));
             }
         }
         // Feature Tabs
-        match (library_type, feature_ref_path) {
-            (x, Some(feature_ref)) if x != LegacyLibraryType::GeneExpression => {
-                rows.push(TableRow::two_col("Feature Reference", feature_ref));
-            }
-            _ => {}
+        if let (LibraryType::FeatureBarcodes(_), Some(feature_ref)) =
+            (library_type, feature_ref_path)
+        {
+            rows.push(TableRow::two_col("Feature Reference", feature_ref));
         }
 
-        if let (Some(cmo_set_path), LegacyLibraryType::Multiplexing) = (cmo_set_path, library_type)
+        let fb_type = library_type.feature_barcode_type();
+        if let (Some(cmo_set_path), Some(FeatureBarcodeType::Multiplexing)) =
+            (cmo_set_path, fb_type)
         {
             rows.push(TableRow::two_col("CMO Set", cmo_set_path));
         }
 
-        if library_type == LegacyLibraryType::AntigenCapture {
+        if fb_type == Some(FeatureBarcodeType::Antigen) {
             rows.push(TableRow::two_col(
                 "Control Specified",
                 antigen_negative_control,
             ));
         }
+        if disable_ab_aggregate_detection {
+            rows.push(TableRow::two_col(
+                "Antibody Aggregate Filtering",
+                "Disabled",
+            ));
+        }
+        if disable_high_occupancy_gem_detection {
+            rows.push(TableRow::two_col(
+                "High-occupancy GEM Filtering",
+                "Disabled",
+            ));
+        }
+
         GenericTable { header: None, rows }
     }
 }
@@ -197,22 +241,7 @@ impl Alert for CountParametersTable {
     fn alerts(&self, ctx: &AlertContext) -> Vec<AlertSpec> {
         let mut alerts = vec![];
 
-        if !ctx.is_hybrid_capture
-            && !ctx.is_rtl
-            && (self.introns_included || ctx.include_introns)
-            && self.library_type == LegacyLibraryType::GeneExpression
-        {
-            alerts.push(AlertSpec {
-                level: AlertLevel::Info,
-                title: "Intron mode used".into(),
-                formatted_value: String::default(),
-                message: r#"This data has been analyzed with intronic reads included in the count matrix. This behavior is different from previous Cell Ranger versions. If you would not like to count intronic reads, please rerun with the "include-introns" option set to "false". Please contact support@10xgenomics.com for any further questions."#.into(),
-            });
-        }
-        if ctx.is_hybrid_capture
-            && ctx.include_introns
-            && self.library_type == LegacyLibraryType::GeneExpression
-        {
+        if ctx.is_hybrid_capture && ctx.include_introns && self.library_type.is_gex() {
             alerts.push(AlertSpec {
                 level: AlertLevel::Warn,
                 title: "Unsupported workflow used".to_string(),
@@ -221,7 +250,7 @@ impl Alert for CountParametersTable {
             });
         }
         if ctx.is_antigen
-            && self.library_type == LegacyLibraryType::AntigenCapture
+            && self.library_type.is_fb_type(FeatureBarcodeType::Antigen)
             && !self.antigen_negative_control
         {
             alerts.push(AlertSpec {
@@ -272,7 +301,7 @@ impl Alert for CountParametersTable {
                 title: "Unsupported workflow used".to_string(),
                 formatted_value: String::default(),
                 message: "Multiome Gene Expression only analysis is not a supported workflow. Results may vary.".to_string(),
-            })
+            });
         }
 
         if !self.dropped_tags.is_empty() {
@@ -377,6 +406,7 @@ impl Alert for CountParametersTable {
 }
 
 impl ToCsvRows for CountParametersTable {}
+impl ToJsonSummary for CountParametersTable {}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum GexOrRtl<G, R> {
@@ -406,6 +436,19 @@ where
         match self {
             GexOrRtl::Gex(g) => g.alerts(ctx),
             GexOrRtl::Rtl(r) => r.alerts(ctx),
+        }
+    }
+}
+
+impl<G, R> ToJsonSummary for GexOrRtl<G, R>
+where
+    G: ToJsonSummary,
+    R: ToJsonSummary,
+{
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        match self {
+            GexOrRtl::Gex(g) => g.to_json_summary(),
+            GexOrRtl::Rtl(r) => r.to_json_summary(),
         }
     }
 }
@@ -450,6 +493,19 @@ where
     }
 }
 
+impl<B, G> ToJsonSummary for AntibodyOrAntigen<B, G>
+where
+    B: ToJsonSummary,
+    G: ToJsonSummary,
+{
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        match self {
+            AntibodyOrAntigen::Antibody(b) => b.to_json_summary(),
+            AntibodyOrAntigen::Antigen(g) => g.to_json_summary(),
+        }
+    }
+}
+
 pub type AntibodyOrAntigenPhysicalLibraryMetricsTable =
     AntibodyOrAntigen<AntibodyPhysicalLibraryMetricsTable, AntigenPhysicalLibraryMetricsTable>;
 
@@ -459,6 +515,7 @@ pub type MultiSharedResource = TxHashMap<String, Value>;
 
 impl Alert for MultiSharedResource {}
 impl ToCsvRows for MultiSharedResource {}
+impl ToJsonSummary for MultiSharedResource {}
 
 #[derive(Debug, Serialize, PartialEq, Eq, Clone, Default)]
 #[serde(into = "GenericTable")]
@@ -502,6 +559,7 @@ impl Alert for VdjParametersTable {
     }
 }
 impl ToCsvRows for VdjParametersTable {}
+impl ToJsonSummary for VdjParametersTable {}
 
 /// A web summary element that is specific for
 /// each chain type.
@@ -542,6 +600,21 @@ where
     }
 }
 
+impl<T, B, GD> ToJsonSummary for VdjChainTypeSpecific<T, B, GD>
+where
+    T: ToJsonSummary,
+    B: ToJsonSummary,
+    GD: ToJsonSummary,
+{
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        match self {
+            VdjChainTypeSpecific::VdjT(t) => t.to_json_summary(),
+            VdjChainTypeSpecific::VdjB(b) => b.to_json_summary(),
+            VdjChainTypeSpecific::VdjTgd(t_gd) => t_gd.to_json_summary(),
+        }
+    }
+}
+
 pub type VdjEnrichmentMetricsTable = VdjChainTypeSpecific<
     VdjTEnrichmentMetricsTable,
     VdjBEnrichmentMetricsTable,
@@ -559,12 +632,14 @@ pub type VdjSampleAnnotationMetricsTable = VdjChainTypeSpecific<
 >;
 impl Alert for Value {}
 impl ToCsvRows for Value {}
+impl ToJsonSummary for Value {}
 
 #[derive(Serialize, Clone)]
 pub struct MultiWebSummary {
     pub sample: WsSample,
     pub data: MultiWebSummaryData,
     pub diagnostics: MultiDiagnostics,
+    pub sample_diagnostics: SampleDiagnostics,
     #[serde(rename = "_resources")]
     pub resources: MultiSharedResource,
 }
@@ -591,6 +666,11 @@ pub struct MultiDiagnostics {
     pub probe_barcode_overlap_coefficients: Option<Value>,
     pub fraction_reads_high_occupancy_gems: Option<Value>,
     pub high_occupancy_probe_barcode_count_threshold: Option<Value>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[allow(non_snake_case)]
+pub struct SampleDiagnostics {
     pub vdj_t: Option<VdjDiagnostics>,
     pub vdj_b: Option<VdjDiagnostics>,
     pub vdj_t_gd: Option<VdjDiagnostics>,
@@ -599,7 +679,7 @@ pub struct MultiDiagnostics {
 impl MultiWebSummary {
     pub fn to_csv(self, filename: &Path) -> Result<()> {
         let mut writer = Writer::from_path(filename)?;
-        writer.write_record(METRICS_SUMMARY_CSV_HEADER.iter())?;
+        writer.write_record(METRICS_SUMMARY_CSV_HEADER)?;
         for row in self.data.to_csv_rows().iter().sorted().dedup() {
             writer.write_record(row)?;
         }
@@ -615,6 +695,12 @@ impl ToCsvRows for MultiWebSummary {
     }
 }
 
+impl ToJsonSummary for MultiWebSummary {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        self.data.to_json_summary()
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct MultiWebSummaryData {
     pub library_websummary: LibraryWebSummary,
@@ -627,6 +713,14 @@ impl ToCsvRows for MultiWebSummaryData {
         let mut rows = self.library_websummary.to_csv_rows();
         rows.append(&mut self.sample_websummary.to_csv_rows());
         rows
+    }
+}
+
+impl ToJsonSummary for MultiWebSummaryData {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        let mut vals = self.library_websummary.to_json_summary();
+        vals.append(&mut self.sample_websummary.to_json_summary());
+        vals
     }
 }
 
@@ -658,6 +752,35 @@ fn to_csv_rows_helper<T: ToCsvRows>(
     rows
 }
 
+fn to_json_summary_helper<T: ToJsonSummary>(
+    tab: Option<&T>,
+    library_type: &str,
+    sample_or_library: &str,
+) -> Vec<JsonMetricSummary> {
+    let Some(tab) = tab else { return vec![] };
+    let mut rows = tab.to_json_summary();
+    for row in &mut rows {
+        row.category = sample_or_library.to_string();
+        row.library_type = library_type.to_string();
+    }
+    rows
+}
+
+mod section {
+    pub const GEX: &str = "Gene Expression";
+    pub const VDJ_T: &str = "VDJ T";
+    pub const VDJ_T_GD: &str = "VDJ T GD";
+    pub const VDJ_B: &str = "VDJ B";
+    pub const AB: &str = "Antibody Capture";
+    pub const AG: &str = "Antigen Capture";
+    pub const CRISPR: &str = "CRISPR Guide Capture";
+    pub const CUSTOM: &str = "Custom Feature";
+    pub const CMO: &str = "Multiplexing Capture";
+}
+
+const TAB_CELLS: &str = "Cells";
+const TAB_LIBRARY: &str = "Library";
+
 #[derive(Serialize, Clone, Default)]
 pub struct LibraryWebSummary {
     pub header_info: LibraryHeaderInfo,
@@ -677,15 +800,36 @@ pub struct LibraryWebSummary {
 impl ToCsvRows for LibraryWebSummary {
     fn to_csv_rows(self) -> Vec<Vec<String>> {
         [
-            to_csv_rows_helper(self.gex_tab, "Gene Expression", "Library"),
-            to_csv_rows_helper(self.vdj_t_tab, "VDJ T", "Library"),
-            to_csv_rows_helper(self.vdj_t_gd_tab, "VDJ T GD", "Library"),
-            to_csv_rows_helper(self.vdj_b_tab, "VDJ B", "Library"),
-            to_csv_rows_helper(self.antibody_tab, "Antibody Capture", "Library"),
-            to_csv_rows_helper(self.antigen_tab, "Antigen Capture", "Library"),
-            to_csv_rows_helper(self.crispr_tab, "CRISPR Guide Capture", "Library"),
-            to_csv_rows_helper(self.custom_feature_tab, "Custom Feature", "Library"),
-            to_csv_rows_helper(self.cmo_tab, "Multiplexing Capture", "Library"),
+            to_csv_rows_helper(self.gex_tab, section::GEX, TAB_LIBRARY),
+            to_csv_rows_helper(self.vdj_t_tab, section::VDJ_T, TAB_LIBRARY),
+            to_csv_rows_helper(self.vdj_t_gd_tab, section::VDJ_T_GD, TAB_LIBRARY),
+            to_csv_rows_helper(self.vdj_b_tab, section::VDJ_B, TAB_LIBRARY),
+            to_csv_rows_helper(self.antibody_tab, section::AB, TAB_LIBRARY),
+            to_csv_rows_helper(self.antigen_tab, section::AG, TAB_LIBRARY),
+            to_csv_rows_helper(self.crispr_tab, section::CRISPR, TAB_LIBRARY),
+            to_csv_rows_helper(self.custom_feature_tab, section::CUSTOM, TAB_LIBRARY),
+            to_csv_rows_helper(self.cmo_tab, section::CMO, TAB_LIBRARY),
+        ]
+        .concat()
+    }
+}
+
+impl ToJsonSummary for LibraryWebSummary {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        [
+            to_json_summary_helper(self.gex_tab.as_ref(), section::GEX, TAB_LIBRARY),
+            to_json_summary_helper(self.vdj_t_tab.as_ref(), section::VDJ_T, TAB_LIBRARY),
+            to_json_summary_helper(self.vdj_t_gd_tab.as_ref(), section::VDJ_T_GD, TAB_LIBRARY),
+            to_json_summary_helper(self.vdj_b_tab.as_ref(), section::VDJ_B, TAB_LIBRARY),
+            to_json_summary_helper(self.antibody_tab.as_ref(), section::AB, TAB_LIBRARY),
+            to_json_summary_helper(self.antigen_tab.as_ref(), section::AG, TAB_LIBRARY),
+            to_json_summary_helper(self.crispr_tab.as_ref(), section::CRISPR, TAB_LIBRARY),
+            to_json_summary_helper(
+                self.custom_feature_tab.as_ref(),
+                section::CUSTOM,
+                TAB_LIBRARY,
+            ),
+            to_json_summary_helper(self.cmo_tab.as_ref(), section::CMO, TAB_LIBRARY),
         ]
         .concat()
     }
@@ -708,18 +852,34 @@ impl ToCsvRows for SampleWebSummary {
     fn to_csv_rows(self) -> Vec<Vec<String>> {
         let mut rows = Vec::new();
         for mut v in [
-            to_csv_rows_helper(self.gex_tab, "Gene Expression", "Cells"),
-            to_csv_rows_helper(self.vdj_t_tab, "VDJ T", "Cells"),
-            to_csv_rows_helper(self.vdj_t_gd_tab, "VDJ T GD", "Cells"),
-            to_csv_rows_helper(self.vdj_b_tab, "VDJ B", "Cells"),
-            to_csv_rows_helper(self.antibody_tab, "Antibody Capture", "Cells"),
-            to_csv_rows_helper(self.antigen_tab, "Antigen Capture", "Cells"),
-            to_csv_rows_helper(self.crispr_tab, "CRISPR Guide Capture", "Cells"),
-            to_csv_rows_helper(self.custom_feature_tab, "Custom Feature", "Cells"),
+            to_csv_rows_helper(self.gex_tab, section::GEX, TAB_CELLS),
+            to_csv_rows_helper(self.vdj_t_tab, section::VDJ_T, TAB_CELLS),
+            to_csv_rows_helper(self.vdj_t_gd_tab, section::VDJ_T_GD, TAB_CELLS),
+            to_csv_rows_helper(self.vdj_b_tab, section::VDJ_B, TAB_CELLS),
+            to_csv_rows_helper(self.antibody_tab, section::AB, TAB_CELLS),
+            to_csv_rows_helper(self.antigen_tab, section::AG, TAB_CELLS),
+            to_csv_rows_helper(self.crispr_tab, section::CRISPR, TAB_CELLS),
+            to_csv_rows_helper(self.custom_feature_tab, section::CUSTOM, TAB_CELLS),
         ] {
             rows.append(&mut v);
         }
         rows
+    }
+}
+
+impl ToJsonSummary for SampleWebSummary {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        [
+            to_json_summary_helper(self.gex_tab.as_ref(), section::GEX, TAB_CELLS),
+            to_json_summary_helper(self.vdj_t_tab.as_ref(), section::VDJ_T, TAB_CELLS),
+            to_json_summary_helper(self.vdj_t_gd_tab.as_ref(), section::VDJ_T_GD, TAB_CELLS),
+            to_json_summary_helper(self.vdj_b_tab.as_ref(), section::VDJ_B, TAB_CELLS),
+            to_json_summary_helper(self.antibody_tab.as_ref(), section::AB, TAB_CELLS),
+            to_json_summary_helper(self.antigen_tab.as_ref(), section::AG, TAB_CELLS),
+            to_json_summary_helper(self.crispr_tab.as_ref(), section::CRISPR, TAB_CELLS),
+            to_json_summary_helper(self.custom_feature_tab.as_ref(), section::CUSTOM, TAB_CELLS),
+        ]
+        .concat()
     }
 }
 
@@ -732,7 +892,7 @@ impl<T: Alert> Alert for Option<T> {
     }
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct LibraryGexWebSummary {
     pub parameters_table: CountParametersTable,
     pub cell_metrics_table: MetricCard<LibraryCellMetricsTable>,
@@ -749,7 +909,7 @@ pub struct LibraryGexWebSummary {
     pub barcode_rank_plot: ChartWithHelp,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct LibraryVdjWebSummary {
     pub parameters_table: VdjParametersTable,
     pub cell_metrics_table: MetricCard<VdjLibraryCellMetricsTable>,
@@ -759,7 +919,7 @@ pub struct LibraryVdjWebSummary {
     pub barcode_rank_plot: Option<ChartWithHelp>, // None if there are 0 cells
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct LibraryAntibodyOrAntigenWebSummary {
     pub parameters_table: CountParametersTable,
     pub cell_metrics_table: MetricCard<LibraryCellMetricsTable>,
@@ -771,16 +931,18 @@ pub struct LibraryAntibodyOrAntigenWebSummary {
     pub feature_histogram: Option<RawChartWithHelp>,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct LibraryCrisprWebSummary {
     pub parameters_table: CountParametersTable,
     pub cell_metrics_table: MetricCard<LibraryCellMetricsTable>,
     pub sequencing_metrics_table: MetricCard<SequencingMetricsTable>,
+    pub mapping_metrics_table: MetricCard<CrisprLibraryMappingMetricsTable>,
     pub physical_library_metrics_table: MetricCard<CrisprPhysicalLibraryMetricsTable>,
+    pub rtl_probe_barcode_metrics_table: Option<MetricCard<RtlProbeBarcodeMetricsTable>>,
     pub barcode_rank_plot: ChartWithHelp,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct LibraryCustomFeatureWebSummary {
     pub parameters_table: CountParametersTable,
     pub cell_metrics_table: MetricCard<LibraryCellMetricsTable>,
@@ -789,7 +951,7 @@ pub struct LibraryCustomFeatureWebSummary {
     pub barcode_rank_plot: ChartWithHelp,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct LibraryCmoWebSummary {
     pub parameters_table: CountParametersTable,
     pub multiplexing_metrics_table: MetricCard<MultiplexingLibraryCellMetricsTable>,
@@ -806,7 +968,7 @@ pub struct LibraryCmoWebSummary {
     pub resources: MultiSharedResource,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct SampleGexWebSummary {
     pub parameters_table: CountParametersTable,
     pub hero_metrics: MetricCard<GexSampleHeroMetricsTable>,
@@ -828,17 +990,18 @@ pub struct ClonotypeInfo {
 
 impl Alert for ClonotypeInfo {}
 impl ToCsvRows for ClonotypeInfo {}
+impl ToJsonSummary for ClonotypeInfo {}
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct SampleVdjWebSummary {
     pub parameters_table: VdjParametersTable,
     pub hero_metrics: MetricCard<VdjSampleHeroMetricsTable>,
     pub annotation_metrics_table: MetricCard<VdjSampleAnnotationMetricsTable>,
-    pub clonotype_info: ClonotypeInfo,
+    pub clonotype_info: Option<ClonotypeInfo>,
     pub barcode_rank_plot: Option<ChartWithHelp>,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct SampleAntibodyWebSummary {
     pub parameters_table: CountParametersTable,
     pub hero_metrics: MetricCard<AntibodySampleHeroMetricsTable>,
@@ -852,7 +1015,7 @@ pub struct SampleAntibodyWebSummary {
     pub feature_histogram: Option<RawChartWithHelp>,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct SampleAntigenWebSummary {
     pub parameters_table: CountParametersTable,
     pub hero_metrics: MetricCard<AntigenSampleHeroMetricsTable>,
@@ -861,17 +1024,18 @@ pub struct SampleAntigenWebSummary {
     pub clonotype_clustermap: Option<RawChartWithHelp>,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct SampleCrisprWebSummary {
     pub parameters_table: CountParametersTable,
     pub hero_metrics: MetricCard<CrisprSampleHeroMetricsTable>,
     /// Only for multiplexed runs
     pub cell_metrics_table: Option<MetricCard<SampleCellMetricsTable>>,
+    pub mapping_metrics_table: MetricCard<CrisprSampleMappingMetricsTable>,
     pub barcode_rank_plot: Option<ChartWithHelp>,
     pub tsne_plot: Option<RawChartWithHelp>,
 }
 
-#[derive(Serialize, Clone, ToCsvRows, Alert)]
+#[derive(Serialize, Clone, ToCsvRows, ToJsonSummary, Alert)]
 pub struct SampleCustomFeatureWebSummary {
     pub parameters_table: CountParametersTable,
     pub hero_metrics: MetricCard<CustomFeatureSampleHeroMetricsTable>,
@@ -992,7 +1156,7 @@ mod tests {
         })
     }
 
-    fn gen_count_param_table(library_type: LegacyLibraryType) -> CountParametersTable {
+    fn gen_count_param_table(library_type: LibraryType) -> CountParametersTable {
         CountParametersTable {
             chemistry: "Single Cell 5' R2-only".into(),
             introns_included: false,
@@ -1003,6 +1167,8 @@ mod tests {
             target_set_name: None,
             targeting_method: None,
             filter_probes: None,
+            disable_ab_aggregate_detection: false,
+            disable_high_occupancy_gem_detection: false,
             num_genes_on_target: None,
             library_type,
             throughput: None,
@@ -1112,7 +1278,7 @@ mod tests {
             hero_metrics: GexSampleHeroMetricsTable(vec![GexSampleHeroMetricsRow {
                 genome: None,
                 total_singlets: Some(1_023),
-                median_reads_per_singlet: Some(FloatAsInt(63_575.0)),
+                mean_reads_per_cell: Some(FloatAsInt(63_575.0)),
                 median_reads_per_cell_on_target: None,
                 median_genes_per_singlet: Some(FloatAsInt(2_149.0)),
                 total_genes_detected: Some(16_313),
@@ -1170,7 +1336,7 @@ mod tests {
                 total_singlets: Some(1013),
                 median_umis_per_singlet: Some(FloatAsInt(68_379.0)),
                 antibody_reads_usable_per_cell: Some(FloatAsInt(4_608.0)),
-                reads_in_cell_associated_partitions: Some(make_percent(96.7)),
+                reads_in_cells: Some(make_percent(96.7)),
             }])
             .into(),
             mapping_metrics_table: AntibodySampleMappingMetricsTable(vec![
@@ -1205,7 +1371,7 @@ mod tests {
 
     #[cfg(test)]
     fn generate_test_websummary() -> MultiWebSummary {
-        let mut count_param_table = gen_count_param_table(LegacyLibraryType::GeneExpression);
+        let mut count_param_table = gen_count_param_table(LibraryType::Gex);
         let library_gex_tab = gen_library_gex_tab(&count_param_table);
 
         let vdj_param_table = VdjParametersTable {
@@ -1278,7 +1444,9 @@ mod tests {
         };
 
         let library_antibody_tab = LibraryAntibodyOrAntigenWebSummary {
-            parameters_table: gen_count_param_table(LegacyLibraryType::AntibodyCapture),
+            parameters_table: gen_count_param_table(LibraryType::FeatureBarcodes(
+                FeatureBarcodeType::Antibody,
+            )),
             cell_metrics_table: LibraryCellMetricsTable(vec![LibraryCellMetricsRow {
                 physical_library_id: Some("AB_1".to_string()),
                 cell_associated_partitions: Some(973),
@@ -1350,7 +1518,9 @@ mod tests {
         };
 
         let library_custom_feature_tab = LibraryCustomFeatureWebSummary {
-            parameters_table: gen_count_param_table(LegacyLibraryType::Custom),
+            parameters_table: gen_count_param_table(LibraryType::FeatureBarcodes(
+                FeatureBarcodeType::Custom,
+            )),
             cell_metrics_table: LibraryCellMetricsTable(vec![LibraryCellMetricsRow {
                 physical_library_id: Some("CC_1".to_string()),
                 cell_associated_partitions: Some(973),
@@ -1408,7 +1578,9 @@ mod tests {
         };
 
         let library_crispr_tab = LibraryCrisprWebSummary {
-            parameters_table: gen_count_param_table(LegacyLibraryType::CrisprGuideCapture),
+            parameters_table: gen_count_param_table(LibraryType::FeatureBarcodes(
+                FeatureBarcodeType::Crispr,
+            )),
             cell_metrics_table: LibraryCellMetricsTable(vec![LibraryCellMetricsRow {
                 physical_library_id: Some("GC_1".to_string()),
                 cell_associated_partitions: Some(973),
@@ -1444,15 +1616,10 @@ mod tests {
                 },
             ])
             .into(),
-            physical_library_metrics_table: CrisprPhysicalLibraryMetricsTable(vec![
-                CrisprPhysicalLibraryMetricsRow {
+            mapping_metrics_table: CrisprLibraryMappingMetricsTable(vec![
+                CrisprLibraryMappingMetricsRow {
                     physical_library_id: Some("GC_1".to_string()),
                     number_of_reads: Some(8_385_586),
-                    valid_barcodes: Some(make_percent(99.65)),
-                    valid_umis: Some(make_percent(92.80)),
-                    sequencing_saturation: Some(make_percent(15.21)),
-                    reads_in_cell_associated_partitions: Some(make_percent(90.65)),
-                    mean_reads_per_cell_associated_partition: Some(FloatAsInt(5471.0)),
                     fraction_reads_with_putative_protospacer: Some(make_percent(90.65)),
                     fraction_guide_reads: Some(make_percent(90.65)),
                     fraction_guide_reads_usable: Some(make_percent(66.42)),
@@ -1460,6 +1627,21 @@ mod tests {
                 },
             ])
             .into(),
+            physical_library_metrics_table: CrisprPhysicalLibraryMetricsTable(vec![
+                CrisprPhysicalLibraryMetricsRow {
+                    physical_library_id: Some("GC_1".to_string()),
+                    number_of_reads: Some(8_385_586),
+                    valid_barcodes: Some(make_percent(99.65)),
+                    valid_gem_barcodes: Some(make_percent(99.8)),
+                    valid_probe_barcodes: Some(make_percent(99.7)),
+                    valid_umis: Some(make_percent(92.80)),
+                    sequencing_saturation: Some(make_percent(15.21)),
+                    reads_in_cell_associated_partitions: Some(make_percent(90.65)),
+                    mean_reads_per_cell_associated_partition: Some(FloatAsInt(5471.0)),
+                },
+            ])
+            .into(),
+            rtl_probe_barcode_metrics_table: None,
             barcode_rank_plot: barcode_rank_plot(
                 vec![1.0, 100.0, 10_000.0, 10_000.0, 500_000.0, 1_000_000.0],
                 vec![10_500.0, 10_000.0, 1000.0, 10.0, 5.0, 1.0],
@@ -1512,7 +1694,9 @@ mod tests {
         let library_cmo_tab = LibraryCmoWebSummary {
             cmo_umi_tsne_plot: None,
             cmo_tags_tsne_plot: None,
-            parameters_table: gen_count_param_table(LegacyLibraryType::Multiplexing),
+            parameters_table: gen_count_param_table(LibraryType::FeatureBarcodes(
+                FeatureBarcodeType::Multiplexing,
+            )),
             multiplexing_metrics_table: MultiplexingLibraryCellMetricsTable(vec![
                 MultiplexingLibraryCellMetricsRow {
                     cell_associated_partitions: Some(973),
@@ -1639,7 +1823,7 @@ mod tests {
         };
 
         let sample_gex_tab = gen_sample_gex_tab(&count_param_table);
-        count_param_table.library_type = LegacyLibraryType::AntibodyCapture;
+        count_param_table.library_type = LibraryType::Antibody;
         let sample_antibody_tab = gen_sample_ab_tab(&count_param_table);
 
         let sample_antigen_tab = SampleAntigenWebSummary {
@@ -1688,7 +1872,7 @@ mod tests {
                 }],
             ))
             .into(),
-            clonotype_info: ClonotypeInfo {
+            clonotype_info: Some(ClonotypeInfo {
                 table: GenericTable {
                     header: None,
                     rows: Vec::new(),
@@ -1698,18 +1882,21 @@ mod tests {
                     help: "Clonotype Table/Plot help".into(),
                     title: "Top 10 Clonotypes".into(),
                 },
-            },
+            }),
             barcode_rank_plot: None,
         };
 
         let sample_crispr_tab = SampleCrisprWebSummary {
-            parameters_table: gen_count_param_table(LegacyLibraryType::CrisprGuideCapture),
+            parameters_table: gen_count_param_table(LibraryType::FeatureBarcodes(
+                FeatureBarcodeType::Crispr,
+            )),
             hero_metrics: CrisprSampleHeroMetricsTable(vec![CrisprSampleHeroMetricsRow {
                 total_singlets: Some(1013),
                 median_umis_per_singlet: Some(FloatAsInt(68_379.0)),
                 guide_reads_usable_per_cell: Some(FloatAsInt(4_608.0)),
-                cells_with_one_or_more_protospacers_detected: Some(make_percent(91.0)), //make_count_percent(910, 91.0)),
-                cells_with_two_or_more_protospacers_detected: Some(make_percent(0.5)), //make_count_percent(6, 0.5)),
+                reads_in_cells: Some(make_percent(96.7)),
+                cells_with_one_or_more_protospacers_detected: Some(make_percent(91.0)),
+                cells_with_two_or_more_protospacers_detected: Some(make_percent(0.5)),
             }])
             .into(),
             cell_metrics_table: Some(
@@ -1726,12 +1913,23 @@ mod tests {
                 }]))
                 .into(),
             ),
+            mapping_metrics_table: CrisprSampleMappingMetricsTable(vec![
+                CrisprSampleMappingMetricsRow {
+                    number_of_reads: Some(8_385_586),
+                    fraction_reads_with_putative_protospacer: Some(make_percent(90.65)),
+                    fraction_guide_reads: Some(make_percent(90.65)),
+                    fraction_protospacer_not_recognized: Some(make_percent(67.01)),
+                },
+            ])
+            .into(),
             tsne_plot: None,
             barcode_rank_plot: None,
         };
 
         let sample_custom_tab = SampleCustomFeatureWebSummary {
-            parameters_table: gen_count_param_table(LegacyLibraryType::Custom),
+            parameters_table: gen_count_param_table(LibraryType::FeatureBarcodes(
+                FeatureBarcodeType::Custom,
+            )),
             hero_metrics: CustomFeatureSampleHeroMetricsTable(vec![
                 CustomFeatureSampleHeroMetricsRow {
                     total_singlets: Some(1013),
@@ -1789,6 +1987,7 @@ mod tests {
                 },
             },
             diagnostics: MultiDiagnostics::default(),
+            sample_diagnostics: Default::default(),
             resources: TxHashMap::default(),
         }
     }
@@ -1817,76 +2016,13 @@ mod tests {
     }
 
     #[test]
-    fn multi_websummary_include_introns_info() {
-        let mut count_param_table = gen_count_param_table(LegacyLibraryType::GeneExpression);
-        count_param_table.introns_included = true;
-
-        let library_gex_tab = gen_library_gex_tab(&count_param_table);
-
-        let ctx = AlertContext::default();
-
-        let library_websummary = LibraryWebSummary {
-            header_info: LibraryHeaderInfo {
-                run_id: "Run id".to_string(),
-                run_desc: "Run Description".to_string(),
-                pipeline_version: "7.0.0".to_string(),
-            },
-            gex_tab: Some(Tab::new(library_gex_tab, &ctx)),
-            ..Default::default()
-        };
-
-        let sample_gex_tab = gen_sample_gex_tab(&count_param_table);
-
-        let sample_websummary = SampleWebSummary {
-            header_info: SampleHeaderInfo {
-                sample_id: SAMPLE_ID.to_string(),
-                sample_desc: SAMPLE_DESC.to_string(),
-                pipeline_version: "7.0.0".to_string(),
-            },
-            gex_tab: Some(Tab::new(sample_gex_tab, &ctx)),
-            ..Default::default()
-        };
-
-        let multi_websummary_introns_info = MultiWebSummary {
-            sample: WsSample::multi(SAMPLE_ID.to_string(), SAMPLE_DESC.to_string()),
-            data: MultiWebSummaryData {
-                library_websummary,
-                sample_websummary,
-                experimental_design: ExperimentalDesign {
-                    svg: SvgGraph::new(
-                        "svg string".into(),
-                        "sample_1".into(),
-                        Some(cr_types::CellMultiplexingType::CMO),
-                    ),
-                    csv: "csv goes here".to_string(),
-                },
-            },
-            diagnostics: Default::default(),
-            resources: Default::default(),
-        };
-
-        let json =
-            serde_json::to_value(&multi_websummary_introns_info).expect("Error generating JSON");
-        for ws in ["library_websummary", "sample_websummary"] {
-            assert!(json["data"][ws]["gex_tab"]["alerts"]
-                .as_array()
-                .expect("No alerts generated")
-                .iter()
-                .any(|v| {
-                    v["level"].to_string().contains("INFO")
-                        && v["title"].to_string().contains("Intron mode used")
-                }));
-        }
-    }
-
-    #[test]
     fn multi_websummary_ab_aggregate_rtl_alert_trigger() {
-        let mut count_param_table = gen_count_param_table(LegacyLibraryType::GeneExpression);
+        let mut count_param_table = gen_count_param_table(LibraryType::Gex);
         count_param_table.targeting_method = Some(TargetingMethod::TemplatedLigation);
         count_param_table.target_set_name = Some("Turtle".into());
 
         let library_gex_tab = gen_library_gex_tab(&count_param_table);
-        count_param_table.library_type = LegacyLibraryType::AntibodyCapture;
+        count_param_table.library_type = LibraryType::Antibody;
         let library_ab_tab = LibraryAntibodyOrAntigenWebSummary {
             parameters_table: count_param_table.clone(),
             cell_metrics_table: LibraryCellMetricsTable(vec![]).into(),
@@ -1927,7 +2063,7 @@ mod tests {
         };
 
         let sample_gex_tab = gen_sample_gex_tab(&count_param_table);
-        count_param_table.library_type = LegacyLibraryType::AntibodyCapture;
+        count_param_table.library_type = LibraryType::Antibody;
         let sample_ab_tab = gen_sample_ab_tab(&count_param_table);
 
         let sample_websummary = SampleWebSummary {
@@ -1956,6 +2092,7 @@ mod tests {
                 },
             },
             diagnostics: Default::default(),
+            sample_diagnostics: Default::default(),
             resources: Default::default(),
         };
 
@@ -1974,12 +2111,12 @@ mod tests {
 
     #[test]
     fn multi_websummary_ab_aggregate_rtl_alert_notrigger() {
-        let mut count_param_table = gen_count_param_table(LegacyLibraryType::GeneExpression);
+        let mut count_param_table = gen_count_param_table(LibraryType::Gex);
         count_param_table.targeting_method = Some(TargetingMethod::TemplatedLigation);
         count_param_table.target_set_name = Some("Turtle".into());
 
         let library_gex_tab = gen_library_gex_tab(&count_param_table);
-        count_param_table.library_type = LegacyLibraryType::AntibodyCapture;
+        count_param_table.library_type = LibraryType::Antibody;
         let library_ab_tab = LibraryAntibodyOrAntigenWebSummary {
             parameters_table: count_param_table.clone(),
             cell_metrics_table: LibraryCellMetricsTable(vec![]).into(),
@@ -2020,7 +2157,7 @@ mod tests {
         };
 
         let sample_gex_tab = gen_sample_gex_tab(&count_param_table);
-        count_param_table.library_type = LegacyLibraryType::AntibodyCapture;
+        count_param_table.library_type = LibraryType::Antibody;
         let sample_ab_tab = gen_sample_ab_tab(&count_param_table);
 
         let sample_websummary = SampleWebSummary {
@@ -2049,6 +2186,7 @@ mod tests {
                 },
             },
             diagnostics: Default::default(),
+            sample_diagnostics: Default::default(),
             resources: Default::default(),
         };
 

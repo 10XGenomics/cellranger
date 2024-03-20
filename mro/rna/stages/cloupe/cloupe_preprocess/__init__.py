@@ -13,18 +13,15 @@ import martian
 
 import cellranger.barcodes.utils as bc_utils
 import cellranger.constants as cr_constants
-import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
 import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_json
 from cellranger.spatial.data_utils import (
     DARK_IMAGES_CHANNELS,
     DARK_IMAGES_COLORIZED,
-    tissue_position_float_to_int,
 )
 
 __MRO__ = """
-
 stage CLOUPE_PREPROCESS(
     in  string   pipestance_type,
     in  string   sample_id,
@@ -52,6 +49,7 @@ stage CLOUPE_PREPROCESS(
     in  json     cells_per_protospacer,
     in  csv      spatial_enrichment,
     in  path     spatial_deconvolution_path,
+    in  bool     disable_cloupe,
     out cloupe   output_for_cloupe,
     out json     gem_group_index_json,
     src py       "stages/cloupe/cloupe_preprocess",
@@ -62,7 +60,8 @@ stage CLOUPE_PREPROCESS(
 """
 
 
-def get_gem_group_index_json(args, outs):
+def get_gem_group_index_json(args, outs) -> str | None:
+    """Return the path of the gem_group_index.json file or None."""
     if args.gem_group_index_json:
         shutil.copy(args.gem_group_index_json, outs.gem_group_index_json)
         return outs.gem_group_index_json
@@ -76,14 +75,14 @@ def get_gem_group_index_json(args, outs):
             return None
 
 
-def get_analysis_h5_path(args):
+def get_analysis_h5_path(args) -> str:
+    """Return the path of the analysis.h5 file."""
     return os.path.join(args.analysis, "analysis.h5")
 
 
-def do_not_make_cloupe(args):
-    """Returns True if there is a reason why this stage should not attempt to.
+def do_not_make_cloupe(args) -> bool:
+    """Return True when this stage should not attempt to generate a cloupe file.
 
-    generate a .cloupe file.
     #General:
         Case1: no_secondary_analysis is True
         Case2: No analysis folder, can't make a cloupe file
@@ -93,6 +92,9 @@ def do_not_make_cloupe(args):
             Case4: If Tissue positions list present but missing cloupe implementation of barcodes
             Case5: If not Tissue positions list but SPATIAL Pipestance. Image crashed but the rest worked
     """
+    if args.disable_cloupe is not None and args.disable_cloupe:
+        martian.log_info("Skipping .cloupe generation by because disable_cloupe is set")
+        return True
     # General cases
     # Case1
     if args.no_secondary_analysis:
@@ -131,37 +133,31 @@ def do_not_make_cloupe(args):
 
 
 def split(args):
-    # no mem usage if skipped
     if do_not_make_cloupe(args):
-        return {"chunks": [{"__mem_gb": h5_constants.MIN_MEM_GB}]}
+        return {"chunks": []}
 
-    # See PR #1196 for a discussion of
-    # Where this memory estimate is derived from.  Note that analysis did not account for imaging data.
-
-    mem_gb_matrix = cr_matrix.CountMatrix.get_mem_gb_crconverter_estimate_from_h5(
+    _num_features, num_barcodes, nnz = cr_matrix.CountMatrix.load_dims_from_h5(
         args.filtered_gene_bc_matrices_h5
     )
+    mem_gib_matrix = 80 * nnz / 1024**3
+    mem_gib_image = 2 if args.tissue_image_paths else 0
+    mem_gib = 3 + math.ceil(mem_gib_matrix) + mem_gib_image
+    print(f"{num_barcodes=},{nnz=},{mem_gib_matrix=},{mem_gib_image=},{mem_gib=}")
 
-    chunks = [
-        {
-            "__mem_gb": math.ceil(max(mem_gb_matrix, h5_constants.MIN_MEM_GB)),
+    return {
+        "chunks": [],
+        "join": {
+            "__mem_gb": mem_gib,
+            # crconverter requies additional VMEM.
+            "__vmem_gb": 3 + 2 * mem_gib,
             "__threads": 2,
-        }
-    ]
-    # Hack to increase min memgb - not sure why we need it
-    return {"chunks": chunks, "join": {"__mem_gb": 1}}
+        },
+    }
 
 
-def join(args, outs, chunk_defs, chunk_outs):
-    if chunk_outs[0].output_for_cloupe is None:
-        # Set output to null if noloupe is set
-        outs.output_for_cloupe = None
-    else:
-        shutil.copy(chunk_outs[0].output_for_cloupe, outs.output_for_cloupe)
-
-
-def main(args, outs):
+def join(args, outs, _chunk_defs, _chunk_outs):
     if do_not_make_cloupe(args):
+        outs.gem_group_index_json = None
         outs.output_for_cloupe = None
         return
 
@@ -186,12 +182,14 @@ def main(args, outs):
         # Only give loupemap if we are aggregating and the sample is spatial
         if args.product_type == cr_constants.SPATIAL_PRODUCT_TYPE:
             call.extend(["--loupemap", args.loupe_map])
+
+    if args.product_type == cr_constants.SPATIAL_PRODUCT_TYPE:
+        # Note: different from cellranger.spatial.pipeline_mode.Product
+        spatial_product_type = "Visium" if args.hd_slide_name is None else "Visium-HD"
+        call.extend(["--spatial-product-type", spatial_product_type])
+
     # assume whole thing if tissue positions present
     if args.tissue_positions:
-        # Revert after CLOUPE-3789 is merged
-        tissue_pos_file = martian.make_path("tissue_positions.csv").decode()
-        tissue_position_float_to_int(args.tissue_positions, tissue_pos_file)
-
         if args.dark_images == DARK_IMAGES_CHANNELS:
             spatial_image_type = "fluorescent"
         elif args.dark_images == DARK_IMAGES_COLORIZED:
@@ -203,7 +201,7 @@ def main(args, outs):
                 "--spatial-image-path",
                 args.tissue_image_paths[0],
                 "--spatial-tissue-path",
-                tissue_pos_file,  # Revert after CLOUPE-3789 is merged
+                args.tissue_positions,
                 "--spatial-dzi-path",
                 args.dzi_info,
                 "--spatial-tiles-paths",

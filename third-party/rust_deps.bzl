@@ -16,19 +16,11 @@ def load_rust_deps():
     )
     cargo_repository(
         name = "cr_rust_cargo_dependencies",
-        lockfile = "//lib/rust:Cargo.lock",
+        lockfile = "@cellranger//lib/rust:Cargo.lock",
         env = {"PYO3_NO_PYTHON": "1"},
-        cargo_config = "//lib/rust:.cargo/config",
+        cargo_config = "@cellranger//lib/rust:.cargo/config.toml",
         srcs = [
-            "//lib/rust:toml",
-        ],
-    )
-    cargo_repository(
-        name = "cr_ana_cargo_dependencies",
-        lockfile = "//lib/rust/cr_ana:Cargo.lock",
-        cargo_config = "//lib/rust/cr_ana:.cargo/config",
-        srcs = [
-            "//lib/rust/cr_ana:Cargo.toml",
+            "@cellranger//lib/rust:toml",
         ],
     )
     cargo_repository(

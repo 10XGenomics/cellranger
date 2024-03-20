@@ -4,13 +4,6 @@ use ordered_float::NotNan;
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// Trait for a parameter that has a validation criterion
-pub trait Validate {
-    fn validate(&self) -> Result<()> {
-        Ok(())
-    }
-}
-
 #[derive(Parser, Debug, Clone)]
 pub struct ForceCellsArgs {
     /// Cell caller override: define the minimum number of ATAC transposition events
@@ -31,23 +24,15 @@ pub struct ForceCellsArgs {
 }
 
 impl ForceCellsArgs {
-    pub fn to_mro_arg(&self) -> Option<HashMap<String, MinCounts>> {
+    pub fn to_mro_arg(&self) -> Result<Option<HashMap<String, MinCounts>>> {
         match (self.min_atac_count, self.min_gex_count) {
-            (None, None) => None,
-            (Some(a), Some(g)) => Some(
+            (None, None) => Ok(None),
+            (Some(a), Some(g)) => Ok(Some(
                 [("default".to_string(), MinCounts { atac: a, gex: g })]
                     .iter()
                     .cloned()
                     .collect(),
-            ),
-            _ => panic!("Invalid force cells parameters"),
-        }
-    }
-}
-
-impl Validate for ForceCellsArgs {
-    fn validate(&self) -> Result<()> {
-        match (self.min_atac_count, self.min_gex_count) {
+            )),
             (Some(v), None) => bail!(
                 "Invalid cell caller override: 'min_atac_count' = {v} but 'min_gex_count' \
                  unspecified. You must specify both to override the cell caller."
@@ -56,7 +41,6 @@ impl Validate for ForceCellsArgs {
                 "Invalid cell caller override: 'min_gex_count' = {v} but 'min_atac_count' \
                  unspecified. You must specify both to override the cell caller."
             ),
-            _ => Ok(()),
         }
     }
 }

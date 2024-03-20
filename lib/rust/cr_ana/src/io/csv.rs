@@ -1,9 +1,8 @@
 //! I/O CSV helper functions
 
-use crate::types::{
-    clustering_key, ClusteringResult, ClusteringType, EmbeddingResult, FeatureType, PcaResult,
-};
+use crate::types::{clustering_key, ClusteringResult, ClusteringType, EmbeddingResult, PcaResult};
 use anyhow::{anyhow, Result};
+use cr_types::reference::feature_reference::FeatureType;
 use ndarray::Array2;
 use std::fs::{copy, create_dir_all, File};
 use std::io::{BufWriter, Write};
@@ -98,11 +97,7 @@ pub(crate) fn combine_pcas(
             match dirents.next() {
                 Some(path) => {
                     let subdir = path?.file_name();
-                    if subdir
-                        .to_str()
-                        .map(|s| s.ends_with("_components"))
-                        .unwrap_or(false)
-                    {
+                    if subdir.to_str().is_some_and(|s| s.ends_with("_components")) {
                         break subdir;
                     }
                 }
@@ -150,7 +145,7 @@ pub(crate) fn save_clustering(
 
 pub(crate) fn combine_clusterings(
     path: &Path,
-    parts: impl Iterator<Item = impl AsRef<Path>>,
+    parts: impl IntoIterator<Item = impl AsRef<Path>>,
 ) -> Result<()> {
     for part in parts {
         for dirent in std::fs::read_dir(&part)? {
@@ -173,9 +168,8 @@ pub(crate) fn save_differential_expression(
     feature_ids: &[String],
     feature_names: &[String],
     data: &Array2<f64>,
-    feature_prefixed: bool,
 ) -> Result<()> {
-    let key = clustering_key(clustering_type, feature_type, feature_prefixed);
+    let key = clustering_key(clustering_type, feature_type);
     let clustering_dir = path.join(key);
     create_dir_all(&clustering_dir)?;
     {

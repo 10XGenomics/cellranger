@@ -90,6 +90,8 @@ pub struct FeatureId(u32);
     Hash,
     MartianType,
 )]
+
+// TODO(CELLRANGER-7889) collapse this with VdjChainType in cr_types.
 pub enum VdjReceptor {
     #[serde(rename = "TR")]
     TR,
@@ -208,12 +210,9 @@ pub(crate) const GENE_NAME_DISALLOWED: [&str; 9] = [
 impl VdjReferenceHeader {
     pub fn from_record(rec: &Record) -> Result<Self, HeaderErrors> {
         let word0 = rec.id();
-
-        let word1 = match rec.desc() {
-            Some(w) => w,
-            None => return Err(HeaderErrors::NoDescription),
+        let Some(word1) = rec.desc() else {
+            return Err(HeaderErrors::NoDescription);
         };
-
         Self::from_words(word0, word1)
     }
 
@@ -865,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_receptor_name() {
-        assert_eq!(VdjReceptor::from_str("TR_GD").unwrap(), VdjReceptor::TRGD)
+        assert_eq!(VdjReceptor::from_str("TR_GD").unwrap(), VdjReceptor::TRGD);
     }
 
     #[test]

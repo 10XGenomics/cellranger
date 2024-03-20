@@ -1,3 +1,4 @@
+load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load(
     "@rules_license//rules:license.bzl",
@@ -8,7 +9,6 @@ load(
     "conda_deps",
     "conda_manifest",
 )
-load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 
 package(
     default_applicable_licenses = ["license"],

@@ -11,18 +11,14 @@ filetype json;
 
 pipeline _CRISPR_ANALYZER(
     in  h5   filtered_feature_counts_matrix,
-    in  csv  filtered_barcodes,
     in  csv  feature_reference,
-    in  json counter_metrics_json,
     out json cells_per_protospacer,
     out json crispr_analysis_metrics,
     out path crispr_analysis,
 )
 {
     call CALL_PROTOSPACERS(
-        filtered_barcodes    = self.filtered_barcodes,
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        counter_metrics_json = self.counter_metrics_json,
     )
 
     call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_FEATURE(

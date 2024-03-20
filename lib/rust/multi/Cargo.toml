@@ -1,6 +1,6 @@
 [dependencies]
-csv = '1.2'
-lazy_static = '1.4'
+csv = '1'
+lazy_static = '1'
 
 [dependencies.anyhow]
 workspace = true
@@ -43,6 +43,12 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.strum]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
 [dependencies.transcriptome]
 path = '../transcriptome'
 
@@ -61,4 +67,4 @@ version = '0.1.0'
 
 [package.metadata]
 [package.metadata.cargo-machete]
-ignored = ['martian']
+ignored = ['martian', 'strum']

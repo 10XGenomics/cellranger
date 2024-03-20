@@ -164,6 +164,9 @@ pub struct ContigAnnotation {
     pub exact_subclonotype_id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "33")]
     pub junction_support: ::core::option::Option<JunctionSupport>,
+    /// "" indicates None
+    #[prost(string, tag = "34")]
+    pub sample: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

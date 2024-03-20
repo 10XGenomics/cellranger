@@ -1,10 +1,11 @@
 use anyhow::{bail, Context, Result};
 use clap::{self, Parser};
-use cr_types::rna_read::LegacyLibraryType;
+use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryName};
 use cr_types::sample_def::SampleDef;
 use cr_types::types::FileOrBytes;
-use cr_types::TargetingMethod;
-use cr_wrap::chemistry_arg::CountChemistryArg;
+use cr_types::{LibraryType, TargetingMethod};
+use cr_wrap::chemistry_arg::validate_chemistry;
+use cr_wrap::create_bam_arg::CreateBam;
 use cr_wrap::fastqs::{FastqArgs, FastqArgsNoLibraries};
 use cr_wrap::mkref::Mkvdjref;
 use cr_wrap::mrp_args::MrpArgs;
@@ -168,9 +169,8 @@ struct Count {
     #[clap(long, value_name = "NUM")]
     force_cells: Option<ForceCells>,
 
-    /// Set --no-bam to not generate the BAM file. This will reduce the total computation time for the pipestance and the size of the output directory. If unsure, we recommend not to use this option. BAM file could be useful for troubleshooting and downstream analysis.
-    #[clap(long = "no-bam")]
-    no_bam: bool,
+    #[clap(flatten)]
+    create_bam: CreateBam,
 
     /// Disable secondary analysis, e.g. clustering. Optional.
     #[clap(long = "nosecondary")]
@@ -196,16 +196,16 @@ struct Count {
     /// specify a chemistry. Options are: 'auto' for
     /// autodetection, 'threeprime' for Single Cell 3',
     /// 'fiveprime' for  Single Cell 5', 'SC3Pv1' or
-    /// 'SC3Pv2' or 'SC3Pv3' for Single Cell 3' v1/v2/v3,
+    /// 'SC3Pv2' or 'SC3Pv3' or 'SC3Pv4' for Single Cell 3' v1/v2/v3/v4,
     /// 'SC3Pv3LT' for Single Cell 3' v3 LT,
     /// 'SC3Pv3HT' for Single Cell 3' v3 HT,
-    /// 'SC5P-PE' or 'SC5P-R2' for Single Cell 5',
+    /// 'SC5P-PE' or 'SC5P-R2' or 'SC5P-R2-v3', 'SC5P-R2-OH-v3' for Single Cell 5',
     /// paired-end/R2-only, 'SC-FB' for Single Cell
     /// Antibody-only 3' v2 or 5'. To analyze the GEX portion
     /// of multiome data, chemistry must be set to 'ARC-v1';
     /// 'ARC-v1' chemistry cannot be autodetected.
-    #[clap(long, value_name = "CHEM", default_value = "auto")]
-    chemistry: CountChemistryArg,
+    #[clap(long, value_name = "CHEM", default_value = "auto", value_parser=validate_chemistry)]
+    chemistry: AutoOrRefinedChemistry,
 
     /// Proceed with processing using a --feature-ref but no
     /// Feature Barcode libraries specified with the
@@ -216,6 +216,10 @@ struct Count {
     /// Whether to check for barcode compatibility between libraries. [default: true]
     #[clap(long, value_name = "true|false")]
     check_library_compatibility: Option<bool>,
+
+    /// Enable or disable antibody and antigen aggregate filtering during cell calling.
+    #[clap(long, value_name = "true|false", default_value = "true", hide = true)]
+    filter_aggregates: Option<bool>,
 
     /// Do not execute the pipeline.
     /// Generate a pipeline invocation (.mro) file and stop.
@@ -253,10 +257,7 @@ impl Count {
             }
         } else {
             // convert the fastq cmd-line args to a SampleDef
-            sample_defs.extend(
-                c.fastqs
-                    .get_sample_defs(LegacyLibraryType::GeneExpression, None)?,
-            );
+            sample_defs.extend(c.fastqs.get_sample_defs(LibraryType::Gex, None)?);
         }
 
         Ok(CountCsMro {
@@ -265,11 +266,11 @@ impl Count {
             sample_desc: c.description,
             reference_path: c.transcriptome,
             recovered_cells: c.expect_cells,
-            no_bam: c.no_bam,
+            no_bam: !c.create_bam.validated()?,
             no_secondary_analysis: c.no_secondary_analysis,
             no_target_umi_filter: false,
             force_cells: c.force_cells.map(|fc| fc.0),
-            chemistry: c.chemistry.0,
+            chemistry: c.chemistry,
             r1_length: c.r1_length,
             r2_length: c.r2_length,
             targeting_method: None,
@@ -279,6 +280,7 @@ impl Count {
             feature_reference: c.feature_ref,
             include_introns: c.include_introns.unwrap(),
             check_library_compatibility: c.check_library_compatibility.unwrap_or(true),
+            disable_ab_aggregate_detection: !c.filter_aggregates.unwrap_or(true),
         })
     }
 }
@@ -293,7 +295,7 @@ struct CountCsMro {
     no_secondary_analysis: bool,
     no_target_umi_filter: bool,
     force_cells: Option<usize>,
-    chemistry: String,
+    chemistry: AutoOrRefinedChemistry,
     r1_length: Option<usize>,
     r2_length: Option<usize>,
     targeting_method: Option<TargetingMethod>,
@@ -303,6 +305,7 @@ struct CountCsMro {
     feature_reference: Option<CliPath>,
     include_introns: bool,
     check_library_compatibility: bool,
+    disable_ab_aggregate_detection: bool,
 }
 
 /// A subcommand for controlling testing
@@ -494,6 +497,7 @@ struct Reanalyze {
     mrp: MrpArgs,
 }
 
+// TODO(CELLRANGER-7889) collapse this with the other VDJ chain type types
 #[derive(Serialize, Debug, Clone, Copy)]
 enum VdjChainType {
     TR,
@@ -544,6 +548,10 @@ struct Vdj {
     /// Run in reference-free mode (do not use annotations).
     #[clap(long)]
     denovo: bool,
+
+    /// Disable clonotyping.
+    #[clap(long, hide = true)]
+    skip_clonotyping: bool,
 
     /// Chain type to display metrics for: 'TR' for T cell receptors,
     /// 'IG' for B cell receptors, or 'auto' to autodetect.
@@ -602,7 +610,7 @@ impl Testrun {
                 sample: Some(vec![String::from("tinygex")]),
                 lanes: None,
             }
-            .get_sample_defs(LegacyLibraryType::GeneExpression, None)?,
+            .get_sample_defs(LibraryType::Gex, None)?,
         );
 
         let t = self.clone();
@@ -616,7 +624,7 @@ impl Testrun {
             no_secondary_analysis: false,
             no_target_umi_filter: false,
             force_cells: None,
-            chemistry: "SC3Pv3".to_string(),
+            chemistry: AutoOrRefinedChemistry::Refined(ChemistryName::ThreePrimeV3),
             r1_length: None,
             r2_length: None,
             targeting_method: None,
@@ -626,6 +634,7 @@ impl Testrun {
             feature_reference: None,
             include_introns: false,
             check_library_compatibility: true,
+            disable_ab_aggregate_detection: false,
         })
     }
 }
@@ -729,7 +738,7 @@ If you want to proceed with a feature barcode reference, but no feature barcode 
 
         SubCommand::Vdj(mut vdj) => {
             // convert fastq args to sample defs
-            vdj.sample_def = vdj.fastqs.get_sample_defs(LegacyLibraryType::Vdj, None)?;
+            vdj.sample_def = vdj.fastqs.get_sample_defs(LibraryType::VdjAuto, None)?;
 
             if let Some(ref ref_folder) = vdj.vdj_reference_path {
                 vdj_reference::VdjReference::check(ref_folder).with_context(|| {
@@ -746,7 +755,7 @@ If you want to proceed with a feature barcode reference, but no feature barcode 
 
         SubCommand::Mkfastq(m) => mkfastq::run_mkfastq(&m, "_cellranger_internal"),
         SubCommand::Mkvdjref(mut args) => {
-            args.shared.populate_version(&pkg_env);
+            args.shared.populate_version(pkg_env.tenx_version);
             args.execute()
         }
         SubCommand::Testrun(t) => {

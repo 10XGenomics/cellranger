@@ -53,6 +53,8 @@ pub mod assembly_types;
 mod contig_aligner;
 pub mod handle_gex_cells;
 pub mod make_filter_switch;
+pub mod merge_per_sample_annotations;
+pub mod subset_assembly_outs;
 mod translator;
 pub mod write_ann_csv;
 pub mod write_contig_outs;

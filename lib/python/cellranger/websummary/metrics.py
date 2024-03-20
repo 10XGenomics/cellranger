@@ -46,6 +46,22 @@ required_cols = {
 }
 
 
+def get_maybe_nested_key(data: dict, key: str):
+    """Given a key which may be nested using the dot notation, return the value.
+
+    This function will return None if the key is not found. The maximum depth of nesting
+    is expected to be very small (~2) so we use recursion.
+    """
+    if key in data:
+        return data[key]
+    elif "." in key:
+        left, right = key.split(".", 1)
+        if left in data:
+            return get_maybe_nested_key(data[left], right)
+
+    return None
+
+
 def _validate_expected_keys_present(keys):
     missing_keys = required_cols - keys
     assert len(missing_keys) == 0, "Expected keys in Metrics CSV file not found."
@@ -234,41 +250,36 @@ class MetricAnnotations:
 
                 if is_barnyard and metric_info.include_cumulative:
                     subkey = add_multi_prefix(key)
-                    if subkey in value_dict:
+                    value = get_maybe_nested_key(value_dict, subkey)
+                    if value is not None:
                         output.append(
                             self.gen_metric(
                                 key,
-                                value_dict[subkey],
+                                value,
                                 debug=debug,
                                 is_barnyard=is_barnyard,
                                 is_cumulative=True,
                             )
                         )
-                    # else:
-                    # print("{} not found in metrics".format(subkey))
 
                 for species in species_list:
-                    # key_prefix = "" if len(species_list) == 1 else "{}_".format(species)
                     subkey = add_species_prefix(species, key)
-                    if subkey in value_dict:
+                    value = get_maybe_nested_key(value_dict, subkey)
+                    if value is not None:
                         output.append(
                             self.gen_metric(
                                 key,
-                                value_dict[subkey],
+                                value,
                                 species,
                                 is_barnyard,
                                 debug,
                                 is_cumulative=False,
                             )
                         )
-
-                    # else:
-                    # print("{} not found in metrics".format(subkey))
             else:
-                if key in value_dict:
-                    output.append(self.gen_metric(key, value_dict[key], debug=debug))
-                # else:
-                # print("{} not found in metrics".format(subkey))
+                value = get_maybe_nested_key(value_dict, key)
+                if value is not None:
+                    output.append(self.gen_metric(key, value, debug=debug))
 
         return output
 
@@ -342,6 +353,15 @@ class SpatialTemplateLigationMetricAnnotations(SpatialMetricAnnotations):
     def __init__(self):
         super().__init__()
         file_path = os.path.join(os.path.dirname(__file__), "spatial_template_ligation_metrics.csv")
+        self._override_metric_settings(file_path)
+
+
+class SpatialHDTemplateLigationMetricAnnotations(SpatialTemplateLigationMetricAnnotations):
+    def __init__(self):
+        super().__init__()
+        file_path = os.path.join(
+            os.path.dirname(__file__), "spatial_hd_template_ligation_metrics.csv"
+        )
         self._override_metric_settings(file_path)
 
 

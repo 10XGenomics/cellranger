@@ -5,7 +5,7 @@ use crate::mrp_args::MrpArgs;
 use crate::utils::{validate_id, CliPath};
 use anyhow::Result;
 use clap::{self, Parser};
-use cr_types::rna_read::LegacyLibraryType;
+use cr_types::LibraryType;
 use ordered_float::NotNan;
 use std::path::PathBuf;
 
@@ -46,7 +46,7 @@ impl TestrunArgs {
                 sample: Some(vec![String::from("tiny_arc_atac")]),
                 lanes: None,
             }
-            .get_sample_defs(LegacyLibraryType::ATAC, None)?,
+            .get_sample_defs(LibraryType::Atac, None)?,
         );
         sample_defs.extend(
             FastqArgs {
@@ -55,7 +55,7 @@ impl TestrunArgs {
                 sample: Some(vec![String::from("tiny_arc_gex")]),
                 lanes: None,
             }
-            .get_sample_defs(LegacyLibraryType::GeneExpression, None)?,
+            .get_sample_defs(LibraryType::Gex, None)?,
         );
         Ok(CountMro {
             sample_id: t.id.clone(),

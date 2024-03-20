@@ -1,6 +1,8 @@
 mod barcode_counter;
+pub mod barcode_index;
 mod compute_extra_multiplexing_metrics;
 mod diff_exp;
+mod filtered_barcodes;
 mod gdna_analysis;
 mod library_read_counter;
 mod molecule_info;
@@ -13,15 +15,21 @@ use crate::gdna_analysis::count_umis_per_probe;
 use crate::library_read_counter::count_reads_per_library;
 use crate::molecule_info::{
     concatenate_molecule_infos, count_reads_and_reads_in_cells, count_usable_reads,
-    downsample_molinfo,
+    downsample_molinfo, get_num_umis_per_barcode,
 };
 use crate::multi_graph::MultiGraph;
+use barcode::binned::SquareBinIndex;
 use barcode::Barcode;
+use barcode_index::MatrixBarcodeIndex;
 use cr_h5::molecule_info::{MoleculeInfoIterator, MoleculeInfoReader};
 use cr_types::reference::reference_info::ReferenceInfo;
-use cr_types::{BcCountDataType, BcCountFormat, TotalBcCountDataType, TotalBcCountFormat};
+use cr_types::{
+    BcCountDataType, BcCountFormat, LibraryType, TotalBcCountDataType, TotalBcCountFormat,
+};
+use filtered_barcodes::FilteredBarcodes;
 use martian_filetypes::FileTypeRead;
 use metric::CountMetric;
+use multi_graph::PyFingerprint;
 use ndarray::prelude::*;
 use ndarray::Array1;
 use pyo3::exceptions::PyException;
@@ -105,30 +113,27 @@ fn reads_per_feature(
 }
 
 #[pyfunction]
-fn get_barcode_cnts(_py: Python<'_>, file_path: String) -> PyResult<&PyDict> {
+fn get_gex_barcode_cnts(py: Python<'_>, file_path: String) -> Vec<(&PyBytes, i64)> {
     // Gets the total_barcode_counts file output by BARCODE_CORRECTION stage and
     // allows us to easily do analysis on this.
+    // Extracts the Gene Expression section.
     let data: BcCountFormat = BcCountFormat::from(file_path);
-    let data_by_feature: BcCountDataType = data.read().unwrap();
-    let dict_to_return = PyDict::new(_py);
-    for (k, mut v) in data_by_feature {
-        let lib_type = format!("{k}");
-        let data: Vec<(&PyBytes, i64)> = v
-            .drain()
-            .map(|(k, v): (Barcode, CountMetric)| (PyBytes::new(_py, k.seq()), v.count()))
-            .collect();
-        dict_to_return.set_item(lib_type, data)?;
-    }
-    Ok(dict_to_return)
+    let mut data_by_feature: BcCountDataType = data.read().unwrap();
+    data_by_feature
+        .remove(&LibraryType::Gex)
+        .unwrap()
+        .drain()
+        .map(|(k, v): (Barcode, CountMetric)| (PyBytes::new(py, k.sequence_bytes()), v.count()))
+        .collect()
 }
 
 #[pyfunction]
-fn get_total_barcode_cnts(_py: Python<'_>, file_path: String) -> PyResult<&PyDict> {
+fn get_total_barcode_cnts(py: Python<'_>, file_path: String) -> PyResult<&PyDict> {
     let reader: TotalBcCountFormat = TotalBcCountFormat::from(file_path);
     let mut data: TotalBcCountDataType = reader.read().unwrap();
-    let dict_to_return = PyDict::new(_py);
+    let dict_to_return = PyDict::new(py);
     for (k, v) in data.drain() {
-        dict_to_return.set_item(PyBytes::new(_py, k.seq()), v.count())?;
+        dict_to_return.set_item(PyBytes::new(py, k.sequence_bytes()), v.count())?;
     }
     Ok(dict_to_return)
 }
@@ -149,7 +154,7 @@ fn fast_utils(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(count_reads_per_library, m)?)?;
     m.add_function(wrap_pyfunction!(downsample_molinfo, m)?)?;
     m.add_function(wrap_pyfunction!(concatenate_molecule_infos, m)?)?;
-    m.add_function(wrap_pyfunction!(get_barcode_cnts, m)?)?;
+    m.add_function(wrap_pyfunction!(get_gex_barcode_cnts, m)?)?;
     m.add_function(wrap_pyfunction!(get_total_barcode_cnts, m)?)?;
     m.add_function(wrap_pyfunction!(count_umis_per_probe, m)?)?;
     m.add_function(wrap_pyfunction!(count_reads_and_reads_in_cells, m)?)?;
@@ -157,6 +162,20 @@ fn fast_utils(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sseq_differential_expression_o3, m)?)?;
     m.add_function(wrap_pyfunction!(compute_sseq_params_o3, m)?)?;
     m.add_function(wrap_pyfunction!(validate_reference, m)?)?;
+    m.add_function(wrap_pyfunction!(get_num_umis_per_barcode, m)?)?;
     m.add_class::<MultiGraph>()?;
+    m.add_class::<PyFingerprint>()?;
+    m.add_class::<FilteredBarcodes>()?;
+    m.add_class::<MatrixBarcodeIndex>()?;
+    m.add_function(wrap_pyfunction!(
+        filtered_barcodes::save_filtered_bcs_groups,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        filtered_barcodes::load_filtered_bcs_groups,
+        m
+    )?)?;
+    m.add_class::<SquareBinIndex>()?;
+
     Ok(())
 }

@@ -79,7 +79,7 @@ pub fn intersect_vecs<T: PartialOrd + Eq + Clone>(x: &[T], y: &[T]) -> Vec<T> {
         if x[i] < y[j] {
             i += 1;
         } else if y[j] < x[i] {
-            j += 1
+            j += 1;
         } else {
             result.push(x[i].clone());
             i += 1;

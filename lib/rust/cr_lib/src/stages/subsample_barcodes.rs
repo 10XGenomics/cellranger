@@ -1,7 +1,7 @@
 //! Martian stage SUBSAMPLE_BARCODES
 
 use anyhow::Result;
-use cr_types::types::{BarcodeSetFormat, LibraryFeatures};
+use cr_types::types::{BarcodeSetFormat, LibraryType};
 use cr_types::BcCountFormat;
 use itertools::Itertools;
 use martian::{MartianMain, MartianRover};
@@ -45,7 +45,7 @@ impl MartianMain for SubsampleBarcodes {
             .read()?
             .into_iter()
             .filter_map(|(k, v)| match k {
-                LibraryFeatures::GeneExpression(_) => Some(v),
+                LibraryType::Gex => Some(v),
                 _ => None,
             })
             .exactly_one()
@@ -94,10 +94,9 @@ impl MartianMain for SubsampleBarcodes {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use barcode::Barcode;
-    use cr_types::types::FeatureType;
+    use barcode::{Barcode, BcSeq};
     use martian::prelude::{MartianFileType, MartianStage};
-    use metric::{Metric, SimpleHistogram, TxHashMap};
+    use metric::{SimpleHistogram, TxHashMap};
     use std::path::{Path, PathBuf};
     use tempfile;
 
@@ -109,25 +108,22 @@ pub mod tests {
         Ok(sub_path)
     }
 
-    fn u32_to_seq_bytes(seq: u32) -> [u8; 8] {
+    fn u32_to_seq(seq: u32) -> BcSeq {
         let mut bc = [0_u8; 8];
         for idx in 0..8 {
             bc[idx] = ACGT[((seq >> idx) & 3) as usize];
         }
-        bc
+        BcSeq::from_bytes(&bc)
     }
 
     fn test_stage(num_barcodes: u32) -> Result<bool> {
         let mut barcode_counts = TxHashMap::default();
-        let mut histogram: SimpleHistogram<Barcode> = SimpleHistogram::new();
+        let mut histogram: SimpleHistogram<Barcode> = SimpleHistogram::default();
         for i in 0..num_barcodes {
-            histogram.observe_by_owned(Barcode::new(0, &u32_to_seq_bytes(i), true), i + 1);
+            histogram.observe_by_owned(Barcode::with_seq(0, u32_to_seq(i), true), i + 1);
         }
         let total_num_reads = histogram.raw_counts().sum::<i64>() as u32;
-        barcode_counts.insert(
-            LibraryFeatures::GeneExpression(FeatureType::Gene),
-            histogram.clone(),
-        );
+        barcode_counts.insert(LibraryType::Gex, histogram.clone());
 
         let tmp_dir = tempfile::tempdir().unwrap();
         let tmp_dir = tmp_dir.path();

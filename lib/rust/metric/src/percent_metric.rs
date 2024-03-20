@@ -23,7 +23,7 @@ impl PercentMetric {
     /// ```rust
     /// use metric::{Metric, PercentMetric};
     /// let c1 = PercentMetric::from_parts(50, 100);
-    /// let mut c2 = PercentMetric::new();
+    /// let mut c2 = PercentMetric::default();
     /// c2.increment_by(50, true);
     /// c2.increment_by(50, false);
     /// assert!(c1==c2);
@@ -56,7 +56,7 @@ impl PercentMetric {
     /// # Example
     /// ```rust
     /// use metric::{Metric, PercentMetric};
-    /// let mut c1 = PercentMetric::new(); // Initialize to zero
+    /// let mut c1 = PercentMetric::default(); // Initialize to zero
     /// c1.increment_by(10, true); // Now it is 10
     /// assert!(c1 == PercentMetric::from_parts(10, 10))
     /// ```
@@ -75,7 +75,7 @@ impl PercentMetric {
     /// # Example
     /// ```rust
     /// use metric::{Metric, PercentMetric};
-    /// let mut c = PercentMetric::new(); // Initialize to zero
+    /// let mut c = PercentMetric::default(); // Initialize to zero
     /// assert!(c.fraction().is_none());
     /// c.increment_by(10, false);
     /// c.increment_by(10, true);

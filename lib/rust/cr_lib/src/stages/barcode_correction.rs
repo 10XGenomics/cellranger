@@ -1,21 +1,22 @@
 //! Martian stage BARCODE_CORRECTION
 
-use crate::barcode_correction_metrics::{BarcodeCorrectionMetricsFormat, BarcodeCorrectionVisitor};
+use crate::barcode_correction_metrics::{
+    BarcodeCorrectionMetricsFormat, BarcodeCorrectionVisitor, BarcodeDiversityMetrics,
+};
 use crate::barcode_sort::{BarcodeOrder, ReadVisitor};
 use crate::stages::make_correction_map::CorrectionMapFormat;
 use crate::types::ReadShardFile;
 use anyhow::Result;
 use barcode::{
     Barcode, BarcodeConstruct, BarcodeCorrector, BarcodeSegment, BarcodeSegmentState, BcSegQual,
-    HasBarcode, SegmentedBarcode, Segments, Whitelist,
+    SegmentedBarcode, Segments, Whitelist,
 };
 use barcode_extensions::select_barcode_corrector;
 use cr_bam::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_ITEM_BUFFER_SZ, ALN_BC_SEND_BUFFER_SZ};
-use cr_types::chemistry::{BarcodeExtraction, ChemistryDef};
-use cr_types::rna_read::{LegacyLibraryType, RnaRead};
+use cr_types::chemistry::{BarcodeExtraction, ChemistryDefs};
+use cr_types::rna_read::RnaRead;
 use cr_types::types::{
-    BcCountDataType, BcCountFormat, BcSegmentCountFormat, GemWell, LibraryFeatures,
-    TotalBcCountFormat,
+    BcCountDataType, BcCountFormat, BcSegmentCountFormat, GemWell, LibraryType, TotalBcCountFormat,
 };
 use cr_types::MetricsFile;
 use fastq_set::read_pair::{ReadPair, ReadPart, RpRange};
@@ -23,8 +24,7 @@ use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric;
-use metric::{JsonReport, JsonReporter, Metric, SimpleHistogram, TxHashMap, TxHashSet};
+use metric::{self, JsonReport, Metric, SimpleHistogram, TxHashMap, TxHashSet};
 use serde::{Deserialize, Serialize};
 use shardio::{Range, ShardReader, ShardWriter};
 
@@ -32,11 +32,11 @@ use shardio::{Range, ShardReader, ShardWriter};
 pub struct BarcodeCorrectionStageInputs {
     pub gem_well: GemWell,
     pub invalid_uncorrected: Vec<ReadShardFile>,
-    pub chemistry_def: ChemistryDef,
+    pub chemistry_defs: ChemistryDefs,
     pub barcode_segment_counts: BcSegmentCountFormat,
     pub barcode_counts: BcCountFormat,
     pub valid_read_metrics: BarcodeCorrectionMetricsFormat,
-    pub libraries_to_translate: TxHashSet<LegacyLibraryType>,
+    pub libraries_to_translate: TxHashSet<LibraryType>,
     pub correction_map: Option<CorrectionMapFormat>,
     // Counts for all barcodes over this amount will be
     // be reported in the total_barcode_counts output.
@@ -75,30 +75,27 @@ pub struct BarcodeCorrection;
 
 fn correct_barcode_in_read(
     rna_read: &mut RnaRead,
+    extractor: Option<&BarcodeExtraction>,
     corrector_and_length_range: BarcodeConstruct<&(
         BarcodeCorrector,
         Option<std::ops::Range<usize>>,
     )>,
-    extraction: &Option<&BarcodeExtraction>,
 ) {
     // This is needed to get around the borrow checker
     let bc_qual = rna_read.raw_bc_construct_qual();
+    let corrector = corrector_and_length_range.map(|(corrector, _range)| corrector);
 
-    let corrector = corrector_and_length_range.map(|x| &x.0);
-
-    match extraction {
+    match extractor {
         Some(BarcodeExtraction::Independent) | None => {
-            rna_read
-                .segmented_barcode_mut()
-                .segments_mut()
-                .zip(bc_qual)
-                .zip(corrector)
-                .iter()
-                .for_each(|((segment, qual), corrector)| {
-                    if !segment.is_valid() {
-                        corrector.correct_barcode(segment, Some(qual));
-                    }
-                });
+            for (segment, qual, corrector) in izip!(
+                rna_read.segmented_barcode_mut().segments_mut(),
+                bc_qual,
+                corrector
+            ) {
+                if !segment.is_valid() {
+                    corrector.correct_barcode(segment, Some(qual));
+                }
+            }
         }
         Some(BarcodeExtraction::JointBc1Bc2 {
             min_offset,
@@ -111,7 +108,7 @@ fn correct_barcode_in_read(
                 bc_qual: BcSegQual,
             ) -> Option<(RpRange, BarcodeSegment, u16)> {
                 read.get_range(range, ReadPart::Seq).and_then(|seq| {
-                    let mut bc = BarcodeSegment::new(seq, BarcodeSegmentState::Invalid);
+                    let mut bc = BarcodeSegment::with_sequence(seq, BarcodeSegmentState::Invalid);
                     corrector
                         .correct_barcode(&mut bc, Some(bc_qual))
                         .map(|dist| (range, bc, dist))
@@ -262,7 +259,7 @@ impl MartianStage for BarcodeCorrection {
             .into_iter()
             .map(|range| BarcodeCorrectionChunkInputs { range })
             .collect::<StageDef<_>>()
-            .join_resource(Resource::with_mem_gb(5)))
+            .join_resource(Resource::with_mem_gb(6)))
     }
 
     fn main(
@@ -293,12 +290,9 @@ impl MartianStage for BarcodeCorrection {
         let mut invalid_sender = invalid_writer.get_sender();
 
         let mut bc_counts_corrected: BcCountDataType = TxHashMap::default();
-        let mut bc_counts_total: SimpleHistogram<Barcode> = SimpleHistogram::new();
+        let mut bc_counts_total: SimpleHistogram<Barcode> = SimpleHistogram::default();
 
         let bc_segment_counts = args.barcode_segment_counts.read()?;
-
-        let mut per_lib_corrector = TxHashMap::default();
-        let barcode_extraction = args.chemistry_def.barcode_extraction();
 
         let mut per_lib_correction_map = args
             .correction_map
@@ -306,36 +300,42 @@ impl MartianStage for BarcodeCorrection {
             .transpose()?
             .unwrap_or_default();
 
-        for (k, v) in bc_segment_counts {
-            let whitelist = Whitelist::construct(
-                args.chemistry_def.barcode_whitelist(),
-                args.libraries_to_translate
-                    .contains(&k.legacy_library_type()),
-                None,
-            )?;
+        let extractors_and_correctors: TxHashMap<_, _> = bc_segment_counts
+            .into_iter()
+            .map(|(library_type, v)| {
+                let chemistry_def = &args.chemistry_defs[&library_type];
+                let extractor = chemistry_def.barcode_extraction();
+                let whitelist = Whitelist::construct(
+                    chemistry_def.barcode_whitelist(),
+                    args.libraries_to_translate.contains(&library_type),
+                )?;
 
-            per_lib_corrector.insert(
-                k,
-                select_barcode_corrector(
-                    whitelist.zip(v),
-                    barcode_extraction,
-                    per_lib_correction_map.remove(&k),
-                ),
-            );
-        }
+                anyhow::Ok((
+                    library_type,
+                    (
+                        extractor,
+                        select_barcode_corrector(
+                            whitelist.zip(v),
+                            extractor,
+                            per_lib_correction_map.remove(&library_type),
+                        ),
+                    ),
+                ))
+            })
+            .try_collect()?;
 
         let mut visitor = BarcodeCorrectionVisitor::new();
         for rna_read in reader.iter_range(&chunk_args.range)? {
             let mut rna_read = rna_read?;
-            let corrector = &per_lib_corrector[&rna_read.library_feats()];
-            correct_barcode_in_read(&mut rna_read, corrector.as_ref(), &barcode_extraction);
+            let (extractor, corrector) = &extractors_and_correctors[&rna_read.library_type];
+            correct_barcode_in_read(&mut rna_read, *extractor, corrector.as_ref());
 
             visitor.visit_processed_read(&mut rna_read)?;
             let bc = rna_read.barcode();
             if bc.is_valid() {
                 bc_counts_corrected
-                    .entry(rna_read.library_feats())
-                    .or_insert_with(SimpleHistogram::new)
+                    .entry(rna_read.library_type)
+                    .or_default()
                     .observe(&bc);
                 valid_sender.send(rna_read)?;
             } else {
@@ -379,12 +379,12 @@ impl MartianStage for BarcodeCorrection {
         let bc_counts_raw = args.barcode_counts.read()?;
 
         let bc_counts_total = {
-            let mut result = SimpleHistogram::new();
+            let mut result = SimpleHistogram::default();
             for co in &chunk_outs {
                 result += co.total_barcode_counts.read()?;
             }
             for counts in bc_counts_raw.values() {
-                let mut retained = SimpleHistogram::new();
+                let mut retained = SimpleHistogram::default();
                 counts
                     .distribution()
                     .iter()
@@ -411,37 +411,41 @@ impl MartianStage for BarcodeCorrection {
             metrics.merge(chunk_out.chunk_summary.read()?);
         }
 
-        // VDJ has needs to be lowercase here
-        fn metric_prefix(lib_feat: LibraryFeatures) -> &'static str {
-            match lib_feat {
-                LibraryFeatures::Vdj(_) => "vdj",
-                lf => lf.legacy_library_type().metric_prefix().unwrap_or("_"),
-            }
-        }
-
-        let metrics = metrics
+        // VDJ prefix is lowercase for these metrics.
+        let metrics: TxHashMap<_, _> = metrics
             .0
             .into_iter()
-            .map(|(k, v)| (metric_prefix(k), v))
-            .collect::<TxHashMap<_, _>>();
+            .map(|(lib_type, v)| {
+                if lib_type.is_vdj() {
+                    (Some("vdj"), v)
+                } else {
+                    (lib_type.as_metric_prefix_static(), v)
+                }
+            })
+            .collect();
 
-        let mut reporter = metrics.to_json_reporter();
-        for (lib_feat, bc_counts) in bc_counts_corrected {
-            let mut barcodes_reporter = JsonReporter::new();
-            barcodes_reporter.insert("barcodes_detected", bc_counts.distribution().len());
-            barcodes_reporter.insert(
-                "effective_barcode_diversity",
-                bc_counts.effective_diversity(),
-            );
-            match lib_feat {
-                LibraryFeatures::Vdj(_) => {}
-                lf => barcodes_reporter
-                    .add_prefix(lf.legacy_library_type().metric_prefix().unwrap_or("_")),
-            }
-            for (k, v) in barcodes_reporter {
-                reporter.insert(k, v);
-            }
-        }
+        let barcode_diversity_metrics: TxHashMap<_, _> = bc_counts_corrected
+            .into_iter()
+            .map(|(lib_type, bc_counts)| {
+                (
+                    if lib_type.is_vdj() {
+                        None
+                    } else {
+                        lib_type.as_metric_prefix_static()
+                    },
+                    BarcodeDiversityMetrics {
+                        barcodes_detected: bc_counts.distribution().len(),
+                        effective_barcode_diversity: bc_counts.effective_diversity(),
+                    },
+                )
+            })
+            .collect();
+
+        let summary = MetricsFile::from_reporter(
+            &rover,
+            "summary",
+            &(metrics.to_json_reporter() + barcode_diversity_metrics.to_json_reporter()),
+        )?;
 
         let (valid_corrected, invalid) = chunk_outs
             .into_iter()
@@ -450,7 +454,7 @@ impl MartianStage for BarcodeCorrection {
         Ok(BarcodeCorrectionStageOutputs {
             valid_corrected,
             invalid,
-            summary: MetricsFile::from_reporter(&rover, "summary", &reporter)?,
+            summary,
             corrected_barcode_counts,
             total_barcode_counts,
         })

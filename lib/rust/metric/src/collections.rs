@@ -1,9 +1,8 @@
-//!
 //! This module implements the `Metric` and `JsonReport` trait
 //! for common collections (`Vec`, `HashMap`)
-//!
 
-use crate::{JsonReport, JsonReporter, Metric};
+use crate::{join_metric_name, JsonReport, JsonReporter, Metric, ToMetricPrefix};
+use itertools::zip_eq;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{BuildHasher, Hash};
@@ -14,10 +13,6 @@ where
     K: Ord + Eq + Hash + Serialize + for<'de> Deserialize<'de>,
     V: Metric,
 {
-    fn new() -> Self {
-        BTreeMap::default()
-    }
-
     fn merge(&mut self, other: Self) {
         use std::collections::btree_map::Entry::{Occupied, Vacant};
         for (key, value) in other {
@@ -40,11 +35,6 @@ where
     V: Metric,
     S: BuildHasher + Default,
 {
-    /// Returns the default HashMap
-    fn new() -> Self {
-        HashMap::default()
-    }
-
     /// Merging two hashmaps correspond to merging the values for keys
     /// which are common to both hashmaps and copying into `self` any new (key, value)
     /// pair from the `other` hashmap
@@ -63,29 +53,24 @@ where
     }
 }
 
-/// `JsonReport` trait for `HashMap` where the value implements the `JsonReport` trait
-/// and the key can be converted into a string
-impl<K: ToString, V: JsonReport, S> JsonReport for HashMap<K, V, S> {
+/// Convert a `HashMap` to a `JsonReporter`, and flatten the keys by joining them with `_`.
+/// The keys must implement `ToMetricPrefix` and the values `JsonReport`.
+impl<K: ToMetricPrefix, V: JsonReport, S> JsonReport for HashMap<K, V, S> {
     fn to_json_reporter(&self) -> JsonReporter {
-        let mut reporter = JsonReporter::new();
-        for (key, value) in self {
-            let mut this_report = value.to_json_reporter();
-            this_report.add_prefix(key);
-            reporter.merge(this_report);
-        }
-        reporter
+        self.iter()
+            .flat_map(|(prefix, reporter)| {
+                let prefix = prefix.to_metric_prefix();
+                reporter
+                    .to_json_reporter()
+                    .into_iter()
+                    .map(move |(k, v)| (join_metric_name(prefix.as_deref(), &k), v))
+            })
+            .collect()
     }
 }
 
 /// `Metric` trait for `Vec<T>` where T implements the `Metric` trait.
-impl<T> Metric for Vec<T>
-where
-    T: Metric,
-{
-    fn new() -> Self {
-        Vec::new()
-    }
-
+impl<T: Metric> Metric for Vec<T> {
     /// `self` needs to be either empty or the same size as `other`.
     /// Elements at the same positions are merged
     fn merge(&mut self, mut other: Self) {
@@ -93,8 +78,7 @@ where
             self.append(&mut other);
             return;
         }
-        assert!(self.len() == other.len());
-        for (v1, v2) in self.iter_mut().zip(other.into_iter()) {
+        for (v1, v2) in zip_eq(self, other) {
             v1.merge(v2);
         }
     }
@@ -105,7 +89,7 @@ where
 /// in the vector must have unique key(s) when converted to a reporter.
 impl<T: JsonReport> JsonReport for Vec<T> {
     fn to_json_reporter(&self) -> JsonReporter {
-        let mut reporter = JsonReporter::new();
+        let mut reporter = JsonReporter::default();
         for value in self {
             let this_report = value.to_json_reporter();
             reporter.merge(this_report);
@@ -117,7 +101,7 @@ impl<T: JsonReport> JsonReport for Vec<T> {
 /// Implement `JsonReport` trait for a tuple.
 impl<K: ToString, V: Serialize> JsonReport for (K, V) {
     fn to_json_reporter(&self) -> JsonReporter {
-        let mut reporter = JsonReporter::new();
+        let mut reporter = JsonReporter::default();
         reporter.insert(self.0.to_string(), serde_json::to_value(&self.1).unwrap());
         reporter
     }
@@ -151,16 +135,16 @@ mod tests {
 
     #[test]
     fn check_hashmap_merge() {
-        let mut m1: TxHashMap<String, CountMetric> = TxHashMap::new();
+        let mut m1: TxHashMap<String, CountMetric> = TxHashMap::default();
         m1.insert("Hello".into(), CountMetric::from(10));
         m1.insert("World".into(), CountMetric::from(5));
 
-        let mut m2: TxHashMap<String, CountMetric> = TxHashMap::new();
+        let mut m2: TxHashMap<String, CountMetric> = TxHashMap::default();
         m2.insert("Hello".into(), CountMetric::from(20));
         m2.insert("Blah".into(), CountMetric::from(40));
         m1.merge(m2);
 
-        let mut m: TxHashMap<String, CountMetric> = TxHashMap::new();
+        let mut m: TxHashMap<String, CountMetric> = TxHashMap::default();
         m.insert("Hello".into(), CountMetric::from(30));
         m.insert("World".into(), CountMetric::from(5));
         m.insert("Blah".into(), CountMetric::from(40));
@@ -170,13 +154,13 @@ mod tests {
 
     #[test]
     fn check_hashmap_report() {
-        let mut m1: TxHashMap<String, CountMetric> = TxHashMap::new();
+        let mut m1: TxHashMap<String, CountMetric> = TxHashMap::default();
         m1.insert("Hello".into(), CountMetric::from(10));
         m1.insert("World".into(), CountMetric::from(5));
 
         let report = m1.to_json_reporter();
 
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Hello_count", 10);
         expected_report.insert("World_count", 5);
 

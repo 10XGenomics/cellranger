@@ -87,11 +87,10 @@ impl JibesModelO3 {
         let background = backgrounds.to_vec().unwrap();
         let foreground = foregrounds.to_vec().unwrap();
         for &z in &foreground {
-            if z < MIN_FOREGROUND_DELTA {
-                panic!(
-                    "Cannot initialize with foreground value {z} less than {MIN_FOREGROUND_DELTA}"
-                );
-            }
+            assert!(
+                z >= MIN_FOREGROUND_DELTA,
+                "Cannot initialize with foreground value {z} less than {MIN_FOREGROUND_DELTA}"
+            );
         }
         let std_dev = std_devs.to_vec().unwrap();
         JibesModelO3 {
@@ -215,7 +214,7 @@ impl JibesEMO3 {
                 second_elem += tag_cnt
                     * zip(self.posterior.row(i), self.latent_states.column(k))
                         .map(|x| *x.0 * *x.1)
-                        .sum::<f64>()
+                        .sum::<f64>();
             }
             #[allow(non_snake_case)]
             let XTWY = array![first_elem, second_elem];
@@ -278,9 +277,10 @@ impl JibesEMO3 {
             // Never allow the variance to go to 0, which would only happen if
             // only one data point is in this component, but would cause the LL to go to infinity
             self.model.std_devs[k] = std_dev_estimate.max(0.0001);
-            if self.optimize_pop_frequencies {
-                panic!("Frequency optimization not added yet.");
-            }
+            assert!(
+                !self.optimize_pop_frequencies,
+                "Frequency optimization not added yet."
+            );
         }
     }
 }
@@ -493,9 +493,10 @@ impl JibesEMO3 {
     }
 
     fn get_snr_dictionary(&self, py: Python<'_>) -> HashMap<String, f64> {
-        if !self.converged {
-            panic!("Model must converge before SNRs can be reported.");
-        }
+        assert!(
+            self.converged,
+            "Model must converge before SNRs can be reported."
+        );
         let snrs: Vec<f64> = zip(&self.model.foreground, &self.model.std_devs)
             .map(|(signal, noise)| signal / noise)
             .collect();

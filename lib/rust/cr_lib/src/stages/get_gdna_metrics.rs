@@ -1,29 +1,23 @@
 //! Martian stage GET_GDNA_METRICS
 
-// Other imports for stage
 use crate::gdna_utils::compute_gdna_metrics;
-// Bring the procedural macros in scope:
-// #[derive(MartianStruct)], #[derive(MartianType)], #[make_mro], martian_filetype!
-use crate::H5File;
 use anyhow::Result;
-use json_report_derive::JsonReport;
+use cr_types::H5File;
 use martian::{MartianMain, MartianRover};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::FileTypeWrite;
-use metric::{JsonReport, Metric};
-use metric_derive::Metric;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Metric, JsonReport, Serialize, Deserialize)]
-struct GdnaMetric {
+#[derive(Serialize)]
+pub struct GdnaMetric {
     estimated_gdna_content: f64,
     estimated_gdna_unspliced_threshold: f64,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct GdnaPlottingSummary {
     unspliced_counts: Vec<f64>,
     spliced_counts: Vec<f64>,
@@ -32,40 +26,36 @@ pub struct GdnaPlottingSummary {
     model_slope: f64,
 }
 
-#[derive(Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Clone, Deserialize, MartianStruct)]
 pub struct GetGdnaMetricsStageInputs {
     pub molecule_info: H5File,
     pub reference_path: PathBuf,
     pub probe_set: CsvFile<()>,
 }
 
-#[derive(Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Serialize, Deserialize, MartianStruct)]
 pub struct GetGdnaMetricsStageOutputs {
-    pub summary: JsonFile<()>,
+    pub summary: JsonFile<GdnaMetric>,
     pub gdna_plot_sufficient_stats: JsonFile<GdnaPlottingSummary>,
 }
 
 // This is our stage struct
 pub struct GetGdnaMetrics;
 
-#[make_mro(mem_gb = 4)]
+#[make_mro(mem_gb = 4, volatile = strict)]
 impl MartianMain for GetGdnaMetrics {
     type StageInputs = GetGdnaMetricsStageInputs;
-    type StageOutputs = GetGdnaMetricsStageOutputs; // Use `MartianVoid` if empty
+    type StageOutputs = GetGdnaMetricsStageOutputs;
+
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let gdna_metrics =
             compute_gdna_metrics(&args.molecule_info, &args.probe_set, &args.reference_path);
 
-        let metrics = GdnaMetric {
-            estimated_gdna_content: gdna_metrics
-                .estimated_percentage_of_gdna_umi
-                .fraction()
-                .unwrap_or(f64::NAN),
+        let summary: JsonFile<_> = rover.make_path("summary");
+        summary.write(&GdnaMetric {
+            estimated_gdna_content: gdna_metrics.estimated_percentage_of_gdna_umi,
             estimated_gdna_unspliced_threshold: gdna_metrics.estimated_gdna_per_probe.ceil(),
-        };
-        let summary: JsonFile<()> = rover.make_path("summary");
-        let reporter = metrics.to_json_reporter();
-        reporter.report(&summary)?;
+        })?;
 
         let plotly_summary = GdnaPlottingSummary {
             unspliced_counts: gdna_metrics.unspliced_counts.clone(),

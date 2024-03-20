@@ -1,8 +1,7 @@
-use crate::reference::genome_of_chrom::GenomeName;
 use crate::rna_read::HIGH_CONF_MAPQ;
+use crate::types::GenomeName;
 use anyhow::{anyhow, Context, Result};
-use arrayvec::{self, ArrayVec};
-use itertools::Itertools;
+use itertools::{chain, Itertools};
 use lazy_static::lazy_static;
 use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
@@ -151,7 +150,7 @@ impl PartialEq for Probe {
 impl PartialOrd for Probe {
     /// Compare two probe IDs.
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.probe_id.partial_cmp(&other.probe_id)
+        Some(self.cmp(other))
     }
 }
 
@@ -305,10 +304,11 @@ impl ProbeSetReference {
         }
 
         // Skip the middle base if the sequence has odd length.
-        let rhs_end = self.probe_seq_len / 2;
-        let lhs_start = (self.probe_seq_len + 1) / 2;
-        let lhs_seq = &seq[..rhs_end];
-        let rhs_seq = &seq[lhs_start..min(seq.len(), self.probe_seq_len)];
+        let lhs_end = self.probe_seq_len / 2;
+        let rhs_start = (self.probe_seq_len + 1) / 2;
+        let rhs_end = min(seq.len(), self.probe_seq_len);
+        let lhs_seq = &seq[..lhs_end];
+        let rhs_seq = &seq[rhs_start..rhs_end];
         let (lhs_probes, lhs_score) = self
             .align_half_read(&self.lhs_seq_to_probe, lhs_seq)
             .unwrap_or((&[], 0));
@@ -516,18 +516,14 @@ impl ProbeSetReference {
             probe_to_seq
                 .iter()
                 .fold(Default::default(), |mut map, (probe, seq)| {
-                    map.entry(seq.lhs.clone())
-                        .or_insert_with(Vec::new)
-                        .push(probe.clone());
+                    map.entry(seq.lhs.clone()).or_default().push(probe.clone());
                     map
                 });
         let mut rhs_seq_to_probe: SeqToProbeMap =
             probe_to_seq
                 .iter()
                 .fold(Default::default(), |mut map, (probe, seq)| {
-                    map.entry(seq.rhs.clone())
-                        .or_insert_with(Vec::new)
-                        .push(probe.clone());
+                    map.entry(seq.rhs.clone()).or_default().push(probe.clone());
                     map
                 });
 
@@ -539,8 +535,7 @@ impl ProbeSetReference {
             probes.sort();
         }
 
-        let genome = metadata.0["reference_genome"].clone();
-
+        let genome = metadata.0["reference_genome"].as_str().into();
         Ok(Self {
             metadata,
             transcriptome_min_score,
@@ -630,12 +625,12 @@ pub struct MappedProbe {
 
 impl MappedProbe {
     /// Create a new mapping result.
-    pub fn new(lhs: Option<MappedProbeHalf>, rhs: Option<MappedProbeHalf>, genome: &str) -> Self {
-        let genome = if lhs.is_some() || rhs.is_some() {
-            Some(genome.to_string())
-        } else {
-            None
-        };
+    pub fn new(
+        lhs: Option<MappedProbeHalf>,
+        rhs: Option<MappedProbeHalf>,
+        genome: &GenomeName,
+    ) -> Self {
+        let genome = (lhs.is_some() || rhs.is_some()).then(|| genome.clone());
         MappedProbe {
             lhs,
             rhs,
@@ -698,14 +693,10 @@ impl MappedProbe {
     /// Return two genes when the two probes map to different genes.
     /// Return one gene when one probe maps and the other does not.
     /// Return no genes when no probes map.
-    pub fn genes(&self) -> arrayvec::IntoIter<[&Gene; 2]> {
+    pub fn genes(&self) -> impl Iterator<Item = &Gene> {
         let lhs = self.lhs_probe().map(|x| &x.gene);
         let rhs = self.rhs_probe().map(|x| &x.gene);
-        [lhs, if lhs == rhs { None } else { rhs }]
-            .iter()
-            .filter_map(|&x| x)
-            .collect::<ArrayVec<_>>()
-            .into_iter()
+        chain(lhs, if lhs == rhs { None } else { rhs })
     }
 
     /// Return an iterator over the mapped probes.
@@ -713,7 +704,7 @@ impl MappedProbe {
     /// Return two probes when the two halves of the read map to different probes or either probe does not map.
     /// Return no probes when neither half of the read maps.
     /// A string of "NA" indicates that half of the read does not map.
-    pub fn probes(&self) -> arrayvec::IntoIter<[&Probe; 2]> {
+    pub fn probes(&self) -> impl Iterator<Item = &Probe> {
         lazy_static! {
             /// A static reference to an unmapped probe.
             static ref PROBE_NA: Probe = Probe {
@@ -728,13 +719,10 @@ impl MappedProbe {
         }
 
         match (self.lhs_probe(), self.rhs_probe()) {
-            (Some(lhs), Some(rhs)) if lhs == rhs => iter::once(lhs).collect(),
-            (Some(lhs), Some(rhs)) => [lhs, rhs].iter().copied().collect(),
-            (Some(lhs), None) => [lhs, &PROBE_NA].iter().copied().collect(),
-            (None, Some(rhs)) => [&PROBE_NA, rhs].iter().copied().collect(),
-            (None, None) => ArrayVec::new(),
+            (None, None) => chain(None, None),
+            (lhs, rhs) if lhs == rhs => chain(lhs, None),
+            (lhs, rhs) => chain(lhs.or(Some(&PROBE_NA)), rhs.or(Some(&PROBE_NA))),
         }
-        .into_iter()
     }
 
     /// Return the mapping quality of this alignment.

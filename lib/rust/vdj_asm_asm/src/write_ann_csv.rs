@@ -59,8 +59,7 @@ impl From<&ContigAnnotation> for ContigAnnotationCsvRow {
             length: ann.sequence.len(),
             chain: ann
                 .chain_type()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| (*"None").to_string()),
+                .map_or_else(|| (*"None").to_string(), |c| c.to_string()),
             v_gene: ann.get_gene_name(VdjRegion::V).cloned(),
             d_gene: ann.get_gene_name(VdjRegion::D).cloned(),
             j_gene: ann.get_gene_name(VdjRegion::J).cloned(),

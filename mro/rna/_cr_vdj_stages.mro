@@ -16,6 +16,7 @@ filetype fa;
 filetype fasta;
 filetype fasta.fai;
 filetype fastq;
+filetype fprint.json;
 filetype h5;
 filetype html;
 filetype json;
@@ -26,7 +27,6 @@ filetype txt;
 
 struct VdjRefFastaFolder(
     fa regions,
-    fa donor_regions,
 )
 
 struct VdjRefFolder(
@@ -41,11 +41,56 @@ struct FilterSwitch(
     bool enclone_umi,
 )
 
+struct WhitelistSpec(
+    string name,
+    file   translation_whitelist_path,
+    string slide,
+    string part,
+)
+
+struct BarcodeReadComponent(
+    string        read_type,
+    string        kind,
+    int           offset,
+    int           length,
+    WhitelistSpec whitelist,
+)
+
+struct UmiWhitelistSpec(
+    string slide,
+    string part,
+    string translation,
+)
+
+struct UmiReadComponent(
+    string           read_type,
+    int              offset,
+    int              length,
+    int              min_length,
+    UmiWhitelistSpec whitelist,
+)
+
+struct RnaReadComponent(
+    string read_type,
+    int    offset,
+    int    length,
+    int    min_length,
+)
+
+struct ChemistryDef(
+    string                 name,
+    string                 description,
+    string                 endedness,
+    string                 strandedness,
+    BarcodeReadComponent[] barcode,
+    UmiReadComponent[]     umi,
+    RnaReadComponent       rna,
+    RnaReadComponent       rna2,
+    map                    barcode_extraction,
+)
+
 stage COPY_VDJ_REFERENCE(
     in  path         vdj_reference_path,
-    in  fa           vdj_t_donor_ref_fa,
-    in  fa           vdj_t_gd_donor_ref_fa,
-    in  fa           vdj_b_donor_ref_fa,
     out VdjRefFolder vdj_reference,
     src comp         "cr_vdj martian copy_vdj_reference",
 )
@@ -61,7 +106,7 @@ stage SUMMARIZE_VDJ_FILTERS(
     out json     metrics_summary,
     src comp     "cr_vdj martian summarize_vdj_filters",
 ) using (
-    mem_gb = 4,
+    mem_gb = 5,
 )
 
 stage CREATE_BARCODE_CSV(
@@ -89,6 +134,7 @@ stage RUN_ENCLONE(
 )
 
 stage WRITE_CLONOTYPE_OUTS(
+    in  int    sample_number,
     in  string receptor,
     in  pb     enclone_output,
     out csv    clonotypes_csv,
@@ -98,6 +144,7 @@ stage WRITE_CLONOTYPE_OUTS(
 )
 
 stage FILL_CLONOTYPE_INFO(
+    in  int  sample_number,
     in  json contig_annotations,
     in  pb   enclone_output,
     out json all_contig_annotations_json,
@@ -106,15 +153,16 @@ stage FILL_CLONOTYPE_INFO(
     mem_gb = 2,
 )
 
-stage HANDLE_NO_VDJ_REF(
+stage HANDLE_NO_CLONOTYPING(
     in  json asm_contig_json,
     in  json clonotype_contig_json,
-    in  bool has_no_vdj_ref,
+    in  bool disable_clonotyping,
     out json final_contig_annotations,
-    src comp "cr_vdj martian handle_no_ref",
+    src comp "cr_vdj martian handle_no_clonotyping",
 )
 
 stage WRITE_CONCAT_REF_OUTS(
+    in  int       sample_number,
     in  pb        enclone_output,
     in  json      all_contig_annotations_json,
     out bam       concat_ref_bam,
@@ -123,11 +171,12 @@ stage WRITE_CONCAT_REF_OUTS(
     out fasta.fai concat_ref_fasta_fai,
     src comp      "cr_vdj martian write_concat_ref_outs",
 ) using (
-    mem_gb  = 4,
+    mem_gb  = 5,
     threads = 4,
 )
 
 stage WRITE_CONSENSUS_BAM(
+    in  int     sample_number,
     in  pb      enclone_output,
     in  json    all_contig_annotations_json,
     out bam     consensus_bam,
@@ -139,6 +188,7 @@ stage WRITE_CONSENSUS_BAM(
 )
 
 stage WRITE_CONSENSUS_TXT(
+    in  int       sample_number,
     in  pb        enclone_output,
     out fasta     consensus_fasta,
     out fasta.fai consensus_fasta_fai,
@@ -150,53 +200,55 @@ stage WRITE_CONSENSUS_TXT(
 )
 
 stage ASSEMBLE_VDJ(
-    in  bincode.lz4[] bc_sorted_rna_reads,
-    in  bool          paired_end,
-    in  path          vdj_reference_path,
-    in  string        receptor,
-    in  int           n50_n50_rpu,
-    in  int           npairs,
-    in  bool          denovo,
-    in  path          inner_enrichment_primers,
-    in  int           total_read_pairs,
-    in  json          corrected_bc_counts,
-    in  bool          r2_revcomp,
-    out bam           contig_bam,
-    out bam.bai       contig_bam_bai,
-    out tsv           summary_tsv,
-    out tsv           umi_summary_tsv,
-    out json          metrics_summary_json,
-    out json          contig_annotations,
-    out bdf.bincode   barcode_brief,
-    out csv           barcode_support,
-    out json[]        barcodes_in_chunks,
-    out arp.bincode   assemblable_reads_per_bc,
-    out txt           align_info,
-    out fastq         unmapped_sample_fastq,
-    out txt           report,
-    src comp          "cr_vdj martian assembly",
+    in  map<ChemistryDef> chemistry_defs,
+    in  bincode.lz4[]     bc_sorted_rna_reads,
+    in  path              vdj_reference_path,
+    in  string            receptor,
+    in  int               n50_n50_rpu,
+    in  int               npairs,
+    in  bool              denovo,
+    in  path              inner_enrichment_primers,
+    in  int               total_read_pairs,
+    in  json              corrected_bc_counts,
+    in  int               min_contig_length,
+    out bam               contig_bam,
+    out bam.bai           contig_bam_bai,
+    out tsv               summary_tsv,
+    out tsv               umi_summary_tsv,
+    out json              metrics_summary_json,
+    out json              contig_annotations,
+    out bdf.bincode       barcode_brief,
+    out csv               barcode_support,
+    out json[]            barcodes_in_chunks,
+    out arp.bincode       assemblable_reads_per_bc,
+    out txt               align_info,
+    out fastq             unmapped_sample_fastq,
+    out txt               report,
+    src comp              "cr_vdj martian assembly",
 ) split (
-    in  bincode.lz4   chunk_rna_reads,
-    in  bool          perf_track,
-    in  int           chunk_id,
-    out json          barcodes_in_chunk,
-    out bin           barcode_data,
-    out bin           barcode_data_sum,
-    out bin           barcode_data_brief,
-    out bincode       outs_builder,
+    in  bincode.lz4       chunk_rna_reads,
+    in  bool              perf_track,
+    in  int               chunk_id,
+    out json              barcodes_in_chunk,
+    out bin               barcode_data,
+    out bin               barcode_data_sum,
+    out bin               barcode_data_brief,
+    out bincode           outs_builder,
 )
 
 stage ASM_CALL_CELLS(
-    in  string       receptor,
-    in  bool         denovo,
-    in  path         vdj_reference_path,
-    in  json         contig_annotations,
-    in  bdf.bincode  barcode_brief,
-    in  int          n50_n50_rpu,
-    in  FilterSwitch filter_switch,
-    out json         contig_annotations,
-    out json.lz4     filter_diagnostics,
-    src comp         "cr_vdj martian asm_call_cells",
+    in  string            receptor,
+    in  bool              denovo,
+    in  path              vdj_reference_path,
+    in  map<ChemistryDef> count_chemistry_defs,
+    in  json              contig_annotations,
+    in  bdf.bincode       barcode_brief,
+    in  int               n50_n50_rpu,
+    in  FilterSwitch      filter_switch,
+    in  fprint.json       sample_fingerprint,
+    out json              contig_annotations,
+    out json.lz4          filter_diagnostics,
+    src comp              "cr_vdj martian asm_call_cells",
 ) using (
     mem_gb = 4,
 ) retain (
@@ -224,6 +276,11 @@ stage WRITE_CONTIG_OUTS(
     out bed         annotations_bed,
     out json        cell_barcodes,
     out json        paired_cell_barcodes,
+    out json        paired_prod_barcodes,
+    out json        paired_cdr3_barcodes,
+    out json        prod_barcodes,
+    out json        cdr3_barcodes,
+    out json        all_contig_barcodes,
     out json        summary,
     src comp        "cr_vdj martian write_contig_outs",
 )
@@ -248,9 +305,39 @@ stage MAKE_FILTER_SWITCH(
     src comp         "cr_vdj martian make_filter_switch",
 )
 
+stage MERGE_PER_SAMPLE_ANNOTATIONS(
+    in  map<json> per_sample_annotations,
+    out json      contig_annotations,
+    src comp      "cr_vdj martian merge_per_sample_annotations",
+)
+
 stage WRITE_ANN_CSV(
     in  json all_contig_annotations_json,
     out csv  all_contig_annotations_csv,
     out csv  filtered_contig_annotations_csv,
     src comp "cr_vdj martian write_ann_csv",
+)
+
+stage SUBSET_ASSEMBLY_OUTS(
+    in  bool              per_sample,
+    in  map<ChemistryDef> count_chemistry_defs,
+    in  fprint.json       sample_fingerprint,
+    in  json              contig_annotations,
+    in  json              merged_annotations,
+    in  int               total_read_pairs,
+    in  json              corrected_barcode_counts,
+    in  arp.bincode       assemblable_reads_per_bc,
+    in  tsv               contig_summary,
+    in  tsv               umi_summary,
+    in  csv               barcode_support,
+    in  bdf.bincode       barcode_brief,
+    out json              contig_annotations,
+    out int               total_read_pairs,
+    out json              corrected_barcode_counts,
+    out arp.bincode       assemblable_reads_per_bc,
+    out tsv               contig_summary,
+    out tsv               umi_summary,
+    out csv               barcode_support,
+    out bdf.bincode       barcode_brief,
+    src comp              "cr_vdj martian subset_assembly_outs",
 )

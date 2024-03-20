@@ -146,9 +146,9 @@ pub struct StageOutputs {
 
 fn attach_read_group_tags<'a>(
     header: &mut bam::Header,
-    read_chunks: impl Iterator<Item = &'a RnaChunk>,
+    read_chunks: impl IntoIterator<Item = &'a RnaChunk>,
 ) {
-    for read_group in read_chunks.map(|x| &x.read_group).unique() {
+    for read_group in read_chunks.into_iter().map(|x| &x.read_group).unique() {
         // sample_id, library_id, gem_group, flowcell, lane
         let parts = read_group.split(':').collect::<Vec<_>>();
         let mut record = HeaderRecord::new(b"RG");
@@ -162,26 +162,23 @@ fn attach_read_group_tags<'a>(
     }
 }
 
-fn attach_bamtofastq_comments<'a>(
-    header: &mut bam::Header,
-    mut read_chunks: impl Iterator<Item = &'a RnaChunk>,
-) {
-    // NOTE: bamtofastq tags will be based on the first RnaChunk
-    // it _should_ be impossible to feed CR with multiple libraries
-    // that have different bamtofastq setups.  But we're
-    // not going to fail here if they do.
-    let chunk = read_chunks.next().unwrap();
-    let headers = chunk.chemistry.name.bamtofastq_headers();
-
-    for h in headers {
-        header.push_comment(h.as_bytes());
+/// Add BAM header comments that are used by bamtofastq.
+fn attach_bamtofastq_comments(header: &mut bam::Header, read_chunks: &[RnaChunk]) {
+    let bamtofastq_header_comments = read_chunks
+        .iter()
+        .map(|x| x.chemistry.name.bamtofastq_headers())
+        .unique()
+        .exactly_one()
+        .unwrap();
+    for comment in bamtofastq_header_comments {
+        header.push_comment(comment.as_bytes());
     }
 }
 
-fn attach_library_info_comments<'a>(
+fn attach_library_info_comments(
     header: &mut bam::Header,
-    read_chunks: impl Iterator<Item = &'a RnaChunk>,
-    target_set_name: Option<String>,
+    read_chunks: &[RnaChunk],
+    target_set_name: Option<&str>,
 ) {
     let library_infos = make_library_info(read_chunks, target_set_name);
     for info in library_infos {
@@ -201,9 +198,9 @@ fn attach_slide_serial_capture_area(
 }
 
 pub fn make_header(
-    bam_header: Option<&PathBuf>,
+    bam_header: Option<&Path>,
     read_chunks: &[RnaChunk],
-    target_set_name: Option<String>,
+    target_set_name: Option<&str>,
     write_header: bool,
     slide_serial_capture_area: Option<String>,
     software_version: &str,
@@ -226,9 +223,9 @@ pub fn make_header(
     let mut header = bam::Header::from_template(&header_view);
     // only the first of these is used in the `samtools cat` later
     if write_header {
-        attach_read_group_tags(&mut header, read_chunks.iter());
-        attach_bamtofastq_comments(&mut header, read_chunks.iter());
-        attach_library_info_comments(&mut header, read_chunks.iter(), target_set_name);
+        attach_read_group_tags(&mut header, read_chunks);
+        attach_bamtofastq_comments(&mut header, read_chunks);
+        attach_library_info_comments(&mut header, read_chunks, target_set_name);
         attach_slide_serial_capture_area(&mut header, slide_serial_capture_area);
     }
     Ok(header)
@@ -287,7 +284,7 @@ impl MartianStage for WritePosBam {
         let header = make_header(
             Some(&args.bam_header),
             &args.read_chunks,
-            args.target_set_name,
+            args.target_set_name.as_deref(),
             chunk_args.write_header,
             args.slide_serial_capture_area,
             &rover.pipelines_version(),
@@ -347,7 +344,7 @@ impl MartianStage for WritePosBam {
         let header: Header = make_header(
             Some(&args.bam_header),
             &args.read_chunks,
-            args.target_set_name,
+            args.target_set_name.as_deref(),
             false,
             args.slide_serial_capture_area,
             &rover.pipelines_version(),
@@ -414,8 +411,8 @@ mod tests {
     use super::*;
     use crate::testing::correctness::check_bam_file_correctness;
     use cr_types::chemistry::{ChemistryDef, ChemistryName};
-    use cr_types::rna_read::LegacyLibraryType;
     use cr_types::types::SampleAssignment::{Assigned, Unassigned};
+    use cr_types::LibraryType;
     use fastq_set::read_pair_iter::InputFastqs;
 
     fn get_test_chunk() -> RnaChunk {
@@ -423,7 +420,7 @@ mod tests {
         RnaChunk::new(
             &ChemistryDef::named(ChemistryName::FivePrimePE),
             &SampleDef::default(),
-            LegacyLibraryType::GeneExpression,
+            LibraryType::Gex,
             InputFastqs {
                 r1: String::default(),
                 r2: None,

@@ -1,11 +1,10 @@
 use crate::barcode_sort::ReadVisitor;
 use anyhow::Result;
-use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, BcSegSeq, HasBarcode};
+use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, BcSegSeq};
 use cr_types::chemistry::ChemistryDef;
 use cr_types::reference::feature_extraction::FeatureExtractor;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::{RnaChunk, RnaRead};
-use cr_types::types::LibraryFeatures;
 use cr_websummary::multi::tables::SequencingMetricsRow;
 use cr_websummary::PercentF1;
 use fastq_set::metric_utils::{PatternCheck, ILLUMINA_QUAL_OFFSET};
@@ -17,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::convert::Into;
 use std::sync::Arc;
-use umi::HasUmi;
 
 const HOMOPOLYMER_LENGTH: usize = 15;
 const BARCODE_MIN_QUAL_THRESHOLD: u8 = 10;
@@ -25,7 +23,7 @@ const UMI_MIN_QUAL_THRESHOLD: u8 = 10;
 const UMI_POLYT_SUFFIX_LENGTH: usize = 5;
 
 #[allow(non_snake_case)]
-#[derive(Clone, Serialize, Deserialize, Metric, JsonReport)]
+#[derive(Default, Serialize, Deserialize, Metric, JsonReport)]
 #[json_report(extend = "extra_reports")]
 pub struct MakeShardMetrics {
     bc_N_bases: PercentMetric,
@@ -75,10 +73,7 @@ pub struct MakeShardMetrics {
     /// There is a related metric, `total_read_pairs` in the metrics summary json which we have
     /// used historically for `r3`. `total_read_pairs` metric was originally computed in this stage,
     /// but has been moved to `ALIGN_AND_COUNT` except for VDJ which is why we have a
-    /// `vdj_total_read_pairs` metric in this struct. In cellranger vdj/count,
-    /// `total_read_pairs` = `sequenced_reads_count`. In spaceranger, there is an additional reads
-    /// per spot subsampling (in targeted mode) -- in such a case `total_read_pairs` is the
-    /// number of `sequenced_reads_count` read pairs analyzed after this subsampling step.
+    /// `vdj_total_read_pairs` metric in this struct. `total_read_pairs` = `sequenced_reads_count`.
     sequenced_reads: CountMetric,
 
     /// Number of read pairs skipped because it cannot be a valid RnaRead, typically due to
@@ -89,21 +84,22 @@ pub struct MakeShardMetrics {
     #[json_report(skip)]
     vdj_total_read_pairs: i64,
 
+    /// Total read pairs per library
     #[json_report(skip)]
-    total_read_pairs_per_library: TxHashMap<String, CountMetric>,
+    total_read_pairs_per_library: TxHashMap<u16, i64>,
 }
 
 impl MakeShardMetrics {
     /// Emit total_read_pairs_per_library without the default _count suffix.
     fn extra_reports(&self) -> JsonReporter {
-        let mut metrics = JsonReporter::new();
-        // CellRanger 3.0 has these prefixed by library_id and without _count suffix
-        for (library_id, count) in &self.total_read_pairs_per_library {
-            metrics.insert(
-                format!("{library_id}_total_read_pairs_per_library"),
-                count.count(),
-            );
-        }
+        let mut metrics: JsonReporter = self
+            .total_read_pairs_per_library
+            .iter()
+            .map(|(library_id, count)| {
+                (format!("{library_id}_total_read_pairs_per_library"), count)
+            })
+            .collect();
+
         if self.vdj_total_read_pairs > 0 {
             metrics.insert("total_read_pairs", self.vdj_total_read_pairs);
         }
@@ -142,15 +138,14 @@ pub struct MakeShardHistograms {
 }
 
 impl MakeShardHistograms {
-    pub fn new(chemistry_def: &ChemistryDef) -> Self {
+    pub fn new(barcode_construct: BarcodeConstruct<()>) -> Self {
         MakeShardHistograms {
-            valid_bc_counts: SimpleHistogram::new(),
-            r1_lengths: SimpleHistogram::new(),
-            valid_bc_segment_counts: chemistry_def
-                .barcode_read_type()
-                .map(|_| SimpleHistogram::new()),
+            valid_bc_counts: SimpleHistogram::default(),
+            r1_lengths: SimpleHistogram::default(),
+            valid_bc_segment_counts: barcode_construct.map(|()| SimpleHistogram::default()),
         }
     }
+
     pub fn merge(&mut self, other: Self) {
         // NOTE: The functions new() and merge() look eerily similar to the
         // `Metric` trait. However` valid_bc_segment_counts` require a context
@@ -187,7 +182,7 @@ impl MakeShardHistograms {
             .iter()
             .for_each(|(segment, hist)| {
                 if segment.is_valid() {
-                    hist.observe_owned(segment.sequence)
+                    hist.observe_owned(*segment.sequence());
                 }
             });
     }
@@ -222,10 +217,10 @@ impl<'a> MakeShardVisitor<'a> {
         };
         // Handle edge case where a library has no read counts (possibly because it wasn't sequenced
         // far enough to have a parseable read) and so would not be initialized with a count.
-        let mut metrics: MakeShardMetrics = Metric::new();
+        let mut metrics = MakeShardMetrics::default();
         metrics
             .total_read_pairs_per_library
-            .insert(read_chunks[chunk_id].library_id().to_string(), 0.into());
+            .insert(read_chunks[chunk_id].library_id(), 0);
         Ok(MakeShardVisitor {
             poly_a_pattern: PatternCheck::new(&[b'A'; HOMOPOLYMER_LENGTH]),
             poly_c_pattern: PatternCheck::new(&[b'C'; HOMOPOLYMER_LENGTH]),
@@ -235,7 +230,7 @@ impl<'a> MakeShardVisitor<'a> {
             feature_counts,
             feature_extractor,
             read_chunks,
-            histograms: MakeShardHistograms::new(chemistry_def),
+            histograms: MakeShardHistograms::new(chemistry_def.barcode_construct().map(|_| ())),
         })
     }
 
@@ -260,7 +255,7 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
          -> PercentMetric {
             let mut exists = pattern_check.exists(read);
             if let Some(read2) = read2_option {
-                exists = exists || pattern_check.exists(read2)
+                exists = exists || pattern_check.exists(read2);
             }
             exists.into()
         };
@@ -304,15 +299,13 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
 
             good_umi: rna_read.umi().is_valid().into(),
             has_n_barcode_property: rna_read
-                .segmented_barcode()
-                .sseq()
+                .raw_bc_construct_seq()
                 .iter()
                 .any(|s| s.has_n())
                 .into(),
             has_n_umi_property: rna_read.umi().sseq().has_n().into(),
             homopolymer_barcode_property: rna_read
-                .segmented_barcode()
-                .sseq()
+                .raw_bc_construct_seq()
                 .iter()
                 .any(|s| s.is_homopolymer())
                 .into(),
@@ -328,20 +321,12 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
                 .into(),
             miss_whitelist_barcode_property: (!rna_read.barcode().is_valid()).into(),
             sequenced_reads: 1.into(),
-            vdj_total_read_pairs: {
-                i64::from(matches!(rna_read.library_feats(), LibraryFeatures::Vdj(_)))
-            },
-            total_read_pairs_per_library: {
-                let mut x = TxHashMap::default();
-                x.insert(
-                    rna_read
-                        .read_chunk(self.read_chunks)
-                        .library_id()
-                        .to_string(),
-                    1.into(),
-                );
-                x
-            },
+            vdj_total_read_pairs: i64::from(rna_read.library_type.is_vdj()),
+            total_read_pairs_per_library: std::iter::once((
+                rna_read.read_chunk(self.read_chunks).library_id(),
+                1,
+            ))
+            .collect(),
 
             unprocessed_read_pairs: 0,
         };
@@ -376,9 +361,9 @@ where
     C: Borrow<u8>,
     D: IntoIterator<Item = C>,
 {
-    let mut result = PercentMetric::new();
+    let mut result = PercentMetric::default();
     for base in seq {
-        result.increment(*base.borrow() == b'N')
+        result.increment(*base.borrow() == b'N');
     }
     result
 }

@@ -5,23 +5,26 @@ use crate::barcode_sort::BarcodeSortWorkflow;
 use crate::make_shard_metrics::{MakeShardHistograms, MakeShardMetrics, MakeShardVisitor};
 use crate::types::{FeatureReferenceFormat, ReadPrefixCountFile, ReadShardFile, UmiCountFile};
 use crate::SequencingMetricsFormat;
-use anyhow::{bail, Result};
+use anyhow::{ensure, Result};
 use barcode::Whitelist;
-use cr_types::chemistry::ChemistryDef;
+use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
 use cr_types::reference::feature_reference::{
-    FeatureConfig, FeatureReference, FeatureReferenceFile, TargetGeneIndicesFile, TargetSetFile,
+    FeatureConfig, FeatureReference, FeatureReferenceFile, FeatureType, TargetGeneIndicesFile,
+    TargetSetFile,
 };
-use cr_types::rna_read::{LegacyLibraryType, RnaChunk};
-use cr_types::types::{BcCountFormat, BcSegmentCountFormat, FeatureType, GemWell, LibraryFeatures};
+use cr_types::rna_read::RnaChunk;
+use cr_types::types::{
+    BcCountFormat, BcSegmentCountFormat, FeatureBarcodeType, GemWell, LibraryType,
+};
 use cr_types::{FeatureCountFormat, MetricsFile};
 use cr_websummary::multi::tables::SequencingMetricsTable;
 use fastq_set::read_pair::WhichRead;
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric::{self, JsonReport, Metric, SimpleHistogram, TxHashMap, TxHashSet};
+use metric::{JsonReport, JsonReporter, Metric, SimpleHistogram, TxHashMap, TxHashSet};
 use multi::config::multiconst;
 use parameters_toml::umi_min_read_length;
 use serde::{Deserialize, Serialize};
@@ -33,7 +36,7 @@ martian_filetype!(MakeShardHistogramsFile, "msh");
 
 #[derive(Deserialize, Clone, MartianStruct)]
 pub struct MakeShardStageInputs {
-    pub chemistry_def: ChemistryDef,
+    pub chemistry_defs: ChemistryDefs,
     // Make shard works on data from a single gem well
     pub gem_well: GemWell,
     pub read_chunks: Vec<RnaChunk>,
@@ -46,7 +49,7 @@ pub struct MakeShardStageInputs {
     pub target_features: Option<TargetGeneIndicesFile>,
     pub target_set: Option<TargetSetFile>,
     pub target_set_name: Option<String>,
-    pub libraries_to_translate: TxHashSet<LegacyLibraryType>,
+    pub libraries_to_translate: TxHashSet<LibraryType>,
     pub feature_config: Option<FeatureConfig>,
 }
 
@@ -79,7 +82,6 @@ pub struct MakeShardStageOutputs {
     pub summary: MetricsFile,
     // this is for VDJ, because exclusive can collapse or choose VDJ
     pub total_read_pairs: i64,
-    pub paired_end: bool,
     pub feature_reference: Option<FeatureReferenceFormat>,
     /// The barcode correction stage only iterates through reads with invalid barcodes.
     /// This means that the valid read counts need to be supplied by this stage in order to
@@ -104,31 +106,28 @@ impl MartianStage for MakeShard {
         rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
         // Ensure that we got data only from the specified gem well
-        if !args
-            .read_chunks
-            .iter()
-            .all(|chunk| GemWell(chunk.gem_group()) == args.gem_well)
-        {
-            bail!(
-                "You have provided data from multiple gem wells, which is not supported in \
-                    count, vdj and multi pipelines. To perform analysis on the combined data, run \
-                    data from individual GEM wells using one of count/vdj/multi pipelines and \
-                    aggregate the outputs using the aggr pipeline."
-            )
-        }
+        ensure!(
+            args.read_chunks
+                .iter()
+                .all(|chunk| GemWell(chunk.gem_group()) == args.gem_well),
+            "You have provided data from multiple gem wells, which is not supported in \
+             count, vdj and multi pipelines. To perform analysis on the combined data, run \
+             data from individual GEM wells using one of count/vdj/multi pipelines and \
+             aggregate the outputs using the aggr pipeline."
+        );
 
         // TODO: rather than special-casing antibody, perhaps only
         // generate features for input library types?
         let antibody_only = {
             let mut r = TxHashSet::default();
-            r.insert(FeatureType::Antibody);
+            r.insert(FeatureType::Barcode(FeatureBarcodeType::Antibody));
             r
         };
-        let use_feature_types = if args
-            .read_chunks
-            .iter()
-            .all(|chunk| chunk.library_type() == LegacyLibraryType::AntibodyCapture)
-        {
+        let use_feature_types = if args.read_chunks.iter().all(|chunk| {
+            chunk
+                .library_type()
+                .is_fb_type(FeatureBarcodeType::Antibody)
+        }) {
             Some(antibody_only)
         } else {
             None
@@ -164,7 +163,7 @@ impl MartianStage for MakeShard {
                 )
             })
             .collect::<StageDef<_>>()
-            .join_resource(Resource::with_mem_gb(8)))
+            .join_resource(Resource::with_mem_gb(9)))
     }
 
     fn main(
@@ -204,7 +203,7 @@ impl MartianStage for MakeShard {
                 .transpose()?,
             &args.read_chunks,
             id,
-            &args.chemistry_def,
+            &rna_chunk.chemistry,
         )?;
 
         // Output filenames
@@ -221,10 +220,9 @@ impl MartianStage for MakeShard {
             valid_shard.as_ref(),
             invalid_shard.as_ref(),
             Whitelist::construct(
-                args.chemistry_def.barcode_whitelist(),
+                rna_chunk.chemistry.barcode_whitelist(),
                 args.libraries_to_translate
                     .contains(&rna_chunk.library_type()),
-                None,
             )?,
         )?;
 
@@ -251,20 +249,18 @@ impl MartianStage for MakeShard {
         let bc_correct_summary: BarcodeCorrectionMetricsFormat =
             rover.make_path("bc_correct_summary");
         bc_correct_summary.write(&BarcodeCorrectionMetrics::with_valid(
-            LibraryFeatures::from(rna_chunk.library_type()),
+            rna_chunk.library_type(),
             num_valid_barcodes,
             num_valid_barcode_segments,
         ))?;
 
         let total_read_pairs = bc_sort.num_valid_items() + bc_sort.num_invalid_items();
 
-        if total_read_pairs == 0 {
-            bail!(
-                "ERROR: There were no reads to process. Please check whether \
-                the read lengths in the input fastqs satisfy the minumum read length requirements \
-                for the chemistry."
-            );
-        }
+        ensure!(
+            total_read_pairs > 0,
+            "There were no reads to process. Please check whether the read lengths in the input \
+             fastqs satisfy the minumum read length requirements for the chemistry."
+        );
 
         Ok(MakeShardChunkOutputs {
             total_read_pairs,
@@ -304,35 +300,39 @@ impl MartianStage for MakeShard {
 
         let total_read_pairs = chunk_outs.iter().map(|co| co.total_read_pairs).sum();
 
-        let mut per_lib_per_fastq_id_metrics = TxHashMap::default();
+        let mut per_lib_per_fastq_id_metrics: TxHashMap<_, TxHashMap<_, MakeShardMetrics>> =
+            TxHashMap::default();
         let mut per_lib_hist = TxHashMap::default();
-        for (i, chunk_out) in chunk_outs.iter().enumerate() {
+        for (read_chunk, chunk_out) in zip_eq(&args.read_chunks, &chunk_outs) {
+            let library_type = read_chunk.library_type();
+            let barcode_construct = read_chunk.chemistry.barcode_construct().map(|_| ());
+
             let metric = chunk_out.chunk_summary.read()?;
             per_lib_per_fastq_id_metrics
-                .entry(args.read_chunks[i].library_type())
-                .or_insert_with(TxHashMap::default)
-                .entry(args.read_chunks[i].fastq_id.as_ref())
-                .or_insert_with(MakeShardMetrics::new)
+                .entry(library_type)
+                .or_default()
+                .entry(read_chunk.fastq_id.as_ref())
+                .or_default()
                 .merge(metric);
 
             let hist = chunk_out.chunk_hist.read()?;
             per_lib_hist
-                .entry(LibraryFeatures::from(args.read_chunks[i].library_type()))
-                .or_insert_with(|| MakeShardHistograms::new(&args.chemistry_def))
+                .entry(library_type)
+                .or_insert_with(|| MakeShardHistograms::new(barcode_construct))
                 .merge(hist);
         }
 
         let mut per_lib_seq_metrics = TxHashMap::default();
         let mut per_lib_metrics = TxHashMap::default();
         for (library_type, per_fastq_id_metrics) in per_lib_per_fastq_id_metrics {
-            let mut lib_metrics = MakeShardMetrics::new();
+            let mut lib_metrics = MakeShardMetrics::default();
             let mut seq_metrics_rows = Vec::new();
             for (fastq_id, metrics) in per_fastq_id_metrics {
                 seq_metrics_rows
                     .push(metrics.sequencing_metrics_row(fastq_id.cloned().unwrap_or_default()));
-                lib_metrics.merge(metrics)
+                lib_metrics.merge(metrics);
             }
-            per_lib_metrics.insert(LibraryFeatures::from(library_type), lib_metrics);
+            per_lib_metrics.insert(library_type, lib_metrics);
             per_lib_seq_metrics.insert(library_type, SequencingMetricsTable(seq_metrics_rows));
         }
 
@@ -365,16 +365,12 @@ impl MartianStage for MakeShard {
                 .fraction()
                 .unwrap_or_default();
             if frac >= 0.1 {
-                eprintln!(
-                    "Warning: {}: homopolymer_barcode_property_frac is high: {}",
-                    library.library_type(),
-                    frac
-                );
+                eprintln!("Warning: {library}: homopolymer_barcode_property_frac is high: {frac}");
             }
         }
 
         // Also if r1_lengths are different, abort the run and complain
-        let mut r1_lengths = SimpleHistogram::new();
+        let mut r1_lengths = SimpleHistogram::default();
         for histograms in per_lib_hist.values() {
             r1_lengths.merge(histograms.r1_lengths.clone());
         }
@@ -382,63 +378,62 @@ impl MartianStage for MakeShard {
             let r1_min_length = r1_lengths.min_key().unwrap();
             let r1_max_length = r1_lengths.max_key().unwrap();
             let umi_max_length = args
-                .chemistry_def
-                .umi
+                .read_chunks
                 .iter()
-                .filter(|u| u.read_type == WhichRead::R1)
-                .map(|u| u.offset + u.length)
+                .flat_map(|chunk| {
+                    chunk
+                        .chemistry
+                        .umi
+                        .iter()
+                        .filter(|x| x.read_type == WhichRead::R1)
+                        .map(|x| x.offset + x.length)
+                })
                 .max()
                 .unwrap_or(0);
 
-            if r1_min_length < umi_max_length {
-                bail!(
-                    "ERROR: We detected a mixture of different R1 lengths ([{min}-{max}]), which \
-                    breaks assumptions in how UMIs are tabulated and corrected. To process these \
-                    data, you will need to truncate to the shortest observed R1 length by providing \
-                    {min} to the --r1-length argument if are running count/vdj, or via the r1-length \
-                    parameter in each of the following tables of your multi config CSV if you are \
-                    running multi: [{tbl}]",
-                    min = r1_min_length,
-                    max = r1_max_length,
-                    tbl = per_lib_hist
-                        .keys()
-                        .map(|key| match key {
-                            LibraryFeatures::GeneExpression(_) => multiconst::GENE_EXPRESSION,
-                            LibraryFeatures::Vdj(_) => multiconst::VDJ,
-                            LibraryFeatures::FeatureBarcodes(_) => multiconst::FEATURE,
-                        })
-                        .join("], ["),
-                );
-            }
+            ensure!(
+                r1_min_length >= umi_max_length,
+                "We detected a mixture of different R1 lengths ([{min}-{max}]), which \
+                 breaks assumptions in how UMIs are tabulated and corrected. To process these \
+                 data, you will need to truncate to the shortest observed R1 length by providing \
+                 {min} to the --r1-length argument if are running count/vdj, or via the r1-length \
+                 parameter in each of the following tables of your multi config CSV if you are \
+                 running multi: [{tbl}]",
+                min = r1_min_length,
+                max = r1_max_length,
+                tbl = per_lib_hist
+                    .keys()
+                    .map(|key| match *key {
+                        LibraryType::Gex => multiconst::GENE_EXPRESSION,
+                        LibraryType::Vdj(_) => multiconst::VDJ,
+                        LibraryType::FeatureBarcodes(_) => multiconst::FEATURE,
+                        LibraryType::Atac => unreachable!(),
+                    })
+                    .join("], ["),
+            );
         }
 
-        let per_lib_report: TxHashMap<_, _> = per_lib_metrics
-            .into_iter()
-            .map(|(k, v)| (k.legacy_library_type().metric_prefix().unwrap_or("_"), v))
-            .collect();
-        let mut reporter = per_lib_report.to_json_reporter();
-        reporter += args.chemistry_def.to_json_reporter();
-        reporter.insert("cellranger_version", rover.pipelines_version());
+        let mut per_lib_reporter = per_lib_metrics.to_json_reporter();
 
         // HERE BE DRAGONS
         //   there are oddities to the way metrics are prefixed and reported,
         //   these oddities are implemented here.
-        let library_ids = args
-            .read_chunks
-            .iter()
-            .map(|x| x.library_id().to_string())
-            .collect::<Vec<_>>();
-        for library_id in library_ids {
+        for library_id in args.read_chunks.iter().map(RnaChunk::library_id) {
             // VDJ is expected to be disjoint from GEX/FB and so these metrics are expected unprefixed
-            if let Some(val) =
-                reporter.remove(format!("VDJ_{library_id}_total_read_pairs_per_library"))
+            if let Some(value) =
+                per_lib_reporter.remove(&format!("VDJ_{library_id}_total_read_pairs_per_library"))
             {
-                reporter.insert(format!("{library_id}_total_read_pairs_per_library"), val);
+                per_lib_reporter
+                    .insert(format!("{library_id}_total_read_pairs_per_library"), value);
             }
         }
         // SO SAY THE DRAGONS
 
-        let feature_reference = chunk_defs.get(0).and_then(|x| x.feature_reference.clone());
+        let summary = JsonReporter::from(("cellranger_version", rover.pipelines_version()))
+            + per_lib_reporter
+            + args.chemistry_defs.primary().to_json_reporter();
+
+        let feature_reference = chunk_defs.first().and_then(|x| x.feature_reference.clone());
 
         Ok(MakeShardStageOutputs {
             valid: chunk_outs.iter().map(|x| x.valid_shard.clone()).collect(),
@@ -446,9 +441,8 @@ impl MartianStage for MakeShard {
             barcode_counts,
             barcode_segment_counts,
             feature_counts: feature_counts_file,
-            summary: MetricsFile::from_reporter(&rover, "summary", &reporter)?,
+            summary: MetricsFile::from_reporter(&rover, "summary", &summary)?,
             total_read_pairs,
-            paired_end: args.chemistry_def.is_paired_end(),
             feature_reference,
             bc_correct_summary,
             sequencing_metrics: sequencing_metrics_file,

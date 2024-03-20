@@ -3,6 +3,7 @@
 use crate::stages::detect_chemistry::{DetectChemistry, DetectChemistryStageInputs};
 use anyhow::Result;
 use cr_types::chemistry::ChemistryName;
+use cr_types::LibraryType;
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -16,12 +17,12 @@ use std::path::PathBuf;
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct StageInputs {
     inputs: JsonFile<TxHashMap<String, DetectChemistryStageInputs>>,
-    expected: JsonFile<TxHashMap<String, ChemistryName>>,
+    expected: JsonFile<TxHashMap<String, TxHashMap<LibraryType, ChemistryName>>>,
 }
 
 #[derive(Clone, Serialize, MartianStruct)]
 pub struct StageOutputs {
-    actual: JsonFile<BTreeMap<String, Option<ChemistryName>>>,
+    actual: JsonFile<BTreeMap<String, Option<TxHashMap<LibraryType, ChemistryName>>>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
@@ -31,7 +32,7 @@ pub struct ChunkInputs {
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct ChunkOutputs {
-    chunk_outputs: TxHashMap<String, Option<ChemistryName>>,
+    chunk_outputs: TxHashMap<String, Option<TxHashMap<LibraryType, ChemistryName>>>,
 }
 
 pub struct DetectChemistryTest;
@@ -76,7 +77,15 @@ impl MartianStage for DetectChemistryTest {
             println!("RUNNING {k:?}");
             match DetectChemistry.test_run(&run_dir, v) {
                 Ok(outs) => {
-                    result.insert(k, Some(outs.chemistry_def.name));
+                    result.insert(
+                        k,
+                        Some(
+                            outs.chemistry_defs
+                                .into_iter()
+                                .map(|(lib_type, def)| (lib_type, def.name))
+                                .collect(),
+                        ),
+                    );
                 }
                 Err(e) => {
                     eprintln!("> FAILURE for {k}: {e}");
@@ -109,13 +118,13 @@ impl MartianStage for DetectChemistryTest {
             match (actual, expected.get(&k)) {
                 (Some(a), Some(e)) => {
                     if a != *e {
-                        println!("MISMATCH for k = {k} actual = {a} expected = {e}");
+                        println!("MISMATCH for k = {k} actual = {a:?} expected = {e:?}");
                     }
                 }
                 (Some(a), None) => {
-                    println!("UNVETTED for k = {k} actual = {a}");
+                    println!("UNVETTED for k = {k} actual = {a:?}");
                 }
-                (None, Some(e)) => println!("ERROR for k = {k} expected = {e}"),
+                (None, Some(e)) => println!("ERROR for k = {k} expected = {e:?}"),
                 (None, None) => {}
             }
         }

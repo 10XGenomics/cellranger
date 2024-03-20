@@ -1,5 +1,6 @@
 [dependencies]
-numpy = '>=0.18'
+bincode = '1'
+numpy = '0.19'
 
 [dependencies.anyhow]
 workspace = true
@@ -32,9 +33,14 @@ path = '../metric'
 [dependencies.ndarray]
 workspace = true
 
+[dependencies.pyanyhow]
+path = '../pyanyhow'
+
 [dependencies.pyo3]
-features = ['extension-module', 'abi3-py310']
-version = '>=0.18.2'
+workspace = true
+
+[dependencies.serde]
+workspace = true
 
 [dependencies.serde_json]
 workspace = true

@@ -2,12 +2,13 @@
 
 use crate::preflight::hostname;
 use anyhow::{anyhow, bail, Result};
-use cr_types::chemistry::{ChemistryDef, IndexScheme};
+use cr_types::chemistry::{
+    AutoChemistryName, AutoOrRefinedChemistry, ChemistryDef, ChemistrySpecs, IndexScheme,
+};
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile};
-use cr_types::rna_read::LegacyLibraryType;
 use cr_types::sample_def::SampleDef;
 use cr_types::types::FileOrBytes;
-use cr_types::{AlignerParam, TargetingMethod};
+use cr_types::{AlignerParam, LibraryType, TargetingMethod, VdjChainType};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct, MartianType};
 use martian_filetypes::json_file::JsonFile;
@@ -15,7 +16,7 @@ use martian_filetypes::tabular_file::CsvFile;
 use metric::TxHashMap;
 use multi::barcode_sample_assignment::SampleAssignmentCsv;
 use multi::config::preflight::build_feature_reference_with_cmos;
-use multi::config::{create_feature_config, FeatureType, MultiConfigCsvFile};
+use multi::config::{create_feature_config, MultiConfigCsvFile};
 use parameters_toml::max_multiplexing_tags;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JValue;
@@ -51,30 +52,27 @@ pub struct ParseMultiConfigStageInputs {
     pub is_pd: bool,
 }
 
-/// Copy of `struct CellCallingParam`, defined in _basic_sc_rna_counter_stages.mro
 /// The `per_gem_well` parameter is applied at the library-level (CMO-multiplexing, standard GEX).
 /// The `per_sample` field is only valid in case of RTL multiplexed inputs.
 /// The fields `per_gem_well` and `per_sample` are mutually exclusive.
-/// Martian will unify this copy of the type and the copy
-/// in _basic_sc_rna_counter_stages.mro
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 #[cfg_attr(test, derive(Debug))]
 pub struct CellCallingParam {
-    pub per_gem_well: Option<usize>,
-    pub per_sample: Option<TxHashMap<String, Option<usize>>>,
+    pub per_gem_well: Option<f64>,
+    pub per_sample: Option<TxHashMap<String, Option<f64>>>,
 }
 
 impl CellCallingParam {
     // Return total values for parameters that can be input either at the per_gem_well or per_sample level
-    pub fn sum(&self) -> Option<usize> {
+    pub fn sum(&self) -> Option<f64> {
         match (self.per_gem_well, self.per_sample.as_ref()) {
             (Some(x), Some(xs)) => {
                 assert!(xs.values().all(Option::is_none));
                 Some(x)
             }
             (Some(x), None) => Some(x),
-            (None, Some(xs)) => xs.values().fold(Some(0), |acc, x| match (acc, x) {
-                (Some(acc), Some(x)) => Some(acc + x),
+            (None, Some(xs)) => xs.values().try_fold(0.0, |acc, x| match (acc, x) {
+                (acc, Some(x)) => Some(acc + x),
                 _ => None,
             }),
             (None, None) => None,
@@ -82,16 +80,15 @@ impl CellCallingParam {
     }
 }
 
-/// Copy of `struct CellCalling`, defined in _basic_sc_rna_counter_stages.mro
 /// Carries options to customize the cell calling mode.
-/// Martian will unify this copy of the type and the copy
-/// in _basic_sc_rna_counter_stages.mro
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 #[cfg_attr(test, derive(Debug))]
 pub struct CellCalling {
     pub recovered_cells: CellCallingParam,
     pub force_cells: CellCallingParam,
     pub emptydrops_minimum_umis: CellCallingParam,
+    pub global_minimum_umis: CellCallingParam,
+    pub max_mito_percent: CellCallingParam,
     pub cell_barcodes: Option<JsonFile<()>>,
     pub override_mode: Option<String>,
     pub override_library_types: Option<Vec<String>>,
@@ -123,7 +120,7 @@ pub type GeneticDemuxParams = JValue;
 #[cfg_attr(test, derive(Debug))]
 pub struct CountInputs {
     pub sample_def: Vec<SampleDef>,
-    pub chemistry: Option<String>,
+    pub chemistry_specs: ChemistrySpecs,
     pub custom_chemistry_def: Option<ChemistryDef>,
     pub reference_path: PathBuf,
     pub gene_index: JsonFile<()>,
@@ -155,6 +152,7 @@ pub struct CountInputs {
     pub tenx_cmos: Option<bool>,
     pub min_assignment_confidence: Option<f64>,
     pub annotations: Option<Vec<CsvFile<()>>>,
+    pub cas_model: Option<String>,
 }
 
 /// General VdjInputs which are not chain specific
@@ -163,7 +161,9 @@ pub struct CountInputs {
 pub struct VdjGenInputs {
     pub reference_path: Option<PathBuf>,
     pub vdj_reference_path: Option<PathBuf>,
+    pub min_contig_length: Option<usize>,
     pub filter_flags: VdjFilterFlags,
+    pub skip_clonotyping: bool,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, MartianStruct)]
@@ -179,7 +179,7 @@ pub struct VdjFilterFlags {
 #[cfg_attr(test, derive(Debug))]
 pub struct VdjInputs {
     pub sample_def: Vec<SampleDef>,
-    pub chemistry: Option<String>,
+    pub chemistry_spec: AutoOrRefinedChemistry,
     pub custom_chemistry_def: Option<ChemistryDef>,
     #[mro_type = "map[]"]
     pub primers: Vec<Primers>,
@@ -190,11 +190,9 @@ pub struct VdjInputs {
     pub denovo: bool,
     pub r1_length: Option<usize>,
     pub r2_length: Option<usize>,
-    pub ground_truth_clonotype_path: Option<PathBuf>,
     pub inner_enrichment_primers: Option<PathBuf>,
     pub chain_type: Option<String>,
     pub physical_library_id: Option<String>,
-    pub r2_revcomp: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
@@ -296,17 +294,16 @@ impl MartianMain for ParseMultiConfig {
             //   which is good, because I probably want it for validating [gem-wells]
             //   misc thought, do deep validation of libraries and gem-wells settings,
             //   e.g. vdj_force_cells vs (gex_)force_cells
-            let mut sample_def = cfg
-                .libraries
-                .0
-                .iter()
-                .fold(Ok(vec![]), |acc: Result<_>, x| {
-                    let mut acc = acc?;
-                    if x.is_count()? {
-                        acc.push(x.to_sample_def(&cfg)?);
-                    }
-                    Ok(acc)
-                })?;
+            let mut sample_def =
+                cfg.libraries
+                    .0
+                    .iter()
+                    .try_fold(Vec::new(), |mut acc, x| -> Result<_> {
+                        if x.is_gex() || x.library_type().is_fb() {
+                            acc.push(x.to_sample_def(&cfg)?);
+                        }
+                        Ok(acc)
+                    })?;
             if sample_def.is_empty() {
                 (None, None, None, None, None, None, None)
             } else {
@@ -321,7 +318,7 @@ impl MartianMain for ParseMultiConfig {
                 )?;
                 let feature = cfg.feature.as_ref();
                 for sample in &mut sample_def {
-                    if let Some(LegacyLibraryType::GeneExpression) = sample.library_type {
+                    if let Some(LibraryType::Gex) = sample.library_type {
                         sample.r1_length = gex.r1_length;
                         sample.r2_length = gex.r2_length;
                     } else {
@@ -335,8 +332,6 @@ impl MartianMain for ParseMultiConfig {
                     &gex.reference_path,
                     gene_index.as_ref(),
                 )?;
-                let chemistry = gex.chemistry.name().unwrap_or("auto").to_string();
-                let chemistry = Some(chemistry);
                 /* TODO: when we divvy up CountInputs into a vec by gem-well,
                 //   thread in gem-wells params for force_cells, etc
                 let force_cells = cfg
@@ -386,31 +381,46 @@ impl MartianMain for ParseMultiConfig {
 
                 let cell_calling_config = CellCalling {
                     force_cells: CellCallingParam {
-                        per_gem_well: gex.force_cells,
+                        per_gem_well: gex.force_cells.map(|x| x as f64),
                         per_sample: cfg
                             .samples
                             .as_ref()
                             .map(multi::config::SamplesCsv::get_force_cells),
                     },
                     recovered_cells: CellCallingParam {
-                        per_gem_well: gex.expect_cells,
+                        per_gem_well: gex.expect_cells.map(|x| x as f64),
                         per_sample: cfg
                             .samples
                             .as_ref()
                             .map(multi::config::SamplesCsv::get_expect_cells),
                     },
                     emptydrops_minimum_umis: CellCallingParam {
-                        per_gem_well: gex.emptydrops_minimum_umis,
+                        per_gem_well: gex.emptydrops_minimum_umis.map(|x| x as f64),
                         per_sample: cfg
                             .samples
                             .as_ref()
                             .map(multi::config::SamplesCsv::get_emptydrops_minimum_umis),
                     },
+                    global_minimum_umis: CellCallingParam {
+                        per_gem_well: gex.global_minimum_umis.map(|x| x as f64),
+                        per_sample: cfg
+                            .samples
+                            .as_ref()
+                            .map(multi::config::SamplesCsv::get_global_minimum_umis),
+                    },
+                    max_mito_percent: CellCallingParam {
+                        per_gem_well: gex.max_mito_percent,
+                        per_sample: cfg
+                            .samples
+                            .as_ref()
+                            .map(multi::config::SamplesCsv::get_max_mito_percent),
+                    },
                     cell_barcodes: cell_barcodes.clone(),
                     override_mode: None,
                     override_library_types: None,
-                    disable_ab_aggregate_detection: false,
-                    disable_high_occupancy_gem_detection: false,
+                    disable_ab_aggregate_detection: feature
+                        .is_some_and(|feat| !feat.filter_aggregates),
+                    disable_high_occupancy_gem_detection: !gex.filter_high_occupancy_gems,
                 };
 
                 let (feature_reference_file, tenx_cmos) = match build_feature_reference_with_cmos(
@@ -453,8 +463,14 @@ impl MartianMain for ParseMultiConfig {
                 });
 
                 let count_input = Some(CountInputs {
+                    // Filter the VDJ libraries out of this collection since VDJ
+                    // chemistry is handled separately.
+                    chemistry_specs: cfg
+                        .chemistry_specs()?
+                        .into_iter()
+                        .filter(|(lib_type, _)| !lib_type.is_vdj())
+                        .collect(),
                     sample_def,
-                    chemistry,
                     custom_chemistry_def,
                     reference_path: PathBuf::from(&gex.reference_path),
                     gene_index,
@@ -479,7 +495,7 @@ impl MartianMain for ParseMultiConfig {
                     genetic_demux_params: None,
                     throughput: None,
                     check_library_compatibility: gex.check_library_compatibility,
-                    no_bam: gex.no_bam,
+                    no_bam: !gex.create_bam,
                     force_sample_barcodes: BarcodeAssignments {
                         sample_barcodes: sample_barcodes.clone(),
                         non_singlet_barcodes: non_singlet_barcodes.clone(),
@@ -488,6 +504,7 @@ impl MartianMain for ParseMultiConfig {
                     tenx_cmos,
                     min_assignment_confidence: gex.min_assignment_confidence,
                     annotations: None,
+                    cas_model: gex.cas_model.clone(),
                 });
 
                 (
@@ -506,9 +523,9 @@ impl MartianMain for ParseMultiConfig {
             for lib in &cfg.libraries.0 {
                 // TODO: Pass only a single VdjInput with all sample_defs and
                 // vector-types for other per-chain configurables
-                if !lib.is_count()? {
+                if lib.is_vdj() {
                     per_lib_vdj_sample_def
-                        .entry((lib.physical_library_id(), lib.feature_types()))
+                        .entry((lib.physical_library_id(), lib.library_type()))
                         .or_insert_with(Vec::new)
                         .push(lib.to_sample_def(&cfg)?);
                 }
@@ -530,25 +547,29 @@ impl MartianMain for ParseMultiConfig {
                     || anyhow!("missing [vdj] table for VDJ libraries"),
                 )?;
                 let mut vdj_inputs = Vec::new();
-                for ((physical_library_id, feature_types), sample_def) in per_lib_vdj_sample_def {
-                    use FeatureType::{VDJ_B, VDJ_T, VDJ_T_GD};
-                    let chain_type = match feature_types {
-                        [VDJ_T] => Some("TR".to_string()),
-                        [VDJ_T_GD] => {
-                            // In gamma/delta mode we need inner-enrichment-primers to be present in multi config
-                            if vdj.inner_enrichment_primers.is_none() {
-                                bail!(
-                                    "VDJ-T-GD library requires inner enrichment primers to be specified in the multi config file."
-                                );
+                for ((physical_library_id, feature_type), sample_def) in per_lib_vdj_sample_def {
+                    let chain_type = if let Some(ct) = feature_type.vdj_chain_type() {
+                        match ct {
+                            VdjChainType::VdjT => Some("TR"),
+                            VdjChainType::VdjTGD => {
+                                // In gamma/delta mode we need inner-enrichment-primers to be present in multi config
+                                if vdj.inner_enrichment_primers.is_none() {
+                                    bail!(
+                                        "VDJ-T-GD library requires inner enrichment primers to be specified in the multi config file."
+                                    );
+                                }
+                                Some("TR_GD")
                             }
-                            Some("TR_GD".to_string())
+                            VdjChainType::VdjB => Some("IG"),
+                            VdjChainType::Auto => None,
                         }
-                        [VDJ_B] => Some("IG".to_string()),
-                        _ => None,
-                    };
+                    } else {
+                        None
+                    }.map(ToString::to_string);
+
                     vdj_inputs.push(VdjInputs {
+                        chemistry_spec: AutoOrRefinedChemistry::Auto(AutoChemistryName::Vdj),
                         sample_def,
-                        chemistry: Some("SCVDJ_auto".to_string()),
                         custom_chemistry_def: None,
 
                         primers: primers.clone(),
@@ -559,11 +580,9 @@ impl MartianMain for ParseMultiConfig {
                         denovo: false,
                         r1_length: vdj.r1_length,
                         r2_length: vdj.r2_length,
-                        ground_truth_clonotype_path: None,
                         inner_enrichment_primers: vdj.inner_enrichment_primers.clone(),
                         chain_type,
                         physical_library_id: Some(physical_library_id.to_string()),
-                        r2_revcomp: vdj.r2_revcomp.unwrap_or_default(),
                     });
                 }
                 let vdj_gen_inputs = VdjGenInputs {
@@ -572,11 +591,13 @@ impl MartianMain for ParseMultiConfig {
                         .as_ref()
                         .map(|gex| PathBuf::from(&gex.reference_path)),
                     vdj_reference_path: Some(vdj.reference_path.clone()),
+                    min_contig_length: vdj.min_contig_length,
                     filter_flags: VdjFilterFlags {
                         multiplet_filter: vdj.multiplet_filter,
                         shared_contig_filter: vdj.shared_contig_filter,
                         umi_baseline_filter: vdj.umi_baseline_filter,
                     },
+                    skip_clonotyping: vdj.skip_clonotyping.unwrap_or_default(),
                 };
                 (vdj_inputs, Some(vdj_gen_inputs))
             }
@@ -686,14 +707,15 @@ mod tests {
             dynamic_redaction(move |value, _| replace_if_not_none(value, "feature_ref")),
         );
         settings.add_redaction(".multi_graph", "[multi_graph:redacted]");
+        settings.set_sort_maps(true);
         settings
     }
 
-    fn json_snapshot(sample_id: &str) {
+    fn yaml_snapshot(sample_id: &str) {
         let test_csv = &format!("test/multi/{sample_id}.csv");
         insta_settings(test_csv).bind(|| {
             let outs = test_run_stage(test_csv, sample_id).unwrap();
-            insta::assert_json_snapshot!(sample_id, &outs);
+            insta::assert_yaml_snapshot!(sample_id, &outs);
         });
     }
 
@@ -712,7 +734,7 @@ mod tests {
             .samples
             .unwrap()
             .get_translated_probe_barcodes()
-            .is_empty())
+            .is_empty());
     }
 
     #[test]
@@ -749,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_vdj_internal() {
-        json_snapshot("vdj_micro")
+        yaml_snapshot("vdj_micro");
     }
 
     #[test]
@@ -763,27 +785,27 @@ mod tests {
 
     #[test]
     fn test_vdj_gex_internal() {
-        json_snapshot("vdj_gex_micro")
+        yaml_snapshot("vdj_gex_micro");
     }
 
     #[test]
     fn test_gex_fbc_internal() {
-        json_snapshot("gex_fbc_micro")
+        yaml_snapshot("gex_fbc_micro");
     }
 
     #[test]
     fn test_gex_fbc_dos_internal() {
-        json_snapshot("gex_fbc_micro_dos")
+        yaml_snapshot("gex_fbc_micro_dos");
     }
 
     #[test]
     fn test_gex_fbc_dos_utf8_internal() {
-        json_snapshot("gex_fbc_micro_dos_utf8")
+        yaml_snapshot("gex_fbc_micro_dos_utf8");
     }
 
     #[test]
     fn test_gex_fbc_mac_utf8_internal() {
-        json_snapshot("gex_fbc_micro_mac_utf8")
+        yaml_snapshot("gex_fbc_micro_mac_utf8");
     }
 
     #[test]
@@ -803,17 +825,17 @@ mod tests {
 
     #[test]
     fn test_gex_vdj_beamab_internal() {
-        json_snapshot("beamab_vdj_gex")
+        yaml_snapshot("beamab_vdj_gex");
     }
 
     #[test]
     fn test_gex_vdj_beamt_internal() {
-        json_snapshot("beamt_vdj_gex")
+        yaml_snapshot("beamt_vdj_gex");
     }
 
     #[test]
     fn test_gex_vdj_beamab_with_antigen_specificity_internal() {
-        json_snapshot("beamab_vdj_gex_antigen_spec")
+        yaml_snapshot("beamab_vdj_gex_antigen_spec");
     }
 
     #[test]
@@ -827,6 +849,6 @@ mod tests {
 
     #[test]
     fn test_vdj_filters() {
-        json_snapshot("vdj_micro_filters")
+        yaml_snapshot("vdj_micro_filters");
     }
 }

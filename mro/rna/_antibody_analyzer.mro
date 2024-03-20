@@ -11,9 +11,9 @@ filetype json;
 
 pipeline _ANTIBODY_ANALYZER(
     in  h5   filtered_feature_counts_matrix,
-    in  h5   molecule_info,
     in  csv  aggregate_barcodes,
     in  bool is_antibody,
+    in  bool is_spatial,
     out path antibody_analysis,
     out json antibody_histograms_json,
     out json antibody_treemap_json,
@@ -22,8 +22,8 @@ pipeline _ANTIBODY_ANALYZER(
     # Currently makes histograms
     call CALL_ANTIBODIES(
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        molecule_info = self.molecule_info,
-        is_antibody   = self.is_antibody,
+        is_antibody = self.is_antibody,
+        is_spatial  = self.is_spatial,
     )
 
     # Currently copies this file

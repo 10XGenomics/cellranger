@@ -145,14 +145,6 @@ where
 
     fn failed_folder(test_name: &Path) -> PathBuf {
         Self::test_folder(test_name).join(format!("failed-{test_name:?}"))
-        /*
-            uuid::Uuid::new_v4()
-                .to_string()
-                .chars()
-                .take(6)
-                .collect::<String>()
-
-        */
     }
 
     /// 1. Run the test in a temporary directory

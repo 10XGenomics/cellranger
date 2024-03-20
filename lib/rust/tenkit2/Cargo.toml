@@ -1,5 +1,5 @@
 [dependencies]
-debruijn = '0.3.4'
+debruijn = '0.3'
 
 [dependencies.io_utils]
 workspace = true

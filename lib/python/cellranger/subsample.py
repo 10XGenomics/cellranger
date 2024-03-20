@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import pickle
-from collections import Counter
 from collections.abc import Collection, Iterable
 from copy import copy
 from typing import TYPE_CHECKING, TypedDict
@@ -20,6 +19,9 @@ import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 import tenkit.stats as tk_stats
 from cellranger.constants import OFF_TARGET_SUBSAMPLE, ON_TARGET_SUBSAMPLE
+from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
+    FilteredBarcodes,
+)
 
 if TYPE_CHECKING:
     from cellranger.molecule_counter import MoleculeCounter
@@ -104,10 +106,11 @@ def get_num_cells_per_library(library_info, filtered_barcodes_csv):
         np.array of int: number of cell-associated barcodes per library
     """
     # get number of cells per GEM group
-    cell_bcs = cr_utils.get_cell_associated_barcode_set(filtered_barcodes_csv)
-    num_cells_per_gg = Counter(cr_utils.split_barcode_seq(bc)[1] for bc in cell_bcs)
+    num_cells_per_gg = FilteredBarcodes(filtered_barcodes_csv).cells_per_gem_group()
     # each library maps to a single gem group
-    num_cells_per_lib = np.array([num_cells_per_gg[lib["gem_group"]] for lib in library_info])
+    num_cells_per_lib = np.array(
+        [num_cells_per_gg.get(lib["gem_group"], 0) for lib in library_info]
+    )
     return num_cells_per_lib
 
 
@@ -189,21 +192,25 @@ def _subsampling_for_depth(
     # compute subsampling rates (frac. of usable reads)
     subsample_rates: np.ndarray[int, np.dtype[np.float_]] = np.zeros(library_count, dtype=float)
     if subsample_type == BULK_SUBSAMPLE_TYPE:
-        subsample_rates[lib_indices] = (
-            target_usable_reads_per_lib[lib_indices] / raw_reads_per_lib[lib_indices]
-        )
+        denominator = raw_reads_per_lib
     else:
-        subsample_rates[lib_indices] = (
-            target_usable_reads_per_lib[lib_indices] / usable_reads_per_lib[lib_indices]
-        )
+        denominator = usable_reads_per_lib
+
+    for index in lib_indices:
+        if denominator[index] != 0.0:
+            subsample_rates[index] = target_usable_reads_per_lib[index] / denominator[index]
+
     # for the largest computed (non-default) subsampling depth,
     # make sure we're subsampling the smallest library to rate=1.0
     if target_depth == max_computed_depth:
-        subsample_rates = subsample_rates / np.max(subsample_rates)
+        max_rate = np.max(subsample_rates)
+        if max_rate != 0.0:
+            subsample_rates = subsample_rates / max_rate
     # zero out rates that are > 1
     # This can only apply to the the default subsampling targets,
     # for which we still want to run subsampling jobs with rate=0.
     subsample_rates[subsample_rates > 1.0] = 0.0
+
     return {
         "library_type": library_type,
         "subsample_type": subsample_type,
@@ -445,7 +452,6 @@ def run_subsampling(
     with cr_mc.MoleculeCounter.open(molecule_info_h5, "r") as mc:
         # Get cell-associated barcodes
         genomes = get_genomes(mc)
-        cell_bcs_by_genome = get_cell_associated_barcodes(genomes, filtered_barcodes_csv)
 
         # Load chunk of relevant data from the mol_info
         chunk = slice(int(chunk_start), int(chunk_start) + int(chunk_len))
@@ -471,7 +477,7 @@ def run_subsampling(
             mol_feature_idx = mol_feature_idx[:][mask]
 
         # Give each cell-associated barcode an integer index
-        cell_bc_to_int = {bc: i for i, bc in enumerate(sorted(cell_bcs_by_genome[""]))}
+        filtered_barcodes = FilteredBarcodes(filtered_barcodes_csv)
 
         # Give each genome an integer index
         genome_to_int = {g: i for i, g in enumerate(genomes)}
@@ -507,7 +513,7 @@ def run_subsampling(
         # Run each subsampling task on this chunk of data
         n_tasks = len(subsample_info)
         n_genomes = len(genomes)
-        n_cells = len(cell_bc_to_int)
+        n_cells = filtered_barcodes.num_cells()
         # total features summed across lib-types
         n_features: int = feature_int_to_genome_int.shape[0]
 
@@ -543,8 +549,7 @@ def run_subsampling(
                 mol_read_pairs,
                 mol_gem_group,
                 mol_barcode_idx,
-                cell_bc_to_int,
-                cell_bcs_by_genome,
+                filtered_barcodes,
                 umis_per_bc[task_idx],
                 read_pairs_per_bc[task_idx],
                 features_det_per_bc[task_idx],
@@ -575,8 +580,7 @@ def _run_subsample_task(
     mol_read_pairs: np.ndarray[int, np.dtype[np.int_]],
     mol_gem_group: np.ndarray[int, np.dtype[np.int_]],
     mol_barcode_idx: np.ndarray[int, np.dtype[np.int_]],
-    cell_bc_to_int: dict[bytes, int],
-    cell_bcs_by_genome: dict[str, set[bytes]],
+    filtered_barcodes: FilteredBarcodes,
     umis_per_bc: np.ndarray[tuple[int, int], np.dtype[np.int64]],
     read_pairs_per_bc: np.ndarray[tuple[int, int], np.dtype[np.int64]],
     features_det_per_bc: np.ndarray[tuple[int, int], np.dtype[np.int64]],
@@ -612,10 +616,9 @@ def _run_subsample_task(
         keys=_make_group_keys(is_bulk_subsampling, mol_gem_group, mol_barcode_idx),
     ):
         barcode = cr_utils.format_barcode_seq(barcodes[bc_idx], gg)
-        cell_idx = cell_bc_to_int.get(barcode)
 
         for this_genome_idx, genome in enumerate(genomes):
-            is_cell_barcode = barcode in cell_bcs_by_genome[genome]
+            is_cell_barcode = filtered_barcodes.contains(barcode=barcode, genome=genome)
 
             # Skip entries from non-cell barcodes when doing raw cells subsampling
             if not is_cell_barcode and is_raw_cells_subsampling:
@@ -633,8 +636,9 @@ def _run_subsample_task(
                 features_det_per_task[this_genome_idx, :] = np.bincount(
                     feature_idx[umis], minlength=n_features
                 )
-            elif barcode in cell_bcs_by_genome[genome]:
+            elif is_cell_barcode:
                 # This is a cell-associated barcode for this genome
+                cell_idx = filtered_barcodes.index_of_barcode(barcode)
                 umis_per_bc[this_genome_idx, cell_idx] = len(umis)
                 read_pairs_per_bc[this_genome_idx, cell_idx] = this_genome_read_pairs
                 features_det_per_bc[this_genome_idx, cell_idx] = np.count_nonzero(
@@ -709,11 +713,8 @@ def calculate_subsampling_metrics(
         lib_type_map = {lt: idx for (idx, lt) in enumerate(lib_types)}
         assert mc.feature_reference is not None
         num_target_features = mc.feature_reference.count_target_feature_indices()
-    cell_bcs_by_genome = get_cell_associated_barcodes(genomes, filtered_barcodes_csv)
 
-    # Give each cell-associated barcode an integer index
-    cell_bcs = sorted(list(cell_bcs_by_genome[""]))
-    cell_bc_to_int = {bc: i for i, bc in enumerate(cell_bcs)}
+    filtered_barcodes = FilteredBarcodes(filtered_barcodes_csv)
 
     for i, task in enumerate(subsample_info):
         lib_type = task["library_type"]
@@ -734,9 +735,7 @@ def calculate_subsampling_metrics(
 
             # Only compute on cell-associated barcodes for this genome.
             # This only matters when there are multiple genomes present.
-            cell_inds = np.array(
-                sorted(cell_bc_to_int[bc] for bc in cell_bcs_by_genome[genome]), dtype=np.uint64
-            )
+            cell_inds = filtered_barcodes.sorted_barcode_indices(genome)
 
             mean_reads_per_cell = np.mean(data["read_pairs_per_bc"][i, g, cell_inds])
             summary[

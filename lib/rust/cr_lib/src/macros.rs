@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! per_type_metric {
     ($new_metric_name:ident, $new_visitor_name:ident, $key_type:ident, $inner_type:ident) => {
-        #[derive(Clone, Deserialize, Serialize, Metric)]
+        #[derive(Default, Serialize, Deserialize, Metric)]
         pub struct $new_metric_name(pub metric::TxHashMap<$key_type, $inner_type>);
 
         pub struct $new_visitor_name {
@@ -11,14 +11,8 @@ macro_rules! per_type_metric {
         impl $new_visitor_name {
             pub fn new() -> Self {
                 $new_visitor_name {
-                    metrics: metric::Metric::new(),
+                    metrics: Default::default(),
                 }
-            }
-        }
-
-        impl Default for $new_visitor_name {
-            fn default() -> Self {
-                $new_visitor_name::new()
             }
         }
     };

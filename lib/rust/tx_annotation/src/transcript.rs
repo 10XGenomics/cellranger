@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
-use bio_types::strand::Strand;
-use cr_types::reference::genome_of_chrom::{genome_of_chrom, GenomeName};
-use cr_types::types::ReqStrand;
-use cr_types::utils;
+use cr_types::reference::genome_of_chrom::genome_of_chrom;
+use cr_types::{utils, GenomeName, ReqStrand};
+use fastq_set::WhichEnd;
 use martian_filetypes::tabular_file::TsvFileNoHeader;
 use martian_filetypes::FileTypeRead;
+use metric::AsMetricPrefix;
 use rust_htslib::bam::record::{Cigar, CigarString, Record};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::{cmp, fmt, str};
+use std::{cmp, str};
+use strum_macros::{Display, IntoStaticStr};
 use transcriptome::{Gene, TranscriptIndex, Transcriptome};
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -178,20 +179,30 @@ impl TranscriptAlignment {
     }
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Debug, Clone, Copy, Hash, Serialize, Deserialize)]
+#[derive(
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Debug,
+    Clone,
+    Copy,
+    Hash,
+    Display,
+    IntoStaticStr,
+    Serialize,
+    Deserialize,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum AnnotationRegion {
     Exonic,
     Intronic,
     Intergenic,
 }
 
-impl fmt::Display for AnnotationRegion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AnnotationRegion::Exonic => write!(f, "exonic"),
-            AnnotationRegion::Intronic => write!(f, "intronic"),
-            AnnotationRegion::Intergenic => write!(f, "intergenic"),
-        }
+impl AsMetricPrefix for AnnotationRegion {
+    fn as_metric_prefix(&self) -> Option<&'static str> {
+        Some(self.into())
     }
 }
 
@@ -237,8 +248,8 @@ impl StarExon {
 
 #[derive(Clone)]
 pub struct AnnotationParams {
-    pub chemistry_strandedness: Strand,
-    pub chemistry_fiveprime: bool,
+    pub chemistry_strandedness: ReqStrand,
+    pub chemistry_endedness: WhichEnd,
     pub intergenic_trim_bases: i64,
     pub intronic_trim_bases: i64,
     pub junction_trim_bases: i64,
@@ -321,9 +332,9 @@ impl TranscriptAnnotator {
         if tx_idx == 0 {
             // read ends before the first transcript start
             return annotation_data;
-        } else {
-            tx_idx -= 1; // first transcript on the left
         }
+        // first transcript on the left
+        tx_idx -= 1;
 
         // cycle back through overlapping transcripts
         let mut curr_transcript = &self.transcript_info[tx_idx];
@@ -355,10 +366,9 @@ impl TranscriptAnnotator {
 
             if tx_idx == 0 {
                 break;
-            } else {
-                tx_idx -= 1;
-                curr_transcript = &self.transcript_info[tx_idx];
             }
+            tx_idx -= 1;
+            curr_transcript = &self.transcript_info[tx_idx];
         }
         let mut seen_genes = HashSet::new();
         let mut transcripts = BTreeMap::new();
@@ -396,9 +406,10 @@ impl TranscriptAnnotator {
             annotation_data.region = AnnotationRegion::Intronic;
             if self.params.include_introns {
                 for aln in alignments.into_iter().rev() {
-                    if aln.tx_align.is_some() {
-                        panic!("any_exonic was False, but encountered tx alignment");
-                    };
+                    assert!(
+                        aln.tx_align.is_none(),
+                        "any_exonic was False, but encountered tx alignment"
+                    );
                     match aln.strand {
                         ReqStrand::Forward => {
                             seen_genes.insert(aln.gene.clone());
@@ -462,12 +473,11 @@ impl TranscriptAnnotator {
         let tx_reverse_strand = transcript_info.strand == 2;
         let mut read_reverse_strand = read.is_reverse();
         if read.is_paired() && read.is_last_in_template() {
-            read_reverse_strand = !read_reverse_strand
+            read_reverse_strand = !read_reverse_strand;
         };
         let is_antisense = match self.params.chemistry_strandedness {
-            Strand::Forward => tx_reverse_strand != read_reverse_strand,
-            Strand::Reverse => tx_reverse_strand == read_reverse_strand,
-            Strand::Unknown => false,
+            ReqStrand::Forward => tx_reverse_strand != read_reverse_strand,
+            ReqStrand::Reverse => tx_reverse_strand == read_reverse_strand,
         };
 
         let tx_strand = if is_antisense {
@@ -495,7 +505,7 @@ impl TranscriptAnnotator {
         assert!(is_exonic);
 
         // find the beginning / ending exons
-        let (ex_start, ex_end) = match find_exons(
+        let Some((ex_start, ex_end)) = find_exons(
             &self.exon_info,
             clipped_read_start,
             clipped_read_end,
@@ -503,9 +513,8 @@ impl TranscriptAnnotator {
             tx_last_exon,
             self.params.intergenic_trim_bases,
             self.params.intronic_trim_bases,
-        ) {
-            Some((s, e)) => (s, e),
-            None => return (Some(gene_aln), region),
+        ) else {
+            return (Some(gene_aln), region);
         };
 
         // compute offsets
@@ -523,9 +532,8 @@ impl TranscriptAnnotator {
         );
 
         // discard misaligned reads
-        let (mut tx_cigar, tx_aligned_bases) = match tx_alignment {
-            Some((cig, bases)) => (cig, bases),
-            None => return (Some(gene_aln), region),
+        let Some((mut tx_cigar, tx_aligned_bases)) = tx_alignment else {
+            return (Some(gene_aln), region);
         };
 
         // flip reverse strand
@@ -535,12 +543,14 @@ impl TranscriptAnnotator {
         };
 
         // Apparent insert size, assuming a SE read coming from this transcript
-        let se_insert_size = if self.params.chemistry_fiveprime {
-            tx_offset + tx_aligned_bases
-        } else {
-            self.transcript_index
-                .get_transcript_length(&transcript_info.id)
-                - tx_offset
+        let se_insert_size = match self.params.chemistry_endedness {
+            WhichEnd::FivePrime => tx_offset + tx_aligned_bases,
+            WhichEnd::ThreePrime => {
+                let tx_len = self
+                    .transcript_index
+                    .get_transcript_length(&transcript_info.id);
+                tx_len - tx_offset
+            }
         } as u32;
 
         let alignment = TranscriptAlignment {
@@ -578,11 +588,10 @@ fn is_read_exonic(
         if ex_idx > last_exon {
             // read is out of bounds
             return false;
-        } else {
-            let exon = &exon_info[ex_idx];
-            if get_overlap(segment.start, segment.end, exon.start, exon.end) < min_overlap_frac {
-                return false;
-            }
+        }
+        let exon = &exon_info[ex_idx];
+        if get_overlap(segment.start, segment.end, exon.start, exon.end) < min_overlap_frac {
+            return false;
         }
     }
     true
@@ -684,7 +693,7 @@ fn get_cigar_segments(
                 if seen_nonclips {
                     right_clip.push(*c);
                 } else {
-                    left_clip.push(*c)
+                    left_clip.push(*c);
                 }
             }
             Cigar::RefSkip(_) => {
@@ -706,7 +715,7 @@ fn get_cigar_segments(
                 curr_segment.end += c.len() as i64;
                 curr_segment.cigar.push(*c);
             }
-            _ => unreachable!(),
+            Cigar::Pad(_) => unreachable!(),
         }
     }
 
@@ -894,13 +903,6 @@ mod tests {
         transcript_index: TranscriptIndex,
     }
 
-    pub fn set_forward(record: &mut Record) {
-        // NOTE: rust_htslib doesn't have a method for this either
-        if record.is_reverse() {
-            record.inner_mut().core.flag -= 16u16;
-        }
-    }
-
     fn make_test_annotator(params: AnnotationParams) -> TranscriptAnnotator {
         /*
         Build a transcriptome. Things to test:
@@ -1047,8 +1049,8 @@ mod tests {
 
     fn default_params() -> AnnotationParams {
         AnnotationParams {
-            chemistry_strandedness: Strand::Forward,
-            chemistry_fiveprime: false,
+            chemistry_strandedness: ReqStrand::Forward,
+            chemistry_endedness: WhichEnd::ThreePrime,
             intergenic_trim_bases: 0,
             intronic_trim_bases: 0,
             junction_trim_bases: 0,
@@ -1060,8 +1062,8 @@ mod tests {
 
     fn include_introns_params() -> AnnotationParams {
         AnnotationParams {
-            chemistry_strandedness: Strand::Forward,
-            chemistry_fiveprime: false,
+            chemistry_strandedness: ReqStrand::Forward,
+            chemistry_endedness: WhichEnd::ThreePrime,
             intergenic_trim_bases: 0,
             intronic_trim_bases: 0,
             junction_trim_bases: 0,
@@ -1255,15 +1257,8 @@ mod tests {
         check_annotation(&read, &txome, 2, 0, None, AnnotationRegion::Exonic);
 
         // negative chemistry, R2 negative strand
-        txome.params.chemistry_strandedness = Strand::Reverse;
+        txome.params.chemistry_strandedness = ReqStrand::Reverse;
         check_annotation(&read, &txome, 0, 2, None, AnnotationRegion::Exonic);
-
-        // mixed-strand chemistry
-        txome.params.chemistry_strandedness = Strand::Unknown;
-        read.set_reverse();
-        check_annotation(&read, &txome, 2, 0, None, AnnotationRegion::Exonic);
-        set_forward(&mut read);
-        check_annotation(&read, &txome, 2, 0, None, AnnotationRegion::Exonic);
     }
 
     #[test]

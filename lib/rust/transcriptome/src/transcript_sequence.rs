@@ -93,18 +93,16 @@ mod test {
 
         let mut not_found = 0;
         for tx in &txome.transcripts {
-            let tx_id = &tx.id;
-            if let Some(real_seq) = tx_seqs.get(tx_id) {
+            if let Some(real_seq) = tx_seqs.get(&tx.id) {
                 let loaded_tx_seq =
                     get_transcript_sequence(&mut fa, &tx.chrom, &tx.exons, tx.strand)?;
-                if &loaded_tx_seq != real_seq {
-                    panic!(
-                        "tx_id: {} gencode: {} me: {}",
-                        tx_id,
-                        std::str::from_utf8(real_seq).unwrap(),
-                        std::str::from_utf8(&loaded_tx_seq).unwrap()
-                    );
-                }
+                assert!(
+                    &loaded_tx_seq == real_seq,
+                    "tx_id: {} gencode: {} me: {}",
+                    &tx.id,
+                    std::str::from_utf8(real_seq).unwrap(),
+                    std::str::from_utf8(&loaded_tx_seq).unwrap()
+                );
             } else {
                 not_found += 1;
             }

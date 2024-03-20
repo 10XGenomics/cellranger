@@ -1,9 +1,9 @@
+load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 load(
     "@tenx_bazel_rules//rules/conda:conda_manifest.bzl",
     "conda_deps",
     "conda_manifest",
 )
-load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 
 filegroup(
     name = "conda_package_tenxpy_python",

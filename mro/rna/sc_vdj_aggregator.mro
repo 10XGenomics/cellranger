@@ -55,9 +55,9 @@ pipeline ANTIGEN_AGGR(
 
     call _ANTIBODY_ANALYZER as _ANTIGEN_ANALYZER(
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        molecule_info      = null,
         aggregate_barcodes = null,
         is_antibody        = false,
+        is_spatial         = false,
     ) using (
         disabled = self.disable_antigen_aggr,
     )
@@ -130,20 +130,24 @@ pipeline SC_VDJ_AGGREGATOR(
     )
 
     call WRITE_CONSENSUS_TXT(
+        sample_number  = null,
         enclone_output = RUN_ENCLONE_AGGR.enclone_output,
     )
 
     call WRITE_CLONOTYPE_OUTS(
+        sample_number  = null,
         receptor       = PROCESS_VDJ_PROTO.receptor,
         enclone_output = RUN_ENCLONE_AGGR.enclone_output,
     )
 
     call FILL_CLONOTYPE_INFO(
+        sample_number      = null,
         contig_annotations = SETUP_VDJ_AGGR.combined_ann_json,
         enclone_output     = RUN_ENCLONE_AGGR.enclone_output,
     )
 
     call WRITE_CONCAT_REF_OUTS(
+        sample_number               = null,
         all_contig_annotations_json = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
         enclone_output              = RUN_ENCLONE_AGGR.enclone_output,
     )

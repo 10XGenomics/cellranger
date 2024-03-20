@@ -1146,7 +1146,7 @@ CHARTS = [
         "data": [],
         "config": shared.CHARTS_PLOTLY_FIXED_CONFIG,
         "function": "plot_barcode_rank",
-        "description": "The plot shows the count of filtered UMIs mapped to each barcode. Barcodes are not determined to be cell-associated strictly based on their UMI count. Instead, they could be determined based on their expression profile, or removed via Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. The color of the graph in these regions is based on the local density of barcodes that are cell-associated.",
+        "description": "The plot shows the count of filtered UMIs mapped to each barcode. Barcodes are not determined to be cell-associated strictly based on their UMI count. Instead, they could be determined based on their expression profile, or removed via Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. The color of the graph in these regions is based on the local density of barcodes that are cell-associated. Hovering over the plot displays the total number and percentage of barcodes in that region called as cells along with the number of UMI counts for those barcodes and barcode rank, ordered in descending order of UMI counts.",
         "name": "barcode_rank",
     },
     {

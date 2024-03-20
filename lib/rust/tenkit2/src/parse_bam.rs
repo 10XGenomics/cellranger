@@ -91,9 +91,10 @@ fn read_one_read_from_10x_fastq<R: BufRead>(
         return None;
     }
     line.pop();
-    if !line.starts_with('@') {
-        panic!("Invalid readname line in fastq file: \"{line}\"");
-    }
+    assert!(
+        line.starts_with('@'),
+        "Invalid readname line in fastq file: \"{line}\""
+    );
     if opt.keep_readname {
         *readname = line.after("@").to_string();
     }
@@ -104,9 +105,10 @@ fn read_one_read_from_10x_fastq<R: BufRead>(
         return None;
     }
     r.read_line(line).ok()?;
-    if !line.ends_with("+\n") {
-        panic!("Failed to find plus line in fastq file.");
-    }
+    assert!(
+        line.ends_with("+\n"),
+        "Failed to find plus line in fastq file."
+    );
     if line.is_empty() {
         return None;
     }
@@ -242,7 +244,7 @@ fn read_one_barcode_of_reads_from_10x_fastq1<R: BufRead>(
 /*
 // NOT DOING THIS BECAUSE IT'S SLOWER
 // ◼ Need to understand why.
-pub fn parse_fastq1( fastq1: &String,
+pub fn parse_fastq1( fastq1: &str,
     read_data: &mut Vec<(String,Vec<(String,DnaString,Vec<u8>,String,u16)>)>,
     max_reads: i64, opt: &BamReadOptions ) {
     read_data.clear();
@@ -412,7 +414,7 @@ fn read_one_barcode_of_reads_from_10x_fastq2<R: BufRead>(
 /*
 // NOT DOING THIS BECAUSE IT'S SLOWER
 // ◼ Need to understand why.  Test case is pogo.
-pub fn parse_fastq2( fastq1: &String, fastq2: &String,
+pub fn parse_fastq2( fastq1: &str, fastq2: &str,
     read_data: &mut Vec<(String,Vec<(String,DnaString,Vec<u8>,String,u16)>)>,
     max_reads: i64, opt: &BamReadOptions ) {
     read_data.clear();

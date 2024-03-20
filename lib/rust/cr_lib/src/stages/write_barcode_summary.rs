@@ -5,18 +5,18 @@ use crate::align_metrics::{
     BarcodeKind, BarcodeMetrics, GenomeMapping, LibFeatThenBarcodeOrder, MappingRegion,
     MULTI_GENOME,
 };
-use crate::count_matrix::write_barcodes_column;
-use crate::types::{FeatureReferenceFormat, H5File};
+use crate::types::FeatureReferenceFormat;
 use crate::BarcodeMetricsShardFile;
 use anyhow::{bail, Result};
-use barcode::Barcode;
+use cr_h5::count_matrix::write_barcodes_column;
 use cr_types::barcode_index::BarcodeIndex;
-use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::types::{BarcodeIndexFormat, FeatureType};
-use itertools::Itertools;
+use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
+use cr_types::{BarcodeIndexFormat, GenomeName, H5File, LibraryType};
+use itertools::zip_eq;
 use martian::prelude::{MartianMain, MartianRover};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::FileTypeRead;
+use metric::join_metric_name;
 use serde::{Deserialize, Serialize};
 use shardio::UnsortedShardReader;
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ pub struct WriteBarcodeSummaryStageInputs {
     /// Metrics computed per barcode sorted by (library type, barcode)
     pub per_barcode_metrics: Vec<BarcodeMetricsShardFile>,
     pub feature_reference: FeatureReferenceFormat,
-    pub barcode_index: BarcodeIndexFormat<Barcode>,
+    pub barcode_index: BarcodeIndexFormat,
 }
 
 /// The Martian stage outputs.
@@ -67,7 +67,7 @@ impl BarcodeCounts {
 
 /// Add one vector to another.
 fn add_assign(lhs: &mut [u32], rhs: &[u32]) {
-    for (x, y) in lhs.iter_mut().zip_eq(rhs) {
+    for (x, y) in zip_eq(lhs, rhs) {
         *x += y;
     }
 }
@@ -112,7 +112,7 @@ fn checked_add(sum: &mut u32, add: i64) {
 
 struct BarcodeSummaryData {
     /// Number of reads/umis per barcode for each genome.
-    genome_barcode_counts: HashMap<(FeatureType, String), BarcodeCounts>,
+    genome_barcode_counts: HashMap<(FeatureType, GenomeName), BarcodeCounts>,
     read_counts: HashMap<FeatureType, BarcodeReads>,
 }
 
@@ -120,13 +120,13 @@ impl BarcodeSummaryData {
     fn new(
         per_barcode_metrics: &[BarcodeMetricsShardFile],
         feature_ref: &FeatureReference,
-        barcode_index: &BarcodeIndex<Barcode>,
+        barcode_index: &BarcodeIndex,
     ) -> Result<Self> {
         let mut genome_barcode_counts = HashMap::new();
         let mut read_counts = HashMap::new();
         for feature_def in &feature_ref.feature_defs {
             let genome = if feature_def.genome.is_empty() {
-                MULTI_GENOME.to_string()
+                MULTI_GENOME.into()
             } else {
                 feature_def.genome.clone()
             };
@@ -144,8 +144,8 @@ impl BarcodeSummaryData {
             )?;
 
         fn update_counts(
-            genome_barcode_counts: &mut HashMap<(FeatureType, String), BarcodeCounts>,
-            key: &(FeatureType, String),
+            genome_barcode_counts: &mut HashMap<(FeatureType, GenomeName), BarcodeCounts>,
+            key: &(FeatureType, GenomeName),
             index: usize,
             umi_counts: i64,
             read_counts: i64,
@@ -159,23 +159,21 @@ impl BarcodeSummaryData {
         for barcode_metrics in metrics_reader {
             let BarcodeMetrics {
                 barcode,
-                library_feats,
+                library_type,
                 metrics,
             } = barcode_metrics?;
             if let BarcodeKind::Valid(bc) = barcode {
                 let index = barcode_index.get_index(&bc);
-                let feature_type =
-                    FeatureType::try_from(library_feats.legacy_library_type()).unwrap();
-                match feature_type {
-                    FeatureType::Gene => {
+                let feature_type = match library_type {
+                    LibraryType::Gex => {
                         for (genome, genome_metrics) in metrics.per_genome_name {
                             update_counts(
                                 &mut genome_barcode_counts,
-                                &(feature_type, genome),
+                                &(FeatureType::Gene, genome),
                                 index,
                                 genome_metrics.umi_counts.count(),
                                 genome_metrics.usable_reads.count(),
-                            )
+                            );
                         }
                         for (GenomeMapping { genome, .. }, genome_mapping_metrics) in metrics
                             .per_genome_mapping
@@ -184,7 +182,7 @@ impl BarcodeSummaryData {
                         {
                             // We want to ignore the "multi" genome here
                             if let Some(entry) =
-                                genome_barcode_counts.get_mut(&(feature_type, genome))
+                                genome_barcode_counts.get_mut(&(FeatureType::Gene, genome))
                             {
                                 checked_add(
                                     &mut entry.half_mapped_counts[index],
@@ -196,23 +194,26 @@ impl BarcodeSummaryData {
                                 );
                             }
                         }
+                        FeatureType::Gene
                     }
-                    _ => {
+                    LibraryType::FeatureBarcodes(feature_type) => {
                         // No "genome" in other features but we use the key "multi"
                         update_counts(
                             &mut genome_barcode_counts,
-                            &(feature_type, MULTI_GENOME.to_string()),
+                            &(FeatureType::Barcode(feature_type), MULTI_GENOME.into()),
                             index,
                             metrics.umi_counts,
                             metrics.usable_reads,
-                        )
+                        );
+                        FeatureType::Barcode(feature_type)
                     }
-                }
+                    LibraryType::Vdj(_) | LibraryType::Atac => unreachable!("{library_type}"),
+                };
 
                 let read_counts_entry = read_counts.get_mut(&feature_type).unwrap();
                 checked_add(
                     &mut read_counts_entry.sequenced_reads[index],
-                    metrics.sequenced_reads.count(),
+                    metrics.total_reads.count(),
                 );
                 checked_add(
                     &mut read_counts_entry.barcode_corrected_sequenced_reads[index],
@@ -236,7 +237,7 @@ fn write_barcode_summary_h5(
     path: &Path,
     per_barcode_metrics: &[BarcodeMetricsShardFile],
     feature_ref: &FeatureReference,
-    barcode_index: &BarcodeIndex<Barcode>,
+    barcode_index: &BarcodeIndex,
 ) -> Result<()> {
     let file = hdf5::File::create(path)?;
 
@@ -255,13 +256,13 @@ fn write_barcode_summary_h5(
         read_counts,
     } = BarcodeSummaryData::new(per_barcode_metrics, feature_ref, barcode_index)?;
 
-    for ((feat, genome), barcode_counts) in &genome_barcode_counts {
+    for (&(feat, ref genome), barcode_counts) in &genome_barcode_counts {
         // The additional underscore is a bug and retained for backward compatibility.
         // Example metric names are
         // _multi_transcriptome_conf_mapped_barcoded_reads
         // ANTIBODY__multi_transcriptome_conf_mapped_barcoded_reads
         let underscore_genome = format!("_{genome}");
-        let library_type_genome = feat.join(&underscore_genome);
+        let library_type_genome = join_metric_name(feat, &underscore_genome);
         let read_counts_name =
             format!("{library_type_genome}_transcriptome_conf_mapped_barcoded_reads");
         file.new_dataset::<u32>()
@@ -342,7 +343,7 @@ fn write_barcode_summary_h5(
             file.new_dataset::<u32>()
                 .deflate(1)
                 .shape((data.len(),))
-                .create(feature_type.join(name).as_ref())?
+                .create(join_metric_name(feature_type, name).as_str())?
                 .write(&data)?;
         }
     }

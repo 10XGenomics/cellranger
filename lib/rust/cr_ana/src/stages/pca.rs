@@ -2,9 +2,10 @@
 
 use crate::io::{csv, h5};
 use crate::pca::run_pca;
-use crate::types::{FeatureType, H5File};
+use crate::types::H5File;
 use crate::EXCLUDED_FEATURE_TYPES;
 use anyhow::Result;
+use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::read_adaptive_csr_matrix;
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{make_mro, MartianStruct};
@@ -44,7 +45,7 @@ pub struct PcaChunkInputs {
 
 pub struct PcaStage;
 
-#[make_mro(stage_name = RUN_PCA_NG, mem_gb = 1, threads = 1, volatile = strict)]
+#[make_mro(stage_name = RUN_PCA_NG, volatile = strict)]
 impl MartianStage for PcaStage {
     type StageInputs = PcaStageInputs;
     type StageOutputs = PcaStageOutputs;
@@ -56,25 +57,23 @@ impl MartianStage for PcaStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
-        let mem_gib = 1 + h5::est_mem_gb_from_nnz(&args.matrix_h5)?.ceil() as isize;
-        let mut stage_def = StageDef::new();
-        let pca_map = match args.pca_map {
-            Some(m) => m,
-            None => HashMap::new(),
-        };
-        for (&feature_type, &count) in &feature_types {
-            // if we have only 1 feature, skip!
-            if count < 2 || EXCLUDED_FEATURE_TYPES.contains(&feature_type) {
-                continue;
-            }
-            if !pca_map.contains_key(&feature_type.to_string()) {
-                let chunk_resource = Resource::with_mem_gb(mem_gib).threads(4);
-                stage_def
-                    .add_chunk_with_resource(Self::ChunkInputs { feature_type }, chunk_resource);
-            }
-        }
-        Ok(stage_def)
+        let mem_gib = 3 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil() as isize;
+        let pca_map = args.pca_map.unwrap_or_default();
+
+        Ok(h5::matrix_feature_types(&args.matrix_h5)?
+            .into_iter()
+            .filter(|&(feature_type, count)| {
+                count >= 2
+                    && !EXCLUDED_FEATURE_TYPES.contains(&feature_type)
+                    && !pca_map.contains_key(&feature_type.to_string())
+            })
+            .map(|(feature_type, _)| {
+                (
+                    Self::ChunkInputs { feature_type },
+                    Resource::with_mem_gb(mem_gib).threads(4),
+                )
+            })
+            .collect())
     }
 
     fn main(

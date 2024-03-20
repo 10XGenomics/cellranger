@@ -1,8 +1,8 @@
 [dependencies]
-byteorder = '1.4.3'
-prost = '>= 0.7, < 0.12'
-prost-build = '>= 0.7, < 0.12'
-sha2 = '0.10.7'
+byteorder = '1'
+prost = '0.11'
+prost-build = '0.11'
+sha2 = '0.10'
 
 [dependencies.anyhow]
 workspace = true

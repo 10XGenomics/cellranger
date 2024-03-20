@@ -1,8 +1,7 @@
 [dependencies]
-bio = '>=0.35'
-csv = '1.2'
-json = '0.12.1'
-rayon = '1.7'
+bio = '1'
+csv = '1'
+rayon = '1'
 
 [dependencies.amino]
 workspace = true
@@ -31,16 +30,19 @@ workspace = true
 [dependencies.martian-filetypes]
 workspace = true
 
-[dependencies.perf_stats]
-workspace = true
+[dependencies.metric]
+path = '../metric'
 
-[dependencies.pretty_trace]
+[dependencies.perf_stats]
 workspace = true
 
 [dependencies.rust-htslib]
 workspace = true
 
 [dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
 workspace = true
 
 [dependencies.string_utils]
@@ -70,3 +72,7 @@ edition = '2021'
 name = 'clonotype_assigner'
 publish = false
 version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['metric', 'serde_json']

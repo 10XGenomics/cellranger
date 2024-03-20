@@ -19,13 +19,14 @@ import cellranger.webshim.constants.gex as ws_gex_constants
 import cellranger.websummary.plotly_tools as pltly
 from cellranger.analysis.clustering import AB_PREFIX, GEX_PREFIX
 from cellranger.analysis.singlegenome import TSNE_NAME, UMAP_NAME, SingleGenomeAnalysis
+from cellranger.websummary.helpers import get_tsne_key
+from cellranger.websummary.numeric_converters import round_floats_in_list
 from cellranger.websummary.react_components import (
     ClusteringData,
     Clusterings,
     ClusteringSelector,
     DifferentialExpressionTableValue,
     SharedCoordinatePlotCollection,
-    round_floats_in_list,
 )
 
 TSNE_LAYOUT_CONFIG = {
@@ -412,11 +413,6 @@ def analysis_by_clustering(
     )
 
 
-def get_tsne_key(feature_type, n_components):
-    """Return the correct tsne key for each feature type and number of components, e.g. gene_expression_2."""
-    return "{}_{}".format(feature_type.replace(" ", "_").lower(), n_components).encode()
-
-
 def umi_on_tsne_helper(analysis: SingleGenomeAnalysis, spatial: bool = False, library_type=None):
     """Get the tSNE projections for a given library adn retun the left-side plot as json."""
     if library_type is None:
@@ -529,6 +525,3 @@ def umi_on_tsne_from_path(analysis_dir, library_type=None):
 
     # left (colored by umi count) tsne plot
     return umi_on_tsne_helper(analysis, spatial=False, library_type=library_type)
-
-
-#############################################################################################

@@ -1,12 +1,13 @@
 //! Martian stage WRITE_MATRIX_MARKET.
 
+use crate::env;
 use crate::types::FeatureReferenceFormat;
-use crate::{env, CountShardFile};
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::barcode_index::BarcodeIndex;
-use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::types::{BarcodeIndexFormat, FeatureBarcodeCount, FeatureType};
+use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
+use cr_types::types::{BarcodeIndexFormat, FeatureBarcodeCount};
+use cr_types::{BarcodeThenFeatureOrder, CountShardFile};
 use martian::{MartianFileType, MartianMain, MartianRover};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::gzip_file::Gzip;
@@ -42,7 +43,7 @@ impl MtxWriter {
         &self,
         chunks: &[CountShardFile],
         feature_ref: &FeatureReference,
-        barcode_index: &BarcodeIndex<Barcode>,
+        barcode_index: &BarcodeIndex,
         software_version: &str,
     ) -> Result<()> {
         self.write_matrix_mtx(chunks, feature_ref, barcode_index, software_version)?;
@@ -80,7 +81,7 @@ impl MtxWriter {
         &self,
         chunks: &[CountShardFile],
         feature_ref: &FeatureReference,
-        barcode_index: &BarcodeIndex<Barcode>,
+        barcode_index: &BarcodeIndex,
         software_version: &str,
     ) -> Result<()> {
         let mtx_path = self.folder.join("matrix.mtx.gz");
@@ -88,10 +89,8 @@ impl MtxWriter {
             std::fs::File::create(mtx_path)?,
             flate2::Compression::fast(),
         ));
-        let reader: ShardReader<
-            FeatureBarcodeCount<Barcode>,
-            crate::BarcodeThenFeatureOrder<Barcode>,
-        > = ShardReader::open_set(chunks)?;
+        let reader: ShardReader<FeatureBarcodeCount, BarcodeThenFeatureOrder> =
+            ShardReader::open_set(chunks)?;
 
         // Print the header, matrix dimensions, and number of non-zero entries.
         writeln!(
@@ -130,7 +129,7 @@ pub struct WriteMatrixMarket;
 pub struct StageInputs {
     pub counts: Vec<CountShardFile>,
     pub feature_reference: FeatureReferenceFormat,
-    pub barcode_index: BarcodeIndexFormat<Barcode>,
+    pub barcode_index: BarcodeIndexFormat,
 }
 
 #[derive(Serialize, Deserialize, Clone, MartianStruct)]

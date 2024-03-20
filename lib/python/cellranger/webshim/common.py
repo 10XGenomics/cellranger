@@ -18,7 +18,6 @@ import numpy as np
 
 import cellranger.analysis.clustering as cr_clustering
 import cellranger.constants as cr_constants
-import cellranger.reference as cr_reference
 import cellranger.report as cr_report  # pylint: disable=no-name-in-module
 import cellranger.rna.library as rna_library
 import cellranger.targeted.utils as cr_tgt_utils
@@ -31,17 +30,11 @@ import cellranger.webshim.constants.vdj as ws_vdj_constants
 import tenkit.safe_json as tk_safe_json
 from cellranger.analysis.multigenome import MultiGenomeAnalysis
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+from cellranger.reference_paths import get_ref_name_from_genomes
 from cellranger.webshim.data import SampleData, generate_counter_barcode_rank_plot_data
-from cellranger.webshim.jibes_web import (
-    _make_rc_vectors,
-    make_color_map,
-    make_histogram_plot,
-)
-from cellranger.websummary.analysis_tab_core import get_tsne_key
-from cellranger.websummary.sample_properties import (
-    CountSampleProperties,
-    SampleProperties,
-)
+from cellranger.webshim.jibes_plotting import _make_rc_vectors, make_color_map, make_histogram_plot
+from cellranger.websummary.helpers import get_tsne_key
+from cellranger.websummary.sample_properties import CountSampleProperties, SampleProperties
 
 
 def add_prefix(prefix, name):
@@ -376,7 +369,7 @@ def build_plot_data_dict(plot_segment, counts, show_name_and_hover=True, color=N
         counts: Reverse sorted UMI counts for all barcodes.
         show_name_and_hover: boolean whether to add hover and name text specific
             to the classic CR rank plot (the user might want to set these
-            themselves for alternate ranke plots)
+            themselves for alternate rank plots)
     """
     # -1 for continuity between two charts
     start = max(0, plot_segment.start - 1)
@@ -397,18 +390,6 @@ def build_plot_data_dict(plot_segment, counts, show_name_and_hover=True, color=N
         },
         "showlegend": plot_segment.legend,
     }
-    if show_name_and_hover:
-        name = "Cells" if plot_segment.cell_density > 0 else "Background"
-        data_dict["name"] = name
-        # Setup the tooltip
-        if plot_segment.cell_density > 0.0:
-            n_barcodes = plot_segment.end - plot_segment.start
-            n_cells = int(round(plot_segment.cell_density * n_barcodes))
-            hover = f"{100 * plot_segment.cell_density:.0f}% Cells<br>({n_cells}/{n_barcodes})"
-        else:
-            hover = "Background"
-        data_dict["hoverinfo"] = "text"
-        data_dict["text"] = hover
     offset = 1 + start  # it's a log-log plot, hence the 1
     for index, count in plot_rows:
         data_dict["x"].append(index + offset)
@@ -418,6 +399,22 @@ def build_plot_data_dict(plot_segment, counts, show_name_and_hover=True, color=N
     if len(data_dict["x"]) == 0:
         data_dict["x"].append(0)
         data_dict["y"].append(0)
+
+    if show_name_and_hover:
+        name = "Cells" if plot_segment.cell_density > 0 else "Background"
+        data_dict["name"] = name
+        if plot_segment.cell_density > 0.0:
+            n_barcodes = plot_segment.end - plot_segment.start
+            n_cells = int(round(plot_segment.cell_density * n_barcodes))
+            hoverbase = f"{100 * plot_segment.cell_density:.0f}% Cells<br>({n_cells}/{n_barcodes})"
+        else:
+            hoverbase = "Background"
+        hover = []
+        for index, count in plot_rows:
+            rank = index + offset
+            hover.append(f"{hoverbase}<br>Rank {rank:,}<br>UMIs {count:,}")
+        data_dict["hoverinfo"] = "text"
+        data_dict["text"] = hover
 
     return data_dict
 
@@ -1340,7 +1337,7 @@ def build_info_dict(sample_properties, sample_data, pipeline):
             info["references"].append(
                 {
                     "type": cr_constants.REFERENCE_TYPE,
-                    "name": cr_reference.get_ref_name_from_genomes(genomes),
+                    "name": get_ref_name_from_genomes(genomes),
                 }
             )
 
@@ -1367,7 +1364,7 @@ def build_info_dict(sample_properties, sample_data, pipeline):
             ref_name = sample_data.summary.get(name_metric)
 
             if isinstance(ref_name, list):
-                ref_name = cr_reference.get_ref_name_from_genomes(ref_name)
+                ref_name = get_ref_name_from_genomes(ref_name)
 
             info["references"].append({"type": ref_type, "name": ref_name})
 

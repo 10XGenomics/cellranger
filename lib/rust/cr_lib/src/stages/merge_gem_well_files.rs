@@ -41,7 +41,10 @@ pub struct StageOutputs {
     pub merged_gem_well_files: GemWellFiles,
 }
 
-fn hard_link_files<P: Clone + MartianFileType + AsRef<Path>>(v: &mut Vec<P>, rover: &MartianRover) {
+pub fn hard_link_files<P: Clone + MartianFileType + AsRef<Path>>(
+    v: &mut Vec<P>,
+    rover: &MartianRover,
+) {
     *v = v
         .iter()
         .cloned()

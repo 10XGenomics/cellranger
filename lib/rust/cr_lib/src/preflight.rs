@@ -1,11 +1,11 @@
 use anyhow::{bail, ensure, Context, Result};
 use bio::alphabets::dna::revcomp;
+use cr_h5::probe_reference_io::PROBE_DATA_LEN;
 use cr_types::probe_set::ProbeSetReferenceMetadata;
-use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::reference::genome_of_chrom::GenomeName;
+use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
 use cr_types::reference::reference_info::MULTI_GENOME_SEPARATOR;
-use cr_types::types::FeatureType;
-use cr_types::TargetingMethod;
+use cr_types::types::FeatureBarcodeType;
+use cr_types::{GenomeName, TargetingMethod};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 #[cfg(not(target_os = "linux"))]
@@ -125,6 +125,19 @@ fn make_required_headers(method: TargetingMethod) -> TxHashSet<&'static str> {
     }
 }
 
+/// Validate the length and content of the gene_id and probe_id columns of the probe set reference CSV.
+fn validate_probe_field(field_name: &str, field_value: &str) -> Result<()> {
+    ensure!(
+        field_value.len() <= PROBE_DATA_LEN,
+        "{field_name} must not be longer than {PROBE_DATA_LEN} characters: \"{field_value}\""
+    );
+    ensure!(
+        field_value.chars().all(|c| c.is_ascii_graphic()),
+        "{field_name} must contain only ASCII characters: \"{field_value}\""
+    );
+    Ok(())
+}
+
 pub fn check_target_panel(
     transcriptome: &Transcriptome,
     genomes: Vec<GenomeName>,
@@ -219,12 +232,11 @@ pub fn check_target_panel(
         let probe_set_ref = &metadata[METADATA_KEY_REFERENCE_GENOME];
         let probe_set_genomes: HashSet<&str> =
             probe_set_ref.split(MULTI_GENOME_SEPARATOR).collect();
-        let genomes_set: HashSet<&str> = genomes.iter().map(String::as_str).collect();
+        let genomes_set: HashSet<&str> = genomes.iter().map(GenomeName::as_str).collect();
         if genomes_set != probe_set_genomes {
             bail!(
-                "Reference genome \"{}\" does not match probe set CSV reference \"{}\"",
-                genomes.join(MULTI_GENOME_SEPARATOR),
-                probe_set_ref
+                "Reference genome \"{}\" does not match probe set CSV reference \"{probe_set_ref}\"",
+                genomes.iter().format(MULTI_GENOME_SEPARATOR),
             );
         }
     }
@@ -235,24 +247,21 @@ pub fn check_target_panel(
         .from_path(probe_set)
         .with_context(|| probe_set.display().to_string())?;
 
-    let headers = reader
-        .headers()
-        .map(|headers| {
-            headers.iter().fold(Ok(TxHashSet::default()), |acc, x| {
-                acc.and_then(|mut acc| {
-                    ensure!(
-                        acc.insert(x),
-                        "The probe set CSV file header contains a duplicate field: \"{x}\". \
-                         Please ensure that the file has no duplicated fields."
-                    );
-                    Ok(acc)
-                })
-            })
-        })
-        .unwrap_or_else(|_| Ok(TxHashSet::default()))?;
+    let headers: Vec<_> = {
+        let headers = reader.headers()?;
+        let duplicates: Vec<_> = headers.iter().duplicates().collect();
+        ensure!(
+            duplicates.is_empty(),
+            "The probe set CSV file header contains a duplicate field: \"{}\". \
+             Please ensure that the file has no duplicated fields.",
+            duplicates.join(", ")
+        );
+        headers.iter().collect()
+    };
 
     let required_headers = make_required_headers(targeting_method);
-    let missing_headers: Vec<_> = required_headers.difference(&headers).sorted().collect();
+    let headers_set = headers.iter().copied().collect();
+    let missing_headers: Vec<_> = required_headers.difference(&headers_set).sorted().collect();
     ensure!(
         missing_headers.is_empty(),
         "The probe set CSV file header does not contain one or more required comma-separated \
@@ -260,12 +269,12 @@ pub fn check_target_panel(
          Please check that the file is in CSV format and has the required field names.",
         missing_headers.into_iter().join("\", \""),
         required_headers
-            .intersection(&headers)
+            .intersection(&headers_set)
             .sorted()
             .join("\", \""),
     );
 
-    let extra_headers: Vec<_> = headers.difference(&ALLOWED_HEADERS).sorted().collect();
+    let extra_headers: Vec<_> = headers_set.difference(&ALLOWED_HEADERS).sorted().collect();
     ensure!(
         extra_headers.is_empty(),
         "The probe set CSV file header contains invalid columns: \"{}\". \
@@ -275,8 +284,8 @@ pub fn check_target_panel(
     );
 
     if file_format == "probe_set_file_format" {
-        let header_row: Vec<_> = reader.headers().unwrap().iter().take(3).collect();
-        match header_row[..] {
+        let header_row = &headers[0..3];
+        match header_row {
             ["gene_id", "probe_seq", "probe_id"] => (),
             ["gene_id", "bait_seq", "bait_id"] => (),
             _ => {
@@ -290,10 +299,8 @@ pub fn check_target_panel(
         }
     }
 
-    let hdr_to_idx: TxHashMap<_, _> = reader
-        .headers()
-        .unwrap()
-        .iter()
+    let hdr_to_idx: TxHashMap<_, _> = headers
+        .into_iter()
         .enumerate()
         .map(|(i, h)| (h.to_string(), i))
         .collect();
@@ -307,27 +314,26 @@ pub fn check_target_panel(
         let row = 2 + metadata.len() + i; // 1 for 0-indexing, 1 for header
         if let Err(ref error) = record {
             match error.kind() {
-                csv::ErrorKind::UnequalLengths {
+                &csv::ErrorKind::UnequalLengths {
                     pos: _,
                     expected_len: _,
                     len,
                 } => {
-                    if (*len as usize) > hdr_to_idx.len() {
+                    if len as usize > hdr_to_idx.len() {
                         bail!(
                             "The probe set CSV file contains more columns than the header on row \
-                             {row}. Please use a CSV file with a header for each column and a value \
-                             for each column in each row. You may have a comma character in a \
-                             field. Commas are permitted in some fields, but fields containing \
+                             {row}. Please use a CSV file with a header for each column and a \
+                             value for each column in each row. You may have a comma character in \
+                             a field. Commas are permitted in some fields, but fields containing \
                              commas must be enclosed in quotes.",
                         );
-                    } else {
-                        bail!(
-                            "The probe set CSV file contains an empty column or fewer columns than \
-                             the header on row {row}. You might have a missing comma. \
-                             Please use a CSV file with a header for each column and a value for \
-                             each column in each row.",
-                        );
                     }
+                    bail!(
+                        "The probe set CSV file contains an empty column or fewer columns than \
+                         the header on row {row}. You might have a missing comma. \
+                         Please use a CSV file with a header for each column and a value for \
+                         each column in each row.",
+                    );
                 }
                 _ => {
                     bail!("The probe set CSV file failed to parse on row {row}.",)
@@ -337,6 +343,7 @@ pub fn check_target_panel(
 
         let record = record?;
         if let Some(gene_id) = record.get(gene_id_idx) {
+            validate_probe_field("gene_id", gene_id)?;
             let targeted_gene_id = match targeting_method {
                 // Custom probes may target genes not found in the reference transcriptome.
                 TemplatedLigation => gene_id,
@@ -377,6 +384,7 @@ pub fn check_target_panel(
             (None, None) => (),
             (Some(&idx), None) | (None, Some(&idx)) => {
                 if let Some(probe_id) = record.get(idx) {
+                    validate_probe_field("probe_id", probe_id)?;
                     ensure!(
                         probe_ids.insert(probe_id.to_string()),
                         "The probe set CSV file contains a duplicate probe ID on row {row}: \
@@ -446,7 +454,7 @@ pub fn check_crispr_target_genes(
         .map(|x| (x.id.as_str(), x.name.as_str()))
         .collect();
     for feat in &feature_ref.feature_defs {
-        if feat.feature_type != FeatureType::CRISPR {
+        if feat.feature_type != FeatureType::Barcode(FeatureBarcodeType::Crispr) {
             continue;
         }
         if let Some(target_id) = feat.tags.get("target_gene_id").map(String::as_str) {

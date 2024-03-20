@@ -2,14 +2,15 @@ use crate::align_homopolymer::count_homopolymer_matches;
 use crate::stages::align_and_count;
 use crate::types::AnnSpillFormat;
 use anyhow::Result;
-use barcode::{Barcode, HasBarcode};
+use barcode::{Barcode, BarcodeContent};
 use cr_types::constants::ILLUMINA_QUAL_OFFSET;
 use cr_types::probe_set::ProbeSetReference;
 use cr_types::reference::feature_extraction::{FeatureData, FeatureExtractor};
 use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::rna_read::{LegacyLibraryType, RnaChunk, RnaRead};
+use cr_types::rna_read::{RnaChunk, RnaRead};
 use cr_types::spill_vec::{SpillVec, SpillVecReader};
-use cr_types::types::{HasMultiplexing, LibraryFeatures};
+use cr_types::types::LibraryType;
+use cr_types::FeatureBarcodeType;
 use fastq_set::adapter_trimmer::{Adapter, AdapterTrimmer, TrimResult};
 use fastq_set::WhichRead;
 use martian::MartianFileType;
@@ -22,8 +23,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tx_annotation::mark_dups::{BarcodeDupMarker, DupBuilder, DupInfo, UmiCorrection};
-use tx_annotation::read::{AnnotationInfo, ReadAnnotations, ReadAnnotator, RecordAnnotation};
+use tx_annotation::mark_dups::{BarcodeDupMarker, DupBuilder, UmiCorrection};
+use tx_annotation::read::{ReadAnnotations, ReadAnnotator, RecordAnnotation};
 use umi::UmiInfo;
 
 const PD_FRAC_FB_READS_TO_ALIGN: f64 = 0.1; // PD only so shouldn't go in parameters.toml
@@ -31,7 +32,7 @@ pub const MAX_ANNOTATIONS_IN_MEM: usize = 250_000; // With ~2KB per item, this w
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct BarcodeSummary {
-    library_type: LegacyLibraryType,
+    library_type: LibraryType,
     barcode: String,
     reads: u64,
     umis: u64,
@@ -40,7 +41,7 @@ pub struct BarcodeSummary {
 }
 
 impl BarcodeSummary {
-    pub fn new(barcode: Barcode, library_type: LegacyLibraryType) -> Self {
+    pub fn new(barcode: Barcode, library_type: LibraryType) -> Self {
         BarcodeSummary {
             library_type,
             barcode: barcode.to_string(),
@@ -227,14 +228,22 @@ pub struct Aligner {
 ///
 /// used for deterministic random sampling of feature bc reads for txome alignment for PD metric
 fn barcode_seeded_rng(barcode: Barcode) -> ChaCha20Rng {
-    let mut pd_seed: [u8; 32] = [0; 32];
-    for (i, b) in barcode.seq().iter().enumerate() {
-        if i >= 32 {
-            break;
+    match barcode.content() {
+        BarcodeContent::Sequence(seq) => {
+            let mut pd_seed: [u8; 32] = [0; 32];
+            for (i, b) in seq.iter().enumerate() {
+                if i >= 32 {
+                    break;
+                }
+                pd_seed[i] = *b;
+            }
+            ChaCha20Rng::from_seed(pd_seed)
         }
-        pd_seed[i] = *b;
+        BarcodeContent::SpatialIndex(index) => {
+            let seed = ((index.row as u64) << 32) + index.col as u64;
+            ChaCha20Rng::seed_from_u64(seed)
+        }
     }
-    ChaCha20Rng::from_seed(pd_seed)
 }
 
 impl Aligner {
@@ -278,49 +287,32 @@ impl Aligner {
         reads: impl IntoIterator<Item = Result<RnaRead>>,
         barcode_subsample_rate: f64,
     ) -> Result<AnnotationIter<'_>> {
-        let aligner_subsample_rate = args.aligner_subsample_rate.unwrap_or(1.0);
         let spill_file = AnnSpillFormat::new(&self.spill_folder, barcode.to_string());
         let mut annotations = SpillVec::new(MAX_ANNOTATIONS_IN_MEM, spill_file);
-        let mut dup_builder = HashMap::new();
-        let mut subsample_rng = barcode_seeded_rng(barcode);
-        let mut pd_rng = subsample_rng.clone();
+        let mut dup_builder: HashMap<LibraryType, DupBuilder> = HashMap::new();
+        let mut pd_rng = barcode_seeded_rng(barcode);
 
         // First pass through the reads
         for read in reads {
             let read = read?;
-            let discard_read = read.library_feats() == LibraryFeatures::gex()
-                && !subsample_rng.gen_bool(aligner_subsample_rate);
-            let ann = if discard_read {
-                // This gene expression read is discarded by subsampling.
-                if read.r2_seq().is_some() {
-                    unimplemented!();
-                }
-                // the second record is guaranteed None by the above test of r2_seq
-                let (record, _) = Aligner::new_unmapped_records(&read);
-                let record = RecordAnnotation::Discarded(record);
-                let umi_info = UmiInfo::new(read.raw_umi_seq(), read.raw_umi_qual());
-                ReadAnnotations::from_records(read, vec![record], umi_info, false)
-            } else {
-                let pd_align_feature_bc_read = self.aligner.is_some()
-                    && args.is_pd
-                    && pd_rng.gen_bool(PD_FRAC_FB_READS_TO_ALIGN);
-                self.annotate_read(args, read, pd_align_feature_bc_read)
-            };
+            let pd_align_feature_bc_read =
+                args.is_pd && self.aligner.is_some() && pd_rng.gen_bool(PD_FRAC_FB_READS_TO_ALIGN);
+            let ann = self.annotate_read(args, read, pd_align_feature_bc_read);
             dup_builder
-                .entry(ann.read.library_feats())
-                .or_insert_with(DupBuilder::new)
+                .entry(ann.read.library_type)
+                .or_default()
                 .observe(&ann, &self.reference);
             annotations.push(ann)?;
         }
 
-        let dup_marker = dup_builder
+        let dup_marker: HashMap<_, _> = dup_builder
             .into_iter()
-            .map(|(lib_feats, builder)| {
+            .map(|(library_type, builder)| {
                 (
-                    lib_feats,
+                    library_type,
                     builder.build(
                         self.filter_umis,
-                        match lib_feats.has_multiplexing() {
+                        match library_type.is_fb_type(FeatureBarcodeType::Multiplexing) {
                             true => UmiCorrection::Disable,
                             false => UmiCorrection::Enable,
                         },
@@ -328,7 +320,7 @@ impl Aligner {
                     ),
                 )
             })
-            .collect::<HashMap<_, _>>();
+            .collect();
 
         Ok(AnnotationIter::new(
             annotations.iter()?,
@@ -474,15 +466,15 @@ impl Aligner {
         read: RnaRead,
         pd_align_feature_bc_read: bool,
     ) -> ReadAnnotations {
-        match read.library_feats() {
-            LibraryFeatures::GeneExpression(_) => {
+        match read.library_type {
+            LibraryType::Gex => {
                 if self.target_panel_reference.is_some() {
                     self.align_probe_read(args, read)
                 } else {
                     self.align_read(args, read)
                 }
             }
-            LibraryFeatures::FeatureBarcodes(_) => {
+            LibraryType::FeatureBarcodes(_) => {
                 let umi_info = UmiInfo::new(read.raw_umi_seq(), read.raw_umi_qual());
 
                 // extract the features for this read
@@ -521,7 +513,7 @@ impl Aligner {
                     pd_alignment,
                 }
             }
-            _ => unreachable!(),
+            LibraryType::Vdj(_) | LibraryType::Atac => unreachable!("{}", read.library_type),
         }
     }
 
@@ -544,12 +536,9 @@ impl Aligner {
         let qual: Vec<_> = qual_ascii.iter().map(|x| x - 33).collect();
 
         // Reverse complement the sequence and quality if any alignments are reversed.
-        let (seq_reversed, qual_reversed) = if recs.iter().any(rust_htslib::bam::Record::is_reverse)
-        {
-            (
-                Some(bio::alphabets::dna::revcomp(seq)),
-                Some(qual.iter().rev().copied().collect::<Vec<_>>()),
-            )
+        let (seq_reversed, qual_reversed) = if recs.iter().any(Record::is_reverse) {
+            let qual_reversed: Vec<_> = qual.iter().rev().copied().collect();
+            (Some(bio::alphabets::dna::revcomp(seq)), Some(qual_reversed))
         } else {
             (None, None)
         };
@@ -584,9 +573,9 @@ impl Aligner {
                     Some(&CigarString(cigar)),
                     seq_reversed.as_ref().unwrap(),
                     qual_reversed.as_ref().unwrap(),
-                )
+                );
             } else {
-                rec.set(name, Some(&CigarString(cigar)), seq, &qual)
+                rec.set(name, Some(&CigarString(cigar)), seq, &qual);
             }
         }
     }
@@ -604,19 +593,19 @@ impl Aligner {
         }
         // split the qname at the first space
         let name = read.header().split(|c| *c == b' ').next().unwrap();
-        let qual = read
+        let qual: Vec<_> = read
             .r1_qual()
             .iter()
             .map(|&x| x - ILLUMINA_QUAL_OFFSET)
-            .collect::<Vec<_>>();
+            .collect();
         let mut rec1 = new_record(name, read.r1_seq(), &qual);
         let rec2 = if let Some(r2_seq) = read.r2_seq() {
-            let qual = read
+            let qual: Vec<_> = read
                 .r2_qual()
                 .unwrap()
                 .iter()
                 .map(|&x| x - ILLUMINA_QUAL_OFFSET)
-                .collect::<Vec<_>>();
+                .collect();
             let mut rec2 = new_record(name, r2_seq, &qual);
             rec2.set_paired();
             rec2.set_mate_unmapped();
@@ -643,7 +632,7 @@ impl Aligner {
 
 pub struct AnnotationIter<'a> {
     store: SpillVecReader<ReadAnnotations, AnnSpillFormat>,
-    dup_marker: HashMap<LibraryFeatures, BarcodeDupMarker>,
+    dup_marker: HashMap<LibraryType, BarcodeDupMarker>,
     read_chunks: &'a [RnaChunk],
     feature_reference: &'a FeatureReference,
     probe_set_reference: Option<&'a Arc<ProbeSetReference>>,
@@ -654,7 +643,7 @@ pub struct AnnotationIter<'a> {
 impl<'a> AnnotationIter<'a> {
     fn new(
         store: SpillVecReader<ReadAnnotations, AnnSpillFormat>,
-        dup_marker: HashMap<LibraryFeatures, BarcodeDupMarker>,
+        dup_marker: HashMap<LibraryType, BarcodeDupMarker>,
         read_chunks: &'a [RnaChunk],
         feature_reference: &'a FeatureReference,
         probe_set_reference: Option<&'a Arc<ProbeSetReference>>,
@@ -681,11 +670,9 @@ impl<'a> Iterator for AnnotationIter<'a> {
         match self.store.next() {
             Some(Ok(mut ann)) => {
                 assert!(ann.dup_info.is_none());
-                ann.dup_info = if ann.is_discarded() {
-                    Some(DupInfo::new_discarded(ann.umi_info.seq))
-                } else if ann.read.barcode().is_valid() {
+                ann.dup_info = if ann.read.barcode().is_valid() {
                     self.dup_marker
-                        .get_mut(&ann.read.library_feats())
+                        .get_mut(&ann.read.library_type)
                         .unwrap()
                         .process(
                             &ann,
@@ -709,7 +696,7 @@ impl<'a> Iterator for AnnotationIter<'a> {
 #[cfg(test)]
 mod tests {
     use crate::aligner::{barcode_seeded_rng, Aligner};
-    use barcode::Barcode;
+    use barcode::{Barcode, BcSeq};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha20Rng;
     use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
@@ -718,7 +705,7 @@ mod tests {
     #[allow(clippy::float_cmp)]
     fn test_barcode_seeded_rng() {
         // seed an RNG using a barcode sequence and get 3 random floats from it
-        let mut bc_rng = barcode_seeded_rng(Barcode::new(1, b"ACGT", true));
+        let mut bc_rng = barcode_seeded_rng(Barcode::with_seq(1, BcSeq::from_bytes(b"ACGT"), true));
         let res1 = bc_rng.gen::<f64>();
         let res2 = bc_rng.gen::<f64>();
         let res3 = bc_rng.gen::<f64>();

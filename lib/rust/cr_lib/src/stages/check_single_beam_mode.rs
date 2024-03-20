@@ -30,7 +30,7 @@ impl MartianMain for CheckSingleBeamMode {
         match beam_modes.as_slice() {
             [] => bail!("no BEAM modes detected"),
             [one] => Ok(CheckSingleBeamModeStageOutputs { beam_mode: *one }),
-            [more @ ..] => bail!("multiple BEAM modes detected: {more:?}"),
+            more => bail!("multiple BEAM modes detected: {more:?}"),
         }
     }
 }

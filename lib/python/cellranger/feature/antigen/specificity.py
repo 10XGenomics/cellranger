@@ -687,7 +687,7 @@ class CellsPerClonotype:
         concordance = tk_stats.robust_divide(max_antigen[1], size)
 
         clonotype_id = (
-            key.split("_")[0] if self.grouped_by == ClonalGroupLevel.EXACT_SUBCLONOTYPE else key
+            key.rsplit("_", 1)[0] if self.grouped_by == ClonalGroupLevel.EXACT_SUBCLONOTYPE else key
         )
         is_canonical_pair = (
             self.num_chains_per_clonotype[clonotype_id] if clonotype_id != "None" else False
@@ -726,7 +726,7 @@ class CellsPerClonotype:
             order_by = {
                 k: [
                     literal_eval(i) if i != "None" else 0
-                    for i in k.removeprefix("clonotype").split("_")
+                    for i in k.split("clonotype")[-1].split("_")
                 ]
                 for k in result
             }

@@ -3,23 +3,24 @@ use crate::{
     write_column_ds,
 };
 use anyhow::{bail, Context, Result};
-use barcode::{Barcode, BcSeq, MAX_BARCODE_LENGTH};
+use barcode::{Barcode, BarcodeContent, MAX_BARCODE_LENGTH};
 use cr_types::probe_set::Probe;
 use cr_types::reference::feature_reference::{FeatureDef, FeatureReference};
-use cr_types::rna_read::LegacyLibraryType;
-use cr_types::types::PROBE_IDX_SENTINEL_VALUE;
-use cr_types::{BarcodeIndex, BcUmiInfo, LibraryInfo, UmiCount};
+use cr_types::{
+    BarcodeIndex, BcUmiInfo, GenomeName, LibraryInfo, LibraryType, UmiCount,
+    PROBE_IDX_SENTINEL_VALUE,
+};
 use hdf5::types::{FixedAscii, TypeDescriptor, VarLenAscii, VarLenUnicode};
 use hdf5::{Dataset, Extents, File, Group};
-use itertools::izip;
+use itertools::{izip, Itertools};
 use metric::{TxHashMap, TxHashSet};
 use ndarray::{s, Array1, ArrayView, Axis, Ix};
 use rand::prelude::*;
 use rand_distr::Binomial;
 use rand_pcg::{Lcg128Xsl64, Pcg64};
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::BTreeSet;
-use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use umi::UmiType;
@@ -41,6 +42,9 @@ const GEM_GROUP_COL_NAME: &str = "gem_group";
 const UMI_COL_NAME: &str = "umi";
 const UMI_TYPE_COL_NAME: &str = "umi_type";
 const PROBE_IDX_COL_NAME: &str = "probe_idx";
+
+const LIBRARY_METRICS_JSON: &str = "libraries";
+const RAW_READS_IN_LIBRARY_METRICS_JSON: &str = "raw_read_pairs";
 
 // const MOL_INFO_COLUMNS: [&'static str; 7] = [BARCODE_IDX_COL_NAME, LIBRARY_IDX_COL_NAME,
 // FEATURE_IDX_COL_NAME, COUNT_COL_NAME, GEM_GROUP_COL_NAME, UMI_COL_NAME, UMI_TYPE_COL_NAME];
@@ -113,7 +117,7 @@ pub struct MolInfoDatasets {
 
 /// A single UMI count with minimal BC information (bc index and gem group)
 /// used when we don't want to pass around a bunch of barcode sequences
-#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct FullUmiCount {
     pub barcode_idx: BarcodeIdxType,
     pub gem_group: GemGroupType,
@@ -344,33 +348,33 @@ impl Iterator for MoleculeInfoIterator {
         loop {
             if self.index >= self.size {
                 break None;
-            } else {
-                // initialize
-                if self.cache.is_none() {
-                    self.cache = Some(
-                        MolInfoCache::new(
-                            &self.datasets,
-                            self.index,
-                            min(self.index + ITERATOR_CHUNK_SIZE, self.size),
-                        )
-                        .unwrap(),
-                    );
-                }
-                match &self.cache {
-                    Some(x) => {
-                        let cur_index = self.index % ITERATOR_CHUNK_SIZE;
-                        let cur_data = x.data[cur_index];
-                        self.index += 1;
-                        // Clear the cache if we've read past it
-                        if self.index >= x.end {
-                            self.cache = None;
-                        }
-                        if self.allow_entry(&cur_data) {
-                            break Some(cur_data);
-                        }
+            }
+
+            // initialize
+            if self.cache.is_none() {
+                self.cache = Some(
+                    MolInfoCache::new(
+                        &self.datasets,
+                        self.index,
+                        min(self.index + ITERATOR_CHUNK_SIZE, self.size),
+                    )
+                    .unwrap(),
+                );
+            }
+            match &self.cache {
+                Some(x) => {
+                    let cur_index = self.index % ITERATOR_CHUNK_SIZE;
+                    let cur_data = x.data[cur_index];
+                    self.index += 1;
+                    // Clear the cache if we've read past it
+                    if self.index >= x.end {
+                        self.cache = None;
                     }
-                    None => panic!("Logical flaw in iteration"),
+                    if self.allow_entry(&cur_data) {
+                        break Some(cur_data);
+                    }
                 }
+                None => panic!("Logical flaw in iteration"),
             }
         }
     }
@@ -419,8 +423,6 @@ impl MoleculeInfoReader {
 
         let mut all_bc_info = Vec::new();
 
-        let set: TxHashSet<u64> = TxHashSet::from_iter(barcode_idx.iter().copied());
-
         loop {
             if start >= barcode_idx.len() {
                 break;
@@ -437,9 +439,9 @@ impl MoleculeInfoReader {
             let mut umi_counts = Vec::with_capacity(end - start);
 
             // construct the fastq_10x barcode
-            let barcode = Barcode::new(
+            let barcode = Barcode::with_content(
                 gem_group[start],
-                barcode_seqs[barcode_idx[start] as usize].as_bytes(),
+                BarcodeContent::from_bytes(barcode_seqs[barcode_idx[start] as usize].as_bytes())?,
                 true,
             );
 
@@ -472,7 +474,7 @@ impl MoleculeInfoReader {
             all_bc_info.push(bc_umi_info);
         }
 
-        assert_eq!(set.len(), all_bc_info.len());
+        assert_eq!(all_bc_info.len(), barcode_idx.iter().unique().count());
 
         let total_umis: usize = all_bc_info.iter().map(|x| x.umi_counts.len()).sum();
         assert_eq!(barcode_idx.len(), total_umis);
@@ -485,13 +487,13 @@ impl MoleculeInfoReader {
     }
 
     /// Read a molecule_info.h5 file and return the barcode whitelist.
-    pub fn read_barcodes(path: &Path) -> Result<Vec<BcSeq>> {
-        Ok(Self::open(path)?
+    pub fn read_barcodes(path: &Path) -> Result<Vec<BarcodeContent>> {
+        Self::open(path)?
             .dataset(BARCODE_DATASET_NAME)?
             .read_1d::<FABc>()?
             .into_iter()
-            .map(|barcode| BcSeq::from_bytes(barcode.as_bytes()))
-            .collect())
+            .map(|barcode| BarcodeContent::from_bytes(barcode.as_bytes()))
+            .try_collect()
     }
 
     pub fn read_barcodes_size(path: &Path) -> Result<usize> {
@@ -513,14 +515,14 @@ impl MoleculeInfoReader {
 
     /// Read a molecule_info.h5 file and return the datasets
     /// barcode_info/pass_filter and barcode_info/genomes.
-    pub fn read_barcode_info(path: &Path) -> Result<(ndarray::Array2<u64>, Vec<String>)> {
+    pub fn read_barcode_info(path: &Path) -> Result<(ndarray::Array2<u64>, Vec<GenomeName>)> {
         let barcode_info = Self::open(path)?.group(BARCODE_INFO_GROUP_NAME)?;
         let pass_filter = barcode_info.dataset("pass_filter")?.read_2d::<u64>()?;
         let genomes = barcode_info
             .dataset("genomes")?
             .read_1d::<FA256>()?
             .into_iter()
-            .map(String::from)
+            .map(|x| x.as_str().into())
             .collect();
         Ok((pass_filter, genomes))
     }
@@ -538,7 +540,7 @@ impl MoleculeInfoReader {
 
     /// Read a molecule_info.h5 file and return the molecule_info JSON string.
     pub fn read_metrics(path: &Path) -> Result<String> {
-        let ds = Self::open(path)?.dataset("metrics_json")?;
+        let ds = Self::open(path)?.dataset(METRICS_JSON)?;
 
         match ds.dtype()?.to_descriptor()? {
             TypeDescriptor::VarLenAscii => Ok(ds.read_scalar::<VarLenAscii>()?.to_string()),
@@ -559,10 +561,7 @@ impl MoleculeInfoReader {
     }
 
     // Return the filtered barcodes of the specified library type.
-    pub fn read_filtered_barcodes(
-        path: &Path,
-        library_type: LegacyLibraryType,
-    ) -> Result<Vec<Barcode>> {
+    pub fn read_filtered_barcodes(path: &Path, library_type: LibraryType) -> Result<Vec<Barcode>> {
         let barcodes = MoleculeInfoReader::read_barcodes(path)?;
         let library_info = MoleculeInfoReader::read_library_info(path)?;
         let lib_to_gg: TxHashMap<LibraryIdxType, GemGroupType> = library_info
@@ -571,7 +570,7 @@ impl MoleculeInfoReader {
                 LibraryInfo::Count(x) => {
                     (x.library_type == library_type).then_some((x.library_id, x.gem_group))
                 }
-                _ => unimplemented!(),
+                LibraryInfo::Aggr(_) => unimplemented!(),
             })
             .collect();
 
@@ -579,14 +578,56 @@ impl MoleculeInfoReader {
         Ok(pass_filter
             .outer_iter()
             .filter_map(|barcode_library| {
-                let &[barcode_index, library_index, _genome_index] = barcode_library.as_slice().unwrap() else {
+                let &[barcode_index, library_index, _genome_index] =
+                    barcode_library.as_slice().unwrap()
+                else {
                     unreachable!();
                 };
-                lib_to_gg.get(&(library_index as u16)).map(|&gg| {
-                    Barcode::new(gg, barcodes[barcode_index as usize].seq(), true)
-                })
+                lib_to_gg
+                    .get(&(library_index as u16))
+                    .map(|&gg| Barcode::with_content(gg, barcodes[barcode_index as usize], true))
             })
             .collect())
+    }
+
+    /// Returns the library IDs in count GEX libraries in the molecule info
+    pub fn get_count_gex_library_ids(path: &Path) -> Result<TxHashSet<u16>> {
+        let lib_infos: Vec<LibraryInfo> = Self::read_library_info(path)?;
+        let gex_lib_ids: TxHashSet<_> = lib_infos
+            .iter()
+            .filter_map(|lib_info| {
+                if let LibraryInfo::Count(rna_lib) = lib_info {
+                    rna_lib.library_type.is_gex().then_some(rna_lib.library_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(gex_lib_ids)
+    }
+
+    /// Returns the total raw reads in count GEX libraries in the molecule info
+    pub fn get_raw_reads_in_count_gex_libraries(path: &Path) -> Result<i64> {
+        let gex_lib_ids = Self::get_count_gex_library_ids(path)?;
+        let metrics_json_string = Self::read_metrics(path)?;
+        let metric_json_value: serde_json::Value = serde_json::from_str(&metrics_json_string)?;
+        let total_gex_reads: i64 = metric_json_value[LIBRARY_METRICS_JSON]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter_map(|(lib_id_read_in, lib_data)| {
+                if gex_lib_ids.contains(&lib_id_read_in.parse::<u16>().unwrap()) {
+                    Some(
+                        lib_data[RAW_READS_IN_LIBRARY_METRICS_JSON]
+                            .as_i64()
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .sum();
+        Ok(total_gex_reads)
     }
 }
 
@@ -629,7 +670,7 @@ impl MoleculeInfoWriter {
         feature_ref: &FeatureReference,
         probes: Option<&[Probe]>,
         filtered_probes: Option<&[bool]>,
-        barcodes: &[BcSeq],
+        barcodes: &[BarcodeContent],
         library_info: &[LibraryInfo],
     ) -> Result<MoleculeInfoWriter> {
         // open h5 file
@@ -786,7 +827,7 @@ impl MoleculeInfoWriter {
     pub fn write_barcode_info(
         &mut self,
         pass_filter: &ndarray::Array2<u64>,
-        genomes: &[String],
+        genomes: &[GenomeName],
     ) -> Result<()> {
         let ds = self
             .barcode_info_group
@@ -818,15 +859,12 @@ impl MoleculeInfoWriter {
     }
 
     /// write /barcodes to h5 file.
-    fn write_barcodes(f: &File, barcodes: &[BcSeq]) -> Result<()> {
-        write_column_ds(
-            f,
-            BARCODE_DATASET_NAME,
-            &barcodes
-                .iter()
-                .map(|x| FABc::from_ascii(x.seq()).unwrap())
-                .collect::<Vec<FABc>>(),
-        )
+    fn write_barcodes(f: &File, barcodes: &[BarcodeContent]) -> Result<()> {
+        let data: Vec<_> = barcodes
+            .iter()
+            .map(|x| FABc::from_ascii(&x.to_string().into_bytes()).unwrap())
+            .collect();
+        write_column_ds(f, BARCODE_DATASET_NAME, &data)
     }
 
     // Used to concatentate molecule_info files in AGGR
@@ -857,11 +895,11 @@ impl MoleculeInfoWriter {
         let mut new_pass_filter = old_barcodes_info.dataset("pass_filter")?.read_2d::<u64>()?;
 
         // Collect all barcodes in pass_filter
-        let mut bc_idx_to_retain = new_pass_filter
+        let mut bc_idx_to_retain: BTreeSet<_> = new_pass_filter
             .slice(s![.., 0])
             .iter()
-            .map(|x| *x as _)
-            .collect::<BTreeSet<Ix>>();
+            .map(|&x| x as Ix)
+            .collect();
 
         if !pass_only {
             // Also keep any barcode with count > 0
@@ -878,12 +916,12 @@ impl MoleculeInfoWriter {
         let bc_idx_to_retain: Vec<_> = bc_idx_to_retain.into_iter().collect();
 
         // Since bc_idx_to_retain is sorted, select will keep new_barcodes in sorted order
-        let new_barcodes: Vec<BcSeq> = old_barcodes
+        let new_barcodes: Vec<BarcodeContent> = old_barcodes
             .read_1d::<FABc>()?
             .select(Axis(0), &bc_idx_to_retain)
             .into_iter()
-            .map(|barcode| BcSeq::from_bytes(barcode.as_bytes()))
-            .collect();
+            .map(|barcode| BarcodeContent::from_bytes(barcode.as_bytes()))
+            .try_collect()?;
 
         // Implementation note: this is an optimization to avoid checking a hashmap for
         // new indices for the old barcodes, but 0 is a valid position and so can result
@@ -900,28 +938,24 @@ impl MoleculeInfoWriter {
 
         while index < size {
             let end = min(size, index + ITERATOR_CHUNK_SIZE);
-            let mut future = self.barcode_idx_ds.read_slice_1d(index..end)?;
-            future.iter_mut().for_each(|x: &mut usize| {
-                *x = new_positions[*x].expect("Error accessing invalid barcode index")
-            });
+            let mut future: Array1<usize> = self.barcode_idx_ds.read_slice_1d(index..end)?;
+            for x in &mut future {
+                *x = new_positions[*x].expect("Error accessing invalid barcode index");
+            }
             self.barcode_idx_ds.write_slice(future.view(), index..end)?;
             index += ITERATOR_CHUNK_SIZE;
         }
 
         // Update barcode_info
-        new_pass_filter
-            .slice_mut(s![.., 0])
-            .iter_mut()
-            .for_each(|x| {
-                *x = new_positions[*x as usize].expect("Error accessing invalid barcode index")
-                    as u64
-            });
+        for x in new_pass_filter.slice_mut(s![.., 0]) {
+            *x = new_positions[*x as usize].expect("Error accessing invalid barcode index") as u64;
+        }
 
         let genomes: Vec<_> = old_barcodes_info
             .dataset("genomes")?
             .read_1d::<FA256>()?
             .into_iter()
-            .map(String::from)
+            .map(|x| x.as_str().into())
             .collect();
 
         // Write barcode info
@@ -935,11 +969,7 @@ impl MoleculeInfoWriter {
     }
 
     /// Write umi count data for one barcode to the molecule_info.h5 file.
-    pub fn fill(
-        &mut self,
-        barcode_index: &BarcodeIndex<Barcode>,
-        count_data: &BcUmiInfo,
-    ) -> Result<()> {
+    pub fn fill(&mut self, barcode_index: &BarcodeIndex, count_data: &BcUmiInfo) -> Result<()> {
         let barcode_idx = barcode_index.get_index(&count_data.barcode) as u64;
         for c in &count_data.umi_counts {
             self.gem_group_buf.push(count_data.barcode.gem_group());
@@ -1023,7 +1053,7 @@ impl MoleculeInfoWriter {
                 x.barcode_idx += bc_offset;
                 x.gem_group = gg_map[usize::from(x.gem_group)];
                 x.umi_data.library_idx = lib_map[usize::from(x.umi_data.library_idx)];
-                self.consume_iterator_value(x).expect("Failed to consume")
+                self.consume_iterator_value(x).expect("Failed to consume");
             });
             self.flush().expect("Could not flush buffers");
         }
@@ -1123,8 +1153,8 @@ impl MoleculeInfoWriter {
     }
 
     pub fn merge_barcode_infos(
-        mut bc_infos: Vec<(ndarray::Array2<u64>, Vec<String>)>,
-    ) -> (ndarray::Array2<u64>, Vec<String>) {
+        mut bc_infos: Vec<(ndarray::Array2<u64>, Vec<GenomeName>)>,
+    ) -> (ndarray::Array2<u64>, Vec<GenomeName>) {
         assert!(!bc_infos.is_empty());
         let (last_pf, genomes) = bc_infos.pop().unwrap();
 
@@ -1153,6 +1183,8 @@ impl Drop for MoleculeInfoWriter {
 mod molecule_info_tests {
 
     use super::*;
+    use cr_types::reference::feature_reference::FeatureType;
+    use cr_types::types::FeatureBarcodeType;
 
     #[test]
     fn concatenate_metrics_1() {
@@ -1245,11 +1277,8 @@ mod molecule_info_tests {
     #[test]
     fn test_mol_info_reader() {
         let mol_info_path = Path::new("test/h5/pbmc_1k_v2_molecule_info.h5");
-        let filtered_barcodes = MoleculeInfoReader::read_filtered_barcodes(
-            mol_info_path,
-            LegacyLibraryType::GeneExpression,
-        )
-        .unwrap();
+        let filtered_barcodes =
+            MoleculeInfoReader::read_filtered_barcodes(mol_info_path, LibraryType::Gex).unwrap();
         let filtered_barcode_ids =
             MoleculeInfoReader::read_filtered_barcode_ids(mol_info_path).unwrap();
         dbg!(filtered_barcode_ids.len());
@@ -1300,7 +1329,9 @@ mod molecule_info_tests {
         assert_eq!(
             MoleculeInfoIterator::new(mol_info_path)?
                 .cell_barcodes_only(true)?
-                .filter_features(|fdef| fdef.feature_type == cr_types::FeatureType::Antigen)?
+                .filter_features(
+                    |fdef| fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antigen)
+                )?
                 .count(),
             55193
         );

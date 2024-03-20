@@ -1,9 +1,10 @@
 //! Differential Expression stage code
 
 use crate::io::{csv, h5};
-use crate::types::{feature_prefixed, ClusteringType, FeatureType, H5File};
-use crate::{ANTIBODY_CAPTURE, GENE_EXPRESSION};
+use crate::types::{ClusteringType, H5File};
 use anyhow::Result;
+use cr_types::reference::feature_reference::FeatureType;
+use cr_types::FeatureBarcodeType;
 use diff_exp::{compute_sseq_params, sseq_differential_expression};
 use hdf5_io::matrix::{read_adaptive_csr_matrix, read_matrix_metadata};
 use itertools::Itertools;
@@ -44,9 +45,9 @@ impl DiffExpResult {
             ..
         } = diff_exp;
         DiffExpResult {
-            norm_mean_a: normalized_mean_in.to_vec(),
-            log2_fold_change: log2_fold_change.to_vec(),
-            adjusted_p_value: adjusted_p_values.to_vec(),
+            norm_mean_a: normalized_mean_in.into_raw_vec(),
+            log2_fold_change: log2_fold_change.into_raw_vec(),
+            adjusted_p_value: adjusted_p_values.into_raw_vec(),
         }
     }
 }
@@ -88,8 +89,7 @@ impl MartianStage for DiffExpStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let chunk_resource =
-            Resource::with_mem_gb(h5::est_mem_gb_from_nnz(&args.matrix_h5)?.ceil() as isize);
+        let mem_gib = 6 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil() as isize;
         let stage_def = h5::load_clusterings(&args.clustering_h5, args.is_antibody_only)?
             .into_iter()
             .flat_map(|c| {
@@ -107,7 +107,7 @@ impl MartianStage for DiffExpStage {
                     DiffExpChunkInputs {
                         cluster_keys: chunk.collect(),
                     },
-                    chunk_resource,
+                    Resource::with_mem_gb(mem_gib),
                 )
             })
             .collect();
@@ -123,16 +123,18 @@ impl MartianStage for DiffExpStage {
         rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .build_global()?;
-        let clusterings = h5::load_clusterings(&args.clustering_h5, args.is_antibody_only)?
-            .into_iter()
-            .map(|c| ((c.feature_type, c.clustering_type), c))
-            .collect::<HashMap<_, _>>();
+        let clusterings: HashMap<_, _> =
+            h5::load_clusterings(&args.clustering_h5, args.is_antibody_only)?
+                .into_iter()
+                .map(|c| ((c.feature_type, c.clustering_type), c))
+                .collect();
         let retained = if args.is_antibody_only {
-            Some(ANTIBODY_CAPTURE)
+            Some(FeatureType::Barcode(FeatureBarcodeType::Antibody).to_string())
         } else {
-            Some(GENE_EXPRESSION)
+            Some(FeatureType::Gene.to_string())
         };
-        let FBM { matrix, .. } = read_adaptive_csr_matrix(&args.matrix_h5, retained, None)?.0;
+        let FBM { matrix, .. } =
+            read_adaptive_csr_matrix(&args.matrix_h5, retained.as_deref(), None)?.0;
         let sseq_params = compute_sseq_params(&matrix, None, None, None);
         let outputs = Self::ChunkOutputs {
             diffexp: rover.make_path("diffexp"),
@@ -145,9 +147,9 @@ impl MartianStage for DiffExpStage {
             let mut cond_b = vec![];
             for (i, &l) in clustering.labels.iter().enumerate() {
                 if l == cluster_key.cluster_id {
-                    cond_a.push(i)
+                    cond_a.push(i);
                 } else {
-                    cond_b.push(i)
+                    cond_b.push(i);
                 }
             }
             let result = DiffExpResult::new(sseq_differential_expression(
@@ -174,20 +176,21 @@ impl MartianStage for DiffExpStage {
             .num_threads(1)
             .build_global()?;
         let retained = if args.is_antibody_only {
-            Some(ANTIBODY_CAPTURE)
+            Some(FeatureType::Barcode(FeatureBarcodeType::Antibody).to_string())
         } else {
-            Some(GENE_EXPRESSION)
+            Some(FeatureType::Gene.to_string())
         };
         let MatrixMetadata {
             feature_ids,
             feature_names,
             feature_types,
             ..
-        } = read_matrix_metadata(&args.matrix_h5, retained)?;
-        let clusterings = h5::load_clusterings(&args.clustering_h5, args.is_antibody_only)?
-            .into_iter()
-            .map(|c| ((c.feature_type, c.clustering_type.lc()), c))
-            .collect::<HashMap<_, _>>();
+        } = read_matrix_metadata(&args.matrix_h5, retained.as_deref())?;
+        let clusterings: HashMap<_, _> =
+            h5::load_clusterings(&args.clustering_h5, args.is_antibody_only)?
+                .into_iter()
+                .map(|c| ((c.feature_type, c.clustering_type.lc()), c))
+                .collect();
         let n_genes = feature_ids.len();
         let diffexp_h5 = rover.make_path("diffexp_h5");
         let h5_file = hdf5::File::create(&diffexp_h5)?;
@@ -222,12 +225,7 @@ impl MartianStage for DiffExpStage {
                 data.slice_mut(s![.., 3 * i + 2])
                     .assign(&Array1::from(adjusted_p_value));
             }
-            let is_feature_prefixed = feature_prefixed(args.is_antibody_only, feature_type);
-            let group = if !is_feature_prefixed {
-                format!("_{}", typ.lc())
-            } else {
-                format!("_{}_{}", feature_type.lc(), typ.lc())
-            };
+            let group = format!("_{}_{}", feature_type.as_snake_case(), typ.lc());
             h5_group
                 .create_group(&group)?
                 .new_dataset::<f64>()
@@ -242,7 +240,6 @@ impl MartianStage for DiffExpStage {
                 &feature_ids,
                 &feature_names,
                 &data,
-                is_feature_prefixed,
             )?;
         }
         h5_file

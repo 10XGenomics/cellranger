@@ -2,19 +2,18 @@
 //! Write a JSON file with the metrics and plots data for the websummary.
 
 use crate::itertools::Itertools;
-use crate::stages::build_vdj_ws_contents::{VdjWsContents, VdjWsContentsFormat};
+use crate::stages::build_per_sample_vdj_ws_contents::{VdjWsContents, VdjWsContentsFormat};
 use crate::stages::compute_antigen_vdj_metrics::{AntigenVdjMetrics, AntigenVdjMetricsFormat};
 use crate::stages::detect_chemistry::DetectedProbeBarcodePairingFile;
 use crate::stages::parse_multi_config::{CommonInputs, CountInputs};
 use crate::{SequencingMetricsFormat, SvgFile};
 use anyhow::{bail, Result};
 use barcode::whitelist::{categorize_multiplexing_barcode_id, MultiplexingBarcodeType};
-use cr_types::chemistry::ChemistryName;
+use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt, ChemistryName};
 use cr_types::reference::feature_reference::{FeatureConfig, SpecificityControls};
 use cr_types::reference::reference_info::MULTI_GENOME_SEPARATOR;
-use cr_types::rna_read::LegacyLibraryType;
 use cr_types::{
-    AlignerParam, CellMultiplexingType, CrMultiGraph, Fingerprint, HasMultiplexing, Sample,
+    AlignerParam, CellMultiplexingType, CrMultiGraph, Fingerprint, LibraryType, Sample,
     SampleAssignment, TargetingMethod,
 };
 use cr_websummary::alert::AlertContext;
@@ -29,10 +28,12 @@ use cr_websummary::multi::svg::SvgGraph;
 use cr_websummary::multi::tables::{
     AntibodyLibraryMappingMetricsRow, AntibodyLibraryMappingMetricsTable,
     AntibodyPhysicalLibraryMetricsRow, AntibodyPhysicalLibraryMetricsTable,
-    AntibodySampleHeroMetricsTable, AntibodySampleMappingMetricsTable,
-    AntigenPhysicalLibraryMetricsTable, AntigenSampleHeroMetricsRow, AntigenSampleHeroMetricsTable,
-    CrisprPhysicalLibraryMetricsRow, CrisprPhysicalLibraryMetricsTable, CrisprSampleHeroMetricsRow,
-    CrisprSampleHeroMetricsTable, CustomFeaturePhysicalLibraryMetricsRow,
+    AntibodySampleHeroMetricsRow, AntibodySampleHeroMetricsTable,
+    AntibodySampleMappingMetricsTable, AntigenPhysicalLibraryMetricsTable,
+    AntigenSampleHeroMetricsRow, AntigenSampleHeroMetricsTable, CrisprLibraryMappingMetricsRow,
+    CrisprLibraryMappingMetricsTable, CrisprPhysicalLibraryMetricsRow,
+    CrisprPhysicalLibraryMetricsTable, CrisprSampleHeroMetricsRow, CrisprSampleHeroMetricsTable,
+    CrisprSampleMappingMetricsTable, CustomFeaturePhysicalLibraryMetricsRow,
     CustomFeaturePhysicalLibraryMetricsTable, CustomFeatureSampleHeroMetricsRow,
     CustomFeatureSampleHeroMetricsTable, GdnaMetricsTable, GexLibraryMappingMetricsRow,
     GexLibraryMappingMetricsTable, GexLibraryTargetedEnrichmentAlertsRow,
@@ -51,26 +52,26 @@ use cr_websummary::multi::tables::{
 };
 use cr_websummary::multi::websummary::{
     AntibodyOrAntigen, CountParametersTable, ExperimentalDesign, GexOrRtl,
-    GexOrRtlLibraryMappingMetricsTable, GexOrRtlSampleMappingMetricsTable,
+    GexOrRtlLibraryMappingMetricsTable, GexOrRtlSampleMappingMetricsTable, JsonMetricSummary,
     LibraryAntibodyOrAntigenWebSummary, LibraryCmoWebSummary, LibraryCrisprWebSummary,
     LibraryCustomFeatureWebSummary, LibraryGexWebSummary, LibraryHeaderInfo, LibraryWebSummary,
     MismatchedProbeBarcodePairings, MultiDiagnostics, MultiSharedResource, MultiWebSummary,
     MultiWebSummaryData, SampleAntibodyWebSummary, SampleAntigenWebSummary, SampleCellMetricsTable,
-    SampleCrisprWebSummary, SampleCustomFeatureWebSummary, SampleGexWebSummary, SampleHeaderInfo,
-    SampleWebSummary, UMI_PER_PROBE_BARCODE_BACKGROUND_THRESHOLD,
+    SampleCrisprWebSummary, SampleCustomFeatureWebSummary, SampleDiagnostics, SampleGexWebSummary,
+    SampleHeaderInfo, SampleWebSummary, ToJsonSummary, UMI_PER_PROBE_BARCODE_BACKGROUND_THRESHOLD,
 };
 use cr_websummary::{
     CountAndPercent, FloatAsInt, Percent, PlotlyChart, RawChartWithHelp, Tab, WsSample,
 };
+use fastq_set::WhichEnd;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
-use martian_filetypes::FileTypeRead;
-use metric::{PercentMetric, TxHashMap, TxHashSet};
+use martian_filetypes::{FileTypeRead, FileTypeWrite};
+use metric::{join_metric_name, PercentMetric, TxHashMap, TxHashSet};
 use multi::config::{
-    ChemistryParam, MultiConfigCsv, MultiConfigCsvFile, ProbeBarcodeIterationMode,
-    PROBE_BARCODE_ID_GROUPING,
+    MultiConfigCsv, MultiConfigCsvFile, ProbeBarcodeIterationMode, PROBE_BARCODE_ID_GROUPING,
 };
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
@@ -81,7 +82,6 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::iter::FromIterator;
 use std::string::ToString;
-use ChemistryName::{ArcV1, FivePrimePE, FivePrimeR1, FivePrimeR2, ThreePrimeV3LT};
 
 pub const GEM_BARCODE_OVERLAP_ALERT_THRESHOLD: f64 = 0.6;
 
@@ -109,14 +109,11 @@ pub struct StageInputs {
     pub tag_contaminant_info: Option<JsonFile<Value>>,
     pub sample_tsne_plots: TxHashMap<SampleAssignment, Option<JsonFile<SampleTsnePlots>>>,
     pub sample_barcode_rank_plots:
-        TxHashMap<SampleAssignment, Option<JsonFile<TxHashMap<LegacyLibraryType, PlotlyChart>>>>,
+        TxHashMap<SampleAssignment, Option<JsonFile<TxHashMap<LibraryType, PlotlyChart>>>>,
     pub sample_treemap_plots: Option<
-        TxHashMap<
-            SampleAssignment,
-            Option<JsonFile<TxHashMap<LegacyLibraryType, RawChartWithHelp>>>,
-        >,
+        TxHashMap<SampleAssignment, Option<JsonFile<TxHashMap<LibraryType, RawChartWithHelp>>>>,
     >,
-    pub barcode_rank_plots: Option<JsonFile<TxHashMap<LegacyLibraryType, PlotlyChart>>>,
+    pub barcode_rank_plots: Option<JsonFile<TxHashMap<LibraryType, PlotlyChart>>>,
     pub jibes_biplot_histogram: Option<JsonFile<Value>>,
     pub antibody_histograms: Option<JsonFile<RawChartWithHelp>>,
     pub sample_antibody_histograms:
@@ -124,13 +121,16 @@ pub struct StageInputs {
     pub antigen_histograms: Option<JsonFile<RawChartWithHelp>>,
     pub targeted_per_feature_metrics: Option<CsvFile<()>>,
     pub cmo_tsne_plot: Option<JsonFile<MultiplexingTsnePlots>>,
-    pub vdj_t_contents: Option<VdjWsContentsFormat>,
-    pub vdj_t_gd_contents: Option<VdjWsContentsFormat>,
-    pub vdj_b_contents: Option<VdjWsContentsFormat>,
+    pub vdj_t_contents: Option<TxHashMap<SampleAssignment, VdjWsContentsFormat>>,
+    pub vdj_t_gd_contents: Option<TxHashMap<SampleAssignment, VdjWsContentsFormat>>,
+    pub vdj_b_contents: Option<TxHashMap<SampleAssignment, VdjWsContentsFormat>>,
     pub target_set_name: Option<String>,
-    pub antigen_vdj_metrics: Option<AntigenVdjMetricsFormat>,
-    pub antigen_specificity: Option<CsvFile<AntigenSpecificityRow>>,
+    pub antigen_vdj_metrics: Option<TxHashMap<SampleAssignment, Option<AntigenVdjMetricsFormat>>>,
+    pub antigen_specificity:
+        Option<TxHashMap<SampleAssignment, Option<CsvFile<AntigenSpecificityRow>>>>,
     pub feature_config: Option<FeatureConfig>,
+    /// chemistry_defs is None for a VDJ-only analysis.
+    pub chemistry_defs: Option<ChemistryDefs>,
     pub detected_probe_barcode_pairing: Option<DetectedProbeBarcodePairingFile>,
     pub no_preflight: bool,
 }
@@ -140,15 +140,18 @@ pub struct StageOutputs {
     #[mro_retain]
     pub web_summary_json: TxHashMap<SampleAssignment, JsonFile<()>>,
     pub metrics_summary_csv: TxHashMap<SampleAssignment, CsvFile<()>>,
+    #[mro_retain]
+    pub metrics_summary_json: TxHashMap<SampleAssignment, JsonFile<Vec<JsonMetricSummary>>>,
 }
 
 struct LibWsBuilder {
     common_inputs: CommonInputs,
     multi_graph: CrMultiGraph,
     multi_config: MultiConfigCsv,
+    chemistry_defs: Option<ChemistryDefs>,
     lib_metrics: TxHashMap<String, Value>,
-    barcode_rank_plots: TxHashMap<LegacyLibraryType, PlotlyChart>,
-    sequencing_metrics: TxHashMap<LegacyLibraryType, SequencingMetricsTable>,
+    barcode_rank_plots: TxHashMap<LibraryType, PlotlyChart>,
+    sequencing_metrics: TxHashMap<LibraryType, SequencingMetricsTable>,
     count_inputs: Option<CountInputs>,
     jibes_biplot_histogram: Option<Value>,
     antibody_histograms: Option<RawChartWithHelp>,
@@ -159,6 +162,7 @@ struct LibWsBuilder {
     vdj_t_gd_contents: Option<VdjWsContents>,
     vdj_b_contents: Option<VdjWsContents>,
     targeted_per_feature_metrics: Option<CsvFile<()>>,
+    /// True if any form of multiplexing is used in this analysis.
     is_multiplexed: bool,
     specificity_controls: Option<SpecificityControls>,
     dropped_tags: Vec<String>,
@@ -261,44 +265,44 @@ impl LibWsBuilder {
         };
 
         for lib in &self.multi_graph.libraries {
-            match lib.legacy_library_type() {
-                LegacyLibraryType::GeneExpression => {
+            match lib.library_type {
+                LibraryType::Gex => {
                     assert!(lib_ws.gex_tab.is_none());
                     lib_ws.gex_tab = Some(Tab::new(
                         self.build_gex_ws(&lib.physical_library_id)?,
                         context,
-                    ))
+                    ));
                 }
-                LegacyLibraryType::AntibodyCapture => {
+                LibraryType::Antibody => {
                     assert!(lib_ws.antibody_tab.is_none());
                     lib_ws.antibody_tab = Some(Tab::new(
                         self.build_antibody_or_antigen_ws(&lib.physical_library_id, true)?,
                         context,
-                    ))
+                    ));
                 }
-                LegacyLibraryType::AntigenCapture => {
+                LibraryType::Antigen => {
                     assert!(lib_ws.antigen_tab.is_none());
                     lib_ws.antigen_tab = Some(Tab::new(
                         self.build_antibody_or_antigen_ws(&lib.physical_library_id, false)?,
                         context,
-                    ))
+                    ));
                 }
-                LegacyLibraryType::CrisprGuideCapture => {
+                LibraryType::Crispr => {
                     assert!(lib_ws.crispr_tab.is_none());
                     lib_ws.crispr_tab = Some(Tab::new(
                         self.build_crispr_ws(&lib.physical_library_id)?,
                         context,
-                    ))
+                    ));
                 }
-                LegacyLibraryType::Vdj => {}
-                LegacyLibraryType::Custom => {
+                LibraryType::Vdj(_) => {}
+                LibraryType::Custom => {
                     assert!(lib_ws.custom_feature_tab.is_none());
                     lib_ws.custom_feature_tab = Some(Tab::new(
                         self.build_custom_ws(&lib.physical_library_id)?,
                         context,
-                    ))
+                    ));
                 }
-                LegacyLibraryType::Multiplexing => {
+                LibraryType::Cellplex => {
                     assert!(lib_ws.cmo_tab.is_none());
                     let mut cmo_tab: LibraryCmoWebSummary =
                         self.build_cmo_ws(&lib.physical_library_id)?;
@@ -306,7 +310,7 @@ impl LibWsBuilder {
                     lib_ws.resources.extend(cmo_tab.resources.drain());
                     lib_ws.cmo_tab = Some(Tab::new(cmo_tab, context));
                 }
-                LegacyLibraryType::ATAC => unreachable!(),
+                LibraryType::Atac => unreachable!(),
             }
         }
         Ok(lib_ws)
@@ -325,15 +329,12 @@ impl LibWsBuilder {
 
     fn get_library_cell_metrics_row(
         &self,
+        library_type: LibraryType,
         physical_library_id: &str,
         mean_reads_per_cell_associated_partition: Option<FloatAsInt>,
     ) -> Result<LibraryCellMetricsRow> {
-        let has_gex = self
-            .multi_graph
-            .has_legacy_library_type(LegacyLibraryType::GeneExpression);
-        let has_antibody = self
-            .multi_graph
-            .has_legacy_library_type(LegacyLibraryType::AntibodyCapture);
+        let has_gex = self.multi_graph.has_library_type(LibraryType::Gex);
+        let has_antibody = self.multi_graph.has_library_type(LibraryType::Antibody);
 
         let cell_associated_partitions = if has_antibody && !has_gex {
             get_metric_usize(
@@ -352,12 +353,19 @@ impl LibWsBuilder {
             }
         };
 
-        let get_if_rtl_multiplexed = |key: &str| -> Result<Option<f64>> {
-            if self.is_rtl_multiplexed() {
-                get_metric_f64(&self.lib_metrics, key)
-            } else {
-                Ok(None)
-            }
+        // Show high occupancy GEM filtering on the Gene Expression tab,
+        // or on the Antibody tab if there is no GEX library.
+        let fraction_cells_passing_high_occupancy_filtering = if self.is_rtl_multiplexed()
+            && (library_type == LibraryType::Gex
+                || !has_gex && library_type == LibraryType::Antibody)
+        {
+            get_metric_f64(
+                &self.lib_metrics,
+                "rtl_multiplexing_fraction_cells_in_high_occupancy_gems",
+            )?
+            .map(|x| Percent::Float(1.0 - x))
+        } else {
+            None
         };
 
         Ok(LibraryCellMetricsRow {
@@ -371,50 +379,31 @@ impl LibWsBuilder {
             partitions_called_multiplets: get_if_cmo_multiplexed(
                 "cell_associated_partitions_identified_as_multiplets",
             )?,
-            fraction_cells_passing_high_occupancy_filtering: get_if_rtl_multiplexed(
-                "rtl_multiplexing_fraction_cells_in_high_occupancy_gems",
-            )?
-            .map(|x| Percent::Float(1.0 - x)),
+            fraction_cells_passing_high_occupancy_filtering,
         })
     }
 
-    /// Return the chemistry description.
-    fn chemistry_description(&self) -> Option<String> {
-        get_metric_string(&self.lib_metrics, "chemistry_description").unwrap()
-    }
-
     /// Return the chemistry description and append "(manual)" if a manual chemistry is specified.
-    fn chemistry_description_with_manual(&self) -> String {
-        let chemistry_description = self.chemistry_description().unwrap();
-        let Some(gex) = &self.multi_config.gene_expression else {
-            return chemistry_description;
-        };
-        if gex.chemistry == ChemistryParam::Auto {
-            chemistry_description
+    fn chemistry_description_with_manual(&self, library_type: LibraryType) -> String {
+        let chemistry_defs = self.chemistry_defs.as_ref().unwrap();
+        let chemistry_description = &chemistry_defs[&library_type].description;
+        let chemistry_spec = self.multi_config.chemistry_specs().unwrap()[&library_type];
+
+        if chemistry_spec.is_auto() {
+            chemistry_description.to_string()
         } else {
             format!("{chemistry_description} (manual)")
         }
     }
 
-    /// Return the chemistry name.
-    fn chemistry(&self) -> Option<ChemistryName> {
-        self.chemistry_description().map(|s| {
-            if s.starts_with("custom") {
-                ChemistryName::Custom
-            } else {
-                ChemistryName::from_description(&s).unwrap()
-            }
-        })
-    }
-
-    fn count_param_table(&self, library_type: LegacyLibraryType) -> Result<CountParametersTable> {
+    fn count_param_table(&self, library_type: LibraryType) -> Result<CountParametersTable> {
         let count_inputs = self.count_inputs.as_ref().unwrap();
 
         let (unspecified_probe_barcodes_detected, specified_probe_barcodes_missing) =
             self.identify_unexpected_or_missing_probe_barcodes(library_type);
 
         Ok(CountParametersTable {
-            chemistry: self.chemistry_description_with_manual(),
+            chemistry: self.chemistry_description_with_manual(library_type),
             introns_included: count_inputs.include_introns,
             reference_path: count_inputs.reference_path.display().to_string(),
             transcriptome: format!(
@@ -427,6 +416,12 @@ impl LibWsBuilder {
             target_set_name: self.target_set_name.clone(),
             targeting_method: self.targeting_method(),
             filter_probes: count_inputs.filter_probes,
+            disable_ab_aggregate_detection: count_inputs
+                .cell_calling_config
+                .disable_ab_aggregate_detection,
+            disable_high_occupancy_gem_detection: count_inputs
+                .cell_calling_config
+                .disable_high_occupancy_gem_detection,
             num_genes_on_target: self
                 .lib_metrics
                 .get("num_genes_on_target")
@@ -531,17 +526,11 @@ impl LibWsBuilder {
     /// Return the probe barcode metrics table for the specified library type.
     fn build_rtl_probe_barcode_metrics_table(
         &self,
-        library_type: LegacyLibraryType,
+        library_type: LibraryType,
     ) -> Option<RtlProbeBarcodeMetricsTable> {
         if !self.is_rtl_multiplexed() {
             return None;
         }
-
-        let expected_multiplexing_barcode_type = match library_type {
-            LegacyLibraryType::GeneExpression => MultiplexingBarcodeType::RTL,
-            LegacyLibraryType::AntibodyCapture => MultiplexingBarcodeType::Antibody,
-            _ => unreachable!("unexpected library type {library_type}"),
-        };
 
         let probe_barcode_id_to_sample_id_and_mapped_probe_barcode_ids: TxHashMap<_, _> = self
             .multi_graph
@@ -576,7 +565,7 @@ impl LibWsBuilder {
 
         let umi_per_probe_barcode: Vec<(&str, i64)> = if let Some(umi_per_probe_barcode) = self
             .lib_metrics
-            .get(library_type.join("umi_per_probe_barcode").as_ref())
+            .get(&join_metric_name(library_type, "umi_per_probe_barcode"))
         {
             umi_per_probe_barcode
                 .as_object()
@@ -616,16 +605,6 @@ impl LibWsBuilder {
                     let barcode_ids: Vec<_> = std::iter::once(probe_barcode_id)
                         .chain(mapped_barcode_ids.into_iter().flatten().map(String::as_str))
                         .collect();
-
-                    // If this probe barcode isn't of the expected type, and all
-                    // of the mapped probe barcodes also aren't of the expected type,
-                    // do not include this probe barcode in the report.
-                    // See CELLRANGER-7501 for the root of this problem.
-                    if !barcode_ids.iter().any(|x| {
-                        categorize_multiplexing_barcode_id(x) == expected_multiplexing_barcode_type
-                    }) {
-                        return None;
-                    }
 
                     let umi_per_probe_barcode =
                         CountAndPercent(PercentMetric::from_parts(umi_count, umi_sum));
@@ -673,9 +652,12 @@ impl LibWsBuilder {
     /// Return a tuple of (unexpected_but_detected, specified_but_missing).
     fn identify_unexpected_or_missing_probe_barcodes(
         &self,
-        library_type: LegacyLibraryType,
+        library_type: LibraryType,
     ) -> (Vec<String>, Vec<String>) {
-        let Some(bc_metrics_table) = self.build_rtl_probe_barcode_metrics_table(library_type) else {return Default::default()};
+        let Some(bc_metrics_table) = self.build_rtl_probe_barcode_metrics_table(library_type)
+        else {
+            return Default::default();
+        };
         let unspecified_probe_barcodes_detected = bc_metrics_table
             .0
             .iter()
@@ -695,7 +677,7 @@ impl LibWsBuilder {
                 let below_threshold = row
                     .umi_per_probe_barcode
                     .and_then(|umi_per_probe_barcode| umi_per_probe_barcode.0.fraction())
-                    .map_or(false, |frac| {
+                    .is_some_and(|frac| {
                         row.sample_id.is_some() && frac < UMI_PER_PROBE_BARCODE_BACKGROUND_THRESHOLD
                     });
 
@@ -715,7 +697,7 @@ impl LibWsBuilder {
     fn build_gex_ws(&self, physical_library_id: &str) -> Result<LibraryGexWebSummary> {
         let barcode_rank_plot = format_barcode_rank_plot(
             self.barcode_rank_plots
-                .get(&LegacyLibraryType::GeneExpression)
+                .get(&LibraryType::Gex)
                 .expect("Gene expression barcode rank plot was missing."),
             "GEX",
         );
@@ -866,15 +848,16 @@ impl LibWsBuilder {
 
         // Construct final websummary
         Ok(LibraryGexWebSummary {
-            parameters_table: self.count_param_table(LegacyLibraryType::GeneExpression)?,
+            parameters_table: self.count_param_table(LibraryType::Gex)?,
             cell_metrics_table: LibraryCellMetricsTable(vec![self.get_library_cell_metrics_row(
+                LibraryType::GeneExpression,
                 physical_library_id,
                 mean_reads_per_cell_associated_partition,
             )?])
             .into(),
             sequencing_metrics_table: self
                 .sequencing_metrics
-                .get(&LegacyLibraryType::GeneExpression)
+                .get(&LibraryType::Gex)
                 .expect("Sequencing metrics for Gene Expression not found.")
                 .clone()
                 .into(),
@@ -905,7 +888,7 @@ impl LibWsBuilder {
             ])
             .into(),
             rtl_probe_barcode_metrics_table: self
-                .build_rtl_probe_barcode_metrics_table(LegacyLibraryType::GeneExpression)
+                .build_rtl_probe_barcode_metrics_table(LibraryType::Gex)
                 .map(Into::into),
             gdna_table,
             targeted_table,
@@ -917,7 +900,7 @@ impl LibWsBuilder {
             ),
             median_genes_per_cell_plot: library_median_genes_plot_from_metrics(
                 &self.lib_metrics,
-                TxHashSet::from_iter(self.genomes().into_iter()),
+                TxHashSet::from_iter(self.genomes()),
                 PlotType::LibraryPlot,
                 self.targeting_method(),
             ),
@@ -932,9 +915,9 @@ impl LibWsBuilder {
         is_antibody: bool,
     ) -> Result<LibraryAntibodyOrAntigenWebSummary> {
         let library_type = if is_antibody {
-            LegacyLibraryType::AntibodyCapture
+            LibraryType::Antibody
         } else {
-            LegacyLibraryType::AntigenCapture
+            LibraryType::Antigen
         };
 
         let barcode_rank_plot = format_barcode_rank_plot(
@@ -944,9 +927,11 @@ impl LibWsBuilder {
             if is_antibody { "AB" } else { "AG" },
         );
 
-        let mean_reads_per_cell_associated_partition =
-            get_metric_f64(&self.lib_metrics, &library_type.join("reads_per_cell"))?
-                .map(FloatAsInt);
+        let mean_reads_per_cell_associated_partition = get_metric_f64(
+            &self.lib_metrics,
+            &join_metric_name(library_type, "reads_per_cell"),
+        )?
+        .map(FloatAsInt);
 
         let mut metrics = self.lib_metrics.clone();
         metrics.insert("physical_library_id".into(), physical_library_id.into());
@@ -977,20 +962,11 @@ impl LibWsBuilder {
             (false, _) => self.antigen_histograms.clone(),
         };
 
-        let mut library_cell_metrics_row = self.get_library_cell_metrics_row(
+        let library_cell_metrics_row = self.get_library_cell_metrics_row(
+            library_type,
             physical_library_id,
             mean_reads_per_cell_associated_partition,
         )?;
-
-        // Only show high occupancy GEM filtering metric if there's no GEX data,
-        // because if there is GEX data then the antibody data was not used to
-        // create this filter.
-        if self
-            .multi_graph
-            .has_legacy_library_type(LegacyLibraryType::GeneExpression)
-        {
-            library_cell_metrics_row.fraction_cells_passing_high_occupancy_filtering = None;
-        }
 
         Ok(LibraryAntibodyOrAntigenWebSummary {
             parameters_table: self.count_param_table(library_type)?,
@@ -1015,58 +991,39 @@ impl LibWsBuilder {
         let mean_reads_per_cell_associated_partition =
             get_metric_f64(&self.lib_metrics, "CRISPR_reads_per_cell")?.map(FloatAsInt);
         Ok(LibraryCrisprWebSummary {
-            parameters_table: self.count_param_table(LegacyLibraryType::CrisprGuideCapture)?,
+            parameters_table: self.count_param_table(LibraryType::Crispr)?,
             cell_metrics_table: LibraryCellMetricsTable(vec![self.get_library_cell_metrics_row(
+                LibraryType::Crispr,
                 physical_library_id,
                 mean_reads_per_cell_associated_partition,
             )?])
             .into(),
             sequencing_metrics_table: self
                 .sequencing_metrics
-                .get(&LegacyLibraryType::CrisprGuideCapture)
+                .get(&LibraryType::Crispr)
                 .expect("Sequencing metrics for CRISPR not found.")
                 .clone()
                 .into(),
-            physical_library_metrics_table: CrisprPhysicalLibraryMetricsTable(vec![
-                CrisprPhysicalLibraryMetricsRow {
+            mapping_metrics_table: CrisprLibraryMappingMetricsTable(vec![
+                CrisprLibraryMappingMetricsRow {
                     physical_library_id: Some(physical_library_id.to_string()),
-                    number_of_reads: get_metric_usize(
-                        &self.lib_metrics,
-                        "CRISPR_total_read_pairs", // DOUBLE CHECK THIS METRIC
-                    )?,
-                    valid_barcodes: get_metric_percent(&self.lib_metrics, "CRISPR_good_bc_frac")?,
-                    valid_umis: get_metric_percent(&self.lib_metrics, "CRISPR_good_umi_frac")?,
-                    sequencing_saturation: get_metric_percent(
-                        &self.lib_metrics,
-                        "CRISPR_multi_cdna_pcr_dupe_reads_frac",
-                    )?,
-                    reads_in_cell_associated_partitions: get_metric_percent(
-                        &self.lib_metrics,
-                        "CRISPR_feature_reads_in_cells",
-                    )?,
-                    mean_reads_per_cell_associated_partition,
-                    fraction_reads_with_putative_protospacer: get_metric_percent(
-                        &self.lib_metrics,
-                        "CRISPR_feature_bc_extracted_frac",
-                    )?,
-                    fraction_guide_reads: get_metric_percent(
-                        &self.lib_metrics,
-                        "CRISPR_recognized_feature_bc_frac",
-                    )?,
-                    fraction_guide_reads_usable: get_metric_percent(
-                        &self.lib_metrics,
-                        "CRISPR_frac_feature_reads_usable",
-                    )?,
-                    fraction_protospacer_not_recognized: get_metric_percent(
-                        &self.lib_metrics,
-                        "CRISPR_unrecognized_feature_bc_frac", // DOUBLE CHECK THIS METRIC
-                    )?,
+                    ..CrisprLibraryMappingMetricsRow::from_metrics(&self.lib_metrics)?
                 },
             ])
             .into(),
+            physical_library_metrics_table: CrisprPhysicalLibraryMetricsTable(vec![
+                CrisprPhysicalLibraryMetricsRow {
+                    physical_library_id: Some(physical_library_id.to_string()),
+                    ..CrisprPhysicalLibraryMetricsRow::from_metrics(&self.lib_metrics)?
+                },
+            ])
+            .into(),
+            rtl_probe_barcode_metrics_table: self
+                .build_rtl_probe_barcode_metrics_table(LibraryType::Crispr)
+                .map(Into::into),
             barcode_rank_plot: format_barcode_rank_plot(
                 self.barcode_rank_plots
-                    .get(&LegacyLibraryType::CrisprGuideCapture)
+                    .get(&LibraryType::Crispr)
                     .expect("CRISPR Guide Capture barcode rank plot was missing."),
                 "CRISPR",
             ),
@@ -1077,15 +1034,16 @@ impl LibWsBuilder {
         let mean_reads_per_cell_associated_partition =
             get_metric_f64(&self.lib_metrics, "Custom_reads_per_cell")?.map(FloatAsInt);
         Ok(LibraryCustomFeatureWebSummary {
-            parameters_table: self.count_param_table(LegacyLibraryType::Custom)?,
+            parameters_table: self.count_param_table(LibraryType::Custom)?,
             cell_metrics_table: LibraryCellMetricsTable(vec![self.get_library_cell_metrics_row(
+                LibraryType::Custom,
                 physical_library_id,
                 mean_reads_per_cell_associated_partition,
             )?])
             .into(),
             sequencing_metrics_table: self
                 .sequencing_metrics
-                .get(&LegacyLibraryType::Custom)
+                .get(&LibraryType::Custom)
                 .expect("Sequencing metrics for Custom Feature not found.")
                 .clone()
                 .into(),
@@ -1124,7 +1082,7 @@ impl LibWsBuilder {
             .into(),
             barcode_rank_plot: format_barcode_rank_plot(
                 self.barcode_rank_plots
-                    .get(&LegacyLibraryType::Custom)
+                    .get(&LibraryType::Custom)
                     .expect("Custom feature barcode rank plot was missing."),
                 "Custom",
             ),
@@ -1150,7 +1108,7 @@ impl LibWsBuilder {
         };
 
         Ok(LibraryCmoWebSummary {
-            parameters_table: self.count_param_table(LegacyLibraryType::Multiplexing)?,
+            parameters_table: self.count_param_table(LibraryType::Cellplex)?,
             multiplexing_metrics_table: MultiplexingLibraryCellMetricsTable(vec![
                 MultiplexingLibraryCellMetricsRow {
                     cell_associated_partitions: get_metric_usize(
@@ -1213,7 +1171,7 @@ impl LibWsBuilder {
             .into(),
             sequencing_metrics_table: self
                 .sequencing_metrics
-                .get(&LegacyLibraryType::Multiplexing)
+                .get(&LibraryType::Cellplex)
                 .expect("Sequencing metrics for Multiplexing not found.")
                 .clone()
                 .into(),
@@ -1267,7 +1225,7 @@ impl LibWsBuilder {
             cmo_metrics_table: self.build_per_cmo_metrics_table()?.into(),
             barcode_rank_plot: format_barcode_rank_plot(
                 self.barcode_rank_plots
-                    .get(&LegacyLibraryType::Multiplexing)
+                    .get(&LibraryType::Cellplex)
                     .expect("CMO barcode rank plot was missing."),
                 "CMO",
             ),
@@ -1353,7 +1311,7 @@ fn sort_cmo_rows(rows: &mut [MultiplexingCmoMetricsRow]) {
         (None, Some(ref _y)) => Ordering::Less,
         (Some(ref x), Some(ref y)) => x.cmp(y),
         (None, None) => Ordering::Equal,
-    })
+    });
 }
 
 // describes the various TSNE plots a single sample may have.
@@ -1379,10 +1337,9 @@ pub struct MultiplexingTsnePlots {
 struct MultiWsBuilder {
     lib_ws_builder: LibWsBuilder,
     per_sample_metrics: TxHashMap<SampleAssignment, TxHashMap<String, Value>>,
-    sample_barcode_rank_plots:
-        TxHashMap<SampleAssignment, TxHashMap<LegacyLibraryType, PlotlyChart>>,
+    sample_barcode_rank_plots: TxHashMap<SampleAssignment, TxHashMap<LibraryType, PlotlyChart>>,
     sample_treemap_plots:
-        Option<TxHashMap<SampleAssignment, TxHashMap<LegacyLibraryType, RawChartWithHelp>>>,
+        Option<TxHashMap<SampleAssignment, TxHashMap<LibraryType, RawChartWithHelp>>>,
     sample_tsne_plots: TxHashMap<SampleAssignment, SampleTsnePlots>,
     sample_antibody_histograms: Option<TxHashMap<SampleAssignment, RawChartWithHelp>>,
     svg_str: String,
@@ -1392,8 +1349,11 @@ struct MultiWsBuilder {
     context: AlertContext,
     multiplexing_method: Option<CellMultiplexingType>,
     targeting_method: Option<TargetingMethod>,
-    antigen_vdj_metrics: Option<AntigenVdjMetrics>,
-    clonotype_clustermap: Option<RawChartWithHelp>,
+    antigen_vdj_metrics: Option<TxHashMap<SampleAssignment, AntigenVdjMetrics>>,
+    clonotype_clustermap: Option<TxHashMap<SampleAssignment, RawChartWithHelp>>,
+    vdj_t_contents: Option<TxHashMap<SampleAssignment, VdjWsContents>>,
+    vdj_t_gd_contents: Option<TxHashMap<SampleAssignment, VdjWsContents>>,
+    vdj_b_contents: Option<TxHashMap<SampleAssignment, VdjWsContents>>,
 }
 
 impl MultiWsBuilder {
@@ -1443,42 +1403,73 @@ impl MultiWsBuilder {
                     sample_desc: sample.description.clone(),
                     pipeline_version: self.pipeline_version.clone(),
                 },
-                vdj_t_tab: self
-                    .lib_ws_builder
-                    .vdj_t_contents
-                    .clone()
-                    .map(|content| Tab::new(content.to_sample_ws(), &self.context)),
-                vdj_b_tab: self
-                    .lib_ws_builder
-                    .vdj_b_contents
-                    .clone()
-                    .map(|content| Tab::new(content.to_sample_ws(), &self.context)),
-                vdj_t_gd_tab: self
-                    .lib_ws_builder
-                    .vdj_t_gd_contents
-                    .clone()
-                    .map(|content| Tab::new(content.to_sample_ws(), &self.context)),
+                vdj_t_tab: self.vdj_t_contents.as_ref().map(|content| {
+                    Tab::new(
+                        content[&SampleAssignment::Assigned(sample.sample_id.clone())]
+                            .clone()
+                            .to_sample_ws(),
+                        &self.context,
+                    )
+                }),
+                vdj_b_tab: self.vdj_b_contents.clone().map(|content| {
+                    Tab::new(
+                        content[&SampleAssignment::Assigned(sample.sample_id.clone())]
+                            .clone()
+                            .to_sample_ws(),
+                        &self.context,
+                    )
+                }),
+                vdj_t_gd_tab: self.vdj_t_gd_contents.clone().map(|content| {
+                    Tab::new(
+                        content[&SampleAssignment::Assigned(sample.sample_id.clone())]
+                            .clone()
+                            .to_sample_ws(),
+                        &self.context,
+                    )
+                }),
                 ..Default::default()
+            };
+            let sample_diagnostics = SampleDiagnostics {
+                vdj_t: self.vdj_t_contents.as_ref().map(|content| {
+                    VdjWsContents::diagnostics(
+                        &content[&SampleAssignment::Assigned(sample.sample_id.clone())],
+                    )
+                }),
+                vdj_t_gd: self.vdj_t_gd_contents.as_ref().map(|content| {
+                    VdjWsContents::diagnostics(
+                        &content[&SampleAssignment::Assigned(sample.sample_id.clone())],
+                    )
+                }),
+                vdj_b: self.vdj_b_contents.as_ref().map(|content| {
+                    VdjWsContents::diagnostics(
+                        &content[&SampleAssignment::Assigned(sample.sample_id.clone())],
+                    )
+                }),
             };
             let sample_assignment = SampleAssignment::Assigned(sample.sample_id.clone());
             for lib in &multi_graph.libraries {
-                match lib.legacy_library_type() {
-                    LegacyLibraryType::GeneExpression => {
+                match lib.library_type {
+                    LibraryType::Gex => {
                         assert!(sample_ws.gex_tab.is_none());
 
                         sample_ws.gex_tab = Some(Tab::new(
                             self.build_gex_ws(&sample_assignment, &lib.physical_library_id)?,
                             &self.context,
-                        ))
+                        ));
                     }
-                    LegacyLibraryType::AntibodyCapture => {
+                    LibraryType::Antibody => {
                         assert!(sample_ws.antibody_tab.is_none());
-                        // For FLEX, only show the antibody tab if we actually
-                        // have at least one antibody probe barcode for this sample.
+                        // For Flex, show the antibody tab if this sample has antibody reads
+                        // or it has an antibody multiplexing barcode assigned to it.
+                        let antibody_reads = self.per_sample_metrics[&sample_assignment]
+                            ["ANTIBODY_total_read_pairs"]
+                            .as_u64()
+                            .unwrap();
                         if sample.cell_multiplexing_type() == Some(CellMultiplexingType::RTL)
+                            && antibody_reads == 0
                             && !sample_is_associated_with_flex_library_type(
                                 sample,
-                                LegacyLibraryType::AntibodyCapture,
+                                LibraryType::Antibody,
                             )
                         {
                             continue;
@@ -1486,32 +1477,32 @@ impl MultiWsBuilder {
                         sample_ws.antibody_tab = Some(Tab::new(
                             self.build_antibody_ws(&sample_assignment, &lib.physical_library_id)?,
                             &self.context,
-                        ))
+                        ));
                     }
-                    LegacyLibraryType::AntigenCapture => {
+                    LibraryType::Antigen => {
                         assert!(sample_ws.antigen_tab.is_none());
                         sample_ws.antigen_tab = Some(Tab::new(
                             self.build_antigen_ws(&sample_assignment)?,
                             &self.context,
-                        ))
+                        ));
                     }
-                    LegacyLibraryType::CrisprGuideCapture => {
+                    LibraryType::Crispr => {
                         assert!(sample_ws.crispr_tab.is_none());
                         sample_ws.crispr_tab = Some(Tab::new(
                             self.build_crispr_ws(&sample_assignment, &lib.physical_library_id)?,
                             &self.context,
-                        ))
+                        ));
                     }
-                    LegacyLibraryType::Vdj => {}
-                    LegacyLibraryType::Custom => {
+                    LibraryType::Vdj(_) => {}
+                    LibraryType::Custom => {
                         assert!(sample_ws.custom_feature_tab.is_none());
                         sample_ws.custom_feature_tab = Some(Tab::new(
                             self.build_custom_ws(&sample_assignment, &lib.physical_library_id)?,
                             &self.context,
-                        ))
+                        ));
                     }
-                    LegacyLibraryType::Multiplexing => {}
-                    LegacyLibraryType::ATAC => unreachable!(),
+                    LibraryType::Cellplex => {}
+                    LibraryType::Atac => unreachable!(),
                 }
             }
             result.insert(
@@ -1531,6 +1522,7 @@ impl MultiWsBuilder {
                         },
                     },
                     diagnostics: self.diagnostics.clone(),
+                    sample_diagnostics,
                     resources: resources.clone(),
                 },
             );
@@ -1686,15 +1678,16 @@ impl MultiWsBuilder {
 
         let mut cell_hero_metrics_rows = Vec::with_capacity(genomes.len());
         for genome in &genomes {
-            // use median RAW READS metric if this is single genome, but use per-genome mapped reads if it's genome specific
-            let median_reads_per_singlet = if genomes.len() == 1 {
-                get_metric_round_float_to_int(metrics, "median_total_reads_per_singlet")?
+            let mean_reads_per_cell = if genomes.len() == 1 {
+                get_metric_round_float_to_int(metrics, "filtered_reads_per_filtered_bc")?
             } else {
+                // Reads must be mapped to be assigned to a particular genome for barnyard.
                 get_metric_round_float_to_int(
                     metrics,
-                    &format!("{genome}_median_reads_per_singlet"),
+                    &format!("{genome}_filtered_bcs_conf_mapped_barcoded_reads_per_filtered_bc"),
                 )?
             };
+
             let median_reads_per_cell_on_target = if self.is_hybrid_capture() && genomes.len() == 1
             {
                 get_metric_round_float_to_int(
@@ -1754,7 +1747,7 @@ impl MultiWsBuilder {
                     metrics,
                     &format!("{genome}_singlets_assigned_to_this_sample"),
                 )?,
-                median_reads_per_singlet,
+                mean_reads_per_cell,
                 median_reads_per_cell_on_target,
                 median_genes_per_singlet,
                 total_genes_detected: total_genes_detected.map(|x| x.0 as usize),
@@ -1771,7 +1764,7 @@ impl MultiWsBuilder {
                 self.sample_barcode_rank_plots
                     .get(sample_assignment)
                     .unwrap()
-                    .get(&LegacyLibraryType::GeneExpression)
+                    .get(&LibraryType::Gex)
                     .expect("GEX sample barcode rank plot not found"),
                 "GEX",
             ))
@@ -1786,9 +1779,7 @@ impl MultiWsBuilder {
         };
 
         Ok(SampleGexWebSummary {
-            parameters_table: self
-                .lib_ws_builder
-                .count_param_table(LegacyLibraryType::GeneExpression)?,
+            parameters_table: self.lib_ws_builder.count_param_table(LibraryType::Gex)?,
             hero_metrics: GexSampleHeroMetricsTable(cell_hero_metrics_rows).into(),
             cell_metrics_table: if self.multiplexing_method.is_some() {
                 Some(
@@ -1807,7 +1798,7 @@ impl MultiWsBuilder {
             median_genes_per_cell_plot: if self.multiplexing_method.is_some() {
                 Some(sample_median_genes_plot_from_metrics(
                     metrics,
-                    TxHashSet::from_iter(genomes.into_iter()),
+                    TxHashSet::from_iter(genomes),
                     PlotType::SamplePlot,
                     self.targeting_method,
                 ))
@@ -1829,10 +1820,13 @@ impl MultiWsBuilder {
         sample_assignment: &SampleAssignment,
         physical_library_id: &str,
     ) -> Result<SampleAntibodyWebSummary> {
-        let metrics = self
-            .per_sample_metrics
-            .get(sample_assignment)
-            .expect("Sample metrics file not found.");
+        let metrics = &self.per_sample_metrics[sample_assignment];
+
+        let mut hero_metrics = AntibodySampleHeroMetricsRow::from_metrics(metrics)?;
+        if self.is_cmo_multiplexed() {
+            hero_metrics.reads_in_cells = None;
+        };
+
         let tsne_plots = self
             .sample_tsne_plots
             .get(sample_assignment)
@@ -1852,7 +1846,7 @@ impl MultiWsBuilder {
         let antibody_treemap: Option<RawChartWithHelp> =
             if let Some(ref sample_treemap) = self.sample_treemap_plots {
                 sample_treemap[sample_assignment]
-                    .get(&LegacyLibraryType::AntibodyCapture)
+                    .get(&LibraryType::Antibody)
                     .cloned()
             } else {
                 None
@@ -1860,8 +1854,7 @@ impl MultiWsBuilder {
 
         let barcode_rank_plot = if self.is_rtl_multiplexed() {
             Some(format_barcode_rank_plot(
-                &self.sample_barcode_rank_plots[sample_assignment]
-                    [&LegacyLibraryType::AntibodyCapture],
+                &self.sample_barcode_rank_plots[sample_assignment][&LibraryType::Antibody],
                 "AB",
             ))
         } else {
@@ -1871,8 +1864,8 @@ impl MultiWsBuilder {
         Ok(SampleAntibodyWebSummary {
             parameters_table: self
                 .lib_ws_builder
-                .count_param_table(LegacyLibraryType::AntibodyCapture)?,
-            hero_metrics: AntibodySampleHeroMetricsTable::from_metrics(metrics)?.into(),
+                .count_param_table(LibraryType::Antibody)?,
+            hero_metrics: AntibodySampleHeroMetricsTable(vec![hero_metrics]).into(),
             cell_metrics_table: if self.multiplexing_method.is_some() {
                 Some(
                     self.sample_cell_metrics_table(metrics, physical_library_id)?
@@ -1903,7 +1896,7 @@ impl MultiWsBuilder {
             .expect("Sample metrics file not found.");
 
         let mut hero_metrics_row = vec![AntigenSampleHeroMetricsRow {
-            feature_type: Some(LegacyLibraryType::GeneExpression.to_string()),
+            feature_type: Some(LibraryType::Gex.to_string()),
             total_singlets: get_metric_usize(metrics, "ANTIGEN_multi_filtered_bcs")?,
             median_umis_per_singlet: get_metric_round_float_to_int(
                 metrics,
@@ -1915,12 +1908,13 @@ impl MultiWsBuilder {
             )?,
         }];
 
-        if let Some(AntigenVdjMetrics {
-            num_cells,
-            mean_usable_reads_per_cell,
-            median_umis_per_cell,
-        }) = self.antigen_vdj_metrics.as_ref()
-        {
+        if let Some(antigen_vdj_metrics) = self.antigen_vdj_metrics.as_ref() {
+            let antigen_vdj_metrics =
+                antigen_vdj_metrics
+                    .get(sample_assignment)
+                    .unwrap_or_else(|| {
+                        panic!("Sample antigen metrics file not found for {sample_assignment}")
+                    });
             hero_metrics_row.push(AntigenSampleHeroMetricsRow {
                 feature_type: Some(
                     self.lib_ws_builder
@@ -1931,10 +1925,12 @@ impl MultiWsBuilder {
                         .unwrap()
                         .to_string(),
                 ),
-                total_singlets: Some(*num_cells as usize),
-                median_umis_per_singlet: Some(FloatAsInt(*median_umis_per_cell)),
-                antigen_reads_usable_per_cell: Some(FloatAsInt(*mean_usable_reads_per_cell)),
-            })
+                total_singlets: Some(antigen_vdj_metrics.num_cells as usize),
+                median_umis_per_singlet: Some(FloatAsInt(antigen_vdj_metrics.median_umis_per_cell)),
+                antigen_reads_usable_per_cell: Some(FloatAsInt(
+                    antigen_vdj_metrics.mean_usable_reads_per_cell,
+                )),
+            });
         }
 
         let antigen_treemap: Option<RawChartWithHelp> =
@@ -1942,7 +1938,7 @@ impl MultiWsBuilder {
                 sample_treemap
                     .get(sample_assignment)
                     .unwrap()
-                    .get(&LegacyLibraryType::AntigenCapture)
+                    .get(&LibraryType::Antigen)
                     .cloned()
             } else {
                 None
@@ -1951,10 +1947,13 @@ impl MultiWsBuilder {
         Ok(SampleAntigenWebSummary {
             parameters_table: self
                 .lib_ws_builder
-                .count_param_table(LegacyLibraryType::AntigenCapture)?,
+                .count_param_table(LibraryType::Antigen)?,
             hero_metrics: AntigenSampleHeroMetricsTable(hero_metrics_row).into(),
             antigen_treemap,
-            clonotype_clustermap: self.clonotype_clustermap.clone(),
+            clonotype_clustermap: self
+                .clonotype_clustermap
+                .as_ref()
+                .and_then(|c| c.get(sample_assignment).cloned()),
         })
     }
 
@@ -1963,35 +1962,16 @@ impl MultiWsBuilder {
         sample_assignment: &SampleAssignment,
         physical_library_id: &str,
     ) -> Result<SampleCrisprWebSummary> {
-        let metrics = self
-            .per_sample_metrics
-            .get(sample_assignment)
-            .expect("Sample metrics file not found.");
+        let metrics = &self.per_sample_metrics[sample_assignment];
+
+        let mut hero_metrics = CrisprSampleHeroMetricsRow::from_metrics(metrics)?;
+        if self.is_cmo_multiplexed() {
+            hero_metrics.reads_in_cells = None;
+        };
 
         Ok(SampleCrisprWebSummary {
-            parameters_table: self
-                .lib_ws_builder
-                .count_param_table(LegacyLibraryType::CrisprGuideCapture)?,
-            hero_metrics: CrisprSampleHeroMetricsTable(vec![CrisprSampleHeroMetricsRow {
-                total_singlets: get_metric_usize(metrics, "CRISPR_multi_filtered_bcs")?,
-                median_umis_per_singlet: get_metric_round_float_to_int(
-                    metrics,
-                    "CRISPR_multi_filtered_bcs_median_counts",
-                )?,
-                guide_reads_usable_per_cell: get_metric_round_float_to_int(
-                    metrics,
-                    "CRISPR_multi_usable_reads_per_filtered_bc",
-                )?,
-                cells_with_one_or_more_protospacers_detected: get_metric_percent(
-                    metrics,
-                    "CRISPR_frac_cells_with_protospacer",
-                )?,
-                cells_with_two_or_more_protospacers_detected: get_metric_percent(
-                    metrics,
-                    "CRISPR_frac_cells_with_multiple_protospacer",
-                )?,
-            }])
-            .into(),
+            parameters_table: self.lib_ws_builder.count_param_table(LibraryType::Crispr)?,
+            hero_metrics: CrisprSampleHeroMetricsTable(vec![hero_metrics]).into(),
             cell_metrics_table: if self.multiplexing_method.is_some() {
                 Some(
                     self.sample_cell_metrics_table(metrics, physical_library_id)?
@@ -2000,6 +1980,7 @@ impl MultiWsBuilder {
             } else {
                 None
             },
+            mapping_metrics_table: CrisprSampleMappingMetricsTable::from_metrics(metrics)?.into(),
             tsne_plot: self.sample_tsne_plots.get(sample_assignment).map(|x| {
                 format_umi_on_tsne_plot(
                     &x.crispr_umi_on_tsne,
@@ -2022,9 +2003,7 @@ impl MultiWsBuilder {
             .expect("Sample metrics file not found.");
 
         Ok(SampleCustomFeatureWebSummary {
-            parameters_table: self
-                .lib_ws_builder
-                .count_param_table(LegacyLibraryType::Custom)?,
+            parameters_table: self.lib_ws_builder.count_param_table(LibraryType::Custom)?,
             hero_metrics: CustomFeatureSampleHeroMetricsTable(vec![
                 CustomFeatureSampleHeroMetricsRow {
                     total_singlets: get_metric_usize(metrics, "Custom_multi_filtered_bcs")?,
@@ -2130,7 +2109,9 @@ fn identify_dropped_tags(
     multi_cfg_file: &MultiConfigCsvFile,
     tag_contaminant_info: &Option<Value>,
 ) -> Vec<String> {
-    let Some(contaminants) = tag_contaminant_info.as_ref() else {return Default::default()};
+    let Some(contaminants) = tag_contaminant_info.as_ref() else {
+        return Default::default();
+    };
 
     // Load expected tags
     let cfg = multi_cfg_file
@@ -2154,22 +2135,21 @@ fn identify_dropped_tags(
 
 /// Return true if this sample is associated with the provided FLEX-compatible library type.
 /// Return false if not multiplexed, or if the multiplexing type is not RTL.
-fn sample_is_associated_with_flex_library_type(
-    sample: &Sample,
-    library_type: LegacyLibraryType,
-) -> bool {
+fn sample_is_associated_with_flex_library_type(sample: &Sample, library_type: LibraryType) -> bool {
     if sample.cell_multiplexing_type() != Some(CellMultiplexingType::RTL) {
         return false;
     }
-    match library_type {
-        LegacyLibraryType::GeneExpression => sample
-            .tag_names()
-            .any(|tag| categorize_multiplexing_barcode_id(tag) == MultiplexingBarcodeType::RTL),
-        LegacyLibraryType::AntibodyCapture => sample.tag_names().any(|tag| {
-            categorize_multiplexing_barcode_id(tag) == MultiplexingBarcodeType::Antibody
-        }),
-        _ => false,
-    }
+    let expected_multi_bc_type = match library_type {
+        LibraryType::Gex => MultiplexingBarcodeType::RTL,
+        LibraryType::Antibody => MultiplexingBarcodeType::Antibody,
+        LibraryType::Crispr => MultiplexingBarcodeType::Crispr,
+        _ => {
+            return false;
+        }
+    };
+    sample
+        .tag_names()
+        .any(|tag| categorize_multiplexing_barcode_id(tag) == expected_multi_bc_type)
 }
 
 #[make_mro(volatile = strict, mem_gb = 5)]
@@ -2227,6 +2207,7 @@ impl MartianMain for WriteMultiWebSummaryJson {
             common_inputs: args.common_inputs.clone(),
             multi_graph: multi_graph.clone(),
             multi_config: args.multi_config.read()?,
+            chemistry_defs: args.chemistry_defs.clone(),
             lib_metrics,
             barcode_rank_plots: match args.barcode_rank_plots {
                 Some(ref plots) => plots.read()?,
@@ -2241,12 +2222,39 @@ impl MartianMain for WriteMultiWebSummaryJson {
             antibody_histograms: args.antibody_histograms.map(|j| j.read()).transpose()?,
             antigen_histograms: args.antigen_histograms.map(|j| j.read()).transpose()?,
             cmo_tsne_plot: args.cmo_tsne_plot.map(|j| j.read()).transpose()?,
-            vdj_t_contents: args.vdj_t_contents.map(|f| f.read()).transpose()?,
-            vdj_t_gd_contents: args.vdj_t_gd_contents.map(|f| f.read()).transpose()?,
-            vdj_b_contents: args.vdj_b_contents.map(|f| f.read()).transpose()?,
+            vdj_t_contents: args
+                .vdj_t_contents
+                .clone()
+                .map(|f| {
+                    f.values()
+                        .next()
+                        .expect("Missing VDJ-T web-summary contents")
+                        .read()
+                })
+                .transpose()?,
+            vdj_t_gd_contents: args
+                .vdj_t_gd_contents
+                .clone()
+                .map(|f| {
+                    f.values()
+                        .next()
+                        .expect("Missing VDJ-T-GD web-summary contents")
+                        .read()
+                })
+                .transpose()?,
+            vdj_b_contents: args
+                .vdj_b_contents
+                .clone()
+                .map(|f| {
+                    f.values()
+                        .next()
+                        .expect("Missing VDJ-B web-summary contents")
+                        .read()
+                })
+                .transpose()?,
             target_set_name: args.target_set_name,
             targeted_per_feature_metrics: args.targeted_per_feature_metrics.clone(),
-            is_multiplexed: multi_graph.has_multiplexing(),
+            is_multiplexed: multi_graph.is_multiplexed(),
             specificity_controls: args
                 .feature_config
                 .unwrap_or(FeatureConfig {
@@ -2289,24 +2297,28 @@ impl MartianMain for WriteMultiWebSummaryJson {
             high_occupancy_probe_barcode_count_threshold: get_metric(
                 "rtl_multiplexing_high_occupancy_probe_barcode_count_threshold",
             ),
-            vdj_t: lib_ws_builder
-                .vdj_t_contents
-                .as_ref()
-                .map(VdjWsContents::diagnostics),
-            vdj_t_gd: lib_ws_builder
-                .vdj_t_gd_contents
-                .as_ref()
-                .map(VdjWsContents::diagnostics),
-            vdj_b: lib_ws_builder
-                .vdj_b_contents
-                .as_ref()
-                .map(VdjWsContents::diagnostics),
         };
 
         //******************************************************************************************
         // POPULATE SAMPLE WEBSUMMARIES
         //******************************************************************************************
-        let chemistry = lib_ws_builder.chemistry();
+        let chemistries = if let Some(chemistry_defs) = &args.chemistry_defs {
+            chemistry_defs.values().map(|x| x.name).collect()
+        } else {
+            HashSet::new()
+        };
+
+        // chemistry_defs is None for a VDJ-only analysis, which is a 5' chemistry.
+        assert!(
+            args.chemistry_defs.is_some()
+                || args.vdj_b_contents.is_some()
+                || args.vdj_t_contents.is_some()
+                || args.vdj_t_gd_contents.is_some()
+        );
+        let is_fiveprime = args
+            .chemistry_defs
+            .map_or(true, |x| x.endedness() == Some(WhichEnd::FivePrime));
+
         let is_hybrid_capture = lib_ws_builder.is_hybrid_capture();
         let is_rtl = lib_ws_builder.is_rtl();
 
@@ -2335,43 +2347,70 @@ impl MartianMain for WriteMultiWebSummaryJson {
             context: AlertContext {
                 is_hybrid_capture,
                 is_rtl,
-                is_lt_chemistry: chemistry == Some(ThreePrimeV3LT),
-                is_arc_chemistry: chemistry == Some(ArcV1),
-                is_fiveprime: chemistry.map_or(false, |x| {
-                    matches!(x, FivePrimeR1 | FivePrimeR2 | FivePrimePE)
-                }),
-                is_multiplexing: args.count_inputs.as_ref().map_or(false, |inputs| {
+                is_lt_chemistry: chemistries.contains(&ChemistryName::ThreePrimeV3LT),
+                is_arc_chemistry: chemistries.contains(&ChemistryName::ArcV1),
+                is_fiveprime,
+                is_multiplexing: args.count_inputs.as_ref().is_some_and(|inputs| {
                     inputs
                         .sample_def
                         .iter()
-                        .any(|sdef| sdef.library_type == Some(LegacyLibraryType::Multiplexing))
+                        .any(|sdef| sdef.library_type == Some(LibraryType::Cellplex))
                 }),
-                is_antigen: args.count_inputs.as_ref().map_or(false, |inputs| {
+                is_antigen: args.count_inputs.as_ref().is_some_and(|inputs| {
                     inputs
                         .sample_def
                         .iter()
-                        .any(|sdef| sdef.library_type == Some(LegacyLibraryType::AntigenCapture))
+                        .any(|sdef| sdef.library_type == Some(LibraryType::Antigen))
                 }),
                 include_introns: args
                     .count_inputs
                     .as_ref()
-                    .map_or(false, |inputs| inputs.include_introns),
+                    .is_some_and(|inputs| inputs.include_introns),
                 no_preflight: args.no_preflight,
             },
-            multiplexing_method: multi_graph.get_multiplexing_method(),
+            multiplexing_method: multi_graph.cell_multiplexing_type(),
             targeting_method: args
                 .count_inputs
                 .as_ref()
                 .and_then(|inputs| inputs.targeting_method),
-            antigen_vdj_metrics: args.antigen_vdj_metrics.map(|f| f.read()).transpose()?,
-            clonotype_clustermap: args
-                .antigen_specificity
-                .map(clonotype_specificity_heatmap)
-                .transpose()?
-                .flatten(),
+            antigen_vdj_metrics: args
+                .antigen_vdj_metrics
+                .as_ref()
+                .map(read_optional_file_map)
+                .transpose()?,
+            clonotype_clustermap: args.antigen_specificity.as_ref().map(|files| {
+                files
+                    .iter()
+                    .filter_map(|(k, opt)| {
+                        opt.as_ref()
+                            .map(|v| (k.clone(), clonotype_specificity_heatmap(v.clone()).unwrap()))
+                    })
+                    .fold(TxHashMap::default(), |mut acc, (k, v)| {
+                        if let Some(v) = v {
+                            acc.insert(k, v);
+                        }
+                        acc
+                    })
+            }),
+            vdj_t_contents: args
+                .vdj_t_contents
+                .as_ref()
+                .map(read_files_into_map)
+                .transpose()?,
+            vdj_t_gd_contents: args
+                .vdj_t_gd_contents
+                .as_ref()
+                .map(read_files_into_map)
+                .transpose()?,
+            vdj_b_contents: args
+                .vdj_b_contents
+                .as_ref()
+                .map(read_files_into_map)
+                .transpose()?,
         };
 
         let per_sample_ws = multi_ws_builder.build()?;
+        let mut sample_to_json_summary = TxHashMap::default();
 
         for (sample, sample_ws) in per_sample_ws {
             // Write the web summary data to JSON
@@ -2382,15 +2421,22 @@ impl MartianMain for WriteMultiWebSummaryJson {
             serde_json::to_writer_pretty(json_file.buf_writer()?, &sample_ws)?;
             sample_to_web_summary.insert(sample.clone(), json_file);
 
-            let csv_file: CsvFile<()> =
-                rover.make_path(format!("{}_metric_summary_csv", sample.clone()));
+            sample_to_json_summary.insert(
+                sample.clone(),
+                rover
+                    .make_path::<JsonFile<_>>(format!("{}_metric_summary_json", &sample))
+                    .with_content(&sample_ws.to_json_summary())?,
+            );
+
+            let csv_file: CsvFile<()> = rover.make_path(format!("{}_metric_summary_csv", &sample));
             sample_ws.to_csv(&csv_file)?;
-            sample_to_metrics_csv.insert(sample, csv_file);
+            sample_to_metrics_csv.insert(sample.clone(), csv_file);
         }
 
         Ok(StageOutputs {
             web_summary_json: sample_to_web_summary,
             metrics_summary_csv: sample_to_metrics_csv,
+            metrics_summary_json: sample_to_json_summary,
         })
     }
 }
@@ -2424,17 +2470,29 @@ fn get_mismatched_probe_barcode_pairings(
     multi_config: &MultiConfigCsvFile,
     detected_probe_barcode_pairing: Option<&DetectedProbeBarcodePairingFile>,
 ) -> Result<Option<MismatchedProbeBarcodePairings>> {
-    let Some(samples) = multi_config.read()?.samples else {return Ok(None);};
-    let Some(detected_probe_barcode_pairing) = detected_probe_barcode_pairing else {return Ok(None);};
+    let Some(samples) = multi_config.read()?.samples else {
+        return Ok(None);
+    };
+    let Some(detected_probe_barcode_pairing) = detected_probe_barcode_pairing else {
+        return Ok(None);
+    };
     let detected_probe_barcode_pairing: HashSet<_> = detected_probe_barcode_pairing
         .read()?
         .into_iter()
+        .filter(|(_, source_bc)| {
+            // CRISPR not yet supported in pairing detection
+            categorize_multiplexing_barcode_id(source_bc) != MultiplexingBarcodeType::Crispr
+        })
         .map(|(target_bc, source_bc)| format!("{target_bc}{PROBE_BARCODE_ID_GROUPING}{source_bc}"))
         .collect();
 
     let configured_probe_barcode_pairing: HashSet<_> = samples
         .get_translated_probe_barcodes()
         .into_iter()
+        .filter(|(source_bc, _)| {
+            // CRISPR not yet supported in pairing detection
+            categorize_multiplexing_barcode_id(source_bc) != MultiplexingBarcodeType::Crispr
+        })
         .map(|(source_bc, target_bc)| format!("{target_bc}{PROBE_BARCODE_ID_GROUPING}{source_bc}"))
         .collect();
     if configured_probe_barcode_pairing.is_empty()

@@ -8,11 +8,17 @@ right now, computes only median confidently mapped reads per singlet per genome
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 # pylint: disable=too-many-format-args
 import pandas as pd
 
-import cellranger.feature.utils as feature_utils
-import cellranger.utils as cr_utils
+from cellranger.constants import NO_BARCODE
+
+if TYPE_CHECKING:
+    from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
+        FilteredBarcodes,
+    )
 
 
 def set_default_no_cells(genomes, antibody_present, crispr_present, custom_present):
@@ -51,15 +57,14 @@ def set_default_no_cells(genomes, antibody_present, crispr_present, custom_prese
     return metrics
 
 
-def set_default_no_barcode_metrics():
-    """Set default values for metrics."""
-    metrics = {}
-    # metrics["median_total_reads_per_singlet"] = 0
-    return metrics
+def is_valid_barcode(bc: str | bytes):
+    if isinstance(bc, str):
+        bc = bc.encode()
+    return bc != NO_BARCODE
 
 
 def compute_per_cell_metrics(
-    filtered_barcodes_path,
+    filtered_barcodes: FilteredBarcodes,
     per_barcode_metrics_path,
     genomes,
     antibody_present=False,
@@ -69,20 +74,11 @@ def compute_per_cell_metrics(
 ):
     """Right now, computes only median confidently mapped reads per singlet per genome."""
     # input validation
-    input_files = [per_barcode_metrics_path, filtered_barcodes_path]
-    input_files_present = feature_utils.all_files_present(input_files)
-    if not input_files_present:
-        raise ValueError("Per barcode metrics or filtered_barcodes CSV is not present")
+    if not per_barcode_metrics_path:
+        return {}
+    per_barcode_metrics = pd.read_csv(per_barcode_metrics_path)
 
-    filtered_barcodes = [
-        x.decode("utf8") for x in feature_utils.get_gex_cell_list(filtered_barcodes_path)
-    ]
-    num_cells = len(filtered_barcodes)
-
-    try:
-        per_barcode_metrics = pd.read_csv(per_barcode_metrics_path)
-    except pd.errors.EmptyDataError:
-        return set_default_no_barcode_metrics()
+    num_cells = filtered_barcodes.num_cells()
 
     if num_cells == 0:
         return set_default_no_cells(
@@ -94,24 +90,24 @@ def compute_per_cell_metrics(
 
     metrics = {}
 
-    filtered_barcode_indices = per_barcode_metrics["barcode"].isin(filtered_barcodes)
+    filtered_barcode_indices = per_barcode_metrics["barcode"].apply(
+        lambda bc: is_valid_barcode(bc) and filtered_barcodes.contains(bc)
+    )
     metrics["median_total_reads_per_singlet"] = per_barcode_metrics.loc[
         filtered_barcode_indices, "raw_reads"
     ].median()
-    del filtered_barcodes
 
     metrics.update(
-        _compute_per_genome_metrics(
-            filtered_barcodes_path, genomes, is_targeted, per_barcode_metrics
-        )
+        _compute_per_genome_metrics(filtered_barcodes, genomes, is_targeted, per_barcode_metrics)
     )
 
     return metrics
 
 
-def _compute_per_genome_metrics(filtered_barcodes_path, genomes, is_targeted, per_barcode_metrics):
+def _compute_per_genome_metrics(
+    filtered_barcodes: FilteredBarcodes, genomes, is_targeted, per_barcode_metrics
+):
     metrics = {}
-    genome_to_barcodes = cr_utils.load_barcode_csv(filtered_barcodes_path)
 
     # Dictionary from column names in the per_barcode_metrics to metric json keys
     genome_metrics = {
@@ -130,12 +126,16 @@ def _compute_per_genome_metrics(filtered_barcodes_path, genomes, is_targeted, pe
 
     for genome in genomes:
         # must get the per-barcode metrics for only barcodes from this genome
-        genome_barcodes = [x.decode("utf8") for x in genome_to_barcodes[genome.encode()]]
         barcode_metric_keys = [
             f"{barcode_metric_key}_{genome}" for barcode_metric_key in genome_metrics
         ]
+        filtered_rows = per_barcode_metrics["barcode"].apply(
+            lambda bc, genome=genome: is_valid_barcode(bc)
+            and filtered_barcodes.contains(bc, genome)
+        )
         metric_values = per_barcode_metrics.loc[
-            per_barcode_metrics["barcode"].isin(genome_barcodes), barcode_metric_keys
+            filtered_rows,
+            barcode_metric_keys,
         ].median()
 
         for barcode_metric_key, metric_key in genome_metrics.items():

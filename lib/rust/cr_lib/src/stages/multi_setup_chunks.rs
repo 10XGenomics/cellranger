@@ -1,10 +1,11 @@
 //! Martian stage MULTI_SETUP_CHUNKS
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use barcode::WhitelistSpec;
-use cr_types::chemistry::ChemistryDef;
-use cr_types::rna_read::{LegacyLibraryType, RnaChunk};
+use cr_types::chemistry::ChemistryDefs;
+use cr_types::rna_read::RnaChunk;
 use cr_types::sample_def::SampleDef;
+use cr_types::LibraryType;
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -15,8 +16,8 @@ use serde::{Deserialize, Serialize};
 pub struct MultiSetupChunksStageInputs {
     pub sample_id: String,
     pub sample_def: Vec<SampleDef>,
-    pub chemistry_def: ChemistryDef,
-    pub default_library_type: Option<LegacyLibraryType>,
+    pub chemistry_defs: ChemistryDefs,
+    pub default_library_type: Option<LibraryType>,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct, PartialEq)]
@@ -40,10 +41,11 @@ impl MartianMain for MultiSetupChunks {
         _rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
         // Make sure that the gem groups in sample def is either all null or all some
-        assert!(
+        ensure!(
             args.sample_def.iter().all(|def| def.gem_group.is_some())
                 || args.sample_def.iter().all(|def| def.gem_group.is_none()),
-            "Inconsistent gem_group tags in sample def. Please specify all gem_group tags as null, or all gem_group tags with an integer."
+            "Inconsistent gem_group tags in sample def. \
+             Please specify all gem_group tags as null, or all gem_group tags with an integer."
         );
 
         // If all gem_groups are set to null, then set them all to 1
@@ -64,22 +66,26 @@ impl MartianMain for MultiSetupChunks {
             .sample_def
             .iter()
             .map(|sample_def| {
-                Ok(sample_def
-                    .find_fastqs()?
-                    .into_iter()
-                    .map(move |fastqs| (sample_def, fastqs)))
+                anyhow::Ok(
+                    sample_def
+                        .find_fastqs()?
+                        .into_iter()
+                        .map(move |fastqs| (sample_def, fastqs)),
+                )
             })
             .flatten_ok()
-            .collect::<Result<_>>()?;
+            .try_collect()?;
 
+        let default_library_type = args.default_library_type.unwrap_or_default();
         let chunks: Vec<RnaChunk> = fastqs
             .into_iter()
             .enumerate()
             .map(|(chunk_id, (sample_def, fastqs))| {
+                let library_type = sample_def.library_type.unwrap_or(default_library_type);
                 RnaChunk::new(
-                    &args.chemistry_def,
+                    &args.chemistry_defs[&library_type],
                     sample_def,
-                    args.default_library_type.unwrap_or_default(),
+                    default_library_type,
                     fastqs,
                     &args.sample_id,
                     library_id_map[&(sample_def.gem_group, sample_def.library_type)],
@@ -88,31 +94,33 @@ impl MartianMain for MultiSetupChunks {
             })
             .collect();
 
+        let barcode_whitelist = args
+            .chemistry_defs
+            .values()
+            .filter_map(|x| {
+                x.barcode_whitelist()
+                    .option_gel_bead()
+                    .and_then(WhitelistSpec::whitelist_name)
+            })
+            .dedup()
+            .at_most_one()
+            .unwrap()
+            .map(String::from);
+
+        let visium_hd_slide_name = args
+            .chemistry_defs
+            .values()
+            .filter_map(|x| x.barcode_whitelist().map_option(WhitelistSpec::slide_name))
+            .flatten()
+            .dedup()
+            .at_most_one()
+            .unwrap()
+            .map(String::from);
+
         Ok(MultiSetupChunksStageOutputs {
             chunks,
-            barcode_whitelist: args
-                .chemistry_def
-                .barcode_whitelist()
-                .option_gel_bead()
-                .and_then(|spec| match spec {
-                    WhitelistSpec::TxtFile { name } => Some(name.to_string()),
-                    _ => None,
-                }),
-            visium_hd_slide_name: {
-                let slide_names: Vec<_> = args
-                    .chemistry_def
-                    .barcode_whitelist()
-                    .iter()
-                    .filter_map(|spec| match spec {
-                        WhitelistSpec::TxtFile { .. }
-                        | WhitelistSpec::DynamicTranslation { .. } => None,
-                        WhitelistSpec::SlideFile { slide, .. } => Some(slide),
-                    })
-                    .unique()
-                    .collect();
-                assert!(slide_names.len() <= 1);
-                slide_names.into_iter().next().cloned()
-            },
+            barcode_whitelist,
+            visium_hd_slide_name,
         })
     }
 }

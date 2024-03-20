@@ -1,8 +1,8 @@
-use crate::count_matrix::{BarcodeWithGemGroup, CountMatrix};
 use anyhow::Result;
 use barcode::whitelist::BarcodeId;
 use barcode::BcSegSeq;
-use cr_types::FeatureType;
+use cr_h5::count_matrix::{BarcodeWithGemGroup, CountMatrix};
+use cr_types::reference::feature_reference::FeatureType;
 use itertools::Itertools;
 use metric::TxHashMap;
 use std::collections::HashMap;

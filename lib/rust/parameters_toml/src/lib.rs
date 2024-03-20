@@ -81,7 +81,7 @@ struct Parameters {
 
 const DEFAULT_PARAMETERS: Parameters = Parameters {
     detect_chemistry_sample_reads: 100_000,
-    detect_chemistry_total_reads: 1_000_000,
+    detect_chemistry_total_reads: 2_000_000,
     min_fraction_whitelist_match: 0.1,
     min_barcode_similarity: 0.1,
     vdj_max_reads_per_barcode: 80_000,

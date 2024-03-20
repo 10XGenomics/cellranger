@@ -4,12 +4,19 @@
 #
 
 MATRIX_MEM_GB_MULTIPLIER = 2.6  # Increased from 2.0 to enable high-diversity samples
+VIS_HD_MATRIX_MEM_GB_MULTIPLIER = 1.0
 NUM_MATRIX_ENTRIES_PER_MEM_GB = 50e6
 
 # Empirical obs: with new CountMatrix setup, take ~ 50 bytes/bc
 NUM_MATRIX_BARCODES_PER_MEM_GB = 10000000
 MIN_MEM_GB = 3
 MIN_MEM_GB_NOWHITELIST = 64
+
+# Empirical obs of mem usage with anndatas created for running CAS
+MEM_BYTES_PER_MATRIX_NNZ_H5AD = 16  # 2^4
+MEM_BYTES_PER_MATRIX_BARCODE_H5AD = 256  # 2^8
+MEM_BYTES_PER_MATRIX_FEATURE_H5AD = 1024  # 2^10
+MEM_BYTES_CONSTANT_H5AD = 8_388_608  # 2^23
 
 GZIP_SUFFIX = b".gz"
 LZ4_SUFFIX = b".lz4"

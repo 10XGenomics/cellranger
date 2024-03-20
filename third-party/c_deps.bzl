@@ -15,14 +15,14 @@ def load_c_deps():
     bwa_commit = "13b5637fe6bd678b5756247a857c7ed9460b8e77"
     http_archive(
         name = "bwa",
-        build_file = "//third-party:bwa.BUILD",
+        build_file = "@cellranger//third-party:bwa.BUILD",
         urls = [
             "https://github.com/lh3/bwa/archive/{}.tar.gz".format(bwa_commit),
         ],
         sha256 = "fa8700e82167ecba76300845a8a0480097cb252b447915e1ec0bc85164915f43",
         patch_args = ["-p1"],
         patches = [
-            "//third-party:bwa-unrestrict-mergedBwt.patch",
+            "@cellranger//third-party:bwa-unrestrict-mergedBwt.patch",
         ],
         strip_prefix = "bwa-" + bwa_commit,
     )
@@ -31,7 +31,7 @@ def load_c_deps():
     star_commit = "230afea1013d462e19fb31f56791f76c355d871c"
     http_archive(
         name = "STAR",
-        build_file = "//third-party:STAR.BUILD",
+        build_file = "@cellranger//third-party:STAR.BUILD",
         urls = [
             "https://github.com/10XGenomics/STAR/archive/{}.tar.gz".format(star_commit),
         ],
@@ -45,7 +45,7 @@ def load_c_deps():
 
     http_archive(
         name = "com_github_samtools",
-        build_file = "//third-party:samtools.BUILD",
+        build_file = "@cellranger//third-party:samtools.BUILD",
         urls = [
             "https://github.com/samtools/samtools/releases/download/1.16.1/samtools-1.16.1.tar.bz2",
         ],
@@ -56,7 +56,7 @@ def load_c_deps():
     louvain_commit = "fb6919ca85e0284f124f43cead25bafdb0e988df"
     http_archive(
         name = "louvain",
-        build_file = "//third-party:louvain.BUILD",
+        build_file = "@cellranger//third-party:louvain.BUILD",
         urls = [
             "https://github.com/10XGenomics/louvain/archive/{}.tar.gz".format(louvain_commit),
         ],
@@ -67,7 +67,7 @@ def load_c_deps():
     # tracking the "bazel" branch in 10xdev/graphviz
     github_http_archive(
         name = "com_github_10xdev_graphviz",
-        commit = "d8039f44cf655d12e80db73cb5129b791a36c4a2",
+        commit = "d5953a58dea6568be4b623640cc68e49b79e5b86",
         url = "https://github.com/10XDev/graphviz",
-        sha256 = "4ab01621a7cc32a37d58d4a667c5be10c4daf49ef116f201f7abeb5d4b1631f5",
+        sha256 = "b12b5938260ba9a6b358d7dc67cabc9b1541940132240d854eb6bf28940f9f4a",
     )

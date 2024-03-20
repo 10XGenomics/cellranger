@@ -16,7 +16,7 @@ from scipy.cluster import hierarchy
 
 import cellranger.altair_utils as alt_utils
 from cellranger.rna.library import ANTIBODY_LIBRARY_TYPE, GENE_EXPRESSION_LIBRARY_TYPE
-from cellranger.websummary.react_components import round_floats_in_list
+from cellranger.websummary.numeric_converters import round_floats_in_list
 
 if TYPE_CHECKING:
     import cellranger.matrix as cr_matrix
@@ -504,7 +504,7 @@ def make_fbc_isotype_correlation_scatter(
     )
 
     chart_title = alt.TitleParams(
-        f"R² = {r_squared}",
+        f"r² = {r_squared}",
         anchor="middle",
     )
     isotype_corr_plot = (
@@ -524,8 +524,8 @@ def make_fbc_isotype_correlation_scatter(
     isotype_corr_plot = alt_utils.chart_to_json(isotype_corr_plot)
     isotype_corr_plot_plot_help = {
         "helpText": f"Total {transform_text} counts from isotype antibody features and non-isotype antibody features for tissue-associated barcodes. "
-        f"A linear correlation validates the usage of isotypes for {ALT_LINK_HELP_TEXT}. "
-        f"Barcodes in the top 1% of isotype antibody or non-isotype antibody counts are colored in orange and discarded before calculating R².",
+        f"A high pearson correlation (r) validates the usage of isotypes for {ALT_LINK_HELP_TEXT}. "
+        f"Barcodes in the top 1% of isotype antibody or non-isotype antibody counts are colored in orange and discarded before calculating r².",
         "title": "Isotype vs. Non-Isotype Antibodies",
     }
     isotype_corr_plot_plot_data = {

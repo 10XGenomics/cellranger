@@ -31,7 +31,7 @@ pub struct Pca2Stage;
 
 const NUM_PCS_DEFAULT: usize = 100;
 
-#[make_mro(stage_name = RUN_PCA2, mem_gb = 1, threads = 1, volatile = strict)]
+#[make_mro(stage_name = RUN_PCA2, volatile = strict)]
 impl MartianStage for Pca2Stage {
     type StageInputs = Pca2StageInputs;
     type StageOutputs = Pca2StageOutputs;
@@ -43,12 +43,12 @@ impl MartianStage for Pca2Stage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        // mem_gb is set based on a series of stress tests and it over-allocates for smaller nnzs
-        // A more detailed memory analysis and a non-linear model could be a good next step
-        let mem_gb = 3.3 * h5::est_mem_gb_from_nnz(args.matrix_h5)? + 6.0;
-        let stage_def =
-            StageDef::with_join_resource(Resource::new().threads(4).mem_gb(mem_gb.ceil() as isize));
-        Ok(stage_def)
+        let nnz = h5::matrix_nnz(&args.matrix_h5)?;
+        let mem_gib = 10 + 72 * nnz / 1024 / 1024 / 1024;
+        println!("nnz={nnz},mem_gib={mem_gib}");
+        Ok(StageDef::with_join_resource(
+            Resource::with_mem_gb(mem_gib as isize).threads(4),
+        ))
     }
 
     fn main(

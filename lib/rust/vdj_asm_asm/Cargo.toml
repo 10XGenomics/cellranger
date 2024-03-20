@@ -1,11 +1,10 @@
 [dependencies]
-bio = '>=0.35'
-bitflags = '1.2'
-debruijn = '0.3.4'
-fxhash = '0.2.1'
-hostname = '0.3.1'
-libc = '0.2.147'
-lz4 = '1.23.3'
+bio = '1'
+bitflags = '2'
+debruijn = '0.3'
+fxhash = '0.2'
+hostname = '0.3'
+lz4 = '1'
 
 [dependencies.anyhow]
 workspace = true
@@ -34,6 +33,9 @@ path = '../json_report_derive'
 [dependencies.kmer_lookup]
 workspace = true
 
+[dependencies.libc]
+workspace = true
+
 [dependencies.martian]
 workspace = true
 
@@ -46,16 +48,10 @@ workspace = true
 [dependencies.metric]
 path = '../metric'
 
-[dependencies.metric_derive]
-path = '../metric_derive'
-
 [dependencies.parameters_toml]
 path = '../parameters_toml'
 
 [dependencies.perf_stats]
-workspace = true
-
-[dependencies.pretty_trace]
 workspace = true
 
 [dependencies.rust-htslib]
@@ -69,9 +65,6 @@ workspace = true
 
 [dependencies.string_utils]
 workspace = true
-
-[dependencies.umi]
-path = '../umi'
 
 [dependencies.vdj_ann]
 workspace = true

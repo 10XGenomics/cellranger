@@ -926,6 +926,11 @@ class MoleculeCounter:
         assert library_idxs.ndim == 1
         return np.count_nonzero(pass_filter[:, 1:2] == library_idxs, axis=0)
 
+    def get_num_filtered_barcodes(self) -> int:
+        """Return the number of filtered barcodes."""
+        assert self.h5 is not None
+        return np.unique(self.h5[BARCODE_INFO_GROUP_NAME]["pass_filter"][:, 0]).size
+
     def get_library_info(self) -> list[dict[str, Any]]:
         return _get_library_info(self.h5)
 

@@ -49,6 +49,7 @@
 // handling pipeline environments
 pub mod arc;
 pub mod chemistry_arg;
+pub mod create_bam_arg;
 mod deprecated_os;
 pub mod env;
 pub mod fastqs;
@@ -60,9 +61,9 @@ pub mod targeted_compare;
 pub mod utils;
 
 use anyhow::{ensure, Context, Result};
-use itertools::Itertools;
 use mrp_args::MrpArgs;
 use serde::Serialize;
+use shell_escape::escape;
 use std::fs::{create_dir, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -219,7 +220,8 @@ pub fn execute_any(
 
 /// Set CMDLINE to the command line arguments, needed to create the pipeline output file _cmdline.
 fn set_env_cmdline() {
-    std::env::set_var("CMDLINE", std::env::args().join(" "));
+    let cmdline: Vec<_> = std::env::args().map(|x| escape(x.into())).collect();
+    std::env::set_var("CMDLINE", cmdline.join(" "));
 }
 
 // Set COLUMNS to 80 when the terminal size is unknown.

@@ -8,19 +8,16 @@
 
 from __future__ import annotations
 
-import json
 import os.path
 from typing import TYPE_CHECKING
 
 import cellranger.constants as cr_constants
 import cellranger.molecule_counter as cr_mc
-import cellranger.reference as cr_reference
 import cellranger.rna.library as rna_library
 import cellranger.vdj.constants as vdj_constants
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.constants.shared as shared_constants
 import cellranger.websummary.plotly_tools as pltly
-import cellranger.websummary.sample_properties as wsp
 from cellranger.feature.throughputs import (
     HT_THROUGHPUT,
     INCONSISTENT_THROUGHPUT_METRIC,
@@ -29,13 +26,18 @@ from cellranger.feature.throughputs import (
     THROUGHPUT_INFERRED_METRIC,
 )
 from cellranger.h5_constants import H5_CHEMISTRY_DESC_KEY
-from cellranger.targeted.targeted_constants import (
-    TARGETING_METHOD_HC,
-    TARGETING_METHOD_TL,
-)
+from cellranger.reference_paths import get_ref_name_from_genomes
+from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC, TARGETING_METHOD_TL
 from cellranger.webshim.data import FILTERED_BCS_TRANSCRIPTOME_UNION
 from cellranger.websummary.isotypes import ALT_LINK_HELP_TEXT
 from cellranger.websummary.metrics import INFO_THRESHOLD, WARNING_THRESHOLD
+from cellranger.websummary.sample_properties import (
+    AggrCountSampleProperties,
+    CountSampleProperties,
+    ExtendedCountSampleProperties,
+    SampleProperties,
+    VdjSampleProperties,
+)
 
 if TYPE_CHECKING:
     from cellranger.webshim.data import SampleData
@@ -65,7 +67,7 @@ RANK_PLOT_HELP = [
     [
         "Barcode Rank Plot",
         [
-            "The plot shows the count of filtered UMIs mapped to each barcode. Barcodes are not determined to be cell-associated strictly based on their UMI count. Instead, they could be determined based on their expression profile, or removed via Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. The color of the graph in these regions is based on the local density of barcodes that are cell-associated."
+            "The plot shows the count of filtered UMIs mapped to each barcode. Barcodes are not determined to be cell-associated strictly based on their UMI count. Instead, they could be determined based on their expression profile, or removed via Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. The color of the graph in these regions is based on the local density of barcodes that are cell-associated. Hovering over the plot displays the total number and percentage of barcodes in that region called as cells along with the number of UMI counts for those barcodes and barcode rank, ordered in descending order of UMI counts."
         ],
     ]
 ]
@@ -150,6 +152,7 @@ SEQUENCING_METRIC_KEYS = [
     "read_bases_with_q30_frac",
     "read2_bases_with_q30_frac",
     "umi_bases_with_q30_frac",
+    "square_008um.bins_under_tissue_frac",  # HD specific
 ]
 
 TARGETED_SEQUENCING_METRIC_KEYS = [
@@ -164,6 +167,7 @@ TARGETED_SEQUENCING_METRIC_KEYS = [
     "read_bases_with_q30_frac",
     "read2_bases_with_q30_frac",
     "umi_bases_with_q30_frac",
+    "square_008um.bins_under_tissue_frac",  # HD specific
 ]
 
 SEQUENCING_ALARM_KEYS = [
@@ -172,6 +176,7 @@ SEQUENCING_ALARM_KEYS = [
     "bc_bases_with_q30_frac",
     "read_bases_with_q30_frac",
     "umi_bases_with_q30_frac",
+    "fraction_bc_outside_image",
 ]
 
 AGGREGATION_METRIC_KEYS = [
@@ -275,6 +280,7 @@ TEMP_LIG_MAPPING_ALARMS = [
     "multi_transcriptome_half_mapped_reads_frac",
     "multi_transcriptome_split_mapped_reads_frac",
 ]
+HD_TEMP_LIG_MAPPING_ALARMS = TEMP_LIG_MAPPING_ALARMS + ["estimated_gdna_content"]
 
 
 def get_empty_rank_plot():
@@ -382,7 +388,11 @@ def hero_metrics(metadata, sample_data: SampleData, species_list):
     return data_with_alarms
 
 
-def _get_chemistry_description(sample_data, sample_properties=None, sample_def=None):
+def _get_chemistry_description(
+    sample_data: SampleData,
+    sample_properties: SampleProperties | None = None,
+    sample_def: dict | None = None,
+) -> str:
     """This function returns the chemistry description of the given sample data.
 
     If sample_def is provided (Aggr), the function uses the molecule_h5 file to retrieve the chemistry description.
@@ -397,52 +407,47 @@ def _get_chemistry_description(sample_data, sample_properties=None, sample_def=N
     Returns:
         chemistry (string): Chemistry description
     """
-    # Aggr specific profile
     if sample_def:
+        # Used by aggr
         mol_info = cr_mc.MoleculeCounter.open(sample_def["molecule_h5"], "r")
-        chemistry = mol_info.get_metric("chemistry_description")
+        chemistry_description = mol_info.get_metric("chemistry_description")
         is_spatial = mol_info.is_spatial_data()
-        is_rtl = mol_info.is_templated_ligation()
-        whitelist = mol_info.get_gb_barcode_whitelist()
-    # Single sample specific profile
     else:
-        chemistry = sample_data.summary.get("chemistry_description")
-        is_spatial = hasattr(sample_properties, "is_spatial") and sample_properties.is_spatial
-        is_rtl = sample_data.targeting_method == TARGETING_METHOD_TL
-        whitelist = (
-            sample_properties.barcode_whitelist
-            if is_rtl and hasattr(sample_properties, "barcode_whitelist")
-            else None
+        assert sample_data.summary is not None
+        assert isinstance(sample_properties, CountSampleProperties | VdjSampleProperties)
+        chemistry_description = (
+            sample_data.summary.get("chemistry_description")
+            or sample_properties.chemistry_description()
         )
+        is_spatial = sample_properties.is_spatial
 
-    assay_map = {
-        "visium-v1": "FFPE v1",
-        "visium-v2": "FFPE v1",
-        "visium-v3": "FFPE v2",
-        "visium-v4": "FFPE v2",
-        "visium-v5": "FFPE v2",
-    }
+    if not is_spatial:
+        return chemistry_description
 
-    if is_spatial:
-        if is_rtl and whitelist is not None:
-            # pull the correct assay if the whitelist is found. Default to "FFPE"
-            assay = assay_map.get(whitelist, "FFPE")
-        elif sample_data.targeting_method == TARGETING_METHOD_HC:
-            assay = "Targeted"
-        else:
-            assay = "3'"
-        chemistry += f" - {assay}"
-    return chemistry
+    if sample_data.targeting_method == TARGETING_METHOD_TL:
+        # Determine the assay from the chemistry.
+        assay = {
+            "Visium V1 Slide": "FFPE v1",
+            "Visium V2 Slide": "FFPE v1",
+            "Visium V3 Slide": "FFPE v2",
+            "Visium V4 Slide": "FFPE v2",
+            "Visium V5 Slide": "FFPE v2",
+        }.get(chemistry_description, "FFPE")
+    elif sample_data.targeting_method == TARGETING_METHOD_HC:
+        assay = "Targeted"
+    else:
+        assay = "3'"
+    return f"{chemistry_description } - {assay}"
 
 
 # pylint: disable=too-many-branches
 def pipeline_info_table(
     sample_data: SampleData,
-    sample_properties,
-    pipeline,
+    sample_properties: SampleProperties,
+    pipeline: str,
     metadata=None,
-    species_list=None,
-    sample_defs=None,
+    species_list: list[str] | None = None,
+    sample_defs: list[dict] | None = None,
 ):
     """Generates a table of general pipeline information.
 
@@ -454,19 +459,17 @@ def pipeline_info_table(
         species_list:
         sample_defs: Map of sample_defs passed in from PARSE_CSV
     """
-    assert isinstance(sample_properties, wsp.SampleProperties)
+    assert isinstance(sample_properties, SampleProperties)
 
     if sample_data is None or sample_data.summary is None:
         return None
 
     alarms = []
 
-    throughput_inferred = sample_data.summary.get(
-        THROUGHPUT_INFERRED_METRIC,
-    )
+    throughput_inferred = sample_data.summary.get(THROUGHPUT_INFERRED_METRIC)
 
     # Get the chemistry description for the sample(s)
-    if isinstance(sample_properties, wsp.AggrCountSampleProperties) and sample_defs:
+    if isinstance(sample_properties, AggrCountSampleProperties) and sample_defs:
         chemistry_row = []
         for sample_def in sample_defs:
             chemistry = _get_chemistry_description(sample_data=sample_data, sample_def=sample_def)
@@ -508,16 +511,10 @@ def pipeline_info_table(
     if pipeline in shared_constants.PIPELINE_COUNT and not sample_properties.is_spatial:
         rows.append(["Include introns", str(sample_properties.include_introns)])
 
-    if isinstance(sample_properties, wsp.ExtendedCountSampleProperties):
-        if sample_properties.reference_path:
-            rows.append(["Reference Path", sample_properties.reference_path])
+    if isinstance(sample_properties, ExtendedCountSampleProperties):
         if sample_properties.target_set:
             if sample_data.targeting_method == TARGETING_METHOD_TL:
                 rows.append(["Probe Set Name", sample_properties.target_set])
-                if hasattr(sample_properties, "target_panel_summary"):
-                    with open(sample_properties.target_panel_summary, "rb") as tps:
-                        target_panel_summary = json.load(tps)
-                    rows.append(["Probe Set Path", target_panel_summary["target_panel_path"]])
             else:
                 rows.append(["Target Panel Name", sample_properties.target_set])
             rows.append(["Number of Genes Targeted", sample_data.summary["num_genes_on_target"]])
@@ -525,18 +522,12 @@ def pipeline_info_table(
             hasattr(sample_properties, "feature_ref_path")
             and sample_properties.feature_ref_path is not None
         ):
-            rows.append(["Feature Reference Path", sample_properties.feature_ref_path])
-
-        # This was meant to be enabled in 3.1 but due to a bug was not included./
-        # if sample_properties.barcode_whitelist:
-        #    rows.append(
-        #        ['Barcode Whitelist', sample_properties.barcode_whitelist])
+            rows.append(["Feature Reference", os.path.basename(sample_properties.feature_ref_path)])
+        if sample_properties.disable_ab_aggregate_detection:
+            rows.append(["Antibody Aggregate Filtering", "Disabled"])
 
     # Find references in the summary
-    if (
-        isinstance(sample_properties, wsp.AggrCountSampleProperties)
-        and not sample_properties.genomes
-    ):
+    if isinstance(sample_properties, AggrCountSampleProperties) and not sample_properties.genomes:
         rows.append(
             [
                 cr_constants.REFERENCE_TYPE,
@@ -547,7 +538,10 @@ def pipeline_info_table(
         genomes = sample_properties.genomes
         if genomes is not None:
             rows.append(
-                [cr_constants.REFERENCE_TYPE, cr_reference.get_ref_name_from_genomes(genomes)]
+                [
+                    cr_constants.REFERENCE_TYPE,
+                    get_ref_name_from_genomes(genomes),
+                ]
             )
     else:
         reference_metric_prefixes = [
@@ -570,7 +564,7 @@ def pipeline_info_table(
                 if ref_name_key in sample_data.summary:
                     ref_name = sample_data.summary.get(ref_name_key)
                     if isinstance(ref_name, list):
-                        ref_name = cr_reference.get_ref_name_from_genomes(ref_name)
+                        ref_name = get_ref_name_from_genomes(ref_name)
 
                     rows.append([ref_type, f"{ref_name}{ref_version}"])
 
@@ -631,28 +625,9 @@ def pipeline_info_table(
             }
         )
 
-    if (
-        isinstance(sample_properties, wsp.CountSampleProperties)
-        and sample_properties.include_introns
-        and not sample_properties.is_targeted
-        and not sample_data.is_antibody_only()
-    ):
-        if ALARMS not in to_return:
-            to_return[ALARMS] = []
-
-        program = "Space Ranger" if sample_properties.is_spatial else "Cell Ranger"
-
-        intron_info_alarm = {
-            "formatted_value": None,
-            "title": "Intron mode used",
-            "message": f"""This data has been analyzed with intronic reads included in the count matrix. This behavior is different from previous {program} versions. If you would not like to count intronic reads, please rerun with the "include-introns" option set to "false". Please contact support@10xgenomics.com for any further questions.""",
-            "level": INFO_THRESHOLD,
-        }
-        to_return[ALARMS].extend([intron_info_alarm])
-
     # If --aligner was used to force the aligner warn the user
     if (
-        isinstance(sample_properties, wsp.CountSampleProperties)
+        isinstance(sample_properties, CountSampleProperties)
         and sample_properties.aligner
         and sample_properties.is_spatial
     ):
@@ -668,7 +643,7 @@ def pipeline_info_table(
 
     # chevron downsampling
     if (
-        isinstance(sample_properties, wsp.CountSampleProperties)
+        isinstance(sample_properties, CountSampleProperties)
         and sample_properties.v1_filtered_fbm
         and sample_properties.is_spatial
     ):
@@ -681,6 +656,54 @@ def pipeline_info_table(
             "level": INFO_THRESHOLD,
         }
         to_return[ALARMS].extend([downsample_info_alarm])
+
+    # If default layout was used for Visium HD
+    if (
+        isinstance(sample_properties, CountSampleProperties)
+        and sample_properties.default_layout
+        and sample_properties.is_visium_hd
+    ):
+        if ALARMS not in to_return:
+            to_return[ALARMS] = []
+        default_layout_alarm = {
+            "formatted_value": None,
+            "title": "Default Layout Used",
+            "message": "Visium HD slide ID was not provided. Analysis was performed using a generic slide layout, and will result in incorrect assignment of barcodes under tissue and misalignment of microscope image to UMI data. For best results, re-run with correct slide ID.",
+            "level": WARNING_THRESHOLD,
+        }
+        to_return[ALARMS].extend([default_layout_alarm])
+
+    # If Slide ID override was used for Visium HD
+    if (
+        isinstance(sample_properties, CountSampleProperties)
+        and sample_properties.override_id
+        and sample_properties.is_visium_hd
+    ):
+        if ALARMS not in to_return:
+            to_return[ALARMS] = []
+        override_id_alarm = {
+            "formatted_value": None,
+            "title": "Override ID Used",
+            "message": "Visium HD slide ID entered on the CytAssist instrument was overridden by the slide ID provided to the Space Ranger pipeline. Confirm that the slide ID matches the slide used to generate the dataset.",
+            "level": WARNING_THRESHOLD,
+        }
+        to_return[ALARMS].extend([override_id_alarm])
+
+    # If Slide ID in Loupe does not match slide ID from cytassist metadata
+    if (
+        isinstance(sample_properties, CountSampleProperties)
+        and sample_properties.slide_id_mismatch  # TODO: FIX THIS
+        and sample_properties.is_visium_hd
+    ):
+        if ALARMS not in to_return:
+            to_return[ALARMS] = []
+        slide_id_mismatch_alarm = {
+            "formatted_value": None,
+            "title": "Slide ID Mismatch",
+            "message": "Visium HD slide ID entered on the CytAssist instrument was overridden by the slide ID provided to the Loupe Manual Aligner. Confirm that the slide ID matches the slide used to generate the dataset.",
+            "level": WARNING_THRESHOLD,
+        }
+        to_return[ALARMS].extend([slide_id_mismatch_alarm])
 
     # If Isotype Normalization was used
     if sample_data.summary.get("ANTIBODY_isotype_normalized") is not None:
@@ -800,8 +823,10 @@ def mapping_table(metadata, sample_data, species_list):
         if sample_data.targeting_method == TARGETING_METHOD_HC:
             alarm_keys = TARGETED_MAPPING_ALARMS
         # template ligation targeting
-        elif sample_data.targeting_method == TARGETING_METHOD_TL:
+        elif sample_data.targeting_method == TARGETING_METHOD_TL and not sample_data.is_visium_hd:
             alarm_keys = TEMP_LIG_MAPPING_ALARMS
+        elif sample_data.targeting_method == TARGETING_METHOD_TL and sample_data.is_visium_hd:
+            alarm_keys = HD_TEMP_LIG_MAPPING_ALARMS
     else:
         alarm_keys = MAPPING_ALARMS
 
@@ -833,7 +858,12 @@ def cell_or_spot_calling_table(
     if is_barnyard:
         metric_keys.insert(0, FILTERED_BCS_TRANSCRIPTOME_UNION)
 
-    tbl_name = "Spots" if sample_properties.is_spatial else "Cells"
+    if sample_properties.is_spatial and not sample_properties.is_visium_hd:
+        tbl_name = "Spots"
+    elif sample_properties.is_spatial and sample_properties.is_visium_hd:
+        tbl_name = "Squares"
+    else:
+        tbl_name = "Cells"
 
     table_dict = create_table_with_alarms(
         "cells", tbl_name, metric_keys, alarm_keys, metadata, sample_data, species_list
@@ -914,7 +944,7 @@ def normalization_summary_table(metadata, sample_data, sample_properties):
 
     TODO: the above trick doesn't generate good web summary if it's a barnyard aggr sample.
     """
-    if not isinstance(sample_properties, wsp.AggrCountSampleProperties):
+    if not isinstance(sample_properties, AggrCountSampleProperties):
         return None
     metric_keys = [
         "pre_normalization_total_reads",
@@ -1024,7 +1054,7 @@ def split_table_by_samples(table, table_name):
 
 def aggregation_by_sample_table(metadata, sample_data, sample_properties):
     """Report per-sample normalization metrics in aggr."""
-    if not isinstance(sample_properties, wsp.AggrCountSampleProperties):
+    if not isinstance(sample_properties, AggrCountSampleProperties):
         return None
 
     alarm_keys = [
@@ -1045,7 +1075,7 @@ def aggregation_by_sample_table(metadata, sample_data, sample_properties):
 
 
 def feature_barcode_aggregation_table(metadata, sample_data, sample_properties, feature_barcode):
-    if not isinstance(sample_properties, wsp.AggrCountSampleProperties):
+    if not isinstance(sample_properties, AggrCountSampleProperties):
         return None
     metric_keys = [f"{feature_barcode}_{i}" for i in AGGREGATION_METRIC_KEYS]
     batches = sample_properties.agg_batches
@@ -1068,7 +1098,7 @@ def _display_loupe_warning(sample_properties, to_return):
     if loupe file contains redundant information
     """
     if (
-        isinstance(sample_properties, wsp.CountSampleProperties)
+        isinstance(sample_properties, CountSampleProperties)
         and sample_properties.redundant_loupe_alignment
     ):
         if ALARMS not in to_return:

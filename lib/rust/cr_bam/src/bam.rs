@@ -3,7 +3,7 @@ use crate::bam_tags::{
     RAW_BARCODE_SEQ_TAG, RAW_UMI_SEQ_TAG,
 };
 use crate::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_GIB};
-use barcode::{Barcode, BcSeq};
+use barcode::{Barcode, BarcodeContent};
 use rust_htslib::bam::record::{Aux, Cigar, Record};
 use shardio::{ShardReader, SortKey, SHARD_ITER_SZ as SHARD_SZ};
 use std::borrow::Cow;
@@ -74,7 +74,7 @@ impl<'a> AuxExt for Aux<'a> {
 }
 
 pub trait CrRecord {
-    fn raw_barcode(&self) -> Option<BcSeq>;
+    fn raw_barcode(&self) -> Option<BarcodeContent>;
     fn processed_barcode(&self) -> Option<Barcode>;
 
     fn raw_umi(&self) -> Option<UmiSeq>;
@@ -86,9 +86,13 @@ pub trait CrRecord {
 }
 
 impl CrRecord for Record {
-    fn raw_barcode(&self) -> Option<BcSeq> {
+    fn raw_barcode(&self) -> Option<BarcodeContent> {
         self.aux(RAW_BARCODE_SEQ_TAG)
-            .map(|x| BcSeq::from_bytes(x.str_bytes()))
+            .map(|x| {
+                x.str()
+                    .parse::<BarcodeContent>()
+                    .unwrap_or_else(|e| panic!("Invalid raw barcode {}: {e}", x.str()))
+            })
             .ok()
     }
 
@@ -166,7 +170,7 @@ pub fn is_read_conf_mapped_to_transcriptome(read: &Record, high_conf_mapq: u8) -
     if (read.is_unmapped()) || (read.mapq() < high_conf_mapq) {
         false
     } else {
-        get_read_gene_ids(read).map_or(false, |l| l.len() == 1)
+        get_read_gene_ids(read).is_some_and(|l| l.len() == 1)
     }
 }
 
@@ -202,7 +206,7 @@ pub fn is_read_dup_candidate(record: &Record) -> bool {
 /// Some are hardcoded for historical reasons.
 pub fn get_library_type_metric_prefix(lib_type: &str) -> String {
     match lib_type {
-        "Gene Expression" => "".to_owned(),
+        "Gene Expression" => String::new(),
         "CRISPR Guide Capture" => "CRISPR_".to_owned(),
         "Antibody Capture" => "ANTIBODY_".to_owned(),
         _ => format!("{lib_type}_"),

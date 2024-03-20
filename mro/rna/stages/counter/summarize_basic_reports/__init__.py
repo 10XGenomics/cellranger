@@ -6,10 +6,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-
 import numpy as np
-from six import ensure_binary
 
 import cellranger.matrix as cr_matrix
 import cellranger.report as cr_report
@@ -18,6 +15,9 @@ import cellranger.rna.refactor_report_matrix as refactor_rna_report_mat
 import cellranger.rna.report_matrix as rna_report_mat
 import cellranger.utils as cr_utils
 from cellranger.cell_calling_helpers import CellCallingParam, get_recovered_cells
+from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
+    FilteredBarcodes,
+)
 from cellranger.metrics import REFERENCE_PATH
 from cellranger.reference_paths import get_reference_genomes
 
@@ -70,11 +70,16 @@ def join(args, outs, chunk_defs, chunk_outs):
     else:
         genomes: list[str] = raw_matrix.get_genomes()
 
-    genome_filtered_bcs = defaultdict(set)
+    filtered_barcodes = FilteredBarcodes(args.filtered_barcodes)
+
+    genome_filtered_bcs = {
+        genome: set(barcodes)
+        for genome, barcodes in filtered_barcodes.per_genome_barcodes().items()
+    }
     for genome in genomes:
-        genome_filtered_bcs[genome] = cr_utils.get_cell_associated_barcode_set(
-            args.filtered_barcodes, ensure_binary(genome)
-        )
+        if genome not in genome_filtered_bcs:
+            genome_filtered_bcs[genome] = set()
+
     # Re-compute various metrics on the filtered matrix
     reads_summary = cr_utils.merge_jsons_as_dict([args.matrix_computer_summary])
 
@@ -85,8 +90,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         per_barcode_metrics_path=args.per_barcode_metrics,
         recovered_cells=get_recovered_cells(CellCallingParam(args.recovered_cells), args.sample),
         cell_bc_seqs=genome_filtered_bcs,
-        sample_bc_seqs=raw_matrix.bcs,
-        sample_bcs_only=args.sample_bcs_only,
+        sample_bc_seqs=raw_matrix.bcs if args.sample_bcs_only else None,
     )
 
     is_targeted = raw_matrix.feature_ref.has_target_features()
@@ -98,7 +102,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     crispr_present = rna_library.CRISPR_LIBRARY_TYPE in library_types
     custom_present = rna_library.CUSTOM_LIBRARY_TYPE in library_types
     per_cell_metrics = refactor_rna_report_mat.compute_per_cell_metrics(
-        filtered_barcodes_path=args.filtered_barcodes,
+        filtered_barcodes=filtered_barcodes,
         per_barcode_metrics_path=args.per_barcode_metrics,
         genomes=genomes,
         antibody_present=antibody_present,

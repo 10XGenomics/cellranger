@@ -114,12 +114,11 @@ where
     /// and unspliced vectors are of the same length.
     pub fn new(spliced_counts: Vec<F>, unspliced_counts: Vec<F>) -> Self {
         assert_eq!(spliced_counts.len(), unspliced_counts.len());
-        if spliced_counts.len() < 3 {
-            panic!(
-                "Vector lengths are {}. Need to be at least 3.",
-                spliced_counts.len()
-            );
-        }
+        assert!(
+            spliced_counts.len() >= 3,
+            "Vector lengths are {}. Need to be at least 3.",
+            spliced_counts.len()
+        );
         let sorted_unspliced_counts = unspliced_counts
             .into_iter()
             .enumerate()

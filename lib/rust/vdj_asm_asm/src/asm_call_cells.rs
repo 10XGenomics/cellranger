@@ -2,18 +2,22 @@
 
 use crate::assembly::BarcodeDataBriefFile;
 use anyhow::Result;
+use barcode::whitelist::BarcodeId;
+use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
+use cr_types::{Fingerprint, FingerprintFile};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::lz4_file::Lz4;
-use martian_filetypes::{LazyFileTypeIO, LazyWrite};
+use martian_filetypes::{FileTypeRead, LazyFileTypeIO, LazyWrite};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_asm_utils::barcode_data::analyze_barcode_data_brief;
 use vdj_asm_utils::filter_barcodes::{
-    cell_filter, confidence_filter, BarcodeCellInfo, BarcodeFilteringParams, Contigs,
+    cell_filter, confidence_filter, overhang_demux_filter, BarcodeCellInfo, BarcodeFilteringParams,
+    Contigs,
 };
 use vdj_asm_utils::filter_log::{FilterLogEntry, FilterLogger, FilterSwitch};
 use vdj_reference::VdjReceptor;
@@ -25,10 +29,12 @@ pub struct AsmCallCellsStageInputs {
     pub receptor: Option<VdjReceptor>,
     pub denovo: bool,
     pub vdj_reference_path: Option<PathBuf>,
+    pub count_chemistry_defs: Option<ChemistryDefs>,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub barcode_brief: BarcodeDataBriefFile,
     pub n50_n50_rpu: u32,
     pub filter_switch: FilterSwitch,
+    pub sample_fingerprint: Option<FingerprintFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
@@ -109,6 +115,26 @@ impl MartianMain for AsmCallCells {
         for bc in &mut barcode_cell_info {
             if bc.now_a_cell && bin_member(&kills, &bc.barcode) {
                 bc.now_a_cell = false;
+            }
+        }
+
+        // OH demux filter
+        if let (Some(count_chems), Some(fingerprint)) =
+            (args.count_chemistry_defs, args.sample_fingerprint)
+        {
+            if let Some(overhang_read_barcode) = count_chems.overhang_read_barcode() {
+                let valid_overhang_ids: HashSet<BarcodeId> = fingerprint
+                    .read()?
+                    .iter()
+                    .flat_map(Fingerprint::tag_names)
+                    .map(|tag_name| BarcodeId::pack(tag_name))
+                    .collect();
+                overhang_demux_filter(
+                    overhang_read_barcode,
+                    valid_overhang_ids,
+                    &mut barcode_cell_info,
+                    Some(&mut filter_logger),
+                );
             }
         }
 

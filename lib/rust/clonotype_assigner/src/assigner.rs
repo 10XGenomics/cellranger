@@ -1,26 +1,23 @@
-// This is code for the stage SC_VDJ_CLONOTYPE_ASSIGNER.
+//! Martian stage RUN_ENCLONE
 
 use anyhow::Result;
 use bio::alignment::{Alignment, AlignmentOperation};
-use cr_types::MetricsFile;
 use enclone_proto::proto_io::read_proto;
 use enclone_proto::types::EncloneOutputs;
 use enclone_ranger::main_enclone::main_enclone_ranger;
-use io_utils::{fwriteln, open_for_write_new};
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
+use martian_filetypes::FileTypeWrite;
 use perf_stats::{elapsed, peak_mem_usage_gb};
-use pretty_trace::PrettyTrace;
 use rust_htslib::bam;
 use rust_htslib::bam::index;
 use rust_htslib::bam::record::CigarString;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
-use std::io::Write;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread;
 use std::time::Instant;
 use string_utils::TextUtils;
 use vdj_ann::annotate::ContigAnnotation;
@@ -40,7 +37,16 @@ martian_filetype!(SamFile, "sam");
 martian_filetype!(BinFile, "bin");
 martian_filetype!(ProtoBinFile, "pb");
 
-#[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
+/// RUN_ENCLONE metrics
+#[derive(Serialize)]
+pub struct ClonotypeAssignerMetrics {
+    /// Raw VDJ paired clonotype diversity
+    multi_raw_vdj_paired_clonotype_diversity: f64,
+    /// Raw CDRs per barcode histogram
+    raw_cdrs_per_bc_histogram: HashMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, MartianStruct)]
 pub struct ClonotypeAssignerStageInputs {
     pub filter_switch: FilterSwitch,
     pub vdj_reference_path: PathBuf,
@@ -48,9 +54,9 @@ pub struct ClonotypeAssignerStageInputs {
     pub receptor: VdjReceptor, // TODO: denovo needs to be handled
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct ClonotypeAssignerStageOutputs {
-    pub summary: MetricsFile,
+    pub summary: JsonFile<ClonotypeAssignerMetrics>,
     pub enclone_output: ProtoBinFile,
     pub donor_ref_fa: FaFile,
     pub barcode_fate: JsonFile<()>,
@@ -134,21 +140,13 @@ impl MartianMain for Assigner {
         // Set up logging.
 
         let t0 = Instant::now();
-        if thread::current().name() == Some("main") {
-            let long_log: String = rover.make_path("../_full_traceback");
-            PrettyTrace::new().noexit().full_file(&long_log).fd(4).on();
-        } else {
-            PrettyTrace::new().noexit().on();
-        }
 
         // Cap number of threads.
-
         // let nthreads = max(4, min(rover.get_threads(), 96)); // NOTE: This could panic in local mode.
         let nthreads = min(rover.get_threads(), 96);
 
         // Call enclone.  We instruct it to generate a binary output file, and print nothing.
         // Need to bound number of threads used by enclone.
-
         let mut argsx = vec!["enclone".to_string()];
         let contig_annotations = args.contig_annotations.as_ref().to_str().unwrap();
 
@@ -240,33 +238,35 @@ impl MartianMain for Assigner {
             clonotype_sizes.push(cells);
             total_cells += cells;
         }
-        let mut diversity = 0.0_f64;
-        for x in clonotype_sizes {
-            diversity += (x as f64 / total_cells as f64) * (x as f64 / total_cells as f64);
-        }
         chain_counts.sort_unstable();
-        diversity = 1.0 / diversity;
-        let summary_file: MetricsFile = rover.make_path("summary.json");
-        let summary_file_str = summary_file.clone();
-        let summary_file_str = summary_file_str.as_ref().to_str().unwrap();
-        let mut writer = open_for_write_new![&summary_file_str];
-        let mut metrics = json::JsonValue::new_object();
-        metrics["multi_raw_vdj_paired_clonotype_diversity"] = diversity.into();
-        let mut histogram = json::JsonValue::new_object();
+
+        let mut multi_raw_vdj_paired_clonotype_diversity = 0.0;
+        for x in clonotype_sizes {
+            multi_raw_vdj_paired_clonotype_diversity +=
+                (x as f64 / total_cells as f64) * (x as f64 / total_cells as f64);
+        }
+        multi_raw_vdj_paired_clonotype_diversity = 1.0 / multi_raw_vdj_paired_clonotype_diversity;
+
+        let mut raw_cdrs_per_bc_histogram = HashMap::new();
         let mut i = 0;
         while i < chain_counts.len() {
             let j = next_diff(&chain_counts, i);
             let n = chain_counts[i];
             if n <= 10 {
-                histogram[format!("{n}")] = (j - i).into();
+                raw_cdrs_per_bc_histogram.insert(n.to_string(), j - i);
             } else {
-                histogram[">10"] = (chain_counts.len() - i).into();
+                raw_cdrs_per_bc_histogram.insert(">10".to_string(), chain_counts.len() - i);
                 break;
             }
             i = j;
         }
-        metrics["raw_cdrs_per_bc_histogram"] = histogram;
-        fwriteln!(writer, "{:#}", metrics);
+
+        let summary: JsonFile<_> = rover.make_path("summary");
+        summary.write(&ClonotypeAssignerMetrics {
+            multi_raw_vdj_paired_clonotype_diversity,
+            raw_cdrs_per_bc_histogram,
+        })?;
+
         println!(
             "used {:.2} seconds total, peak mem = {:.2} GB",
             elapsed(&t0),
@@ -274,9 +274,8 @@ impl MartianMain for Assigner {
         );
 
         // Return outputs.
-        PrettyTrace::new().noexit().on();
         Ok(ClonotypeAssignerStageOutputs {
-            summary: summary_file,
+            summary,
             enclone_output,
             disable_vloupe: total_cells == 0,
             donor_ref_fa,

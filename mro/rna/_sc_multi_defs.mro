@@ -7,7 +7,6 @@
 @include "_analyzer_struct.mro"
 @include "_antibody_analyzer.mro"
 @include "_basic_sc_rna_counter.mro"
-@include "_basic_sc_rna_counter_stages.mro"
 @include "_common_cloupe_stages.mro"
 @include "_common_stages.mro"
 @include "_cr_aggr_stages.mro"
@@ -30,6 +29,7 @@ filetype html;
 filetype json;
 filetype vloupe;
 filetype svg;
+filetype ChemistryDefs;
 
 ###############################################################################
 # Pipeline configuration that tells you which pipelines among count and vdj
@@ -54,7 +54,7 @@ struct VdjInputsCS(
     string physical_library_id,
     int    r1_length,
     int    r2_length,
-    bool   r2_revcomp,
+    string chemistry_spec,
 )
 
 struct CountInputsCS(
@@ -66,7 +66,7 @@ struct CountInputsCS(
     bool               no_secondary_analysis,
     bool               no_target_umi_filter,
     CellCalling        cell_calling_config,
-    string             chemistry,
+    map<string>        chemistry_specs,
     int                r1_length,
     int                r2_length,
     int                trim_polya_min_score,
@@ -80,6 +80,8 @@ struct CountInputsCS(
     bool               tenx_cmos,
     float              min_assignment_confidence,
     int                emptydrops_minimum_umis,
+    int                global_minimum_umis,
+    int                max_mito_percent,
 )
 
 struct GemWellInputs(
@@ -114,6 +116,7 @@ struct VdjOutputsCS(
     bam.bai   concat_ref_bam_bai              "Contig-reference alignment index"                 "concat_ref.bam.bai",
     vloupe    vloupe                          "Loupe V(D)J Browser file"                         "vloupe.vloupe",
     tsv       airr_rearrangement              "AIRR Rearrangement TSV",
+    fa        donor_regions                   "Inferred germline sequences",
     pb        vdj_contig_info                 "All contig info (ProtoBuf format)",
 )
 
@@ -195,6 +198,7 @@ struct SampleVdjOutputsCS(
     vloupe    vloupe                          "Loupe V(D)J Browser file"                         "vloupe.vloupe",
     tsv       airr_rearrangement              "AIRR Rearrangement TSV",
     pb        vdj_contig_info                 "Contig info (ProtoBuf format)",
+    fa        donor_regions                   "Inferred germline sequences",
 )
 
 struct SampleCountOutputsCS(
@@ -260,7 +264,7 @@ struct SampleSlfeOuts(
 struct CountChemistryInputs(
     map[]        sample_def,
     path         reference_path,
-    string       chemistry,
+    map<string>  chemistry_specs,
     int          r1_length,
     int          r2_length,
     bool         check_library_compatibility,
@@ -271,7 +275,7 @@ struct CountChemistryInputs(
 # ducktypes from VdjInputs
 struct VdjChemistryInputs(
     map[]        sample_def,
-    string       chemistry,
+    string       chemistry_spec,
     int          r1_length,
     int          r2_length,
     string       chain_type,
@@ -318,30 +322,35 @@ struct VdjAssemblerInputs(
     float        subsample_rate,
     bool         denovo,
     path         inner_enrichment_primers,
-    bool         r2_revcomp,
+    string       physical_library_id,
 )
 
 ###############################################################################
 # Outputs from VDJ reporter
 ###############################################################################
 struct VdjReport(
-    pb        vdj_contig_info,
-    vloupe    vloupe,
-    string    receptor,
-    json      metrics_summary_json,
-    csv       metrics_summary_csv,
-    html      web_summary,
-    json      web_summary_data,
-    fastq     contig_fastq,
-    fastq     filtered_contig_fastq,
-    fasta     contig_fasta,
-    fasta.fai contig_fasta_fai,
-    fasta     filtered_contig_fasta,
-    bed       annotations_bed,
-    json      cell_barcodes,
-    json      productive_cell_barcodes,
-    html      filter_summary,
-    json      filter_metrics,
+    pb          vdj_contig_info,
+    vloupe      vloupe,
+    json        metrics_summary_json,
+    csv         metrics_summary_csv,
+    html        web_summary,
+    json        web_summary_data,
+    fastq       contig_fastq,
+    fastq       filtered_contig_fastq,
+    fasta       contig_fasta,
+    fasta.fai   contig_fasta_fai,
+    fasta       filtered_contig_fasta,
+    bed         annotations_bed,
+    json        cell_barcodes,
+    json        cdr3_barcodes,
+    json        all_contig_barcodes,
+    json        productive_barcodes,
+    json        productive_cell_barcodes,
+    html        filter_summary,
+    json        filter_metrics,
+    tsv         contig_summary,
+    tsv         umi_summary,
+    bdf.bincode barcode_brief,
 )
 
 ###############################################################################
@@ -354,10 +363,42 @@ struct CountAggrSampleDef(
 )
 
 struct BeamAnalyzerInputs(
-    h5     filtered_feature_counts_matrix,
+    h5     filtered_matrix_h5,
     bmsf[] per_barcode_count_metrics,
     string beam_mode,
     bool   disable_beam,
+)
+
+struct VdjAssemblerAnalyzerInputs(
+    json        asm_contig_annotations,
+    arp.bincode assemblable_reads_per_bc,
+    bdf.bincode barcode_brief,
+    csv         barcode_support,
+    json        corrected_barcode_counts,
+    int         n50_n50_rpu,
+    json        summary,
+    tsv         summary_tsv,
+    int         total_read_pairs,
+    tsv         umi_summary_tsv,
+)
+
+struct VdjAnalyzerClonotypeOuts(
+    tsv       airr_rearrangement,
+    csv       all_contig_annotations_csv,
+    json      all_contig_annotations_json,
+    csv       clonotypes_csv,
+    bam       concat_ref_bam,
+    bam.bai   concat_ref_bam_bai,
+    fasta     concat_ref_fasta,
+    fasta.fai concat_ref_fasta_fai,
+    csv       consensus_annotations_csv,
+    bam       consensus_bam,
+    bam.bai   consensus_bam_bai,
+    fasta     consensus_fasta,
+    fasta.fai consensus_fasta_fai,
+    fa        donor_ref_fa,
+    pb        enclone_output,
+    csv       filtered_contig_annotations_csv,
 )
 
 stage _MAKE_VDJ_CONFIG(
@@ -451,34 +492,39 @@ pipeline VDJ_CHEMISTRY_DETECTOR(
     in  path               vdj_reference_path,
     in  csv                feature_reference,
     in  VdjChemistryInputs vdj_chem_inputs,
-    in  ChemistryDef       gex_chemistry_def,
+    in  map<ChemistryDef>  count_chemistry_defs,
     in  map[]              gex_sample_def,
     in  bool               disable_count,
     in  bool               is_multi,
     in  bool               is_pd,
     in  bool               check_library_compatibility,
     in  FeatureConfig      feature_config,
+    in  string[]           vdj_allowed_chems,
     out ChemistryDef       chemistry_def,
     out string             receptor,
     out string             chain_type,
     out string             beam_mode,
 )
 {
+    call COPY_CHEMISTRY_SPEC(
+        sample_defs    = self.vdj_chem_inputs.sample_def,
+        chemistry_spec = self.vdj_chem_inputs.chemistry_spec,
+    )
+
     call DETECT_CHEMISTRY(
-        reference_path      = null,
-        allowed_chems       = [
-            "SCVDJ_auto",
-            "custom",
-            "SCVDJ",
-            "SCVDJ-R2",
-            "SCVDJ-R1",
-        ],
-        chemistry_name_spec = self.vdj_chem_inputs.chemistry,
-        feature_reference   = null,
-        multi_config        = null,
-        is_pd               = self.is_pd,
-        feature_config      = self.feature_config,
-        *                   = self.vdj_chem_inputs,
+        reference_path    = null,
+        allowed_chems     = self.vdj_allowed_chems,
+        feature_reference = null,
+        multi_config      = null,
+        is_pd             = self.is_pd,
+        feature_config    = self.feature_config,
+        chemistry_specs   = COPY_CHEMISTRY_SPEC.chemistry_specs,
+        *                 = self.vdj_chem_inputs,
+    )
+
+    call EXTRACT_SINGLE_CHEMISTRY(
+        chemistry_defs     = DETECT_CHEMISTRY.chemistry_defs,
+        library_to_extract = null,
     )
 
     call DETECT_VDJ_RECEPTOR(
@@ -492,9 +538,9 @@ pipeline VDJ_CHEMISTRY_DETECTOR(
     )
 
     call CHECK_BARCODES_COMPATIBILITY_VDJ(
-        vdj_chemistry_def           = DETECT_CHEMISTRY.chemistry_def,
+        vdj_chemistry_def           = EXTRACT_SINGLE_CHEMISTRY.chemistry_def,
         vdj_sample_def              = self.vdj_chem_inputs.sample_def,
-        gex_chemistry_def           = self.gex_chemistry_def,
+        count_chemistry_defs        = self.count_chemistry_defs,
         gex_sample_def              = self.gex_sample_def,
         check_library_compatibility = self.check_library_compatibility,
     ) using (
@@ -502,7 +548,7 @@ pipeline VDJ_CHEMISTRY_DETECTOR(
     )
 
     return (
-        chemistry_def = DETECT_CHEMISTRY.chemistry_def,
+        chemistry_def = EXTRACT_SINGLE_CHEMISTRY.chemistry_def,
         receptor      = DETECT_VDJ_RECEPTOR.receptor,
         chain_type    = self.vdj_chem_inputs.chain_type,
         beam_mode     = DETECT_VDJ_RECEPTOR.beam_mode,
@@ -520,6 +566,7 @@ pipeline MULTI_CHEMISTRY_DETECTOR(
     in  bool                         is_multi,
     in  bool                         is_pd,
     in  FeatureConfig                feature_config,
+    in  string[]                     vdj_allowed_chems,
     out string[]                     libraries_to_translate,
     out bool                         is_antibody_only,
     out string                       beam_mode,
@@ -530,12 +577,11 @@ pipeline MULTI_CHEMISTRY_DETECTOR(
 )
 {
     call DETECT_CHEMISTRY as DETECT_COUNT_CHEMISTRY(
-        chemistry_name_spec = self.count_inputs.chemistry,
-        allowed_chems       = self.count_allowed_chems,
-        multi_config        = self.multi_config,
-        is_pd               = self.is_pd,
-        feature_config      = self.feature_config,
-        *                   = self.count_inputs,
+        allowed_chems  = self.count_allowed_chems,
+        multi_config   = self.multi_config,
+        is_pd          = self.is_pd,
+        feature_config = self.feature_config,
+        *              = self.count_inputs,
     ) using (
         disabled = self.basic_config.disable_count,
     )
@@ -544,19 +590,20 @@ pipeline MULTI_CHEMISTRY_DETECTOR(
         vdj_chem_inputs             = split self.vdj_inputs,
         vdj_reference_path          = self.vdj_gen_inputs.vdj_reference_path,
         feature_reference           = self.count_inputs.feature_reference,
-        gex_chemistry_def           = DETECT_COUNT_CHEMISTRY.chemistry_def,
+        count_chemistry_defs        = DETECT_COUNT_CHEMISTRY.chemistry_defs,
         gex_sample_def              = self.count_inputs.sample_def,
         check_library_compatibility = self.count_inputs.check_library_compatibility,
         disable_count               = self.basic_config.disable_count,
         is_multi                    = self.is_multi,
         is_pd                       = self.is_pd,
         feature_config              = self.feature_config,
+        vdj_allowed_chems           = self.vdj_allowed_chems,
     ) using (
         disabled = self.basic_config.disable_vdj,
     )
 
     call CHECK_BARCODES_COMPATIBILITY(
-        chemistry_def               = DETECT_COUNT_CHEMISTRY.chemistry_def,
+        chemistry_defs              = DETECT_COUNT_CHEMISTRY.chemistry_defs,
         sample_def                  = self.count_inputs.sample_def,
         check_library_compatibility = self.count_inputs.check_library_compatibility,
     ) using (
@@ -600,14 +647,13 @@ pipeline COUNT_GEM_WELL_PROCESSOR(
 )
 {
     call PARSE_TARGET_FEATURES(
-        rps_limit = null,
-        is_pd     = self.is_pd,
-        *         = self.inputs,
+        is_pd = self.is_pd,
+        *     = self.inputs,
     )
 
     call MULTI_SETUP_CHUNKS(
         sample_id            = self.sample_id,
-        chemistry_def        = self.chem.chemistry_def,
+        chemistry_defs       = self.chem.chemistry_defs,
         default_library_type = null,
         *                    = self.inputs,
     ) using (
@@ -619,13 +665,12 @@ pipeline COUNT_GEM_WELL_PROCESSOR(
         sample_id                 = self.sample_id,
         multi_config_sha          = self.multi_config_sha,
         is_pd                     = self.is_pd,
-        chemistry_def             = self.chem.chemistry_def,
+        chemistry_defs            = self.chem.chemistry_defs,
         is_antibody_only          = self.chem.is_antibody_only,
         libraries_to_translate    = self.libraries_to_translate,
         chunks                    = MULTI_SETUP_CHUNKS.chunks,
         target_panel_summary      = PARSE_TARGET_FEATURES.target_panel_summary,
         disable_target_umi_filter = PARSE_TARGET_FEATURES.disable_target_umi_filter,
-        rps_limit                 = null,
         target_features           = PARSE_TARGET_FEATURES.target_gene_indices,
         target_set                = PARSE_TARGET_FEATURES.target_panel_or_probe_set,
         target_set_name           = PARSE_TARGET_FEATURES.target_set_name,
@@ -654,6 +699,7 @@ pipeline COUNT_GEM_WELL_PROCESSOR(
         slide_serial_capture_area = null,
         feature_config            = self.feature_config,
         v1_filtered_fbm           = null,
+        is_visium_hd              = false,
     )
 
     return (
@@ -663,27 +709,338 @@ pipeline COUNT_GEM_WELL_PROCESSOR(
     )
 }
 
+pipeline BEAM_ANALYZER(
+    in  h5                  filtered_feature_counts_matrix,
+    in  bmsf[]              per_barcode_count_metrics,
+    in  string              beam_mode,
+    in  csv                 filtered_contig_annotations,
+    in  csv                 clonotypes_csv,
+    in  json                vdj_cell_barcodes,
+    out BeamAnalyzerOutputs outputs,
+)
+{
+    call CALCULATE_ANTIGEN_SPECIFICITY(
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        beam_mode                   = self.beam_mode,
+        filtered_contig_annotations = self.filtered_contig_annotations,
+        clonotypes_csv              = self.clonotypes_csv,
+        count_gem_well_map          = null,
+    )
+
+    call COMPUTE_ANTIGEN_VDJ_METRICS(
+        vdj_cell_barcodes         = self.vdj_cell_barcodes,
+        per_barcode_count_metrics = self.per_barcode_count_metrics,
+    )
+
+    call CREATE_BARCODE_CSV(
+        gex_filtered_matrix      = self.filtered_feature_counts_matrix,
+        vdj_filtered_annotations = self.filtered_contig_annotations,
+        count_gem_well_map       = null,
+    )
+
+    return (
+        outputs = {
+            antigen_assignment:             CALCULATE_ANTIGEN_SPECIFICITY.antigen_assignment,
+            antigen_specificity_scores:     CALCULATE_ANTIGEN_SPECIFICITY.antigen_specificity_scores,
+            antigen_vdj_metrics_bin:        COMPUTE_ANTIGEN_VDJ_METRICS.metrics_bin,
+            antigen_vdj_metrics_json:       COMPUTE_ANTIGEN_VDJ_METRICS.metrics_json,
+            clonotype_concordance:          CALCULATE_ANTIGEN_SPECIFICITY.clonotype_concordance,
+            exact_subclonotype_concordance: CALCULATE_ANTIGEN_SPECIFICITY.exact_subclonotype_concordance,
+            per_barcode:                    CREATE_BARCODE_CSV.per_barcode_csv,
+            specificity_summary:            CALCULATE_ANTIGEN_SPECIFICITY.summary,
+        },
+    )
+}
+
+pipeline VDJ_CALL_CELLS(
+    in  string            receptor,
+    in  bool              is_antibody_only,
+    in  bool              is_non_targeted_gex,
+    in  bool              denovo,
+    in  map<ChemistryDef> count_chemistry_defs,
+    in  FilterSwitch      filter_switch,
+    in  path              vdj_reference_path,
+    in  int               n50_n50_rpu,
+    in  json              contig_annotations,
+    in  bdf.bincode       barcode_brief,
+    in  fprint.json       sample_fingerprint,
+    in  csv               filtered_barcodes,
+    out json              contig_annotations,
+    out json.lz4          asm_filter_diagnostics,
+)
+{
+    call ASM_CALL_CELLS(
+        receptor             = self.receptor,
+        denovo               = self.denovo,
+        vdj_reference_path   = self.vdj_reference_path,
+        count_chemistry_defs = self.count_chemistry_defs,
+        contig_annotations   = self.contig_annotations,
+        barcode_brief        = self.barcode_brief,
+        n50_n50_rpu          = self.n50_n50_rpu,
+        filter_switch        = self.filter_switch,
+        sample_fingerprint   = self.sample_fingerprint,
+    )
+
+    call HANDLE_GEX_CELLS(
+        asm_contig_annotations = ASM_CALL_CELLS.contig_annotations,
+        filtered_barcodes      = self.filtered_barcodes,
+        is_antibody_only       = self.is_antibody_only,
+        is_non_targeted_gex    = self.is_non_targeted_gex,
+    )
+
+    return (
+        contig_annotations     = HANDLE_GEX_CELLS.contig_annotations,
+        asm_filter_diagnostics = ASM_CALL_CELLS.filter_diagnostics,
+    )
+}
+
+pipeline VDJ_ANALYZER(
+    in  VdjAnalysisConfig          vdj_config,
+    in  CommonInputs               common_input,
+    in  string                     receptor,
+    in  path                       vdj_reference_path,
+    in  csv                        feature_reference,
+    in  FeatureConfig              feature_config,
+    in  ChemistryDef               vdj_chemistry_def,
+    in  map<ChemistryDef>          count_chemistry_defs,
+    in  VdjAssemblerAnalyzerInputs assembler_outs,
+    in  json                       merged_annotations,
+    in  VdjDemuxSampleInfo         demux_sample_info,
+    in  GexMatrices                library_level_gex,
+    in  bmsf[]                     per_barcode_count_metrics,
+    in  FilterSwitch               filter_switch,
+    in  bool                       is_antibody_only,
+    in  bool                       is_non_targeted_gex,
+    out VdjAnalyzerClonotypeOuts   clonotype,
+    out BeamAnalyzerOutputs        beam_analyzer,
+    out VdjReport                  report,
+)
+{
+    call SETUP_VDJ_ANALYSIS(
+        receptor          = self.receptor,
+        vdj_config        = self.vdj_config,
+        demux_sample_info = self.demux_sample_info,
+        lib_level_gex     = self.library_level_gex,
+    )
+
+    call VDJ_CALL_CELLS(
+        receptor             = SETUP_VDJ_ANALYSIS.receptor,
+        is_antibody_only     = self.is_antibody_only,
+        is_non_targeted_gex  = self.is_non_targeted_gex,
+        denovo               = self.vdj_config.denovo,
+        count_chemistry_defs = self.count_chemistry_defs,
+        filter_switch        = self.filter_switch,
+        vdj_reference_path   = self.vdj_reference_path,
+        n50_n50_rpu          = self.assembler_outs.n50_n50_rpu,
+        contig_annotations   = self.assembler_outs.asm_contig_annotations,
+        barcode_brief        = self.assembler_outs.barcode_brief,
+        sample_fingerprint   = self.demux_sample_info.fingerprint,
+        filtered_barcodes    = SETUP_VDJ_ANALYSIS.filtered_barcodes,
+    ) using (
+        disabled = SETUP_VDJ_ANALYSIS.disable_cell_calling,
+    )
+
+    call SUBSET_ASSEMBLY_OUTS(
+        per_sample               = self.vdj_config.per_sample,
+        count_chemistry_defs     = self.count_chemistry_defs,
+        sample_fingerprint       = self.demux_sample_info.fingerprint,
+        contig_annotations       = VDJ_CALL_CELLS.contig_annotations,
+        merged_annotations       = self.merged_annotations,
+        total_read_pairs         = self.assembler_outs.total_read_pairs,
+        corrected_barcode_counts = self.assembler_outs.corrected_barcode_counts,
+        assemblable_reads_per_bc = self.assembler_outs.assemblable_reads_per_bc,
+        contig_summary           = self.assembler_outs.summary_tsv,
+        umi_summary              = self.assembler_outs.umi_summary_tsv,
+        barcode_support          = self.assembler_outs.barcode_support,
+        barcode_brief            = self.assembler_outs.barcode_brief,
+    )
+
+    call CLONOTYPE_ASSIGNER(
+        sample_number      = self.demux_sample_info.sample_number,
+        vdj_reference_path = self.vdj_reference_path,
+        contig_annotations = SUBSET_ASSEMBLY_OUTS.contig_annotations,
+        receptor           = SETUP_VDJ_ANALYSIS.receptor,
+        filter_switch      = self.filter_switch,
+    ) using (
+        disabled = SETUP_VDJ_ANALYSIS.disable_clonotyping,
+    )
+
+    call HANDLE_NO_CLONOTYPING(
+        asm_contig_json       = SUBSET_ASSEMBLY_OUTS.contig_annotations,
+        clonotype_contig_json = CLONOTYPE_ASSIGNER.contig_annotations_json,
+        disable_clonotyping   = SETUP_VDJ_ANALYSIS.disable_clonotyping,
+    )
+
+    call WRITE_ANN_CSV(
+        all_contig_annotations_json = HANDLE_NO_CLONOTYPING.final_contig_annotations,
+    )
+
+    call SUMMARIZE_VDJ_FILTERS(
+        sample_id              = self.common_input.sample_id,
+        sample_description     = self.common_input.sample_desc,
+        all_contig_annotations = HANDLE_NO_CLONOTYPING.final_contig_annotations,
+        asm_filter_diagnostics = VDJ_CALL_CELLS.asm_filter_diagnostics,
+        enclone_barcode_fate   = CLONOTYPE_ASSIGNER.enclone_barcode_fate,
+        raw_matrix_h5          = SETUP_VDJ_ANALYSIS.raw_matrix_h5,
+    ) using (
+        disabled = SETUP_VDJ_ANALYSIS.disable_clonotyping,
+    )
+
+    call WRITE_CONTIG_OUTS(
+        contig_annotations       = HANDLE_NO_CLONOTYPING.final_contig_annotations,
+        total_read_pairs         = SUBSET_ASSEMBLY_OUTS.total_read_pairs,
+        corrected_bc_counts      = SUBSET_ASSEMBLY_OUTS.corrected_barcode_counts,
+        assemblable_reads_per_bc = SUBSET_ASSEMBLY_OUTS.assemblable_reads_per_bc,
+    )
+
+    call REPORT_CONTIGS(
+        vdj_reference_path = self.vdj_reference_path,
+        cell_barcodes      = WRITE_CONTIG_OUTS.cell_barcodes,
+        contigs            = WRITE_CONTIG_OUTS.contig_fasta,
+        annotations        = HANDLE_NO_CLONOTYPING.final_contig_annotations,
+        filter_summary     = null,
+        contig_summary     = SUBSET_ASSEMBLY_OUTS.contig_summary,
+        umi_summary        = SUBSET_ASSEMBLY_OUTS.umi_summary,
+        prefix             = "",
+    ) using (
+        volatile = true,
+    )
+
+    call BEAM_ANALYZER(
+        filtered_feature_counts_matrix = SETUP_VDJ_ANALYSIS.filtered_matrix_h5,
+        per_barcode_count_metrics   = self.per_barcode_count_metrics,
+        beam_mode                   = SETUP_VDJ_ANALYSIS.beam_mode,
+        filtered_contig_annotations = WRITE_ANN_CSV.filtered_contig_annotations_csv,
+        clonotypes_csv              = CLONOTYPE_ASSIGNER.clonotypes_csv,
+        vdj_cell_barcodes           = WRITE_CONTIG_OUTS.cell_barcodes,
+    ) using (
+        disabled = SETUP_VDJ_ANALYSIS.disable_beam,
+    )
+
+    call SUMMARIZE_VDJ_REPORTS(
+        sample_id         = self.common_input.sample_id,
+        sample_desc       = self.common_input.sample_desc,
+        vdj_chemistry_def = self.vdj_chemistry_def,
+        barcode_support   = SUBSET_ASSEMBLY_OUTS.barcode_support,
+        summaries         = [
+            self.assembler_outs.summary,
+            REPORT_CONTIGS.summary,
+            CLONOTYPE_ASSIGNER.summary,
+            WRITE_CONTIG_OUTS.summary,
+            BEAM_ANALYZER.outputs.antigen_vdj_metrics_json,
+            SUMMARIZE_VDJ_FILTERS.metrics_summary,
+        ],
+        total_read_pairs  = SUBSET_ASSEMBLY_OUTS.total_read_pairs,
+        cell_barcodes     = WRITE_CONTIG_OUTS.cell_barcodes,
+        clonotype_summary = CLONOTYPE_ASSIGNER.clonotypes_csv,
+        receptor          = SETUP_VDJ_ANALYSIS.receptor,
+    )
+
+    call WRITE_CONTIG_PROTO(
+        vdj_reference_path      = self.vdj_reference_path,
+        contig_annotations_json = HANDLE_NO_CLONOTYPING.final_contig_annotations,
+        metrics_summary_json    = SUMMARIZE_VDJ_REPORTS.metrics_summary_json,
+        receptor                = SETUP_VDJ_ANALYSIS.receptor,
+        gem_wells               = [1],
+        cell_barcodes           = WRITE_CONTIG_OUTS.cell_barcodes,
+        sample_id               = self.common_input.sample_id,
+        sample_desc             = self.common_input.sample_desc,
+        multi_config_sha        = self.common_input.multi_config_sha,
+        barcode_brief           = SUBSET_ASSEMBLY_OUTS.barcode_brief,
+    ) using (
+        disabled = self.vdj_config.has_no_vdj_ref,
+    )
+
+    call VLOUPE_PREPROCESS(
+        pipestance_type              = "SC_VDJ_ASSEMBLER_CS",
+        sample_id                    = self.common_input.sample_id,
+        sample_desc                  = self.common_input.sample_desc,
+        enclone_output               = CLONOTYPE_ASSIGNER.enclone_output,
+        disable_vloupe               = CLONOTYPE_ASSIGNER.disable_vloupe,
+        beam_mode                    = SETUP_VDJ_ANALYSIS.beam_mode,
+        feature_reference            = self.feature_reference,
+        feature_barcode_matrix       = SETUP_VDJ_ANALYSIS.filtered_matrix_h5,
+        antigen_specificity_scores   = BEAM_ANALYZER.outputs.antigen_specificity_scores,
+        antigen_specificity_controls = self.feature_config.specificity_controls.control_for_allele,
+    )
+
+    return (
+        clonotype     = {
+            airr_rearrangement:              CLONOTYPE_ASSIGNER.airr_rearrangement,
+            all_contig_annotations_csv:      WRITE_ANN_CSV.all_contig_annotations_csv,
+            all_contig_annotations_json:     HANDLE_NO_CLONOTYPING.final_contig_annotations,
+            clonotypes_csv:                  CLONOTYPE_ASSIGNER.clonotypes_csv,
+            concat_ref_bam:                  CLONOTYPE_ASSIGNER.concat_ref_bam,
+            concat_ref_bam_bai:              CLONOTYPE_ASSIGNER.concat_ref_bam_bai,
+            concat_ref_fasta:                CLONOTYPE_ASSIGNER.concat_ref_fasta,
+            concat_ref_fasta_fai:            CLONOTYPE_ASSIGNER.concat_ref_fasta_fai,
+            consensus_annotations_csv:       CLONOTYPE_ASSIGNER.consensus_annotations_csv,
+            consensus_bam:                   CLONOTYPE_ASSIGNER.consensus_bam,
+            consensus_bam_bai:               CLONOTYPE_ASSIGNER.consensus_bam_bai,
+            consensus_fasta:                 CLONOTYPE_ASSIGNER.consensus_fasta,
+            consensus_fasta_fai:             CLONOTYPE_ASSIGNER.consensus_fasta_fai,
+            donor_ref_fa:                    CLONOTYPE_ASSIGNER.donor_ref_fa,
+            enclone_output:                  CLONOTYPE_ASSIGNER.enclone_output,
+            filtered_contig_annotations_csv: WRITE_ANN_CSV.filtered_contig_annotations_csv,
+        },
+        beam_analyzer = BEAM_ANALYZER.outputs,
+        report        = {
+            all_contig_barcodes:      WRITE_CONTIG_OUTS.all_contig_barcodes,
+            annotations_bed:          WRITE_CONTIG_OUTS.annotations_bed,
+            barcode_brief:            SUBSET_ASSEMBLY_OUTS.barcode_brief,
+            cdr3_barcodes:            WRITE_CONTIG_OUTS.cdr3_barcodes,
+            cell_barcodes:            WRITE_CONTIG_OUTS.cell_barcodes,
+            contig_fasta:             WRITE_CONTIG_OUTS.contig_fasta,
+            contig_fasta_fai:         WRITE_CONTIG_OUTS.contig_fasta_fai,
+            contig_fastq:             WRITE_CONTIG_OUTS.contig_fastq,
+            contig_summary:           SUBSET_ASSEMBLY_OUTS.contig_summary,
+            filter_metrics:           SUMMARIZE_VDJ_FILTERS.metrics_summary,
+            filter_summary:           SUMMARIZE_VDJ_FILTERS.filter_summary,
+            filtered_contig_fasta:    WRITE_CONTIG_OUTS.filtered_contig_fasta,
+            filtered_contig_fastq:    WRITE_CONTIG_OUTS.filtered_contig_fastq,
+            metrics_summary_csv:      SUMMARIZE_VDJ_REPORTS.metrics_summary_csv,
+            metrics_summary_json:     SUMMARIZE_VDJ_REPORTS.metrics_summary_json,
+            productive_barcodes:      WRITE_CONTIG_OUTS.prod_barcodes,
+            productive_cell_barcodes: WRITE_CONTIG_OUTS.paired_cell_barcodes,
+            umi_summary:              SUBSET_ASSEMBLY_OUTS.umi_summary,
+            vdj_contig_info:          WRITE_CONTIG_PROTO.vdj_contig_info,
+            vloupe:                   VLOUPE_PREPROCESS.output_for_vloupe,
+            web_summary:              SUMMARIZE_VDJ_REPORTS.web_summary,
+            web_summary_data:         SUMMARIZE_VDJ_REPORTS.web_summary_data,
+        },
+    )
+}
+
 pipeline VDJ_GEM_WELL_PROCESSOR(
-    in  string                  sample_id,
-    in  ChemistryDef            chemistry_def,
+    in  CommonInputs            common_input,
+    in  ChemistryDef            vdj_chemistry_def,
+    in  map<ChemistryDef>       count_chemistry_defs,
     in  string                  receptor,
     in  VdjAssemblerInputs      inputs,
     in  VdjGenInputs            gen_inputs,
-    in  csv                     gex_filtered_barcodes,
+    in  GexMatrices             library_level_gex,
+    in  bmsf[]                  per_barcode_count_metrics,
+    in  SampleMatrices[]        multi_matrices,
+    in  json                    multi_graph,
     in  bool                    is_antibody_only,
     in  bool                    is_non_targeted_gex,
+    in  bool                    has_no_vdj_ref,
+    in  csv                     feature_reference,
     in  FeatureConfig           feature_config,
     in  FilterSwitch            filter_switch,
     out ChemistryDef            chemistry_def,
     out MULTI_SETUP_CHUNKS      setup_chunks_outs,
     out SC_VDJ_CONTIG_ASSEMBLER assembler_outs,
-    out json                    contig_annotations,
-    out json.lz4                asm_filter_diagnostics,
+    out VDJ_ANALYZER            lib_level,
+    out map<VDJ_ANALYZER>       per_sample,
+    out map<vwc.json>           vdj_ws_contents,
 )
 {
     call MULTI_SETUP_CHUNKS(
-        sample_id            = self.sample_id,
-        chemistry_def        = self.chemistry_def,
+        sample_id            = self.common_input.sample_id,
+        chemistry_defs       = {
+            "VDJ": self.vdj_chemistry_def,
+        },
         default_library_type = "VDJ",
         *                    = self.inputs,
     ) using (
@@ -691,39 +1048,126 @@ pipeline VDJ_GEM_WELL_PROCESSOR(
     )
 
     call SC_VDJ_CONTIG_ASSEMBLER(
+        chemistry_defs       = {
+            "VDJ": self.vdj_chemistry_def,
+        },
         gem_well             = 1,
-        chemistry_def        = self.chemistry_def,
         chunks               = MULTI_SETUP_CHUNKS.chunks,
         inner_primers        = self.inputs.inner_enrichment_primers,
         vdj_reference_folder = self.gen_inputs.vdj_reference_path,
         receptor             = self.receptor,
         feature_config       = self.feature_config,
+        min_contig_length    = self.gen_inputs.min_contig_length,
         *                    = self.inputs,
     )
 
-    call ASM_CALL_CELLS(
-        receptor           = self.receptor,
-        denovo             = self.inputs.denovo,
-        vdj_reference_path = self.gen_inputs.vdj_reference_path,
-        contig_annotations = SC_VDJ_CONTIG_ASSEMBLER.asm_contig_annotations,
-        barcode_brief      = SC_VDJ_CONTIG_ASSEMBLER.barcode_brief,
-        n50_n50_rpu        = SC_VDJ_CONTIG_ASSEMBLER.n50_n50_rpu,
-        filter_switch      = self.filter_switch,
+    call SETUP_VDJ_DEMUX(
+        multi_matrices = self.multi_matrices,
+        multi_graph    = self.multi_graph,
     )
 
-    call HANDLE_GEX_CELLS(
-        asm_contig_annotations = ASM_CALL_CELLS.contig_annotations,
-        filtered_barcodes      = self.gex_filtered_barcodes,
-        is_antibody_only       = self.is_antibody_only,
-        is_non_targeted_gex    = self.is_non_targeted_gex,
+    map call VDJ_ANALYZER as PER_SAMPLE_VDJ_ANALYZER(
+        vdj_config                = {
+            denovo:           self.inputs.denovo,
+            has_antigen:      SETUP_VDJ_DEMUX.has_antigen,
+            has_no_vdj_ref:   self.has_no_vdj_ref,
+            is_multi:         SETUP_VDJ_DEMUX.is_multi,
+            per_sample:       true,
+            skip_clonotyping: self.gen_inputs.skip_clonotyping,
+        },
+        common_input              = self.common_input,
+        vdj_chemistry_def         = self.vdj_chemistry_def,
+        count_chemistry_defs      = self.count_chemistry_defs,
+        receptor                  = self.receptor,
+        vdj_reference_path        = self.gen_inputs.vdj_reference_path,
+        feature_reference         = self.feature_reference,
+        feature_config            = self.feature_config,
+        assembler_outs            = {
+            asm_contig_annotations:   SC_VDJ_CONTIG_ASSEMBLER.asm_contig_annotations,
+            assemblable_reads_per_bc: SC_VDJ_CONTIG_ASSEMBLER.assemblable_reads_per_bc,
+            barcode_brief:            SC_VDJ_CONTIG_ASSEMBLER.barcode_brief,
+            barcode_support:          SC_VDJ_CONTIG_ASSEMBLER.barcode_support,
+            corrected_barcode_counts: SC_VDJ_CONTIG_ASSEMBLER.corrected_barcode_counts,
+            n50_n50_rpu:              SC_VDJ_CONTIG_ASSEMBLER.n50_n50_rpu,
+            summary:                  null,
+            summary_tsv:              SC_VDJ_CONTIG_ASSEMBLER.summary_tsv,
+            total_read_pairs:         SC_VDJ_CONTIG_ASSEMBLER.total_read_pairs,
+            umi_summary_tsv:          SC_VDJ_CONTIG_ASSEMBLER.umi_summary_tsv,
+        },
+        merged_annotations        = null,
+        demux_sample_info         = split SETUP_VDJ_DEMUX.per_sample_info,
+        library_level_gex         = self.library_level_gex,
+        per_barcode_count_metrics = self.per_barcode_count_metrics,
+        filter_switch             = self.filter_switch,
+        is_antibody_only          = self.is_antibody_only,
+        is_non_targeted_gex       = self.is_non_targeted_gex,
+    ) using (
+        disabled = SETUP_VDJ_DEMUX.is_not_multi,
+    )
+
+    call MERGE_PER_SAMPLE_ANNOTATIONS(
+        per_sample_annotations = PER_SAMPLE_VDJ_ANALYZER.clonotype.all_contig_annotations_json,
+    ) using (
+        disabled = SETUP_VDJ_DEMUX.is_not_multi,
+    )
+
+    call VDJ_ANALYZER as LIB_VDJ_ANALYZER(
+        vdj_config                = {
+            denovo:           self.inputs.denovo,
+            has_antigen:      SETUP_VDJ_DEMUX.has_antigen,
+            has_no_vdj_ref:   self.has_no_vdj_ref,
+            is_multi:         SETUP_VDJ_DEMUX.is_multi,
+            per_sample:       false,
+            skip_clonotyping: self.gen_inputs.skip_clonotyping,
+        },
+        common_input              = self.common_input,
+        vdj_chemistry_def         = self.vdj_chemistry_def,
+        receptor                  = self.receptor,
+        vdj_reference_path        = self.gen_inputs.vdj_reference_path,
+        feature_reference         = self.feature_reference,
+        feature_config            = self.feature_config,
+        count_chemistry_defs      = self.count_chemistry_defs,
+        assembler_outs            = {
+            asm_contig_annotations:   SC_VDJ_CONTIG_ASSEMBLER.asm_contig_annotations,
+            assemblable_reads_per_bc: SC_VDJ_CONTIG_ASSEMBLER.assemblable_reads_per_bc,
+            barcode_brief:            SC_VDJ_CONTIG_ASSEMBLER.barcode_brief,
+            barcode_support:          SC_VDJ_CONTIG_ASSEMBLER.barcode_support,
+            corrected_barcode_counts: SC_VDJ_CONTIG_ASSEMBLER.corrected_barcode_counts,
+            n50_n50_rpu:              SC_VDJ_CONTIG_ASSEMBLER.n50_n50_rpu,
+            summary:                  SC_VDJ_CONTIG_ASSEMBLER.summary,
+            summary_tsv:              SC_VDJ_CONTIG_ASSEMBLER.summary_tsv,
+            total_read_pairs:         SC_VDJ_CONTIG_ASSEMBLER.total_read_pairs,
+            umi_summary_tsv:          SC_VDJ_CONTIG_ASSEMBLER.umi_summary_tsv,
+        },
+        merged_annotations        = MERGE_PER_SAMPLE_ANNOTATIONS.contig_annotations,
+        demux_sample_info         = null,
+        library_level_gex         = self.library_level_gex,
+        per_barcode_count_metrics = self.per_barcode_count_metrics,
+        filter_switch             = self.filter_switch,
+        is_antibody_only          = self.is_antibody_only,
+        is_non_targeted_gex       = self.is_non_targeted_gex,
+    )
+
+    call BUILD_PER_SAMPLE_VDJ_WS_CONTENTS(
+        lib_level_metrics   = LIB_VDJ_ANALYZER.report.metrics_summary_json,
+        per_sample_metrics  = PER_SAMPLE_VDJ_ANALYZER.report.metrics_summary_json,
+        receptor            = self.receptor,
+        physical_library_id = self.inputs.physical_library_id,
+        vdj_gen_inputs      = self.gen_inputs,
+        sequencing_metrics  = SC_VDJ_CONTIG_ASSEMBLER.sequencing_metrics,
+        vdj_ws_json         = PER_SAMPLE_VDJ_ANALYZER.report.web_summary_data,
+        filter_metrics      = PER_SAMPLE_VDJ_ANALYZER.report.filter_metrics,
+    ) using (
+        disabled = SETUP_VDJ_DEMUX.is_not_multi,
     )
 
     return (
-        chemistry_def          = self.chemistry_def,
-        setup_chunks_outs      = MULTI_SETUP_CHUNKS,
-        assembler_outs         = SC_VDJ_CONTIG_ASSEMBLER,
-        contig_annotations     = HANDLE_GEX_CELLS.contig_annotations,
-        asm_filter_diagnostics = ASM_CALL_CELLS.filter_diagnostics,
+        chemistry_def     = self.vdj_chemistry_def,
+        setup_chunks_outs = MULTI_SETUP_CHUNKS,
+        assembler_outs    = SC_VDJ_CONTIG_ASSEMBLER,
+        lib_level         = LIB_VDJ_ANALYZER,
+        per_sample        = PER_SAMPLE_VDJ_ANALYZER,
+        vdj_ws_contents   = BUILD_PER_SAMPLE_VDJ_WS_CONTENTS.vdj_ws_contents,
     )
 }
 
@@ -800,8 +1244,7 @@ pipeline FORCE_SAMPLE_DEF_GEM_WELL(
 # gem wells
 pipeline MULTI_GEM_WELL_PROCESSOR(
     in  int                      gem_group,
-    in  string                   sample_id,
-    in  string                   multi_config_sha,
+    in  CommonInputs             common_input,
     in  FullPipelineConfig       config,
     in  bool                     is_pd,
     in  CounterInputs            count_inputs,
@@ -828,8 +1271,8 @@ pipeline MULTI_GEM_WELL_PROCESSOR(
 {
     call COUNT_GEM_WELL_PROCESSOR(
         gem_group              = self.gem_group,
-        sample_id              = self.sample_id,
-        multi_config_sha       = self.multi_config_sha,
+        sample_id              = self.common_input.sample_id,
+        multi_config_sha       = self.common_input.multi_config_sha,
         inputs                 = self.count_inputs,
         chem                   = self.count_chem,
         libraries_to_translate = self.libraries_to_translate,
@@ -848,53 +1291,77 @@ pipeline MULTI_GEM_WELL_PROCESSOR(
         *                   = self.vdj_gen_inputs.filter_flags,
     )
 
-    # TODO: accept the raw matrix from COUNT_GEM_WELL_PROCESSOR
-    # to aid in cell calling.
     call VDJ_GEM_WELL_PROCESSOR as VDJ_T_GEM_WELL_PROCESSOR(
-        sample_id             = self.sample_id,
-        chemistry_def         = self.vdj_t_chem_def,
-        receptor              = self.vdj_t_receptor,
-        inputs                = self.vdj_t_inputs,
-        gen_inputs            = self.vdj_gen_inputs,
-        gex_filtered_barcodes = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_barcodes,
-        is_antibody_only      = self.count_chem.is_antibody_only,
-        is_non_targeted_gex   = COUNT_GEM_WELL_PROCESSOR.target_outs.disable_targeted,
-        feature_config        = self.feature_config,
-        filter_switch         = MAKE_VDJ_FILTER_SWITCH.filter_switch,
+        common_input              = self.common_input,
+        count_chemistry_defs      = self.count_chem.chemistry_defs,
+        vdj_chemistry_def         = self.vdj_t_chem_def,
+        receptor                  = self.vdj_t_receptor,
+        inputs                    = self.vdj_t_inputs,
+        gen_inputs                = self.vdj_gen_inputs,
+        library_level_gex         = {
+            filtered_barcodes:  COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_barcodes,
+            filtered_matrix_h5: COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_gene_bc_matrices_h5,
+            raw_matrix_h5:      COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.raw_gene_bc_matrices_h5,
+        },
+        per_barcode_count_metrics = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.per_barcode_metrics_shard,
+        multi_matrices            = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.multi_matrices,
+        multi_graph               = self.multi_graph,
+        is_antibody_only          = self.count_chem.is_antibody_only,
+        is_non_targeted_gex       = COUNT_GEM_WELL_PROCESSOR.target_outs.disable_targeted,
+        feature_reference         = self.count_inputs.feature_reference,
+        feature_config            = self.feature_config,
+        filter_switch             = MAKE_VDJ_FILTER_SWITCH.filter_switch,
+        has_no_vdj_ref            = self.config.has_no_vdj_ref,
     ) using (
         disabled = self.config.disable_vdj_t,
     )
 
-    # TODO: accept the raw matrix from COUNT_GEM_WELL_PROCESSOR
-    # to aid in cell calling.
     call VDJ_GEM_WELL_PROCESSOR as VDJ_T_GD_GEM_WELL_PROCESSOR(
-        sample_id             = self.sample_id,
-        chemistry_def         = self.vdj_t_gd_chem_def,
-        receptor              = self.vdj_t_gd_receptor,
-        inputs                = self.vdj_t_gd_inputs,
-        gen_inputs            = self.vdj_gen_inputs,
-        gex_filtered_barcodes = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_barcodes,
-        is_antibody_only      = self.count_chem.is_antibody_only,
-        is_non_targeted_gex   = COUNT_GEM_WELL_PROCESSOR.target_outs.disable_targeted,
-        feature_config        = self.feature_config,
-        filter_switch         = MAKE_VDJ_FILTER_SWITCH.filter_switch,
+        common_input              = self.common_input,
+        count_chemistry_defs      = self.count_chem.chemistry_defs,
+        vdj_chemistry_def         = self.vdj_t_gd_chem_def,
+        receptor                  = self.vdj_t_gd_receptor,
+        inputs                    = self.vdj_t_gd_inputs,
+        gen_inputs                = self.vdj_gen_inputs,
+        library_level_gex         = {
+            filtered_barcodes:  COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_barcodes,
+            filtered_matrix_h5: COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_gene_bc_matrices_h5,
+            raw_matrix_h5:      COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.raw_gene_bc_matrices_h5,
+        },
+        per_barcode_count_metrics = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.per_barcode_metrics_shard,
+        multi_matrices            = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.multi_matrices,
+        multi_graph               = self.multi_graph,
+        is_antibody_only          = self.count_chem.is_antibody_only,
+        is_non_targeted_gex       = COUNT_GEM_WELL_PROCESSOR.target_outs.disable_targeted,
+        feature_reference         = self.count_inputs.feature_reference,
+        feature_config            = self.feature_config,
+        filter_switch             = MAKE_VDJ_FILTER_SWITCH.filter_switch,
+        has_no_vdj_ref            = self.config.has_no_vdj_ref,
     ) using (
         disabled = self.config.disable_vdj_t_gd,
     )
 
-    # TODO: accept the raw matrix from COUNT_GEM_WELL_PROCESSOR
-    # to aid in cell calling.
     call VDJ_GEM_WELL_PROCESSOR as VDJ_B_GEM_WELL_PROCESSOR(
-        sample_id             = self.sample_id,
-        chemistry_def         = self.vdj_b_chem_def,
-        receptor              = self.vdj_b_receptor,
-        inputs                = self.vdj_b_inputs,
-        gen_inputs            = self.vdj_gen_inputs,
-        gex_filtered_barcodes = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_barcodes,
-        is_antibody_only      = self.count_chem.is_antibody_only,
-        is_non_targeted_gex   = COUNT_GEM_WELL_PROCESSOR.target_outs.disable_targeted,
-        feature_config        = self.feature_config,
-        filter_switch         = MAKE_VDJ_FILTER_SWITCH.filter_switch,
+        common_input              = self.common_input,
+        count_chemistry_defs      = self.count_chem.chemistry_defs,
+        vdj_chemistry_def         = self.vdj_b_chem_def,
+        receptor                  = self.vdj_b_receptor,
+        inputs                    = self.vdj_b_inputs,
+        gen_inputs                = self.vdj_gen_inputs,
+        library_level_gex         = {
+            filtered_barcodes:  COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_barcodes,
+            filtered_matrix_h5: COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.filtered_gene_bc_matrices_h5,
+            raw_matrix_h5:      COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.raw_gene_bc_matrices_h5,
+        },
+        per_barcode_count_metrics = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.per_barcode_metrics_shard,
+        multi_matrices            = COUNT_GEM_WELL_PROCESSOR.basic_counter_outs.multi_matrices,
+        multi_graph               = self.multi_graph,
+        is_antibody_only          = self.count_chem.is_antibody_only,
+        is_non_targeted_gex       = COUNT_GEM_WELL_PROCESSOR.target_outs.disable_targeted,
+        feature_reference         = self.count_inputs.feature_reference,
+        feature_config            = self.feature_config,
+        filter_switch             = MAKE_VDJ_FILTER_SWITCH.filter_switch,
+        has_no_vdj_ref            = self.config.has_no_vdj_ref,
     ) using (
         disabled = self.config.disable_vdj_b,
     )
@@ -922,6 +1389,7 @@ pipeline COUNT_ANALYZER(
     in  bool                  disable_crispr,
     in  bool                  disable_antibody,
     in  bool                  disable_antigen,
+    in  bool                  is_pd,
     in  bool                  disable_targeted,
     in  csv                   filtered_barcodes,
     in  csv                   aggregate_barcodes,
@@ -936,9 +1404,9 @@ pipeline COUNT_ANALYZER(
 )
 {
     call DISABLE_SECONDARY_ANALYSIS(
-        filtered_matrices_h5     = self.filtered_matrices_h5,
-        molecule_info            = self.molecule_info,
-        no_secondary_analysis_in = self.no_secondary_analysis,
+        is_spatial            = false,
+        filtered_matrices_h5  = self.filtered_matrices_h5,
+        no_secondary_analysis = self.no_secondary_analysis,
     )
 
     # TODO: It would be cleaner if _CRISPR_ANALYZER can go inside SC_RNA_ANALYZER
@@ -958,6 +1426,7 @@ pipeline COUNT_ANALYZER(
             force_cells:                null,
             graphclust_neighbors:       null,
             graphclust_resolution:      null,
+            is_pd:                      self.is_pd,
             is_spatial:                 false,
             is_visium_hd:               false,
             max_clusters:               null,
@@ -993,9 +1462,7 @@ pipeline COUNT_ANALYZER(
 
     call _CRISPR_ANALYZER(
         filtered_feature_counts_matrix = self.filtered_matrices_h5,
-        filtered_barcodes    = self.filtered_barcodes,
-        feature_reference    = self.feature_reference,
-        counter_metrics_json = self.counter_metrics_json,
+        feature_reference = self.feature_reference,
     ) using (
         disabled = self.disable_crispr,
     )
@@ -1008,6 +1475,8 @@ pipeline COUNT_ANALYZER(
         reference_path            = self.count_inputs.reference_path,
         probe_set                 = self.parse_target_features.probe_set,
         target_panel_summary      = self.parse_target_features.target_panel_summary,
+        is_spatial                = false,
+        is_visium_hd              = false,
     ) using (
         disabled = self.disable_targeted,
     )
@@ -1020,18 +1489,18 @@ pipeline COUNT_ANALYZER(
     # sharing.
     call _ANTIBODY_ANALYZER(
         filtered_feature_counts_matrix = self.filtered_matrices_h5,
-        molecule_info      = self.molecule_info,
         aggregate_barcodes = self.aggregate_barcodes,
         is_antibody        = true,
+        is_spatial         = false,
     ) using (
         disabled = self.disable_antibody,
     )
 
     call _ANTIBODY_ANALYZER as _ANTIGEN_ANALYZER(
         filtered_feature_counts_matrix = self.filtered_matrices_h5,
-        molecule_info      = self.molecule_info,
         aggregate_barcodes = self.aggregate_barcodes,
         is_antibody        = false,
+        is_spatial         = false,
     ) using (
         disabled = self.disable_antigen,
     )
@@ -1064,187 +1533,6 @@ stage CALCULATE_ANTIGEN_SPECIFICITY(
     mem_gb = 4,
 )
 
-pipeline BEAM_ANALYZER(
-    in  h5                  filtered_feature_counts_matrix,
-    in  bmsf[]              per_barcode_count_metrics,
-    in  string              beam_mode,
-    in  csv                 filtered_contig_annotations,
-    in  csv                 clonotypes_csv,
-    in  json                vdj_cell_barcodes,
-    out BeamAnalyzerOutputs outputs,
-)
-{
-    call CALCULATE_ANTIGEN_SPECIFICITY(
-        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        beam_mode                   = self.beam_mode,
-        filtered_contig_annotations = self.filtered_contig_annotations,
-        clonotypes_csv              = self.clonotypes_csv,
-        count_gem_well_map          = null,
-    )
-
-    call COMPUTE_ANTIGEN_VDJ_METRICS(
-        vdj_cell_barcodes         = self.vdj_cell_barcodes,
-        per_barcode_count_metrics = self.per_barcode_count_metrics,
-    )
-
-    call CREATE_BARCODE_CSV(
-        gex_filtered_matrix      = self.filtered_feature_counts_matrix,
-        vdj_filtered_annotations = self.filtered_contig_annotations,
-        count_gem_well_map       = null,
-    )
-
-    return (
-        outputs = {
-            antigen_assignment:             CALCULATE_ANTIGEN_SPECIFICITY.antigen_assignment,
-            antigen_specificity_scores:     CALCULATE_ANTIGEN_SPECIFICITY.antigen_specificity_scores,
-            antigen_vdj_metrics_bin:        COMPUTE_ANTIGEN_VDJ_METRICS.metrics_bin,
-            antigen_vdj_metrics_json:       COMPUTE_ANTIGEN_VDJ_METRICS.metrics_json,
-            clonotype_concordance:          CALCULATE_ANTIGEN_SPECIFICITY.clonotype_concordance,
-            exact_subclonotype_concordance: CALCULATE_ANTIGEN_SPECIFICITY.exact_subclonotype_concordance,
-            per_barcode:                    CREATE_BARCODE_CSV.per_barcode_csv,
-            specificity_summary:            CALCULATE_ANTIGEN_SPECIFICITY.summary,
-        },
-    )
-}
-
-###############################################################################
-# Reporter pipeline
-###############################################################################
-pipeline VDJ_REPORTER(
-    in  string                    sample_id,
-    in  string                    sample_desc,
-    in  string                    multi_config_sha,
-    in  string                    receptor,
-    in  path                      vdj_reference_path,
-    in  bool                      has_no_vdj_ref,
-    in  VDJ_GEM_WELL_PROCESSOR    vdj_gw,
-    in  SC_VDJ_CLONOTYPE_ASSIGNER vdj_clonotype,
-    in  BeamAnalyzerInputs        beam_analyzer_inputs,
-    in  h5                        raw_feature_bc_matrix_h5,
-    in  string                    feature_reference,
-    in  FeatureConfig             feature_config,
-    out VdjReport                 report,
-    out BeamAnalyzerOutputs       beam_analyzer,
-)
-{
-    call WRITE_CONTIG_OUTS(
-        contig_annotations       = self.vdj_clonotype.all_contig_annotations_json,
-        total_read_pairs         = self.vdj_gw.assembler_outs.total_read_pairs,
-        corrected_bc_counts      = self.vdj_gw.assembler_outs.corrected_barcode_counts,
-        assemblable_reads_per_bc = self.vdj_gw.assembler_outs.assemblable_reads_per_bc,
-    )
-
-    call BEAM_ANALYZER(
-        filtered_feature_counts_matrix = self.beam_analyzer_inputs.filtered_feature_counts_matrix,
-        per_barcode_count_metrics   = self.beam_analyzer_inputs.per_barcode_count_metrics,
-        beam_mode                   = self.beam_analyzer_inputs.beam_mode,
-        filtered_contig_annotations = self.vdj_clonotype.filtered_contig_annotations_csv,
-        clonotypes_csv              = self.vdj_clonotype.clonotypes_csv,
-        vdj_cell_barcodes           = WRITE_CONTIG_OUTS.cell_barcodes,
-    ) using (
-        disabled = self.beam_analyzer_inputs.disable_beam,
-    )
-
-    call REPORT_CONTIGS(
-        vdj_reference_path = self.vdj_reference_path,
-        cell_barcodes      = WRITE_CONTIG_OUTS.cell_barcodes,
-        contigs            = WRITE_CONTIG_OUTS.contig_fasta,
-        annotations        = self.vdj_clonotype.all_contig_annotations_json,
-        filter_summary     = null,
-        contig_summary     = self.vdj_gw.assembler_outs.summary_tsv,
-        umi_summary        = self.vdj_gw.assembler_outs.umi_summary_tsv,
-    ) using (
-        volatile = true,
-    )
-
-    call SUMMARIZE_VDJ_FILTERS(
-        sample_id              = self.sample_id,
-        sample_description     = self.sample_desc,
-        all_contig_annotations = self.vdj_clonotype.all_contig_annotations_json,
-        asm_filter_diagnostics = self.vdj_gw.asm_filter_diagnostics,
-        enclone_barcode_fate   = self.vdj_clonotype.enclone_barcode_fate,
-        raw_matrix_h5          = self.raw_feature_bc_matrix_h5,
-    ) using (
-        disabled = self.has_no_vdj_ref,
-    )
-
-    call SUMMARIZE_VDJ_REPORTS(
-        sample_id         = self.sample_id,
-        sample_desc       = self.sample_desc,
-        barcode_whitelist = self.vdj_gw.setup_chunks_outs.barcode_whitelist,
-        barcode_support   = self.vdj_gw.assembler_outs.barcode_support,
-        summaries         = [
-            self.vdj_gw.assembler_outs.summary,
-            REPORT_CONTIGS.summary,
-            self.vdj_clonotype.summary,
-            WRITE_CONTIG_OUTS.summary,
-            SUMMARIZE_VDJ_FILTERS.metrics_summary,
-            # The antigen metrics computed over VDJ cell barcodes are added to
-            # the VDJ metrics json. Because the VDJ part of the pipeline is
-            # not engineered to support multiplexing, whereas the count
-            # pipeline supports multiplexing, adding these metrics to the
-            # count json introduces a more complex structural change in the
-            # pipeline
-            BEAM_ANALYZER.outputs.antigen_vdj_metrics_json,
-        ],
-        cell_barcodes     = WRITE_CONTIG_OUTS.cell_barcodes,
-        clonotype_summary = self.vdj_clonotype.clonotypes_csv,
-        receptor          = self.receptor,
-    )
-
-    call WRITE_CONTIG_PROTO(
-        vdj_reference_path      = self.vdj_reference_path,
-        contig_annotations_json = self.vdj_clonotype.all_contig_annotations_json,
-        metrics_summary_json    = SUMMARIZE_VDJ_REPORTS.metrics_summary_json,
-        receptor                = self.receptor,
-        # TODO: NEEDS TO BE UPDATED FOR MULTI GEM WELL
-        gem_wells               = [1],
-        cell_barcodes           = WRITE_CONTIG_OUTS.cell_barcodes,
-        sample_id               = self.sample_id,
-        sample_desc             = self.sample_desc,
-        multi_config_sha        = self.multi_config_sha,
-        barcode_brief           = self.vdj_gw.assembler_outs.barcode_brief,
-    ) using (
-        disabled = self.has_no_vdj_ref,
-    )
-
-    call VLOUPE_PREPROCESS(
-        pipestance_type              = "SC_VDJ_ASSEMBLER_CS",
-        sample_id                    = self.sample_id,
-        sample_desc                  = self.sample_desc,
-        enclone_output               = self.vdj_clonotype.enclone_output,
-        disable_vloupe               = self.vdj_clonotype.disable_vloupe,
-        beam_mode                    = self.beam_analyzer_inputs.beam_mode,
-        feature_reference            = self.feature_reference,
-        feature_barcode_matrix       = self.beam_analyzer_inputs.filtered_feature_counts_matrix,
-        antigen_specificity_scores   = BEAM_ANALYZER.outputs.antigen_specificity_scores,
-        antigen_specificity_controls = self.feature_config.specificity_controls.control_for_allele,
-    )
-
-    return (
-        report        = {
-            annotations_bed:          WRITE_CONTIG_OUTS.annotations_bed,
-            cell_barcodes:            WRITE_CONTIG_OUTS.cell_barcodes,
-            contig_fasta:             WRITE_CONTIG_OUTS.contig_fasta,
-            contig_fasta_fai:         WRITE_CONTIG_OUTS.contig_fasta_fai,
-            contig_fastq:             WRITE_CONTIG_OUTS.contig_fastq,
-            filter_metrics:           SUMMARIZE_VDJ_FILTERS.metrics_summary,
-            filter_summary:           SUMMARIZE_VDJ_FILTERS.filter_summary,
-            filtered_contig_fasta:    WRITE_CONTIG_OUTS.filtered_contig_fasta,
-            filtered_contig_fastq:    WRITE_CONTIG_OUTS.filtered_contig_fastq,
-            metrics_summary_csv:      SUMMARIZE_VDJ_REPORTS.metrics_summary_csv,
-            metrics_summary_json:     SUMMARIZE_VDJ_REPORTS.metrics_summary_json,
-            productive_cell_barcodes: WRITE_CONTIG_OUTS.paired_cell_barcodes,
-            receptor:                 SUMMARIZE_VDJ_REPORTS.receptor,
-            vdj_contig_info:          WRITE_CONTIG_PROTO.vdj_contig_info,
-            vloupe:                   VLOUPE_PREPROCESS.output_for_vloupe,
-            web_summary:              SUMMARIZE_VDJ_REPORTS.web_summary,
-            web_summary_data:         SUMMARIZE_VDJ_REPORTS.web_summary_data,
-        },
-        beam_analyzer = BEAM_ANALYZER.outputs,
-    )
-}
-
 stage CHOOSE_CLOUPE(
     in  cloupe      library_cloupe,
     in  map<cloupe> sample_cloupe,
@@ -1255,122 +1543,42 @@ stage CHOOSE_CLOUPE(
 )
 
 pipeline MULTI_REPORTER(
-    in  string                    sample_id,
-    in  string                    sample_desc,
-    in  string                    multi_config_sha,
-    in  FullPipelineConfig        config,
-    in  string                    count_pipestance_type,
-    in  csv                       feature_reference,
-    in  path                      reference_path,
-    in  COUNT_GEM_WELL_PROCESSOR  count_gw,
-    in  bool                      include_introns,
-    in  AnalyzerOutputs           count_analyzer,
-    in  _CRISPR_ANALYZER          crispr_analyzer,
-    in  _ANTIBODY_ANALYZER        antibody_analyzer,
-    in  _ANTIBODY_ANALYZER        antigen_analyzer,
-    in  _TARGETED_ANALYZER        targeted_analyzer,
-    in  BeamAnalyzerInputs        beam_analyzer_inputs,
-    in  path                      vdj_reference_path,
-    in  string                    vdj_t_receptor,
-    in  VDJ_GEM_WELL_PROCESSOR    vdj_t_gw,
-    in  SC_VDJ_CLONOTYPE_ASSIGNER vdj_t_clonotype,
-    in  string                    vdj_t_gd_receptor,
-    in  VDJ_GEM_WELL_PROCESSOR    vdj_t_gd_gw,
-    in  SC_VDJ_CLONOTYPE_ASSIGNER vdj_t_gd_clonotype,
-    in  string                    vdj_b_receptor,
-    in  VDJ_GEM_WELL_PROCESSOR    vdj_b_gw,
-    in  SC_VDJ_CLONOTYPE_ASSIGNER vdj_b_clonotype,
-    in  h5                        barcode_summary,
-    in  csv                       filtered_barcodes,
-    in  AssignTagsOuts            assign_tags_outs,
-    in  string                    gem_well_throughput,
-    in  bool                      disable_library_cloupe,
-    in  map<cloupe>               sample_cloupe,
-    in  FeatureConfig             feature_config,
-    out SUMMARIZE_REPORTS         count_summary,
-    out cloupe                    cloupe,
-    out VdjReport                 vdj_t_report,
-    out VdjReport                 vdj_t_gd_report,
-    out VdjReport                 vdj_b_report,
-    out json                      antibody_histograms,
-    out json                      antigen_histograms,
-    out json                      barcode_rank_plots,
-    out json                      jibes_biplot_histogram,
-    out json                      cmo_tsne_plot,
-    out BeamAnalyzerOutputs       beam_analyzer,
+    in  string                   sample_id,
+    in  string                   sample_desc,
+    in  FullPipelineConfig       config,
+    in  string                   count_pipestance_type,
+    in  csv                      feature_reference,
+    in  path                     reference_path,
+    in  map<ChemistryDef>        chemistry_defs,
+    in  COUNT_GEM_WELL_PROCESSOR count_gw,
+    in  bool                     include_introns,
+    in  AnalyzerOutputs          count_analyzer,
+    in  _CRISPR_ANALYZER         crispr_analyzer,
+    in  _ANTIBODY_ANALYZER       antibody_analyzer,
+    in  _ANTIBODY_ANALYZER       antigen_analyzer,
+    in  _TARGETED_ANALYZER       targeted_analyzer,
+    in  h5                       barcode_summary,
+    in  csv                      filtered_barcodes,
+    in  AssignTagsOuts           assign_tags_outs,
+    in  bool                     disable_library_cloupe,
+    in  map<cloupe>              sample_cloupe,
+    out SUMMARIZE_REPORTS        count_summary,
+    out cloupe                   cloupe,
+    out json                     antibody_histograms,
+    out json                     antigen_histograms,
+    out json                     barcode_rank_plots,
+    out json                     jibes_biplot_histogram,
+    out json                     cmo_tsne_plot,
 )
 {
-    call VDJ_REPORTER as VDJ_T_REPORTER(
-        sample_id                = self.sample_id,
-        sample_desc              = self.sample_desc,
-        receptor                 = self.vdj_t_receptor,
-        multi_config_sha         = self.multi_config_sha,
-        vdj_reference_path       = self.vdj_reference_path,
-        has_no_vdj_ref           = self.config.has_no_vdj_ref,
-        vdj_gw                   = self.vdj_t_gw,
-        vdj_clonotype            = self.vdj_t_clonotype,
-        beam_analyzer_inputs     = self.beam_analyzer_inputs,
-        raw_feature_bc_matrix_h5 = self.count_gw.basic_counter_outs.raw_gene_bc_matrices_h5,
-        feature_reference        = self.feature_reference,
-        feature_config           = self.feature_config,
-    ) using (
-        disabled = self.config.disable_vdj_t,
-    )
-
-    call VDJ_REPORTER as VDJ_T_GD_REPORTER(
-        sample_id                = self.sample_id,
-        sample_desc              = self.sample_desc,
-        receptor                 = self.vdj_t_gd_receptor,
-        multi_config_sha         = self.multi_config_sha,
-        vdj_reference_path       = self.vdj_reference_path,
-        has_no_vdj_ref           = self.config.has_no_vdj_ref,
-        vdj_gw                   = self.vdj_t_gd_gw,
-        vdj_clonotype            = self.vdj_t_gd_clonotype,
-        beam_analyzer_inputs     = self.beam_analyzer_inputs,
-        raw_feature_bc_matrix_h5 = self.count_gw.basic_counter_outs.raw_gene_bc_matrices_h5,
-        feature_reference        = self.feature_reference,
-        feature_config           = self.feature_config,
-    ) using (
-        disabled = self.config.disable_vdj_t_gd,
-    )
-
-    call VDJ_REPORTER as VDJ_B_REPORTER(
-        sample_id                = self.sample_id,
-        sample_desc              = self.sample_desc,
-        receptor                 = self.vdj_b_receptor,
-        multi_config_sha         = self.multi_config_sha,
-        vdj_reference_path       = self.vdj_reference_path,
-        has_no_vdj_ref           = self.config.has_no_vdj_ref,
-        vdj_gw                   = self.vdj_b_gw,
-        vdj_clonotype            = self.vdj_b_clonotype,
-        beam_analyzer_inputs     = self.beam_analyzer_inputs,
-        raw_feature_bc_matrix_h5 = self.count_gw.basic_counter_outs.raw_gene_bc_matrices_h5,
-        feature_reference        = self.feature_reference,
-        feature_config           = self.feature_config,
-    ) using (
-        disabled = self.config.disable_vdj_b,
-    )
-
-    call PICK_BEAM_ANALYZER(
-        # At most only one of these would be non-null because we
-        # allow only one VDJ library with antigen
-        options = [
-            VDJ_T_REPORTER.beam_analyzer,
-            VDJ_T_GD_REPORTER.beam_analyzer,
-            VDJ_B_REPORTER.beam_analyzer,
-        ],
-    ) using (
-        disabled = self.beam_analyzer_inputs.disable_beam,
-    )
-
     call SUMMARIZE_REPORTS(
+        chemistry_defs               = self.chemistry_defs,
         summaries                    = [
             self.count_gw.basic_counter_outs.summary,
             self.count_analyzer.summary,
             self.crispr_analyzer.crispr_analysis_metrics,
             self.targeted_analyzer.targeted_analysis_metrics,
             self.assign_tags_outs.gem_well_inferred_throughputs,
-            PICK_BEAM_ANALYZER.output.specificity_summary,
         ],
         sample_id                    = self.sample_id,
         sample_desc                  = self.sample_desc,
@@ -1384,12 +1592,10 @@ pipeline MULTI_REPORTER(
         antibody_treemap             = self.antibody_analyzer.antibody_treemap_json,
         antigen_histograms           = self.antigen_analyzer.antibody_histograms_json,
         antigen_treemap              = self.antigen_analyzer.antibody_treemap_json,
-        barcode_whitelist            = self.count_gw.setup_chunks_outs.barcode_whitelist,
         feature_reference            = self.feature_reference,
         target_set_name              = self.count_gw.target_outs.target_set_name,
         per_feature_metrics_csv      = self.targeted_analyzer.per_feature_metrics_csv,
         include_introns              = self.include_introns,
-        throughput                   = self.gem_well_throughput,
     ) using (
         disabled = self.config.disable_count,
     )
@@ -1421,6 +1627,7 @@ pipeline MULTI_REPORTER(
         cells_per_protospacer        = self.crispr_analyzer.cells_per_protospacer,
         spatial_enrichment           = null,
         spatial_deconvolution_path   = null,
+        disable_cloupe               = null,
     ) using (
         disabled = self.disable_library_cloupe,
     )
@@ -1453,15 +1660,11 @@ pipeline MULTI_REPORTER(
     return (
         count_summary          = SUMMARIZE_REPORTS,
         cloupe                 = CHOOSE_CLOUPE.cloupe,
-        vdj_t_report           = VDJ_T_REPORTER.report,
-        vdj_t_gd_report        = VDJ_T_GD_REPORTER.report,
-        vdj_b_report           = VDJ_B_REPORTER.report,
         antibody_histograms    = self.antibody_analyzer.antibody_histograms_json,
         antigen_histograms     = self.antigen_analyzer.antibody_histograms_json,
         barcode_rank_plots     = GENERATE_LIBRARY_PLOTS.library_to_barcode_rank,
         jibes_biplot_histogram = GENERATE_LIBRARY_PLOTS.jibes_biplot_histogram,
         cmo_tsne_plot          = GENERATE_LIBRARY_PLOTS.cmo_tsne_plot,
-        beam_analyzer          = PICK_BEAM_ANALYZER.output,
     )
 }
 
@@ -1524,8 +1727,6 @@ pipeline SAMPLE_REPORTER(
     out json               sample_tsne_plots,
     out json               sample_library_to_barcode_rank,
     out json               sample_treemap_plots,
-    out VdjReport          vdj_t_report,
-    out VdjReport          vdj_b_report,
 )
 {
     call _SAMPLE_CELLS_REPORTER(
@@ -1580,11 +1781,10 @@ pipeline SAMPLE_REPORTER(
         cells_per_protospacer        = self.crispr_analyzer.cells_per_protospacer,
         spatial_enrichment           = null,
         spatial_deconvolution_path   = null,
+        disable_cloupe               = null,
     ) using (
         disabled = self.config.disable_count,
     )
-
-    # TODO: Wire up per-sample VDJ reporting here
 
     return (
         metrics_summary      = _SAMPLE_CELLS_REPORTER.summary,
@@ -1592,8 +1792,6 @@ pipeline SAMPLE_REPORTER(
         sample_tsne_plots    = GENERATE_SAMPLE_PLOTS.sample_tsne_plots,
         sample_library_to_barcode_rank = GENERATE_SAMPLE_PLOTS.sample_library_to_barcode_rank,
         sample_treemap_plots = GENERATE_SAMPLE_PLOTS.sample_treemap_plots,
-        vdj_t_report         = null,
-        vdj_b_report         = null,
     )
 }
 
@@ -1744,6 +1942,7 @@ pipeline MERGE_GEM_WELLS_AND_SLICE_CELLS(
         cells_per_protospacer        = null,
         spatial_enrichment           = null,
         spatial_deconvolution_path   = null,
+        disable_cloupe               = null,
     )
 
     # certain metrics, such as those from make_shard and barcode correction,
@@ -1798,23 +1997,30 @@ stage STRUCTIFY_PER_SAMPLE_OUTS(
 )
 
 stage SANITIZE_MAP_CALLS(
-    in  map<path>   in_crispr_analysis,
-    in  map<path>   in_rna_analysis,
-    in  map<cloupe> in_cloupe_file,
-    in  map<json>   in_metrics_summary,
-    in  map<json>   in_sample_tsne_plots,
-    in  map<json>   in_sample_barcode_rank_plots,
-    in  map<json>   in_sample_treemap_plots,
-    out map<path>   crispr_analysis,
-    out map<path>   rna_analysis,
-    out map<cloupe> cloupe_file,
-    out map<json>   metrics_summary,
-    out map<json>   sample_tsne_plots,
-    out map<json>   sample_barcode_rank_plots,
-    out map<json>   sample_treemap_plots,
-    src py          "stages/multi/sanitize_map_calls",
+    in  json              multi_graph,
+    in  map<path>         in_crispr_analysis,
+    in  map<path>         in_rna_analysis,
+    in  map<cloupe>       in_cloupe_file,
+    in  map<json>         in_metrics_summary,
+    in  map<json>         in_sample_tsne_plots,
+    in  map<json>         in_sample_barcode_rank_plots,
+    in  map<json>         in_sample_treemap_plots,
+    in  map<VDJ_ANALYZER> in_vdj_t_analyzer,
+    in  map<VDJ_ANALYZER> in_vdj_t_gd_analyzer,
+    in  map<VDJ_ANALYZER> in_vdj_b_analyzer,
+    out map<path>         crispr_analysis,
+    out map<path>         rna_analysis,
+    out map<cloupe>       cloupe_file,
+    out map<json>         metrics_summary,
+    out map<json>         sample_tsne_plots,
+    out map<json>         sample_barcode_rank_plots,
+    out map<json>         sample_treemap_plots,
+    out map<VDJ_ANALYZER> vdj_t_analyzer,
+    out map<VDJ_ANALYZER> vdj_t_gd_analyzer,
+    out map<VDJ_ANALYZER> vdj_b_analyzer,
+    src py                "stages/multi/sanitize_map_calls",
 ) using (
-    volatile = strict,
+    volatile = false,
 )
 
 stage BUILD_SAMPLE_OUTS(

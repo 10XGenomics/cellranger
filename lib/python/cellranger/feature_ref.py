@@ -242,6 +242,19 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
             if not f.id.startswith(PROBE_ID_IGNORE_PREFIXES)
         ]
 
+    def get_antigen_control(self) -> tuple | None:
+        """Extract antigen control feature from feature reference."""
+        control = None
+        if TARGETING_ANTIGEN in self.all_tag_keys:
+            control = [
+                (f.index, f.id, f.name, f.tags.get(MHC_ALLELE, None))
+                for f in self.select_features_by_type(ANTIGEN_LIBRARY_TYPE).feature_defs
+                if f.tags[TARGETING_ANTIGEN] == "False"
+            ]
+            assert len(control) <= 1
+            control = control[0] if len(control) == 1 else None
+        return control
+
     def get_antigen_capture_content(self) -> frozenset[list[tuple]]:
         """Extract the antigen capture content from feature reference.
 
@@ -262,7 +275,9 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
 
         return frozenset(lst)
 
-    def equals_antigen_capture_content(self, other: FeatureReference) -> tuple[bool, str | None]:
+    def equals_antigen_capture_content(
+        self, other: FeatureReference, is_pd: bool
+    ) -> tuple[bool, str | None]:
         """Checks if two feature references have the same antigen capture features.
 
         returns appropriate error message in case of a mismatch
@@ -286,7 +301,7 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
                         "The datasets you are trying to aggregate have incompatible MHC alleles for the same control feature id. Please re-run the original multi pipelines with uniform [antigen-specificity] sections.",
                     )
                 # check matching control
-                if sorted_antigen_content_1[i][4] != sorted_antigen_content_2[i][4]:
+                if (sorted_antigen_content_1[i][4] != sorted_antigen_content_2[i][4]) and not is_pd:
                     return (
                         False,
                         "The datasets you are trying to aggregate have incompatible control feature ids. Please re-run the original multi pipelines with uniform [antigen-specificity] sections.",

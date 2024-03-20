@@ -72,8 +72,8 @@
 use crate::mark_dups::DupInfo;
 use crate::read::{AnnotationInfo, ReadAnnotations};
 use crate::transcript::AnnotationRegion;
-use cr_types::reference::genome_of_chrom::GenomeName;
 use cr_types::rna_read::RnaRead;
+use cr_types::GenomeName;
 use std::collections::HashSet;
 use transcriptome::Gene;
 
@@ -101,7 +101,7 @@ pub trait AnnotatedReadVisitor: Sized {
     /// calling the `walk` function.
     /// Be mindful of the traversal needed when you are overriding this method.
     fn visit_read_annotation(&mut self, annotation: &ReadAnnotations) {
-        walk_read_annotation(self, annotation)
+        walk_read_annotation(self, annotation);
     }
 
     /// Visit the set of genomes of a mapped read. A mapped read will map to at least one
@@ -184,18 +184,8 @@ pub trait AnnotatedReadVisitor: Sized {
     fn visit_antisense_conf_mapped_read(&mut self, _annotation: &ReadAnnotations) {}
 
     /// In the default implementation, this function is called exactly once for each read that
-    /// comes in the aligner stage (both the reads that are discarded and processed).
+    /// comes in the aligner stage.
     fn visit_every_read(&mut self, _read: &RnaRead) {}
-
-    /// In the default implementation, this function is called exactly once for each read
-    /// discarded by subsampling. See `walk_read_annotations` for the traversal logic.
-    fn visit_discarded_read(&mut self, _read: &RnaRead) {}
-
-    /// In the default implementation, this function is called exactly once for each read
-    /// processed by the aligner. Note that among all the sequenced reads corresponding to a barcode
-    /// some might be discarded. The remaining reads are "processed" by the aligner.
-    /// See `walk_read_annotations` for the traversal logic.
-    fn visit_non_discarded_read(&mut self, _read: &RnaRead) {}
 
     /// In the default implementation, this function is called exactly once for every unmapped read
     /// processed. See `walk_read_annotations` for the traversal logic.
@@ -225,13 +215,7 @@ pub fn walk_read_annotation<V: AnnotatedReadVisitor>(
     annotation: &ReadAnnotations,
 ) {
     visitor.visit_every_read(&annotation.read);
-    if annotation.is_discarded() {
-        visitor.visit_discarded_read(&annotation.read);
-        return;
-    }
 
-    visitor.visit_non_discarded_read(&annotation.read);
-    assert!(!annotation.is_discarded());
     if annotation.is_mapped() {
         visitor.visit_mapped_read(annotation);
         visitor.visit_mapped_read_genomes(annotation, annotation.mapped_genomes());
@@ -251,7 +235,7 @@ pub fn walk_read_annotation<V: AnnotatedReadVisitor>(
         }
 
         if annotation.is_conf_mapped_antisense() {
-            visitor.visit_antisense_conf_mapped_read(annotation)
+            visitor.visit_antisense_conf_mapped_read(annotation);
         }
     } else {
         visitor.visit_unmapped_read(annotation);
@@ -259,7 +243,7 @@ pub fn walk_read_annotation<V: AnnotatedReadVisitor>(
     // Dup info is only computed for reads with a valid barcode that confidently
     // maps to a transcriptome
     if let Some(ref dup_info) = annotation.dup_info {
-        visitor.visit_dup_info(annotation, dup_info)
+        visitor.visit_dup_info(annotation, dup_info);
     };
     // Only accumulate feature info for feature-barcode reads
     if annotation.is_feature_read() {

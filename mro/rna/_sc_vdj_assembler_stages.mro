@@ -2,6 +2,8 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
+@include "_cr_vdj_stages.mro"
+
 filetype bam;
 filetype bam.bai;
 filetype sam;
@@ -31,33 +33,35 @@ stage VDJ_PREFLIGHT(
 )
 
 stage REPORT_CONTIGS(
-    in  path  vdj_reference_path,
-    in  json  cell_barcodes,
-    in  fasta contigs,
-    in  json  annotations,
-    in  csv   filter_summary,
-    in  tsv   contig_summary,
-    in  tsv   umi_summary,
-    out json  summary,
-    src py    "stages/vdj/report_contigs",
+    in  path   vdj_reference_path,
+    in  json   cell_barcodes,
+    in  fasta  contigs,
+    in  json   annotations,
+    in  csv    filter_summary,
+    in  tsv    contig_summary,
+    in  tsv    umi_summary,
+    in  string prefix,
+    out json   summary,
+    src py     "stages/vdj/report_contigs",
 ) split (
 )
 
 stage SUMMARIZE_VDJ_REPORTS(
-    in  string sample_id,
-    in  string sample_desc,
-    in  string barcode_whitelist,
-    in  json[] summaries,
-    in  json   cell_barcodes,
-    in  csv    clonotype_summary,
-    in  csv    barcode_support,
-    in  string receptor,
-    out string receptor,
-    out json   metrics_summary_json,
-    out csv    metrics_summary_csv,
-    out html   web_summary,
-    out json   web_summary_data,
-    src py     "stages/vdj/summarize_reports",
+    in  string       sample_id,
+    in  string       sample_desc,
+    in  ChemistryDef vdj_chemistry_def,
+    in  json[]       summaries,
+    in  int          total_read_pairs,
+    in  json         cell_barcodes,
+    in  csv          clonotype_summary,
+    in  csv          barcode_support,
+    in  string       receptor,
+    out string       receptor,
+    out json         metrics_summary_json,
+    out csv          metrics_summary_csv,
+    out html         web_summary,
+    out json         web_summary_data,
+    src py           "stages/vdj/summarize_reports",
 ) split (
 ) retain (
     metrics_summary_json,

@@ -5,8 +5,8 @@ workspace = true
 [dependencies.arrayvec]
 workspace = true
 
-[dependencies.bazel_utils]
-path = '../bazel_utils'
+[dependencies.barcodes_folder]
+path = '../barcodes_folder'
 
 [dependencies.fastq_set]
 workspace = true
@@ -28,7 +28,13 @@ path = '../metric'
 
 [dependencies.ordered-float]
 features = ['serde']
-version = '>=1.1.1, < 4'
+version = '3'
+
+[dependencies.pyanyhow]
+path = '../pyanyhow'
+
+[dependencies.pyo3]
+workspace = true
 
 [dependencies.serde]
 workspace = true

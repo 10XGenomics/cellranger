@@ -1,6 +1,6 @@
 [dependencies]
-bio = '>=0.35'
-fxhash = '0.2.1'
+bio = '1'
+fxhash = '0.2'
 
 [dependencies.anyhow]
 workspace = true

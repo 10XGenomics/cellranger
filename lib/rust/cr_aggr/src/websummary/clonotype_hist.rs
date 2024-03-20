@@ -135,6 +135,6 @@ mod tests {
                     "title": "Top 10 Clonotype Frequencies"
                 }
             }"#,
-        )
+        );
     }
 }

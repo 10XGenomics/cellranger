@@ -67,9 +67,6 @@ mod barcode_overlap;
 /// Barcode sorting workflow used by MAKE_SHARD
 pub mod barcode_sort;
 
-/// Stages for writing sparse feature x barcode count matrics
-pub mod count_matrix;
-
 pub mod detect_chemistry;
 
 /// Read environment variables.

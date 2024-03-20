@@ -1,10 +1,8 @@
 # Copyright (c) 2019 10x Genomics, Inc. All rights reserved.
 """Looks at the sample def and determines which feature-counter calls can be disabled."""
 
-import json
-
 import cellranger.rna.library as rna_library
-from cellranger.multi import config as multi_config
+from cellranger.fast_utils import MultiGraph
 
 __MRO__ = """
 stage DISABLE_FEATURE_STAGES(
@@ -66,9 +64,7 @@ def main(args, outs):
     # Read in the multi graph
     is_multiplexed = False
     if args.multi_graph:
-        with open(args.multi_graph) as in_file:
-            config = multi_config.CrMultiGraph.from_json_val(json.load(in_file))
-            is_multiplexed = config.is_multiplexed()
+        is_multiplexed = MultiGraph.from_path(args.multi_graph).is_multiplexed()
 
     # for CMO-tagged runs of multi we must run the analyzer on the whole library
     # for single sample non-muxed this is the same as the sample analyzer so we should avoid reruns

@@ -30,7 +30,7 @@ from collections.abc import Collection, Iterable
 from typing import Any
 
 
-def vdj_metrics_dict():
+def vdj_metrics_dict(prefix=""):
     """Construct the metrics dictionary for VDJ metrics."""
     # This is a method, rather than a global, so that it doesn't have to
     # construct the giant dictionary whenever the module is imported.
@@ -80,7 +80,7 @@ def vdj_metrics_dict():
         vdj_canonical_and_clonotype_prefix,
     )
 
-    return {
+    ret_dict = {
         "barcode_reads": (
             cr_report.DictionaryMetric,
             {
@@ -244,6 +244,7 @@ def vdj_metrics_dict():
         ),
         "vdj_contig_iqr_insert_size": (cr_report.IQRMetric, {}),
     }
+    return {prefix + k: v for k, v in ret_dict.items()}
 
 
 def is_barcode_corrected(raw_bc_seq: bytes, processed_bc_seq: bytes | None) -> bool:
@@ -255,8 +256,8 @@ def is_barcode_corrected(raw_bc_seq: bytes, processed_bc_seq: bytes | None) -> b
 
 
 class VdjReporter(cr_report.Reporter):
-    def __init__(self, **kwargs):
-        kwargs.update({"metrics_dict": vdj_metrics_dict()})
+    def __init__(self, prefix="", **kwargs):
+        kwargs.update({"metrics_dict": vdj_metrics_dict(prefix)})
 
         self.vdj_genes = [lib_constants.MULTI_REFS_PREFIX] + vdj_constants.VDJ_GENES
         self.canonical_vdj_genes = [
@@ -400,6 +401,7 @@ class VdjReporter(cr_report.Reporter):
         umi_summary_df: pd.DataFrame | None,
         annotation_dicts: Iterable[vdj_annot.AnnotationDict],
         reference: vdj_reference.VdjReference,
+        prefix="",
     ):
         # From contig name to its chain (eg. TRA, TRB)
         contig_chains: dict[str, bytes] = {
@@ -449,10 +451,10 @@ class VdjReporter(cr_report.Reporter):
             if exclusive_count_mismatch(chain):
                 continue
 
-            self._get_metric_attr("vdj_assembly_umis_per_cell_median", chain).add(
+            self._get_metric_attr(prefix + "vdj_assembly_umis_per_cell_median", chain).add(
                 numis_by_chain[chain]
             )
-            self._get_metric_attr("vdj_assembly_umis_per_cell_distribution", chain).add(
+            self._get_metric_attr(prefix + "vdj_assembly_umis_per_cell_distribution", chain).add(
                 numis_by_chain[chain]
             )
 
@@ -462,7 +464,9 @@ class VdjReporter(cr_report.Reporter):
             good_umi_df = umi_summary_df[umi_summary_df["good_umi"] & (umi_summary_df["reads"] > 2)]
             frac_unassigned = np.mean(pd.isnull(good_umi_df.contigs))
 
-        self._get_metric_attr("vdj_assembly_mean_unassembled_umis_frac").add(frac_unassigned)
+        self._get_metric_attr(prefix + "vdj_assembly_mean_unassembled_umis_frac").add(
+            frac_unassigned
+        )
 
     def vdj_barcode_contig_cb(
         self,
@@ -470,12 +474,15 @@ class VdjReporter(cr_report.Reporter):
         contigs: Collection[tuple[Any, bytes]],
         annotation_dicts: Collection[vdj_annot.AnnotationDict],
         reference: vdj_reference.VdjReference,
+        prefix="",
     ):
         bc_fields = {"barcode": barcode}
         assert len(contigs) == len(annotation_dicts)
 
         # Count whether the assembly was succesfully generated
-        self._get_metric_attr("vdj_assembly_assembled_bcs_frac").add(1, filter=len(contigs) > 0)
+        self._get_metric_attr(prefix + "vdj_assembly_assembled_bcs_frac").add(
+            1, filter=len(contigs) > 0
+        )
 
         contig_type_counts = {}
 
@@ -505,14 +512,20 @@ class VdjReporter(cr_report.Reporter):
             # First count unannotated vs annotated
             if contig_gene is None:
                 # Unannotated
-                self._get_metric_attr("vdj_assembly_unannotated_contig_frac").add(1, filter=True)
+                self._get_metric_attr(prefix + "vdj_assembly_unannotated_contig_frac").add(
+                    1, filter=True
+                )
             else:
                 contig_gene = ensure_str(contig_gene)
                 assert isinstance(contig_gene, str)
-                self._get_metric_attr("vdj_assembly_unannotated_contig_frac").add(1, filter=False)
+                self._get_metric_attr(prefix + "vdj_assembly_unannotated_contig_frac").add(
+                    1, filter=False
+                )
 
             # Next count chimeras - overwrites contig_gene for use below
-            chimeric_contig_frac = self._get_metric_attr("vdj_assembly_chimeric_contig_frac")
+            chimeric_contig_frac = self._get_metric_attr(
+                prefix + "vdj_assembly_chimeric_contig_frac"
+            )
             if contig_gene == "Multi":
                 # Chimeric
                 chimeric_contig_frac.add(1, filter=True)
@@ -528,22 +541,22 @@ class VdjReporter(cr_report.Reporter):
 
                 # Contig length
                 if is_gene:
-                    self._get_metric_attr("vdj_assembly_median_contig_length", gene).add(
+                    self._get_metric_attr(prefix + "vdj_assembly_median_contig_length", gene).add(
                         len(contig_seq)
                     )
 
                 # Contig VDJ detection
-                self._get_metric_attr("vdj_assembly_v_detected_contig_frac", gene).add(
+                self._get_metric_attr(prefix + "vdj_assembly_v_detected_contig_frac", gene).add(
                     1, filter=is_gene and len(v_hits) > 0
                 )
 
-                self._get_metric_attr("vdj_assembly_vj_detected_contig_frac", gene).add(
+                self._get_metric_attr(prefix + "vdj_assembly_vj_detected_contig_frac", gene).add(
                     1, filter=is_gene and len(v_hits) > 0 and len(j_hits) > 0
                 )
 
                 is_full_len_contig = annotation.has_full_length_vj_hit()
 
-                self._get_metric_attr("vdj_assembly_full_len_contig_frac", gene).add(
+                self._get_metric_attr(prefix + "vdj_assembly_full_len_contig_frac", gene).add(
                     1, filter=is_gene and is_full_len_contig
                 )
 
@@ -575,26 +588,26 @@ class VdjReporter(cr_report.Reporter):
             bc_fields[gene + "_full_len_count"] = sum(1 for g in full_len_genes if g == gene)
             bc_fields[gene + "_q40_count"] = sum(1 for g in full_len_genes if g == gene)
 
-            self._get_metric_attr("vdj_assembly_contigs_per_bc", gene).add(bc_gene_count)
+            self._get_metric_attr(prefix + "vdj_assembly_contigs_per_bc", gene).add(bc_gene_count)
 
-            self._get_metric_attr("vdj_assembly_contig_bc_frac", gene).add(
+            self._get_metric_attr(prefix + "vdj_assembly_contig_bc_frac", gene).add(
                 1, filter=bc_gene_count > 0
             )
 
-            self._get_metric_attr("vdj_assembly_contig_full_len_bc_frac", gene).add(
+            self._get_metric_attr(prefix + "vdj_assembly_contig_full_len_bc_frac", gene).add(
                 1, filter=gene_is_full_len
             )
 
-            self._get_metric_attr("vdj_assembly_contig_full_len_q40_bc_frac", gene).add(
+            self._get_metric_attr(prefix + "vdj_assembly_contig_full_len_q40_bc_frac", gene).add(
                 1, filter=gene_is_highQ
             )
 
             if gene != lib_constants.MULTI_REFS_PREFIX:
-                self._get_metric_attr("vdj_assembly_cdr_detected_bc_frac", gene).add(
+                self._get_metric_attr(prefix + "vdj_assembly_cdr_detected_bc_frac", gene).add(
                     1, filter=len(gene_cdrs[gene]) > 0
                 )
 
-                self._get_metric_attr("vdj_assembly_prod_cdr_bc_frac", gene).add(
+                self._get_metric_attr(prefix + "vdj_assembly_prod_cdr_bc_frac", gene).add(
                     1, filter=len(gene_prod_cdrs[gene]) > 0
                 )
 
@@ -602,19 +615,19 @@ class VdjReporter(cr_report.Reporter):
                 bc_fields[gene + "_prod_cdr_count"] = len(gene_prod_cdrs[gene])
 
                 if len(gene_cdrs[gene]) > 0:
-                    self._get_metric_attr("vdj_assembly_gt1cdr_cdrPosBc_frac", gene).add(
+                    self._get_metric_attr(prefix + "vdj_assembly_gt1cdr_cdrPosBc_frac", gene).add(
                         1, filter=len(gene_cdrs[gene]) > 1
                     )
 
-                    self._get_metric_attr("vdj_assembly_gt1prodCdr_cdrPosBc_frac", gene).add(
-                        1, filter=len(gene_prod_cdrs[gene]) > 1
-                    )
+                    self._get_metric_attr(
+                        prefix + "vdj_assembly_gt1prodCdr_cdrPosBc_frac", gene
+                    ).add(1, filter=len(gene_prod_cdrs[gene]) > 1)
 
                     # Chech for multiple occurrences of the same CDR
                     mult_cdrs = np.any(np.array([cdr_counts[gene][g] for g in gene_cdrs[gene]]) > 1)
-                    self._get_metric_attr("vdj_assembly_mult_cdrs_cdrPosBc_frac", gene).add(
-                        1, filter=mult_cdrs
-                    )
+                    self._get_metric_attr(
+                        prefix + "vdj_assembly_mult_cdrs_cdrPosBc_frac", gene
+                    ).add(1, filter=mult_cdrs)
 
         pairs_detected = set()
         full_len_pairs = set()
@@ -640,13 +653,17 @@ class VdjReporter(cr_report.Reporter):
                 q40_pairs.add(gene_pair)
 
         for gene_pair in self.vdj_gene_pairs:
-            self._get_metric_attr("vdj_assembly_contig_pair_detected_bc_frac", gene_pair).add(
+            self._get_metric_attr(
+                prefix + "vdj_assembly_contig_pair_detected_bc_frac", gene_pair
+            ).add(
                 1,
                 filter=gene_pair in pairs_detected
                 or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(pairs_detected) > 0),
             )
 
-            self._get_metric_attr("vdj_assembly_contig_pair_full_len_bc_frac", gene_pair).add(
+            self._get_metric_attr(
+                prefix + "vdj_assembly_contig_pair_full_len_bc_frac", gene_pair
+            ).add(
                 1,
                 filter=gene_pair in full_len_pairs
                 or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(full_len_pairs) > 0),
@@ -657,11 +674,13 @@ class VdjReporter(cr_report.Reporter):
                     gene in full_len_genes for gene in vdj_utils.get_genes_in_pair(gene_pair)
                 )
                 # Fraction of cells with pair over cells with any gene of the pair
-                self._get_metric_attr("vdj_assembly_pairing_efficiency", gene_pair).add(
+                self._get_metric_attr(prefix + "vdj_assembly_pairing_efficiency", gene_pair).add(
                     int(any_detected), filter=gene_pair in full_len_pairs
                 )
 
-            self._get_metric_attr("vdj_assembly_contig_pair_full_len_q40_bc_frac", gene_pair).add(
+            self._get_metric_attr(
+                prefix + "vdj_assembly_contig_pair_full_len_q40_bc_frac", gene_pair
+            ).add(
                 1,
                 filter=gene_pair in q40_pairs
                 or (gene_pair == lib_constants.MULTI_REFS_PREFIX and len(q40_pairs) > 0),
@@ -672,17 +691,18 @@ class VdjReporter(cr_report.Reporter):
             )
             if prod_pair:
                 self._get_metric_attr(
-                    "vdj_assembly_contig_pair_productive_full_len_bc_count", gene_pair
+                    prefix + "vdj_assembly_contig_pair_productive_full_len_bc_count", gene_pair
                 ).add(1)
 
             self._get_metric_attr(
-                "vdj_assembly_contig_pair_productive_full_len_bc_frac", gene_pair
+                prefix + "vdj_assembly_contig_pair_productive_full_len_bc_frac", gene_pair
             ).add(1, filter=prod_pair)
 
             # Frac cells paired, conditional on the presence of a single productive contig
             if len(productive_contigs) > 0:
                 self._get_metric_attr(
-                    "vdj_assembly_gt0prodcdr_contig_pair_productive_full_len_bc_frac", gene_pair
+                    prefix + "vdj_assembly_gt0prodcdr_contig_pair_productive_full_len_bc_frac",
+                    gene_pair,
                 ).add(1, filter=prod_pair)
 
         return bc_fields

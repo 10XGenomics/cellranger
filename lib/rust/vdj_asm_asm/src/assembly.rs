@@ -10,13 +10,14 @@
 // ◼ doing any interweaving.
 
 use crate::assembly_types::{
-    AsmReadsPerBcFormat, AssemblyStageInputs, BamBaiFile, BamFile, FastqFile,
+    AsmReadsPerBcFormat, AssemblyStageInputs, BamBaiFile, BamFile, BarcodeSupport,
+    ContigSummaryRow, FastqFile, UmiList, UmiSummaryRow,
 };
 use crate::contig_aligner::ContigAligner;
 use anyhow::Result;
-use barcode::HasBarcode;
+use cr_types::chemistry::ChemistryDef;
 use cr_types::rna_read::RnaRead;
-use cr_types::MetricsFile;
+use cr_types::{LibraryType, MetricsFile};
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::Kmer20;
 use debruijn::Mer;
@@ -34,7 +35,6 @@ use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO, LazyWrite};
 use metric::{JsonReporter, Metric, SerdeFormat, SimpleHistogram};
 use parameters_toml::vdj_max_reads_per_barcode;
 use perf_stats::{available_mem_gb, elapsed, mem_usage_gb, peak_mem_usage_gb, ps_me};
-use pretty_trace::{new_thread_message, CHashMap, PrettyTrace};
 use rust_htslib::bam;
 use rust_htslib::bam::HeaderView;
 use serde::{Deserialize, Serialize};
@@ -43,9 +43,8 @@ use std::fs::{remove_file, rename, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread::ThreadId;
 use std::time::Instant;
-use std::{env, fs, thread};
+use std::{env, fs};
 use string_utils::{stringme, strme, TextUtils};
 use vdj_ann::annotate::{chain_type, ContigAnnotation, JunctionSupport};
 use vdj_ann::refx::{make_vdj_ref_data_core, RefData};
@@ -106,14 +105,10 @@ fn merge_bams(paths: &[BamFile], out: &Path) -> Result<()> {
             rlim_max: 0,
         };
         let ret = getrlimit(RLIMIT_NOFILE, &mut rlim as *mut rlimit);
-        if ret != 0 {
-            panic!("unable to determine soft NOFILE ulimit");
-        }
+        assert!(ret == 0, "unable to determine soft NOFILE ulimit");
         rlim.rlim_cur as usize
     };
-    if rlim < 102 {
-        panic!("soft NOFILE ulimit is unworkably low");
-    }
+    assert!(rlim >= 102, "soft NOFILE ulimit is unworkably low");
     let rlim = rlim - 100;
     // keep merging files, rlim at a time, until only 1 remains
     let mut created = vec![];
@@ -201,7 +196,7 @@ where
 // ◼ This should be run only once, but it's not.
 
 fn enrichment_primers(
-    primer_file: Option<&PathBuf>,
+    primer_file: Option<&Path>,
     refdata: &RefData,
     is_tcr: bool,
     is_bcr: bool,
@@ -307,12 +302,14 @@ fn sam_to_bam(out_bam_file: &Path, sam_header: bam::header::Header, out_sam_file
     rename(&out_bam_sorted_filename, out_bam_file).unwrap();
 }
 
-fn get_max_reads_per_barcode(paired_end: bool) -> f64 {
-    match paired_end {
-        true => (*vdj_max_reads_per_barcode().unwrap() / 2) as f64,
-        false => (*vdj_max_reads_per_barcode().unwrap()) as f64,
+fn get_max_reads_per_barcode(chemistry_def: &ChemistryDef) -> usize {
+    if chemistry_def.is_paired_end() {
+        *vdj_max_reads_per_barcode().unwrap() / 2
+    } else {
+        *vdj_max_reads_per_barcode().unwrap()
     }
 }
+
 // =================================================================================
 // DEFINE THE STAGE INPUTS AND OUTPUTS
 // =================================================================================
@@ -321,12 +318,12 @@ fn get_max_reads_per_barcode(paired_end: bool) -> f64 {
 pub struct AssemblyStageOutputs {
     pub contig_bam: BamFile,
     pub contig_bam_bai: BamBaiFile,
-    pub summary_tsv: TsvFile<()>,
-    pub umi_summary_tsv: TsvFile<()>,
+    pub summary_tsv: TsvFile<ContigSummaryRow>,
+    pub umi_summary_tsv: TsvFile<UmiSummaryRow>,
     pub metrics_summary_json: MetricsFile,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub barcode_brief: BarcodeDataBriefFile,
-    pub barcode_support: CsvFile<()>,
+    pub barcode_support: CsvFile<BarcodeSupport>,
     pub barcodes_in_chunks: Vec<JsonFile<Vec<String>>>,
     pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
 
@@ -350,8 +347,8 @@ pub struct AssemblyChunkInputs {
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct AssemblyChunkOutputs {
     pub contig_bam: BamFile,
-    pub summary_tsv: TsvFileNoHeader<()>,
-    pub umi_summary_tsv: TsvFileNoHeader<()>,
+    pub summary_tsv: TsvFileNoHeader<ContigSummaryRow>,
+    pub umi_summary_tsv: TsvFileNoHeader<UmiSummaryRow>,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub barcodes_in_chunk: JsonFile<Vec<String>>,
     pub align_info: TxtFile,
@@ -359,16 +356,7 @@ pub struct AssemblyChunkOutputs {
     pub barcode_data: BinFile,
     pub barcode_data_sum: BinFile,
     pub barcode_data_brief: BinFile,
-    pub outs_builder: BincodeFile<Vec<AssemblyOutsBuilder>>,
-}
-
-// =================================================================================
-// Intermediate output
-// =================================================================================
-#[derive(Serialize, Deserialize)]
-pub struct AssemblyOutsBuilder {
-    barcode: String,
-    umi_count: usize,
+    pub outs_builder: BincodeFile<Vec<BarcodeSupport>>,
 }
 
 // =================================================================================
@@ -389,16 +377,8 @@ impl MartianStage for Assembly {
     fn split(
         &self,
         args: Self::StageInputs,
-        rover: MartianRover,
+        _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        // Set up tracebacks.
-        if thread::current().name().unwrap() == "main" {
-            let long_log: String = rover.make_path("../_full_traceback");
-            PrettyTrace::new().noexit().full_file(&long_log).on();
-        } else {
-            PrettyTrace::new().noexit().on();
-        }
-
         // Set up chunks.
         // ◼ Join memory highwater mark was 5.4 GB (rounded).
         // ◼ See comments about memory inefficiency in the join step.
@@ -446,23 +426,6 @@ impl MartianStage for Assembly {
             println!("host = {}", hostname::get().unwrap().to_string_lossy());
         }
 
-        // Figure out chunk directory path.
-
-        let chunk_dir = rover.files_path().to_str().unwrap().rev_before("/");
-
-        // Force panic to yield a traceback, and make it a pretty one.
-
-        let thread_message = new_thread_message();
-        if thread::current().name().unwrap() == "main" {
-            PrettyTrace::new()
-                .noexit()
-                .message(thread_message)
-                .full_file(&format!("{chunk_dir}/_full_traceback"))
-                .on();
-        } else {
-            PrettyTrace::new().noexit().on();
-        }
-
         // Print the command.
         println!("{}", env::args().collect::<Vec<_>>().join(" "));
 
@@ -474,7 +437,7 @@ impl MartianStage for Assembly {
         let is_bcr = args.receptor == Some(VdjReceptor::IG);
         let is_gd = Some(args.receptor == Some(VdjReceptor::TRGD));
         let (refdata, refdatax, refdata_full, rkmers_plus_full_20) =
-            load_refdata(args.vdj_reference_path.as_ref(), is_tcr, is_bcr);
+            load_refdata(args.vdj_reference_path.as_deref(), is_tcr, is_bcr);
         let refs = &refdata.refs;
 
         // Specify inner primers.  If the customer has not specified primers, we use the
@@ -483,7 +446,7 @@ impl MartianStage for Assembly {
         let mut inner_primersx = Vec::<Vec<u8>>::new();
         let mut outer_primersx = Vec::<Vec<u8>>::new();
         enrichment_primers(
-            args.inner_enrichment_primers.as_ref(),
+            args.inner_enrichment_primers.as_deref(),
             &refdata,
             is_tcr,
             is_bcr,
@@ -496,9 +459,9 @@ impl MartianStage for Assembly {
         let contig_annotations_file: JsonFile<Vec<ContigAnnotation>> =
             rover.make_path("contig_annotations");
 
-        let umi_summary_file: TsvFileNoHeader<_> = rover.make_path("umi_summary");
+        let umi_summary_file: TsvFileNoHeader<UmiSummaryRow> = rover.make_path("umi_summary");
 
-        let summary_file: TsvFileNoHeader<_> = rover.make_path("summary");
+        let summary_file: TsvFileNoHeader<ContigSummaryRow> = rover.make_path("summary");
 
         let ob_file: BincodeFile<_> = rover.make_path("outs_builder");
 
@@ -543,7 +506,6 @@ impl MartianStage for Assembly {
             is_gd,
             !refs.is_empty(),
             &log_opts,
-            thread_message,
         )?;
 
         // Write barcode data.
@@ -618,19 +580,12 @@ impl MartianStage for Assembly {
     ) -> Result<Self::StageOutputs> {
         // Set up logging.
 
-        if thread::current().name().unwrap() == "main" {
-            let long_log: String = rover.make_path("../_full_traceback");
-            PrettyTrace::new().noexit().full_file(&long_log).on();
-        } else {
-            PrettyTrace::new().noexit().on();
-        }
         let t = Instant::now();
         let log_opts = LogOpts::new();
         log_opts.report_perf_stats_now(&t, "upon entering join");
 
-        // Determine if single end.  Flaky.
-
-        let single_end = !args.paired_end;
+        // CELLRANGER-7889: "VDJ" is hardcoded in mro injection of chemistry defs map.
+        let chemistry_def = &args.chemistry_defs[&LibraryType::VdjAuto];
 
         // Get the number of read pairs.  This is from the beginning, before we
         // throw out non-whitelisted barcodes.
@@ -638,10 +593,10 @@ impl MartianStage for Assembly {
 
         // Merge summary_tsv and umi_summary_tsv files.
 
-        let summary_tsv_file: TsvFile<_> = rover.make_path("summary_tsv");
-        write_summary_tsv(&summary_tsv_file, &chunk_outs)?;
+        let summary_tsv_file: TsvFile<ContigSummaryRow> = rover.make_path("summary_tsv");
+        write_contig_summary_tsv(&summary_tsv_file, &chunk_outs)?;
 
-        let umi_summary_tsv_file: TsvFile<_> = rover.make_path("umi_summary_tsv");
+        let umi_summary_tsv_file: TsvFile<UmiSummaryRow> = rover.make_path("umi_summary_tsv");
         write_umi_summary_tsv(&umi_summary_tsv_file, &chunk_outs)?;
 
         // Merge align info files.
@@ -712,15 +667,15 @@ impl MartianStage for Assembly {
             }
 
             // second pass
+            let max_read_pairs_per_barcode = get_max_reads_per_barcode(chemistry_def);
             let reader2 = co.contig_annotations.lazy_reader()?;
-            let max_read_pairs_per_barcode = get_max_reads_per_barcode(args.paired_end);
             for can in reader2 {
                 let mut can: ContigAnnotation = can?;
                 let used = npairs[&can.barcode].as_u64().unwrap() as usize;
-                let frac = if used as f64 <= max_read_pairs_per_barcode {
+                let frac = if used <= max_read_pairs_per_barcode {
                     1.0_f64
                 } else {
-                    max_read_pairs_per_barcode / (used as f64)
+                    max_read_pairs_per_barcode as f64 / used as f64
                 };
                 can.fraction_of_reads_for_this_barcode_provided_as_input_to_assembly = Some(frac);
                 ann_writer.write_item(&can)?;
@@ -769,7 +724,7 @@ impl MartianStage for Assembly {
         let mut inner_primersx = Vec::<Vec<u8>>::new();
         let mut outer_primersx = Vec::<Vec<u8>>::new();
         enrichment_primers(
-            args.inner_enrichment_primers.as_ref(),
+            args.inner_enrichment_primers.as_deref(),
             &refdata,
             is_tcr,
             is_bcr,
@@ -779,6 +734,7 @@ impl MartianStage for Assembly {
         let mut json = Vec::<u8>::new();
 
         println!("Just before metrics json");
+        let single_end = !chemistry_def.is_paired_end();
         metrics_json(
             rover.files_path().to_str().unwrap(),
             is_tcr,
@@ -812,38 +768,29 @@ impl MartianStage for Assembly {
 
         println!("Validated");
 
-        // Merge the two summaries
-        let mut combined: JsonReporter = metrics_file.read()?;
-        if let Some(ref_path) = args.vdj_reference_path {
-            let mut ref_json_report: JsonReporter = JsonFile::new(ref_path, "reference").read()?;
-            ref_json_report.add_prefix("vdj_reference");
-            combined.merge(ref_json_report);
-        }
-
-        let combined_summary =
-            MetricsFile::from_reporter(&rover, "metrics_summary_json", &combined)?;
+        let metrics_reporter: JsonReporter = metrics_file.read()?;
+        let reference_reporter = if let Some(ref_path) = args.vdj_reference_path {
+            let report: JsonReporter = JsonFile::new(ref_path, "reference").read()?;
+            report.add_prefix("vdj_reference")
+        } else {
+            JsonReporter::default()
+        };
+        let metrics_summary_json = MetricsFile::from_reporter(
+            &rover,
+            "metrics_summary_json",
+            &(metrics_reporter + reference_reporter),
+        )?;
 
         // Merge barcode support files.
-        let barcode_support = {
-            let path: CsvFile<()> = rover.make_path("barcode_support.csv");
-            let mut writer = path.buf_writer()?;
-            writeln!(&mut writer, "barcode,count")?;
-            for co in &chunk_outs {
-                let reader = co.outs_builder.lazy_reader()?;
-                for builder in reader {
-                    let builder: AssemblyOutsBuilder = builder?;
-                    writeln!(&mut writer, "{},{}", builder.barcode, builder.umi_count)?;
-                }
-            }
-            path
-        };
+        let barcode_support_file: CsvFile<BarcodeSupport> = rover.make_path("barcode_support.csv");
+        write_bc_support_csv(&barcode_support_file, &chunk_outs)?;
 
         let barcode_data_brief_file: BarcodeDataBriefFile = rover.make_path("barcode_data_brief");
         barcode_data_brief_file.write(&barcode_data_brief)?;
 
         let assemblable_reads_per_bc = {
             let path: AsmReadsPerBcFormat = rover.make_path("assemblable_reads_per_bc");
-            let mut hist = SimpleHistogram::new();
+            let mut hist = SimpleHistogram::default();
             for brief in barcode_data_brief {
                 hist.insert(brief.barcode, brief.xucounts.iter().sum::<i32>());
             }
@@ -860,17 +807,15 @@ impl MartianStage for Assembly {
             .collect();
 
         log_opts.report_perf_stats_now(&t, "join at Ok");
-        // This is done so that pretty trace forgets about the full_file
-        PrettyTrace::new().noexit().on();
         Ok(AssemblyStageOutputs {
             contig_bam: out_bam_filename,
             contig_bam_bai: contig_bam_bai_filename,
             summary_tsv: summary_tsv_file,
             umi_summary_tsv: umi_summary_tsv_file,
-            metrics_summary_json: combined_summary,
+            metrics_summary_json,
             contig_annotations: contig_annotations_file,
             barcode_brief: barcode_data_brief_file,
-            barcode_support,
+            barcode_support: barcode_support_file,
             barcodes_in_chunks,
             assemblable_reads_per_bc,
             align_info: align_info_file,
@@ -881,7 +826,7 @@ impl MartianStage for Assembly {
 }
 
 fn load_refdata(
-    vdj_reference_path: Option<&PathBuf>,
+    vdj_reference_path: Option<&Path>,
     is_tcr: bool,
     is_bcr: bool,
 ) -> (RefData, RefData, RefData, Vec<(Kmer20, i32, i32)>) {
@@ -901,9 +846,10 @@ fn load_refdata(
         let fasta = read_to_string_safe(&fasta_path);
         let ext_fasta =
             fs::read_to_string(format!("{ref_path}/fasta/supp_regions.fa")).unwrap_or_default();
-        if fasta.is_empty() {
-            panic!("Reference file at {fasta_path} has zero length.");
-        }
+        assert!(
+            !fasta.is_empty(),
+            "Reference file at {fasta_path} has zero length."
+        );
         make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
         make_vdj_ref_data_core(&mut refdata_full, &fasta, "", true, true, None);
         make_kmer_lookup_20_single(&refdata_full.refs, &mut rkmers_plus_full_20);
@@ -946,9 +892,9 @@ fn write_simple_sam(
     out_sam_filenamex: &Lz4File,
     contig_annotations_file: &JsonFile<Vec<ContigAnnotation>>,
     align_info_file: &TxtFile,
-    umi_summary_file: &TsvFileNoHeader<()>,
-    summary_file: &TsvFileNoHeader<()>,
-    ob_file: &BincodeFile<Vec<AssemblyOutsBuilder>>,
+    umi_summary_file: &TsvFileNoHeader<UmiSummaryRow>,
+    summary_file: &TsvFileNoHeader<ContigSummaryRow>,
+    ob_file: &BincodeFile<Vec<BarcodeSupport>>,
     unmapped_sample_fastq_file: &FastqFile,
     refdata: &RefData,
     refdatax: RefData,
@@ -961,7 +907,6 @@ fn write_simple_sam(
     is_gd: Option<bool>,
     has_refs: bool,
     log_opts: &LogOpts,
-    thread_message: &CHashMap<ThreadId, String>,
 ) -> Result<
     (
         bam::header::Header,
@@ -971,6 +916,8 @@ fn write_simple_sam(
     ),
     martian::Error,
 > {
+    // CELLRANGER-7889: "VDJ" is hardcoded in mro injection of chemistry defs map.
+    let chemistry_def = &args.chemistry_defs[&LibraryType::VdjAuto];
     let rtype = make_rtype(&refdata_full, has_refs);
     // Initialize heuristics.
 
@@ -991,8 +938,8 @@ fn write_simple_sam(
     let mut log = Vec::<u8>::new();
     let mut ann_writer = contig_annotations_file.lazy_writer()?;
     let mut align_info = align_info_file.buf_writer()?;
-    let mut umi_summary_writer = umi_summary_file.buf_writer()?;
-    let mut summary_writer = summary_file.buf_writer()?;
+    let mut umi_summary_writer = umi_summary_file.lazy_writer()?;
+    let mut summary_writer = summary_file.lazy_writer()?;
     let mut ob_writer = ob_file.lazy_writer()?;
     let mut unmapped_sample_fastq = unmapped_sample_fastq_file.buf_writer()?;
     let vdj_adapters = crate::adapter::get_vdj_adapters();
@@ -1012,7 +959,7 @@ fn write_simple_sam(
     // Get number of read pairs.
     let npairs = args.npairs as usize;
     // Determine if single end.
-    let single_end = !args.paired_end;
+    let single_end = !chemistry_def.is_paired_end();
     // Define fraction of pairs to align to determine chain type.
     // target_frac = number out of 1000 to keep
 
@@ -1050,7 +997,7 @@ fn write_simple_sam(
         let (mut bid, mut rid) = (0, 0);
         let mut unmapped = 0;
         for (barcode, read_iter) in &bc_sorted_lazy_reader
-            .group_by(|read: &Result<RnaRead>| read.as_ref().ok().map(HasBarcode::barcode))
+            .group_by(|read: &Result<RnaRead>| read.as_ref().ok().map(RnaRead::barcode))
         {
             let mut barcode_data_this = BarcodeData::new();
 
@@ -1063,19 +1010,19 @@ fn write_simple_sam(
             let barcode = barcode.unwrap();
             // Vec<(umi, seq, qual, readname, flags)>
             let read_inner_data =
-                crate::translator::make_read_data(&this_bc_reads, 8, args.r2_revcomp);
+                crate::translator::make_read_data(&this_bc_reads, 8, chemistry_def);
             // (barcode, Vec<(umi, seq, qual, readname, flags)>, actual reads)
             let barcode_string = barcode.to_string();
             let actual_reads = barcode_counts_full.get(&barcode_string);
             let read_data = (barcode_string, read_inner_data, actual_reads);
             barcode_data_this.nreads = read_data.2 as i32;
             // Assign fraction of reads used for assembly of each barcode
-            let max_read_pairs_per_barcode = get_max_reads_per_barcode(args.paired_end);
+            let max_read_pairs_per_barcode = get_max_reads_per_barcode(chemistry_def);
             barcode_data_this.frac =
-                if barcode_data_this.nreads as f64 <= max_read_pairs_per_barcode {
+                if barcode_data_this.nreads as usize <= max_read_pairs_per_barcode {
                     1.0_f64
-                } else if barcode_data_this.nreads != 0 {
-                    max_read_pairs_per_barcode / barcode_data_this.nreads as f64
+                } else if barcode_data_this.nreads > 0 {
+                    max_read_pairs_per_barcode as f64 / barcode_data_this.nreads as f64
                 } else {
                     0.0_f64
                 };
@@ -1083,12 +1030,6 @@ fn write_simple_sam(
             // Set thread message.
 
             let chbid = format!("{ch}.{bid}");
-            if thread::current().name().unwrap() == "main" {
-                thread_message.insert(
-                    thread::current().id(),
-                    format!("while processing barcode {chbid} = {barcode}"),
-                );
-            }
 
             // Align a fixed fraction of the reads to determine their chain type.
             // This is annoying but it's expensive to align them all.
@@ -1148,7 +1089,7 @@ fn write_simple_sam(
             drop(read_data);
 
             let (corrected, umi_sorted_reads) =
-                crate::translator::correct_umis(&mut this_bc_reads, args.r2_revcomp);
+                crate::translator::correct_umis(&mut this_bc_reads, chemistry_def);
             let mut reads = umi_sorted_reads.reads;
             let mut quals = umi_sorted_reads.quals;
             let umi_id = umi_sorted_reads.umi_id;
@@ -1194,6 +1135,7 @@ fn write_simple_sam(
                 &refdatax,
                 lena,
                 &contam,
+                args.min_contig_length,
                 &mut barcode_data_this,
                 &mut barcode_data_brief_this,
                 &mut conx,
@@ -1263,30 +1205,30 @@ fn write_simple_sam(
             // umi_count is the number of umis supporting the barcode.  There
             // are choices here as to how we count.  We use ALL the umis but
             // could change this.
-            ob_writer.write_item(&AssemblyOutsBuilder {
+            ob_writer.write_item(&BarcodeSupport {
                 barcode: barcode.clone(),
-                umi_count: barcode_data_this.xucounts.len(),
+                count: barcode_data_this.xucounts.len(),
             })?;
 
             // Write umi_summary.  We do not enforce a lower bound on the number
             // of reads per UMI, and simply write "1" for the min_umi_reads
             // field, and declare every UMI good.
+            const MIN_READS_PER_UMI: i32 = 1;
             for (umi, group) in &umi_id.iter().group_by(|&&id| id) {
-                let tigname = contig_of_umi[umi as usize]
-                    .map_or(String::new(), |t| format!("{barcode}_contig_{}", t + 1));
-                const MIN_READS_PER_UMI: i32 = 1;
-                fwriteln!(
-                    umi_summary_writer,
-                    "{}\t{}\t{}\t{}\t{}\ttrue\t{}",
-                    barcode,
-                    umi,
-                    uu[umi as usize],
-                    group.count(),
-                    MIN_READS_PER_UMI,
-                    tigname,
-                );
+                let tigname = contig_of_umi[umi as usize].map_or(String::new(), |t| {
+                    format!("{}_contig_{}", barcode.clone(), t + 1)
+                });
+                let umi_string = &uu[umi as usize];
+                umi_summary_writer.write_item(&UmiSummaryRow {
+                    barcode: barcode.clone(),
+                    umi_id: umi,
+                    umi: umi_string.to_string(),
+                    reads: group.count(),
+                    min_umi_reads: MIN_READS_PER_UMI,
+                    good_umi: true,
+                    contigs: tigname,
+                })?;
             }
-            umi_summary_writer.flush()?;
 
             // Write summary.
             for (t, cid) in cids.iter().enumerate() {
@@ -1303,20 +1245,15 @@ fn write_simple_sam(
                         .count()
                 };
 
-                let umilist = cumi[t].iter().join(",");
-                fwriteln!(
-                    summary_writer,
-                    "{}\t{}_contig_{}\t{}\t{}\t{}\t{}",
-                    barcode,
-                    barcode,
-                    t + 1,
-                    cid.len(),
-                    npairs,
-                    cumi[t].len(),
-                    umilist
-                );
+                summary_writer.write_item(&ContigSummaryRow {
+                    barcode: barcode.clone(),
+                    contig_name: format!("{barcode}_contig_{}", t + 1),
+                    num_reads: cid.len(),
+                    num_pairs: npairs,
+                    num_umis: cumi[t].len(),
+                    umi_list: UmiList(cumi[t].clone().into_iter().collect()),
+                })?;
             }
-            summary_writer.flush()?;
             // Define scoring for alignments of reads to contigs.
 
             let scoring =
@@ -1453,36 +1390,65 @@ fn write_simple_sam(
 
     let (_, res) = simple_sam_writer.finish();
     res?;
+    ob_writer.finish()?;
     ann_writer.finish()?;
+    umi_summary_writer.finish()?;
+    summary_writer.finish()?;
     Ok((sam_header, barcodes, barcode_data, barcode_data_brief))
 }
 
-fn write_summary_tsv(summary: &TsvFile<()>, chunk_outs: &[AssemblyChunkOutputs]) -> Result<()> {
-    let mut writer = summary.buf_writer()?;
-    writeln!(
-        &mut writer,
-        "barcode\tcontig_name\tnum_reads\tnum_pairs\tnum_umis\tumi_list"
-    )?;
+fn write_contig_summary_tsv(
+    summary: &TsvFile<ContigSummaryRow>,
+    chunk_outs: &[AssemblyChunkOutputs],
+) -> Result<()> {
+    let mut writer = summary.lazy_writer()?;
+    let mut has_contents = false;
     for co in chunk_outs {
-        line_by_line_copy(&mut co.summary_tsv.buf_reader()?, &mut writer)?;
+        let summary = co.summary_tsv.read()?;
+        has_contents |= !summary.is_empty();
+        for row in summary {
+            writer.write_item(&row)?;
+        }
     }
-    writer.flush()?;
+    if !has_contents {
+        writer.write_header()?;
+    }
+    writer.finish()?;
     Ok(())
 }
 
 fn write_umi_summary_tsv(
-    umi_summary: &TsvFile<()>,
+    summary: &TsvFile<UmiSummaryRow>,
     chunk_outs: &[AssemblyChunkOutputs],
 ) -> Result<()> {
-    let mut writer = umi_summary.buf_writer()?;
-    writeln!(
-        &mut writer,
-        "barcode\tumi_id\tumi\treads\tmin_umi_reads\tgood_umi\tcontigs"
-    )?;
+    let mut writer = summary.lazy_writer()?;
+    let mut has_contents = false;
     for co in chunk_outs {
-        line_by_line_copy(&mut co.umi_summary_tsv.buf_reader()?, &mut writer)?;
+        let summary = co.umi_summary_tsv.read()?;
+        has_contents |= !summary.is_empty();
+        for row in summary {
+            writer.write_item(&row)?;
+        }
     }
-    // Flush so that any errors are raised here
-    writer.flush()?;
+    if !has_contents {
+        writer.write_header()?;
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+fn write_bc_support_csv(
+    summary: &CsvFile<BarcodeSupport>,
+    chunk_outs: &[AssemblyChunkOutputs],
+) -> Result<()> {
+    let mut writer = summary.lazy_writer()?;
+    for co in chunk_outs {
+        let reader = co.outs_builder.lazy_reader()?;
+        for bc_support in reader {
+            let bc_support = bc_support?;
+            writer.write_item(&bc_support)?;
+        }
+    }
+    writer.finish()?;
     Ok(())
 }

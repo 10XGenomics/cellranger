@@ -6,6 +6,9 @@ quote = '1'
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.cr_types]
+path = '../cr_types'
+
 [dependencies.itertools]
 workspace = true
 
@@ -14,7 +17,7 @@ workspace = true
 
 [dependencies.syn]
 features = ['full']
-version = '1'
+version = '2'
 
 [dependencies.toml]
 workspace = true
@@ -29,3 +32,7 @@ edition = '2021'
 name = 'websummary_derive'
 publish = false
 version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['itertools']

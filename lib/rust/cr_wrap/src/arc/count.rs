@@ -1,14 +1,14 @@
 use crate::arc::types::{
-    validate_distance, validate_strict_fraction, ForceCellsArgs, MinCounts, Validate,
-    MAX_CLUSTERS_RANGE,
+    validate_distance, validate_strict_fraction, ForceCellsArgs, MinCounts, MAX_CLUSTERS_RANGE,
 };
+use crate::create_bam_arg::CreateBam;
 use crate::fastqs::FastqArgs;
 use crate::mrp_args::MrpArgs;
 use crate::utils::{validate_id, CliPath};
 use anyhow::{bail, Result};
 use clap::{self, value_parser, Parser};
-use cr_types::rna_read::LegacyLibraryType;
 use cr_types::sample_def::SampleDef;
+use cr_types::LibraryType;
 use ordered_float::NotNan;
 use serde::{self, Serialize};
 use std::collections::HashMap;
@@ -86,9 +86,8 @@ pub struct CountArgs {
     #[clap(long, hide = true, value_parser = value_parser!(u64).range(MAX_CLUSTERS_RANGE))]
     k_means_max_clusters: Option<u64>,
 
-    /// Do not generate bam files
-    #[clap(long = "no-bam")]
-    no_bam: bool,
+    #[clap(flatten)]
+    create_bam: CreateBam,
 
     /// Do not execute the pipeline.
     /// Generate a pipeline invocation (.mro) file and stop.
@@ -97,13 +96,6 @@ pub struct CountArgs {
 
     #[clap(flatten)]
     pub mrp: MrpArgs,
-}
-
-impl Validate for CountArgs {
-    fn validate(&self) -> Result<()> {
-        self.force_cells.validate()?;
-        Ok(())
-    }
 }
 
 impl CountArgs {
@@ -125,14 +117,16 @@ impl CountArgs {
                 lanes: None,
             };
             match l.library_type {
-                LegacyLibraryType::ATAC => seen_atac = true,
-                LegacyLibraryType::GeneExpression => seen_gex = true,
+                LibraryType::Atac => seen_atac = true,
+                LibraryType::Gex => seen_gex = true,
                 v => {
                     bail!(
                         "Invalid value in library_type column {}: cellranger-arc \
-                        count is only compatible with `Gene Expression` and \
-                        `Chromatin Accessibility` libraries.",
-                        v
+                        count is only compatible with `{}` and \
+                        `{}` libraries.",
+                        v,
+                        LibraryType::Gex,
+                        LibraryType::Atac,
                     );
                 }
             };
@@ -145,15 +139,12 @@ impl CountArgs {
             bail!("Invalid libraries file: missing `Gene Expression` FASTQ files");
         }
 
-        // Make sure that supplied parameters are OK
-        self.validate()?;
-
         Ok(CountMro {
             sample_id: c.id.clone(),
             sample_desc: c.description.unwrap_or(c.id),
             reference_path: c.reference,
             sample_def: sample_defs,
-            force_cells: c.force_cells.to_mro_arg(),
+            force_cells: c.force_cells.to_mro_arg()?,
             check_library_compatibility: c
                 .check_library_compatibility
                 .unwrap_or(!c.skip_compatibility_check),
@@ -162,7 +153,7 @@ impl CountArgs {
             custom_peaks: c.peaks,
             peak_qval: c.peak_qval,
             k_means_max_clusters: c.k_means_max_clusters,
-            no_bam: c.no_bam,
+            no_bam: !self.create_bam.validated()?,
         })
     }
 }

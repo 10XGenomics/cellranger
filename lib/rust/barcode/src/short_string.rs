@@ -1,6 +1,7 @@
 //! A stack-allocated immutable string.
 
 use anyhow::{bail, Result};
+use metric::AsMetricPrefix;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::borrow::Borrow;
@@ -60,13 +61,13 @@ impl<const N: usize> Default for ShortString<N> {
 
 impl<const N: usize> Hash for ShortString<N> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.as_str().hash(state)
+        self.as_str().hash(state);
     }
 }
 
 impl<const N: usize> PartialOrd for ShortString<N> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.as_str().partial_cmp(other.as_str())
+        Some(self.cmp(other))
     }
 }
 
@@ -130,6 +131,12 @@ impl<const N: usize> Debug for ShortString<N> {
 impl<const N: usize> Display for ShortString<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self.as_str(), f)
+    }
+}
+
+impl<const N: usize> AsMetricPrefix for ShortString<N> {
+    fn as_metric_prefix(&self) -> Option<&str> {
+        Some(self.as_str())
     }
 }
 

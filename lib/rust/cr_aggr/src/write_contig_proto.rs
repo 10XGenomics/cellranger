@@ -104,7 +104,7 @@ mod tests {
         let cell_barcodes_json = JsonFile::new(&dir, "cell_barcodes");
         cell_barcodes_json.write(&cells)?;
         let metrics_summary_json = MetricsFile::new(&dir, "metrics");
-        metrics_summary_json.write_report(&JsonReporter::default())?;
+        metrics_summary_json.write(&JsonReporter::default())?;
         let barcode_data_brief_file = BarcodeDataBriefFile::new(&dir, "barcode_brief");
         let barcode_brief = vec![BarcodeDataBrief::new()];
         barcode_data_brief_file.write(&barcode_brief)?;

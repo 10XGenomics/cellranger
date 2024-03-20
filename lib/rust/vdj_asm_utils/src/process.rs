@@ -629,6 +629,7 @@ pub fn process_barcode(
     refdatax: &RefData,
     lena: usize,
     contam: &FlowcellContam,
+    min_contig_length: Option<usize>,
     // OUTPUTS:
     barcode_data: &mut BarcodeData,
     barcode_data_brief: &mut BarcodeDataBrief,
@@ -667,9 +668,10 @@ pub fn process_barcode(
                 break;
             }
         }
-        if lid == 60000_u16 {
-            panic!("Failed to find lena id in contam.lena_index.");
-        }
+        assert!(
+            lid != 60000_u16,
+            "Failed to find lena id in contam.lena_index."
+        );
         let bc = barcode_data_brief.barcode.before("-").as_bytes();
         let mut bc_packed = [0_u8; 4];
         pack_bases_16x(bc, &mut bc_packed);
@@ -890,9 +892,8 @@ pub fn process_barcode(
             if !gene1.contains('V') {
                 continue;
             }
-            let n1 = match gene1.after("V").parse::<i32>() {
-                Ok(n) => n,
-                Err(_) => continue,
+            let Ok(n1) = gene1.after("V").parse::<i32>() else {
+                continue;
             };
             let right = x.h.g.to_right(e1 as u32);
             for (e2, anne2) in ann.iter().take(x.h.g.edge_count()).enumerate() {
@@ -1076,7 +1077,7 @@ pub fn process_barcode(
             //   gv, dv,
             //   aj, bj,
             //   gj, dj ]
-            let mut is_tr = vec![false; 8];
+            let mut is_tr = [false; 8];
             for i in 0..ann.len() {
                 let h = &rheaders[ann[i].2 as usize];
                 if h.contains("TRAV") {
@@ -1440,7 +1441,7 @@ pub fn process_barcode(
         }
         let mut id = 0;
         let mut ucount = 0;
-        let types = vec!["IGH", "IGK", "IGL", "TRA", "TRB", "TRD", "TRG"];
+        let types = ["IGH", "IGK", "IGL", "TRA", "TRB", "TRD", "TRG"];
         while id < reads.len() {
             let id2 = next_diff(umi_id, id);
             if barcode_data.umi_info[ucount].1 == none_pos as i8 {
@@ -1511,6 +1512,7 @@ pub fn process_barcode(
         refdata_full,
         rkmers_plus_full_20,
         heur,
+        min_contig_length,
         &mut con,
         &mut jsupp,
         &mut con2,

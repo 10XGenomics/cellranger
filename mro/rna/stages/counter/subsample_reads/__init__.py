@@ -4,8 +4,6 @@
 #
 from __future__ import annotations
 
-import math
-import os
 import pickle as cPickle
 
 import martian
@@ -22,7 +20,6 @@ stage SUBSAMPLE_READS(
     in  csv    filtered_barcodes,
     in  string target_mode,
     out json   summary,
-    out pickle merged_metrics,
     src py     "stages/counter/subsample_reads",
 ) split (
     in  int    chunk_start,
@@ -34,9 +31,6 @@ stage SUBSAMPLE_READS(
     volatile = strict,
 )
 """
-
-MEM_GB_MAIN_PER_FILT_BCS_GB = 60.0
-MEM_GB_JOIN_PER_FILT_BCS_GB = 2.0 * MEM_GB_MAIN_PER_FILT_BCS_GB
 
 
 def split(args):
@@ -51,33 +45,31 @@ def split(args):
     if len(subsamplings) == 0:
         return {"chunks": []}
 
-    # Dynamically adjust mem_gb based on size of input filtered barcodes file
-    filt_bcs_bytes = os.path.getsize(args.filtered_barcodes) if args.filtered_barcodes else 0
-    mem_gb_main = math.ceil(MEM_GB_MAIN_PER_FILT_BCS_GB * float(filt_bcs_bytes) / 1e9)
-    mem_gb_join = math.ceil(MEM_GB_JOIN_PER_FILT_BCS_GB * float(filt_bcs_bytes) / 1e9)
-
     # Split the molecule info h5 into equi-RAM chunks
     chunks = []
     # Use smaller chunks because this code is a slower than other users of mol_info
     tgt_chunk_len = cr_constants.NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK // 4
 
     with cr_mc.MoleculeCounter.open(args.molecule_info, "r") as mc:
+        num_filtered_barcodes = mc.get_num_filtered_barcodes()
+        num_subsamplings = len(subsamplings)
+        mem_gib_chunk = 3 + round(20 * num_filtered_barcodes * num_subsamplings / 1024**3, 1)
+        mem_gib_join = 1 + round(150 * num_filtered_barcodes * num_subsamplings / 1024**3, 1)
+        print(f"{num_filtered_barcodes=},{num_subsamplings=},{mem_gib_chunk=},{mem_gib_join=}")
+
         for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
             chunks.append(
                 {
                     "chunk_start": int(chunk_start),
                     "chunk_len": int(chunk_len),
                     "subsample_info": subsamplings,
-                    # The estimate_mem_gb only count the memory usage for the MoleculeCounter object, which is
-                    # under-estimated the actual memory usage.
-                    # Based on memory profiling with test case fuzzer_114, actual memory usage is ~4x more
-                    # than estimate_mem_gb (without cap), here set scale = 6.
-                    "__mem_gb": max(
-                        mem_gb_main, cr_mc.MoleculeCounter.estimate_mem_gb(chunk_len, scale=6)
-                    ),
+                    "__mem_gb": mem_gib_chunk,
+                    # cr_ss.run_subsampling requires additional VMEM
+                    "__vmem_gb": 3 + 3 * mem_gib_chunk,
                 }
             )
-    return {"chunks": chunks, "join": {"__mem_gb": max(mem_gb_join, 6)}}
+
+    return {"chunks": chunks, "join": {"__mem_gb": mem_gib_join}}
 
 
 def main(args, outs):
@@ -119,6 +111,3 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     with open(outs.summary, "w") as f:
         tk_safe_json.dump_numpy(summary, f, indent=4, sort_keys=True)
-
-    with open(outs.merged_metrics, "wb") as f:
-        cPickle.dump([data, subsample_info], f, protocol=cPickle.HIGHEST_PROTOCOL)

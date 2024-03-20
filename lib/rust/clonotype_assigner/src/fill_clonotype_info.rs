@@ -2,6 +2,7 @@
 
 use crate::assigner::ProtoBinFile;
 use anyhow::Result;
+use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::ClonotypeIter;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -14,6 +15,7 @@ use vdj_reference::VdjRegion;
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct FillClonotypeInfoStageInputs {
+    pub sample_number: Option<usize>,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub enclone_output: Option<ProtoBinFile>,
 }
@@ -94,9 +96,13 @@ impl MartianMain for FillClonotypeInfo {
                 for chain_info in ex_cl.chains {
                     let index = chain_info.index;
                     let chain = chain_info.chain; // now this is an ExactSubClonotypeChain
+                    let clonotype_id = ClonotypeId {
+                        id: i + 1,
+                        sample_number: args.sample_number,
+                    };
                     let fields = FieldsToFill {
-                        raw_clonotype_id: format!("clonotype{}", i + 1),
-                        raw_consensus_id: format!("clonotype{}_consensus_{}", i + 1, index + 1),
+                        raw_clonotype_id: clonotype_id.to_string(),
+                        raw_consensus_id: clonotype_id.consensus_name((index + 1) as usize),
                         exact_subclonotype_id: format!("{}", j + 1),
                         fwr1: chain.fwr1_region(),
                         cdr1: chain.cdr1_region(),

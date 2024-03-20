@@ -36,18 +36,13 @@ struct SampleSlfeOuts(
 )
 
 struct CellCallingParam(
-    int      per_gem_well,
-    map<int> per_sample,
-)
-
-stage GET_AGGREGATE_BARCODES_OUT(
-    in  path antibody_analysis,
-    out csv  aggregate_barcodes,
-    src py   "stages/counter/get_aggregate_barcodes_out",
+    float      per_gem_well,
+    map<float> per_sample,
 )
 
 stage CELLRANGER_PREFLIGHT(
     in  bool             full_check,
+    in  string           chemistry,
     in  map[]            sample_def,
     in  path             reference_path,
     in  csv              feature_reference,
@@ -79,6 +74,18 @@ stage DISABLE_FEATURE_STAGES(
     out bool                disable_library_cloupe,
     out bool                disable_gex,
     src py                  "stages/common/disable_feature_stages",
+) using (
+    volatile = strict,
+)
+
+stage DISABLE_SECONDARY_ANALYSIS(
+    in  bool is_spatial,
+    in  h5   filtered_matrices_h5,
+    in  bool no_secondary_analysis,
+    out bool no_secondary_analysis,
+    src py   "stages/common/disable_secondary_analysis",
+) using (
+    volatile = strict,
 )
 
 stage PARSE_TARGET_FEATURES(
@@ -89,7 +96,6 @@ stage PARSE_TARGET_FEATURES(
     in  bool     no_target_umi_filter,
     in  bool     no_bam,
     in  bool     is_pd,
-    in  int      rps_limit,
     out fa       bait_fasta,
     out csv      target_panel,
     out csv      probe_set,
@@ -98,11 +104,11 @@ stage PARSE_TARGET_FEATURES(
     out bool     disable_targeted,
     out bool     disable_target_umi_filter,
     out bool     no_bam,
-    out int      rps_limit,
     out string   target_set_name,
     out string   targeting_method,
     out tps.json target_panel_summary,
     src py       "stages/common/parse_target_features",
 ) using (
-    mem_gb = 4,
+    mem_gb   = 4,
+    volatile = strict,
 )

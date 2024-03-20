@@ -1,3 +1,4 @@
+load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 load(
     "@rules_license//rules:license.bzl",
     "license",
@@ -7,7 +8,6 @@ load(
     "conda_deps",
     "conda_manifest",
 )
-load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 
 package(default_applicable_licenses = ["license"])
 
@@ -18,9 +18,9 @@ license(
     package_name = "cell-annotation-service-client",
     additional_info = {
         "homepage": "https://github.com/10XGenomics/cell-annotation-service-client",
-        "version": "0.1.0",
+        "version": "1.4.0.dev",
         "manifest": "third-party/deps.bzl",
-        "pURL": "pkg:github/10XGenomics/cell-annotation-service-client@v0.1.0",
+        "pURL": "pkg:github/10XGenomics/cell-annotation-service-client@1.4.0.dev",
     },
     license_kinds = [
         "@rules_license//licenses/spdx:BSD-3-Clause",
@@ -29,34 +29,37 @@ license(
 )
 
 filegroup(
-    name = "conda_package_cas_hdrs",
+    name = "conda_package_cellarium_hdrs",
     visibility = ["@anaconda//:__pkg__"],
 )
 
 filegroup(
-    name = "conda_package_cas_libs",
+    name = "conda_package_cellarium_libs",
     visibility = ["@anaconda//:__pkg__"],
 )
 
 filegroup(
-    name = "conda_package_cas_solibs",
+    name = "conda_package_cellarium_solibs",
     visibility = ["@anaconda//:__pkg__"],
 )
 
 filegroup(
-    name = "conda_package_cas_python",
-    srcs = [site_packages + "/cas" + f for f in [
-        "/cas_cli/service.py",
-        "/cas_cli/__init__.py",
-        "/cas_cli/exceptions.py",
-        "/cas_helper/__init__.py",
-        "/cas_helper/_cli_helper.py",
+    name = "conda_package_cellarium_python",
+    srcs = [site_packages + f for f in [
+        "/cellarium/cas/__init__.py",
+        "/cellarium/cas/_io.py",
+        "/cellarium/cas/assets/cellarium_cas_tx_pca_002_grch38_2020_a.json",
+        "/cellarium/cas/client.py",
+        "/cellarium/cas/data_preparation.py",
+        "/cellarium/cas/endpoints.py",
+        "/cellarium/cas/exceptions.py",
+        "/cellarium/cas/service.py",
     ]],
     visibility = ["@anaconda//:__pkg__"],
 )
 
 filegroup(
-    name = "conda_package_cas_data",
+    name = "conda_package_cellarium_data",
     visibility = ["@anaconda//:__pkg__"],
 )
 

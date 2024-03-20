@@ -1,9 +1,7 @@
 //! Args for the reanalyze sub-command
 
 use crate::arc::aggr::AggrDefs;
-use crate::arc::types::{
-    validate_distance, ForceCellsArgs, MinCounts, Validate, MAX_CLUSTERS_RANGE,
-};
+use crate::arc::types::{validate_distance, ForceCellsArgs, MinCounts, MAX_CLUSTERS_RANGE};
 use crate::mrp_args::MrpArgs;
 use crate::utils::{validate_id, CliPath};
 use anyhow::{bail, Context, Result};
@@ -104,13 +102,9 @@ pub struct ReanalyzeArgs {
     pub mrp: MrpArgs,
 }
 
-impl Validate for ReanalyzeArgs {
-    /// Validate input arguments to reanalyze CLI
-    fn validate(&self) -> Result<()> {
-        self.force_cells
-            .validate()
-            .context("Invalid value for cell caller override")?;
-
+impl ReanalyzeArgs {
+    pub fn to_mro_args(&self) -> Result<ReanalyzeMro> {
+        // Validate input parameters.
         if self.peaks.is_none()
             && self.barcodes.is_none()
             && self.parameters.is_none()
@@ -119,20 +113,14 @@ impl Validate for ReanalyzeArgs {
         {
             bail!(
                 "One of these arguments must be specified: --peaks, or --params, or --barcodes, or
-                    both --min-atac-count and --min-gex-count."
+                both --min-atac-count and --min-gex-count."
             );
         }
 
         if let Some(ref csv_path) = &self.aggregation_csv {
             AggrDefs::from_csv(csv_path).map(|_| ())?;
         }
-        Ok(())
-    }
-}
 
-impl ReanalyzeArgs {
-    pub fn to_mro_args(&self) -> Result<ReanalyzeMro> {
-        self.validate()?;
         // Index path and check exists
         let index = CliPath::from(self.atac_fragments.as_ref().with_extension("gz.tbi"));
         if !index.as_ref().is_file() {
@@ -156,7 +144,10 @@ impl ReanalyzeArgs {
             peaks: self.peaks.clone(),
             parameters: params,
             cell_barcodes: self.barcodes.clone(),
-            force_cells: self.force_cells.to_mro_arg(),
+            force_cells: self
+                .force_cells
+                .to_mro_arg()
+                .context("Invalid value for cell caller override")?,
             projection: self.projection.clone(),
             fragments: self.atac_fragments.clone(),
             fragments_index: index,
@@ -169,8 +160,8 @@ impl ReanalyzeArgs {
 #[serde(transparent)]
 pub struct NumPcs(pub usize);
 
-impl Validate for NumPcs {
-    fn validate(&self) -> Result<()> {
+impl NumPcs {
+    pub fn validate(&self) -> Result<()> {
         let k = self.0;
         if !(2..=100).contains(&k) {
             bail!(
@@ -192,8 +183,8 @@ struct ReanalyzeParams {
     num_atac_pcs: Option<NumPcs>,
 }
 
-impl Validate for ReanalyzeParams {
-    fn validate(&self) -> Result<()> {
+impl ReanalyzeParams {
+    pub fn validate(&self) -> Result<()> {
         if let Some(s) = self.random_seed {
             if s > i64::MAX as u64 {
                 bail!("Invalid value for `random_seed`: too large to fit into int64");
@@ -216,9 +207,7 @@ impl Validate for ReanalyzeParams {
         }
         Ok(())
     }
-}
 
-impl ReanalyzeParams {
     fn is_none(&self) -> bool {
         self.random_seed.is_none()
             && self.k_means_max_clusters.is_none()

@@ -14,7 +14,7 @@ import tempfile
 from PIL import Image, ImageOps
 
 
-def _base64_encode_image(filename):
+def _base64_encode_image(filename, fmt="jpg"):
     """Opens a file using PIL and returns it encoded as a base64 string.
 
     :param filename:
@@ -23,7 +23,11 @@ def _base64_encode_image(filename):
     with open(filename, "rb") as image_file:
         image_show = image_file.read()
     encoded_string = base64.b64encode(image_show).decode("utf-8")
-    return "data:image/jpg;base64," + encoded_string
+    return f"data:image/{fmt};base64," + encoded_string
+
+
+def base64_encode_png(fname):
+    return _base64_encode_image(fname, fmt="png")
 
 
 class WebImage:
@@ -75,7 +79,7 @@ class WebImage:
         _, fname = os.path.split(self.filename)
         tmp_file = os.path.join(tempfile.mkdtemp(), "tmp_" + fname)
         with Image.open(self.filename) as img:
-            img2 = img.resize((new_width, new_height), Image.ANTIALIAS)
+            img2 = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
         img2.save(tmp_file)
         img2.close()
         return WebImage(tmp_file)

@@ -8,6 +8,7 @@ use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct BeamAnalyzerOutputs {
@@ -65,13 +66,15 @@ impl BeamAnalyzerOutputs {
 /// The Martian stage inputs.
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct PickBeamAnalyzerStageInputs {
-    pub options: Vec<Option<BeamAnalyzerOutputs>>,
+    pub vdj_t: Option<HashMap<String, Option<BeamAnalyzerOutputs>>>,
+    pub vdj_t_gd: Option<HashMap<String, Option<BeamAnalyzerOutputs>>>,
+    pub vdj_b: Option<HashMap<String, Option<BeamAnalyzerOutputs>>>,
 }
 
 /// The Martian stage outputs.
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct PickBeamAnalyzerStageOutputs {
-    pub output: Option<BeamAnalyzerOutputs>,
+    pub output: HashMap<String, Option<BeamAnalyzerOutputs>>,
 }
 
 pub struct PickBeamAnalyzer;
@@ -82,15 +85,26 @@ impl MartianMain for PickBeamAnalyzer {
     type StageOutputs = PickBeamAnalyzerStageOutputs;
 
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
-        Ok(Self::StageOutputs {
-            output: {
-                let mut options: Vec<_> = args.options.into_iter().flatten().collect();
-                assert!(options.len() <= 1);
+        let mut output: HashMap<String, Option<BeamAnalyzerOutputs>> = HashMap::new();
+        let inputs: Vec<HashMap<String, Option<BeamAnalyzerOutputs>>> =
+            vec![args.vdj_t, args.vdj_t_gd, args.vdj_b]
+                .into_iter()
+                .flatten()
+                .collect();
+        for sample in inputs[0].keys() {
+            let mut options: Vec<_> = inputs
+                .iter()
+                .filter_map(|inputs| inputs[sample].clone())
+                .collect();
+            assert!(options.len() <= 1);
+            output.insert(
+                sample.to_string(),
                 options
                     .pop()
                     .map(|outs| outs.hard_link(&rover))
-                    .transpose()?
-            },
-        })
+                    .transpose()?,
+            );
+        }
+        Ok(Self::StageOutputs { output })
     }
 }

@@ -3,153 +3,337 @@
 mod chemistry_defs;
 
 use crate::types::ReqStrand;
+use crate::LibraryType;
 use anyhow::{bail, Result};
-use barcode::whitelist::{find_whitelist, BarcodeId};
+use barcode::whitelist::{find_slide_design, BarcodeId};
 use barcode::{
-    BarcodeConstruct, GelBeadAndProbeConstruct, Segments, WhitelistSource, WhitelistSpec,
+    BarcodeConstruct, BcSegSeq, GelBeadAndProbeConstruct, Segments, WhitelistSource, WhitelistSpec,
 };
 use chemistry_defs::get_chemistry_def;
 pub use chemistry_defs::{known_chemistry_defs, normalize_chemistry_def};
 use fastq_set::read_pair::{RpRange, WhichRead};
 use fastq_set::WhichEnd;
+use itertools::{chain, Itertools};
 use martian::{AsMartianPrimaryType, MartianPrimaryType};
 use martian_derive::{MartianStruct, MartianType};
-use metric::{JsonReport, JsonReporter, Metric, TxHashMap};
+use metric::{JsonReport, JsonReporter, TxHashMap, TxHashSet};
 use serde::{Deserialize, Serialize};
-use serde_json::{self, Value};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::str::FromStr;
-use strum_macros::EnumIter;
+use strum_macros::{Display, EnumIter, EnumString};
 
 // "Auto" chemistries which are not fully specified and need to be further
 // refined into one of
-#[derive(EnumIter, Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Display,
+    EnumIter,
+    EnumString,
+    Serialize,
+    Deserialize,
+)]
 pub enum AutoChemistryName {
     #[serde(rename = "auto")]
+    #[strum(serialize = "auto")]
     Count,
-    #[serde(alias = "SC3P_auto")]
-    #[serde(rename = "threeprime")]
+    #[serde(rename = "threeprime", alias = "SC3P_auto")]
+    #[strum(to_string = "threeprime", serialize = "SC3P_auto")]
     ThreePrime,
-    #[serde(alias = "SC5P_auto")]
-    #[serde(rename = "fiveprime")]
+    #[serde(rename = "fiveprime", alias = "SC5P_auto")]
+    #[strum(to_string = "fiveprime", serialize = "SC5P_auto")]
     FivePrime,
     #[serde(rename = "SCVDJ_auto")]
+    #[strum(serialize = "SCVDJ_auto")]
     Vdj,
 }
 
-impl FromStr for AutoChemistryName {
-    type Err = serde_json::Error;
+const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 8] = [
+    ChemistryName::ThreePrimeV1,
+    ChemistryName::ThreePrimeV2,
+    ChemistryName::ThreePrimeV3,
+    // LT is no longer supported, but we retain it here so that we can issue
+    // an accurate error message in DETECT_CHEMISTRY if we detect an LT kit.
+    ChemistryName::ThreePrimeV3LT,
+    ChemistryName::ThreePrimeV3HT,
+    ChemistryName::ThreePrimeV4,
+    ChemistryName::ThreePrimeV4HT,
+    // ARC is not supported by count, but is included to improve debugging
+    // of reagent mix-ups.
+    ChemistryName::ArcV1,
+];
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str(&format!("\"{s}\""))
-    }
-}
+const FIVE_PRIME_AUTO_CHEMS: [ChemistryName; 4] = [
+    ChemistryName::FivePrimeR2,
+    ChemistryName::FivePrimePE,
+    ChemistryName::FivePrimeR2V3,
+    ChemistryName::FivePrimePEV3,
+];
 
-impl Display for AutoChemistryName {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let mut json_str = serde_json::to_string(&self).unwrap();
-        json_str.remove(0);
-        json_str.pop();
-        write!(f, "{json_str}")
+const VDJ_AUTO_CHEMS: [ChemistryName; 6] = [
+    ChemistryName::VdjPE,
+    ChemistryName::VdjR2,
+    ChemistryName::VdjPEV3,
+    ChemistryName::VdjR2V3,
+    ChemistryName::VdjR2FRP,
+    ChemistryName::ThreePrimeV3,
+];
+
+impl AutoChemistryName {
+    /// Return the allowed chemistries for this auto chemistry mode.
+    /// Which RTL chemistries are allowed is determined somewhat dynamically,
+    /// thus we require passing some configuration parameters.
+    pub fn allowed_chemistries(
+        &self,
+        is_pd: bool,
+        is_rtl_multiplexed: bool,
+        using_rtl_uncollapsed_probe_barcodes: bool,
+    ) -> TxHashSet<ChemistryName> {
+        match self {
+            Self::ThreePrime => THREE_PRIME_AUTO_CHEMS.iter().copied().collect(),
+            Self::FivePrime => FIVE_PRIME_AUTO_CHEMS.iter().copied().collect(),
+            Self::Vdj => VDJ_AUTO_CHEMS.iter().copied().collect(),
+            Self::Count => {
+                let frp_chems = if is_rtl_multiplexed {
+                    if is_pd {
+                        // PD
+                        if using_rtl_uncollapsed_probe_barcodes {
+                            // Uncollapsed probe barcode chemistries
+                            [
+                                ChemistryName::MFRP_uncollapsed,
+                                ChemistryName::MFRP_R1_48_uncollapsed,
+                            ]
+                            .as_slice()
+                        } else {
+                            // Collapsed probe barcode chemistries
+                            [
+                                ChemistryName::MFRP_RNA,
+                                ChemistryName::MFRP_Ab,
+                                ChemistryName::MFRP_47,
+                                ChemistryName::MFRP_RNA_R1,
+                                ChemistryName::MFRP_Ab_R1,
+                                ChemistryName::MFRP_Ab_R2pos50,
+                                ChemistryName::MFRP_CRISPR,
+                            ]
+                            .as_slice()
+                        }
+                    } else {
+                        // CS
+                        [
+                            ChemistryName::MFRP_RNA,
+                            ChemistryName::MFRP_Ab,
+                            ChemistryName::MFRP_RNA_R1,
+                            ChemistryName::MFRP_Ab_R1,
+                            ChemistryName::MFRP_Ab_R2pos50,
+                            ChemistryName::MFRP_CRISPR,
+                        ]
+                        .as_slice()
+                    }
+                } else {
+                    // Without a [samples] section
+                    [ChemistryName::SFRP].as_slice()
+                };
+                chain!(&THREE_PRIME_AUTO_CHEMS, &FIVE_PRIME_AUTO_CHEMS, frp_chems)
+                    .copied()
+                    .collect()
+            }
+        }
     }
 }
 
 /// Chemistry names supported by Cellranger excluding auto chemistries
 /// - PE stands for "Paired End"
 #[derive(
-    EnumIter,
     Copy,
     Clone,
     Debug,
-    PartialEq,
-    Serialize,
-    Deserialize,
     Eq,
-    MartianType,
+    PartialEq,
     Hash,
     Ord,
     PartialOrd,
+    Display,
+    EnumIter,
+    EnumString,
+    Serialize,
+    Deserialize,
+    MartianType,
 )]
 #[allow(non_camel_case_types)]
 pub enum ChemistryName {
     #[serde(rename = "custom")]
+    #[strum(serialize = "custom")]
     Custom,
 
     /// Singleplex fixed RNA profiling
     SFRP,
 
     /// Multiplex fixed RNA profiling
-    MFRP,
+    #[serde(rename = "MFRP-RNA")]
+    #[strum(serialize = "MFRP-RNA")]
+    MFRP_RNA,
+
+    /// Multiplex fixed RNA profiling, antibody capture
+    #[serde(rename = "MFRP-Ab")]
+    #[strum(serialize = "MFRP-Ab")]
+    MFRP_Ab,
 
     /// Multiplex fixed RNA profiling with 47 probe barcodes
     #[serde(rename = "MFRP-47")]
+    #[strum(serialize = "MFRP-47")]
     MFRP_47,
 
     /// Multiplex fixed RNA profiling without collapsing base-balanced barcodes
     #[serde(rename = "MFRP-uncollapsed")]
+    #[strum(serialize = "MFRP-uncollapsed")]
     MFRP_uncollapsed,
 
     /// Multiplex fixed RNA profiling (probeBC on R1)
-    #[serde(rename = "MFRP-R1")]
-    MFRP_R1,
+    #[serde(rename = "MFRP-RNA-R1")]
+    #[strum(serialize = "MFRP-RNA-R1")]
+    MFRP_RNA_R1,
+
+    /// Multiplex fixed RNA profiling, antibody capture (probeBC on R1)
+    #[serde(rename = "MFRP-Ab-R1")]
+    #[strum(serialize = "MFRP-Ab-R1")]
+    MFRP_Ab_R1,
 
     /// Multiplex fixed RNA profiling (probeBC on R1) with 192 non-base-balanced probe barcodes
     #[serde(rename = "MFRP-R1-48-uncollapsed")]
+    #[strum(serialize = "MFRP-R1-48-uncollapsed")]
     MFRP_R1_48_uncollapsed,
 
+    /// Multiplex fixed RNA Profiling (probe barcode at R2:50)
+    #[serde(rename = "MFRP-Ab-R2pos50")]
+    #[strum(serialize = "MFRP-Ab-R2pos50")]
+    MFRP_Ab_R2pos50,
+
+    /// Multiplex fixed RNA Profiling (CRISPR)
+    #[serde(rename = "MFRP-CRISPR")]
+    #[strum(serialize = "MFRP-CRISPR")]
+    MFRP_CRISPR,
+
     #[serde(rename = "SC-FB")]
+    #[strum(serialize = "SC-FB")]
     FeatureBarcodingOnly,
 
     #[serde(rename = "SCVDJ")]
+    #[strum(serialize = "SCVDJ")]
     VdjPE,
     #[serde(rename = "SCVDJ-R2")]
+    #[strum(serialize = "SCVDJ-R2")]
     VdjR2,
+    #[serde(rename = "SCVDJ-v3")]
+    #[strum(serialize = "SCVDJ-v3")]
+    VdjPEV3,
+    #[serde(rename = "SCVDJ-Splint-R2-FRP")]
+    #[strum(serialize = "SCVDJ-Splint-R2-FRP")]
+    VdjR2FRP,
+    #[serde(rename = "SCVDJ-R2-v3")]
+    #[strum(serialize = "SCVDJ-R2-v3")]
+    VdjR2V3,
     #[serde(rename = "SCVDJ-R1")]
-    VdjR1, // Deprecated now
+    #[strum(serialize = "SCVDJ-R1")]
+    VdjR1, // Deprecated now, does not have a V2 version
 
     #[serde(rename = "SC5P-R1")]
+    #[strum(serialize = "SC5P-R1")]
     FivePrimeR1,
     #[serde(rename = "SC5P-R2")]
+    #[strum(serialize = "SC5P-R2")]
     FivePrimeR2,
     #[serde(rename = "SC5P-R2-OH")]
+    #[strum(serialize = "SC5P-R2-OH")]
     FivePrimeR2OH,
     #[serde(rename = "SC5PHT")]
+    #[strum(serialize = "SC5PHT")]
     FivePrimeHT,
     #[serde(rename = "SC5P-PE")]
+    #[strum(serialize = "SC5P-PE")]
     FivePrimePE,
 
+    #[serde(rename = "SC5P-R1-v3")]
+    #[strum(serialize = "SC5P-R1-v3")]
+    FivePrimeR1V3,
+    #[serde(rename = "SC5P-R2-v3")]
+    #[strum(serialize = "SC5P-R2-v3")]
+    FivePrimeR2V3,
+    #[serde(rename = "SC5P-R2-OH-v3")]
+    #[strum(serialize = "SC5P-R2-OH-v3")]
+    FivePrimeR2OHV3,
+    #[serde(rename = "SC5PHT-v3")]
+    #[strum(serialize = "SC5PHT-v3")]
+    FivePrimeHTV3,
+    #[serde(rename = "SC5P-PE-v3")]
+    #[strum(serialize = "SC5P-PE-v3")]
+    FivePrimePEV3,
+
     #[serde(rename = "SC3Pv1")]
+    #[strum(serialize = "SC3Pv1")]
     ThreePrimeV1,
     #[serde(rename = "SC3Pv2")]
+    #[strum(serialize = "SC3Pv2")]
     ThreePrimeV2,
     #[serde(rename = "SC3Pv3")]
+    #[strum(serialize = "SC3Pv3")]
     ThreePrimeV3,
     #[serde(rename = "SC3Pv3-OH")]
+    #[strum(serialize = "SC3Pv3-OH")]
     ThreePrimeV3OH,
     #[serde(rename = "SC3Pv3LT")]
-    ThreePrimeV3LT,
+    #[strum(serialize = "SC3Pv3LT")]
+    ThreePrimeV3LT, // deprecated, to be removed
     #[serde(rename = "SC3Pv3HT")]
+    #[strum(serialize = "SC3Pv3HT")]
     ThreePrimeV3HT,
+    #[serde(rename = "SC3Pv4")]
+    #[strum(serialize = "SC3Pv4")]
+    ThreePrimeV4,
+    #[serde(rename = "SC3Pv4-OH")]
+    #[strum(serialize = "SC3Pv4-OH")]
+    ThreePrimeV4OH,
+    #[serde(rename = "SC3Pv4HT")]
+    #[strum(serialize = "SC3Pv4HT")]
+    ThreePrimeV4HT,
 
     #[serde(rename = "SPATIAL3Pv1")]
+    #[strum(serialize = "SPATIAL3Pv1")]
     SpatialThreePrimeV1,
     #[serde(rename = "SPATIAL3Pv2")]
+    #[strum(serialize = "SPATIAL3Pv2")]
     SpatialThreePrimeV2,
     #[serde(rename = "SPATIAL3Pv3")]
+    #[strum(serialize = "SPATIAL3Pv3")]
     SpatialThreePrimeV3,
     #[serde(rename = "SPATIAL3Pv4")]
+    #[strum(serialize = "SPATIAL3Pv4")]
     SpatialThreePrimeV4,
     #[serde(rename = "SPATIAL3Pv5")]
+    #[strum(serialize = "SPATIAL3Pv5")]
     SpatialThreePrimeV5,
 
+    #[serde(rename = "SPATIAL-HD-v1")]
+    #[strum(serialize = "SPATIAL-HD-v1")]
+    SpatialHdV1,
+
     #[serde(rename = "ARC-v1")]
+    #[strum(serialize = "ARC-v1")]
     ArcV1,
 
     #[serde(rename = "ATAC-v1")]
+    #[strum(serialize = "ATAC-v1")]
     AtacV1,
 }
 
@@ -164,15 +348,28 @@ impl ChemistryName {
             Custom | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
             | SpatialThreePrimeV4 | SpatialThreePrimeV5 => None,
 
-            // FRP chemistries are RTL.
-            SFRP | MFRP | MFRP_47 | MFRP_uncollapsed | MFRP_R1 | MFRP_R1_48_uncollapsed => {
-                Some(true)
-            }
+            // Visium HD v1 is RTL
+            SpatialHdV1 => Some(true),
 
-            // 3'GEX chemistries are not RTL.
-            ArcV1 | AtacV1 | FeatureBarcodingOnly | FivePrimeHT | FivePrimePE | FivePrimeR1
-            | FivePrimeR2 | FivePrimeR2OH | ThreePrimeV1 | ThreePrimeV2 | ThreePrimeV3
-            | ThreePrimeV3HT | ThreePrimeV3OH | ThreePrimeV3LT | VdjPE | VdjR1 | VdjR2 => {
+            // FRP chemistries are RTL.
+            SFRP
+            | MFRP_RNA
+            | MFRP_Ab
+            | MFRP_47
+            | MFRP_uncollapsed
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
+            | MFRP_R1_48_uncollapsed
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR => Some(true),
+
+            // All other chemistries are not RTL.
+            // These are explicitly listed for future exhaustiveness checks.
+            FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3 | VdjR1
+            | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimePE
+            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimeHTV3 | FivePrimePEV3
+            | ThreePrimeV1 | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT
+            | ThreePrimeV3HT | ThreePrimeV4 | ThreePrimeV4OH | ThreePrimeV4HT | ArcV1 | AtacV1 => {
                 Some(false)
             }
         }
@@ -183,40 +380,57 @@ impl ChemistryName {
         self.is_rtl().unwrap_or(false) && self != &ChemistryName::SFRP
     }
 
-    /// Return true if a multiplexed OH chemistry.
-    pub fn is_overhang_multiplexed(&self) -> bool {
+    /// Return true if this is an MFRP chemistry.
+    pub fn is_mfrp(&self) -> bool {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
         match self {
-            ThreePrimeV3OH | FivePrimeR2OH => true,
-
-            Custom
-            | SpatialThreePrimeV1
-            | SpatialThreePrimeV2
-            | SpatialThreePrimeV3
-            | SpatialThreePrimeV4
-            | SpatialThreePrimeV5
-            | ArcV1
-            | AtacV1
-            | FeatureBarcodingOnly
-            | FivePrimeHT
-            | FivePrimePE
-            | FivePrimeR1
-            | FivePrimeR2
-            | MFRP
+            MFRP_RNA
+            | MFRP_Ab
             | MFRP_47
             | MFRP_uncollapsed
-            | MFRP_R1
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
-            | SFRP
-            | ThreePrimeV1
-            | ThreePrimeV2
-            | ThreePrimeV3
-            | ThreePrimeV3HT
-            | ThreePrimeV3LT
-            | VdjPE
-            | VdjR1
-            | VdjR2 => false,
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR => true,
+            Custom | SFRP | FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3
+            | VdjR1 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimePE
+            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimeHTV3 | FivePrimePEV3
+            | ThreePrimeV1 | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT
+            | ThreePrimeV3HT | ThreePrimeV4 | ThreePrimeV4OH | ThreePrimeV4HT
+            | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
+            | SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1 | ArcV1 | AtacV1 => false,
+        }
+    }
+
+    /// Return true if this chemistry is compatible with the provided library type.
+    /// NOTE: this method is currently only used for Flex, and the full implementation
+    /// would be verbose. This can be expanded in the future if other products
+    /// need to answer this question.
+    pub fn compatible_with_library_type(&self, library_type: LibraryType) -> bool {
+        assert!(self.is_mfrp() || *self == SFRP);
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        match library_type {
+            LibraryType::Gex => matches!(
+                self,
+                SFRP | MFRP_RNA | MFRP_47 | MFRP_uncollapsed | MFRP_RNA_R1 | MFRP_R1_48_uncollapsed
+            ),
+            LibraryType::Antibody => matches!(
+                self,
+                SFRP | MFRP_Ab
+                    | MFRP_47
+                    | MFRP_uncollapsed
+                    | MFRP_Ab_R1
+                    | MFRP_R1_48_uncollapsed
+                    | MFRP_Ab_R2pos50
+            ),
+            LibraryType::Crispr => matches!(
+                self,
+                SFRP | MFRP_47 | MFRP_uncollapsed | MFRP_R1_48_uncollapsed | MFRP_CRISPR
+            ),
+            _ => panic!("the library type {library_type} is not supported by Flex"),
         }
     }
 
@@ -224,35 +438,42 @@ impl ChemistryName {
     pub fn is_spatial(&self) -> bool {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
-        match self {
-            SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
-            | SpatialThreePrimeV4 | SpatialThreePrimeV5 => true,
+        matches!(
+            self,
+            SpatialThreePrimeV1
+                | SpatialThreePrimeV2
+                | SpatialThreePrimeV3
+                | SpatialThreePrimeV4
+                | SpatialThreePrimeV5
+                | SpatialHdV1
+        )
+    }
 
-            Custom
-            | ArcV1
-            | AtacV1
-            | FeatureBarcodingOnly
-            | FivePrimeHT
-            | FivePrimePE
-            | FivePrimeR1
-            | FivePrimeR2
-            | FivePrimeR2OH
-            | MFRP
-            | MFRP_47
-            | MFRP_uncollapsed
-            | MFRP_R1
-            | MFRP_R1_48_uncollapsed
-            | SFRP
-            | ThreePrimeV1
-            | ThreePrimeV2
-            | ThreePrimeV3
-            | ThreePrimeV3OH
-            | ThreePrimeV3HT
-            | ThreePrimeV3LT
-            | VdjPE
-            | VdjR1
-            | VdjR2 => false,
-        }
+    /// Return true if a spatial chemistry that supports CytAssist
+    pub fn is_cytassist_compatible(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        matches!(
+            self,
+            SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1
+        )
+    }
+
+    // Returns true if a spatial HD chemistry is an RTL chemistry
+    pub fn is_spatial_hd_rtl(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        matches!(self, SpatialHdV1)
+    }
+
+    /// Return true if a spatial chemistry that supports feature barcoding
+    pub fn is_spatial_fb(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        matches!(
+            self,
+            SpatialThreePrimeV3 | SpatialThreePrimeV4 | SpatialThreePrimeV5
+        )
     }
 
     /// Return overhang version of chemistry.
@@ -261,7 +482,9 @@ impl ChemistryName {
         use ChemistryName::*;
         match self {
             ThreePrimeV3 => Ok(ThreePrimeV3OH),
+            ThreePrimeV4 => Ok(ThreePrimeV4OH),
             FivePrimeR2 => Ok(FivePrimeR2OH),
+            FivePrimeR2V3 => Ok(FivePrimeR2OHV3),
 
             _ => bail!("Overhang chemistry undefined for {self}"),
         }
@@ -271,57 +494,14 @@ impl ChemistryName {
     pub fn is_vdj(&self) -> bool {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
-        match self {
-            VdjPE | VdjR1 | VdjR2 => true,
-
-            Custom
-            | ArcV1
-            | AtacV1
-            | FeatureBarcodingOnly
-            | FivePrimeHT
-            | FivePrimePE
-            | FivePrimeR1
-            | FivePrimeR2
-            | FivePrimeR2OH
-            | MFRP
-            | MFRP_47
-            | MFRP_uncollapsed
-            | MFRP_R1
-            | MFRP_R1_48_uncollapsed
-            | SFRP
-            | SpatialThreePrimeV1
-            | SpatialThreePrimeV2
-            | SpatialThreePrimeV3
-            | SpatialThreePrimeV4
-            | SpatialThreePrimeV5
-            | ThreePrimeV1
-            | ThreePrimeV2
-            | ThreePrimeV3
-            | ThreePrimeV3OH
-            | ThreePrimeV3HT
-            | ThreePrimeV3LT => false,
-        }
+        matches!(
+            self,
+            VdjPE | VdjR1 | VdjR2 | VdjPEV3 | VdjR2V3 | VdjR2FRP | ThreePrimeV3
+        )
     }
 }
 
-impl FromStr for ChemistryName {
-    type Err = serde_json::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str(&format!("\"{s}\""))
-    }
-}
-
-impl Display for ChemistryName {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let mut json_str = serde_json::to_string(&self).unwrap();
-        json_str.remove(0);
-        json_str.pop();
-        write!(f, "{json_str}")
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(untagged)] // Ensures that this (de)serializes from/to a string
 pub enum AutoOrRefinedChemistry {
     Auto(AutoChemistryName),
@@ -338,9 +518,9 @@ impl FromStr for AutoOrRefinedChemistry {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<AutoOrRefinedChemistry> {
-        Ok(if let Ok(auto_chem) = s.parse::<AutoChemistryName>() {
+        Ok(if let Ok(auto_chem) = AutoChemistryName::try_from(s) {
             AutoOrRefinedChemistry::Auto(auto_chem)
-        } else if let Ok(chem) = s.parse::<ChemistryName>() {
+        } else if let Ok(chem) = ChemistryName::try_from(s) {
             AutoOrRefinedChemistry::Refined(chem)
         } else {
             bail!("Could not parse {s} as AutoOrRefinedChemistry")
@@ -362,14 +542,61 @@ impl From<ChemistryName> for AutoOrRefinedChemistry {
 
 impl Display for AutoOrRefinedChemistry {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(
-            f,
-            "{}",
-            match self {
-                AutoOrRefinedChemistry::Auto(a) => a.to_string(),
-                AutoOrRefinedChemistry::Refined(r) => r.to_string(),
-            }
-        )
+        match self {
+            AutoOrRefinedChemistry::Auto(x) => write!(f, "{x}"),
+            AutoOrRefinedChemistry::Refined(x) => write!(f, "{x}"),
+        }
+    }
+}
+
+impl AutoOrRefinedChemistry {
+    #[allow(non_upper_case_globals)]
+    /// Alias for custom chemistry.
+    pub const Custom: Self = Self::Refined(ChemistryName::Custom);
+
+    /// Return whether the chemistry is RTL.
+    /// Return None if the chemistry is auto.
+    pub fn is_rtl(&self) -> Option<bool> {
+        match self {
+            Self::Auto(_) => None,
+            Self::Refined(name) => name.is_rtl(),
+        }
+    }
+
+    /// Return true if this chemistry is specifically an MFRP variant.
+    pub fn is_mfrp(&self) -> bool {
+        match self {
+            Self::Auto(_) => false,
+            Self::Refined(name) => name.is_mfrp(),
+        }
+    }
+
+    /// Return true if this is custom chemistry.
+    pub fn is_custom(&self) -> bool {
+        *self == Self::Custom
+    }
+
+    /// Return Some if the chemistry is refined, None if auto.
+    pub fn refined(&self) -> Option<ChemistryName> {
+        if let Self::Refined(name) = *self {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    /// Return true if this is an auto chemistry.
+    pub fn is_auto(&self) -> bool {
+        self.auto().is_some()
+    }
+
+    /// Return Some if the chemistry is auto, None if refined.
+    pub fn auto(&self) -> Option<AutoChemistryName> {
+        if let Self::Auto(mode) = *self {
+            Some(mode)
+        } else {
+            None
+        }
     }
 }
 
@@ -380,17 +607,26 @@ impl ChemistryName {
         use ChemistryName::*;
 
         match self {
-            // standard 'modern' chemistires
+            // standard 'modern' chemistries
             ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
-            | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
-            | SpatialThreePrimeV4 | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OH
-            | FivePrimeHT | FeatureBarcodingOnly | SFRP | ArcV1 => &[
+            | ThreePrimeV4 | ThreePrimeV4HT | ThreePrimeV4OH | SpatialThreePrimeV1
+            | SpatialThreePrimeV2 | SpatialThreePrimeV3 | SpatialThreePrimeV4
+            | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimeR2V3
+            | FivePrimeR2OHV3 | FivePrimeHTV3 | FeatureBarcodingOnly | SFRP | ArcV1 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],
 
             // Multiplexed fixed RNA profiling
-            MFRP | MFRP_47 | MFRP_uncollapsed | MFRP_R1 | MFRP_R1_48_uncollapsed => &[
+            MFRP_RNA
+            | MFRP_Ab
+            | MFRP_47
+            | MFRP_uncollapsed
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
+            | MFRP_R1_48_uncollapsed
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR => &[
                 "10x_bam_to_fastq:R1(GR:GY,UR:UY,1R:1Y)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL,2R:2Y)",
             ],
@@ -404,14 +640,16 @@ impl ChemistryName {
 
             // VDJ chemistry should not be coming through here - may need changing if
             // we decide to make bamtofastq compatible BAMs from VDJ in the future.
-            VdjR1 | VdjR2 | VdjPE => panic!("VDJ don't yet make a normal BAM file"),
+            VdjR1 | VdjR2 | VdjPE | VdjR2V3 | VdjPEV3 | VdjR2FRP => {
+                panic!("VDJ don't yet make a normal BAM file")
+            }
 
             // this chemistry supported for customers & bamtofastq doesn't work, so don't emit any
             // bamtofastq headers
-            FivePrimeR1 => &[],
+            FivePrimeR1 | FivePrimeR1V3 => &[],
 
             // 5' PE chem
-            FivePrimePE => &[
+            FivePrimePE | FivePrimePEV3 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY,SEQ:QUAL)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],
@@ -427,16 +665,11 @@ impl ChemistryName {
                 "10x_bam_to_fastq:I2(CR:CY)",
                 "10x_bam_to_fastq_seqnames:R1,R3,I1,R2",
             ],
+            SpatialHdV1 => &[
+                "10x_bam_to_fastq:R1(1R:1Y)",
+                "10x_bam_to_fastq:R2(SEQ:QUAL,2R:2Y)",
+            ],
         }
-    }
-
-    pub fn from_description(desc: &str) -> Option<Self> {
-        for (k, v) in known_chemistry_defs() {
-            if v.description == desc {
-                return Some(*k);
-            }
-        }
-        None
     }
 }
 
@@ -476,8 +709,7 @@ pub struct UmiWhitelistSpec {
 
 impl UmiWhitelistSpec {
     pub fn sequences(&self) -> Vec<String> {
-        let slide_path =
-            find_whitelist(&self.slide, false, None).expect("Failed to find slide design file");
+        let slide_path = find_slide_design(&self.slide).expect("Failed to find slide design file");
         slide_design::load_oligos(&slide_path, self.part).unwrap()
     }
 }
@@ -496,7 +728,7 @@ pub struct UmiReadComponent {
 }
 
 #[derive(
-    Serialize, Deserialize, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Debug, MartianType,
+    Serialize, Deserialize, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug, MartianType,
 )]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BarcodeKind {
@@ -509,7 +741,7 @@ pub(crate) enum BarcodeKind {
 }
 
 /// One component of a segmented barcode.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug, MartianStruct)]
 pub struct BarcodeReadComponent {
     #[mro_type = "string"]
     pub(crate) read_type: WhichRead,
@@ -550,21 +782,29 @@ impl BarcodeReadComponent {
     }
 
     /// Replace the whitelist with a dynamically generated translation.
+    /// Use the provided other whitelist for the translated sequenced.
     /// The whitelist will be written to the provided path.
     pub fn translate_whitelist_with_id_map(
         &mut self,
         id_map: &TxHashMap<BarcodeId, BarcodeId>,
+        translate_to: &WhitelistSource,
         path: PathBuf,
     ) -> Result<()> {
-        let source = WhitelistSource::from_spec(&self.whitelist, true, None)?;
-        let mut file = File::create(&path)?;
-        for row in source.create_translation_from_id_map(id_map)? {
+        let source = self.whitelist.as_source(true)?;
+        let mut file = BufWriter::new(File::create(&path)?);
+        for row in source.create_translation_from_id_map(id_map, translate_to)? {
             writeln!(file, "{}\t{}\t{}", row.0, row.1, row.2)?;
         }
+        file.flush()?;
         self.whitelist = WhitelistSpec::DynamicTranslation {
             translation_whitelist_path: path,
         };
         Ok(())
+    }
+
+    /// For a translated whitelist build a sequence to id map
+    pub fn build_seq_to_id_map(&self) -> Result<TxHashMap<BcSegSeq, BarcodeId>> {
+        self.whitelist().as_source(true)?.as_translation_seq_to_id()
     }
 }
 
@@ -736,25 +976,23 @@ pub struct ChemistryDef {
 
 impl JsonReport for ChemistryDef {
     fn to_json_reporter(&self) -> JsonReporter {
-        let mut reporter = JsonReporter::new();
-        match serde_json::to_value(self) {
-            Ok(Value::Object(map)) => {
-                for (k, v) in map {
-                    // Only report the newly introduced key if it's not null
-                    if k == "barcode_extraction" && v == Value::Null {
-                        continue;
-                    }
-                    reporter.insert(k, v);
-                }
-            }
-            _ => panic!("Error when reporting ChemistryDef"), // TODO: Return a result?
-        }
-        reporter.add_prefix("chemistry");
-        reporter
+        let Value::Object(map) = serde_json::to_value(self).unwrap() else {
+            unreachable!();
+        };
+        map.into_iter()
+            // Only report the newly introduced key if it's not null
+            .filter(|(k, v)| !(k == "barcode_extraction" && v == &Value::Null))
+            .map(|(k, v)| (format!("chemistry_{k}"), v))
+            .collect()
     }
 }
 
 impl ChemistryDef {
+    /// Return whether this chemistry is RTL.
+    pub fn is_rtl(&self) -> Option<bool> {
+        self.name.is_rtl()
+    }
+
     /// Select a statically-defined chemistry definition by name.
     /// Panics if there is no chemistry def with this name.
     pub fn named(name: ChemistryName) -> Self {
@@ -806,6 +1044,10 @@ impl ChemistryDef {
             return 81;
         }
 
+        if self.name == ChemistryName::FivePrimePEV3 && which == WhichRead::R1 {
+            return 83;
+        }
+
         let mut result = 0;
         for bc in &self.barcode {
             if bc.read_type == which {
@@ -841,28 +1083,101 @@ impl ChemistryDef {
     pub fn translate_probe_barcode_whitelist_with_id_map(
         &mut self,
         id_map: &TxHashMap<BarcodeId, BarcodeId>,
+        translate_to: &WhitelistSource,
         path: PathBuf,
     ) -> Result<()> {
-        match self
-            .barcode
+        self.barcode
             .iter_mut()
-            .filter(|bc| bc.is_probe())
-            .collect::<Vec<_>>()
-            .as_mut_slice()
-        {
-            [] => bail!(
-                "no probe barcode read component found in chemistry {}",
-                self.name
-            ),
-            [bc_read_comp] => {
-                bc_read_comp.translate_whitelist_with_id_map(id_map, path)?;
-            }
-            _ => bail!(
-                "more than one probe barcode read component found in chemistry {}",
-                self.name
-            ),
+            .filter(|x| x.is_probe())
+            .exactly_one()
+            .unwrap()
+            .translate_whitelist_with_id_map(id_map, translate_to, path)
+    }
+}
+
+/// One chemistry def per library type.
+pub type ChemistryDefs = HashMap<LibraryType, ChemistryDef>;
+/// One chemistry spec per library type.
+pub type ChemistrySpecs = HashMap<LibraryType, AutoOrRefinedChemistry>;
+
+pub trait ChemistryDefsExt {
+    /// Return the primary chemistry definition.
+    fn primary(&self) -> &ChemistryDef;
+
+    /// Return the chemistry name.
+    fn name(&self) -> String;
+
+    /// Return the chemistry description.
+    fn description(&self) -> String;
+
+    /// Return whether this chemistry is RTL.
+    fn is_rtl(&self) -> Option<bool>;
+
+    /// Return a single overhang read barcode component, if one is defined.
+    /// Panic if more than one is found.
+    fn overhang_read_barcode(&self) -> Option<&BarcodeReadComponent>;
+
+    /// Return the endedness of this chemistry.
+    fn endedness(&self) -> Option<WhichEnd>;
+}
+
+impl ChemistryDefsExt for ChemistryDefs {
+    /// Return the only chemistry definition when there is only one.
+    /// Return the GEX chemistry definition when there are multiple.
+    /// Fail when there are multiple chemistry definitions and no GEX.
+    fn primary(&self) -> &ChemistryDef {
+        if let Ok((_library_type, chemistry_def)) = self.iter().exactly_one() {
+            chemistry_def
+        } else {
+            self.get(&LibraryType::Gex)
+                .expect("no gene expression chemistry found")
         }
-        Ok(())
+    }
+
+    /// Return a comma-separated list of the chemistry names.
+    fn name(&self) -> String {
+        self.iter()
+            .sorted_by_key(|(&library_type, _)| library_type)
+            .map(|(_, chem)| &chem.name)
+            .unique()
+            .join(", ")
+    }
+
+    /// Return a comma-separated list of the chemistry descriptions.
+    fn description(&self) -> String {
+        self.iter()
+            .sorted_by_key(|(&library_type, _)| library_type)
+            .map(|(_, chem)| &chem.description)
+            .unique()
+            .join(", ")
+    }
+
+    /// Return whether this chemistry is RTL.
+    fn is_rtl(&self) -> Option<bool> {
+        self.values()
+            .filter_map(ChemistryDef::is_rtl)
+            .dedup()
+            .at_most_one()
+            .unwrap()
+    }
+
+    /// Return a single overhang read barcode component, if one is defined.
+    /// Panic if more than one is found.
+    fn overhang_read_barcode(&self) -> Option<&BarcodeReadComponent> {
+        self.values()
+            .filter_map(ChemistryDef::overhang_read_barcode)
+            .unique()
+            .at_most_one()
+            .unwrap()
+    }
+
+    /// Return the endedness of the chemistry.
+    fn endedness(&self) -> Option<WhichEnd> {
+        self.values()
+            .filter_map(|x| x.endedness)
+            .dedup()
+            .at_most_one()
+            .unwrap()
     }
 }
 
@@ -1209,7 +1524,7 @@ mod tests {
     fn test_chem_json_report() {
         insta::assert_json_snapshot!(
             ChemistryDef::named(ChemistryName::ThreePrimeV3).to_json_reporter()
-        )
+        );
     }
 
     #[test]

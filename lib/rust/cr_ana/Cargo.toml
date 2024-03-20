@@ -3,14 +3,16 @@ name = 'cr_ana'
 test = false
 
 [dependencies]
-anyhow = '1'
 itertools = '0.10'
 log = '0.4'
-ndarray = '>= 0.15'
+ndarray = '0.15'
 ndarray-stats = '0.5'
 noisy_float = '0.2'
-num-traits = '0.2.16'
-rayon = '1.7'
+num-traits = '0.2'
+rayon = '1'
+
+[dependencies.anyhow]
+workspace = true
 
 [dependencies.bhtsne]
 branch = 'main'
@@ -19,7 +21,10 @@ git = 'https://github.com/10XGenomics/scan-rs'
 [dependencies.clap]
 default-features = false
 features = ['std', 'derive']
-version = '3'
+version = '4'
+
+[dependencies.cr_types]
+path = '../cr_types'
 
 [dependencies.diff-exp]
 branch = 'main'
@@ -37,11 +42,6 @@ git = 'https://github.com/10XGenomics/hdf5-rust.git'
 [dependencies.hdf5-io]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
-
-[dependencies.intel-mkl-src]
-default-features = false
-features = ['download', 'mkl-static-lp64-seq']
-version = '0.7'
 
 [dependencies.leiden]
 branch = 'main'
@@ -61,7 +61,7 @@ git = 'https://github.com/martian-lang/martian-rust'
 
 [dependencies.ndarray-npy]
 default-features = false
-version = '0.8.1'
+version = '0.8'
 
 [dependencies.scan-rs]
 branch = 'main'
@@ -73,7 +73,7 @@ git = 'https://github.com/10XGenomics/scan-rs'
 
 [dependencies.serde]
 features = ['derive']
-version = '1.0'
+version = '1'
 
 [dependencies.sprs]
 default-features = false
@@ -84,10 +84,6 @@ version = '0.11'
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
-[dependencies.strum]
-features = ['derive']
-version = '>=0.23, <0.25'
-
 [dependencies.umap-rs]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
@@ -97,20 +93,7 @@ test = false
 
 [package]
 authors = ['10x Genomics']
-default-run = 'cr_ana'
 edition = '2021'
 name = 'cr_ana'
 publish = false
 version = '0.1.0'
-
-[profile]
-[profile.dev]
-opt-level = 3
-
-[profile.release]
-codegen-units = 1
-debug = 1
-lto = true
-
-[profile.test]
-opt-level = 3

@@ -77,6 +77,7 @@ pub fn make_contigs(
     refdata_full: &RefData,
     rkmers_plus_full_20: &[(Kmer20, i32, i32)],
     heur: &Heuristics,
+    min_contig_length: Option<usize>,
 
     // OUTPUTS:
     con: &mut Vec<DnaString>,                  // good contigs (or all?)
@@ -339,7 +340,7 @@ pub fn make_contigs(
 
     // Make a path for each UMI, and kill duplicates.
 
-    const MIN_CONTIG: usize = 300;
+    let min_contig_length: usize = min_contig_length.unwrap_or(300);
     let mut strong = Vec::<(i32, Vec<i32>)>::new();
     if log_opts.clock || log_opts.mem {
         fwriteln!(
@@ -435,7 +436,7 @@ pub fn make_contigs(
 
         // Save contig if long enough.
 
-        if c.len() >= MIN_CONTIG {
+        if c.len() >= min_contig_length {
             con.push(c);
             conp.push(all[j].clone());
         }
@@ -705,7 +706,7 @@ pub fn make_contigs(
 
     let mut to_delete = vec![false; con.len()];
     for i in 0..con.len() {
-        if con[i].len() < MIN_CONTIG {
+        if con[i].len() < min_contig_length {
             to_delete[i] = true;
         }
     }
@@ -1075,7 +1076,7 @@ pub fn make_contigs(
         for pass in 0..2 {
             let mut tr = &mut tra;
             if pass == 1 {
-                tr = &mut trb
+                tr = &mut trb;
             };
             let mut to_deletet: Vec<bool> = vec![false; tr.len()];
             for j in 1..tr.len() {
@@ -1379,7 +1380,7 @@ pub fn make_contigs(
                                 u as UmiType,
                                 r.get(m),
                                 quals[id as usize][m],
-                            ))
+                            ));
                         }
                     }
                 }
@@ -1399,7 +1400,7 @@ pub fn make_contigs(
                     u as UmiType,
                     reads[id as usize].get((l + j) as usize),
                     quals[id as usize][(l + j) as usize],
-                ))
+                ));
             }
             perfp += 1;
         }

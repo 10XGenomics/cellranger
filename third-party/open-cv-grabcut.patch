@@ -1,0 +1,45 @@
+diff --git a/src/modules/imgproc/include/opencv2/imgproc.hpp b/src/modules/imgproc/include/opencv2/imgproc.hpp
+index 9e5375e..a855cab 100644
+--- a/src/modules/imgproc/include/opencv2/imgproc.hpp
++++ b/src/modules/imgproc/include/opencv2/imgproc.hpp
+@@ -3387,10 +3387,15 @@ processing the same image.
+ that the result can be refined with further calls with mode==#GC_INIT_WITH_MASK or
+ mode==GC_EVAL .
+ @param mode Operation mode that could be one of the #GrabCutModes
++@param gamma is the weight that scales the kernel weights (exp(- beta* distance^2)) in computing
++edge weights between adjacent pixels. Defaults to 50.
++@param lambdaToGammaRatio is the ratio between lambda and gamma. Lambda is the wieght on the
++definitely foreground to source and definitely background to sink
+  */
+ CV_EXPORTS_W void grabCut( InputArray img, InputOutputArray mask, Rect rect,
+                            InputOutputArray bgdModel, InputOutputArray fgdModel,
+-                           int iterCount, int mode = GC_EVAL );
++                           int iterCount, int mode = GC_EVAL,
++                           double gamma = 50, double lambdaToGammaRatio = 9 );
+ 
+ //! @} imgproc_segmentation
+ 
+diff --git a/src/modules/imgproc/src/grabcut.cpp b/src/modules/imgproc/src/grabcut.cpp
+index 5ec5af2..7acefcc 100644
+--- a/src/modules/imgproc/src/grabcut.cpp
++++ b/src/modules/imgproc/src/grabcut.cpp
+@@ -542,7 +542,8 @@ static void estimateSegmentation( GCGraph<double>& graph, Mat& mask )
+ 
+ void cv::grabCut( InputArray _img, InputOutputArray _mask, Rect rect,
+                   InputOutputArray _bgdModel, InputOutputArray _fgdModel,
+-                  int iterCount, int mode )
++                  int iterCount, int mode,
++                  double gamma, double lambdaToGammaRatio )
+ {
+     CV_INSTRUMENT_REGION();
+ 
+@@ -577,8 +578,7 @@ void cv::grabCut( InputArray _img, InputOutputArray _mask, Rect rect,
+     if( mode == GC_EVAL || mode == GC_EVAL_FREEZE_MODEL )
+         checkMask( img, mask );
+ 
+-    const double gamma = 50;
+-    const double lambda = 9*gamma;
++    double lambda = lambdaToGammaRatio*gamma;
+     const double beta = calcBeta( img );
+ 
+     Mat leftW, upleftW, upW, uprightW;

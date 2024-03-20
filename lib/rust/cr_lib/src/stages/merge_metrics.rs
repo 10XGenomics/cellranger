@@ -32,7 +32,7 @@ impl MartianMain for MergeMetrics {
 
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let metrics = args.summaries.iter().flatten().try_fold(
-            JsonReporter::new(),
+            JsonReporter::default(),
             |mut metrics, json_file| -> Result<_> {
                 metrics.merge(json_file.read()?);
                 Ok(metrics)

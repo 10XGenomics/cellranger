@@ -24,7 +24,7 @@ fn meta_records(meta: &Metadata, gem_well: u32) -> Vec<String> {
     let info = &meta.per_gem_well_info[&gem_well];
     let mut result = vec![info.donor.clone(), info.origin.clone()];
     for col in &meta.additional_columns {
-        result.push(info.additional_data[col].clone())
+        result.push(info.additional_data[col].clone());
     }
     result
 }

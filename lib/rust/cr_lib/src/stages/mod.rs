@@ -1,6 +1,6 @@
 pub mod align_and_count;
 pub mod barcode_correction;
-pub mod build_vdj_ws_contents;
+pub mod build_per_sample_vdj_ws_contents;
 pub mod call_tags_overhang;
 pub mod call_tags_rtl;
 pub mod check_barcodes_compatibility;
@@ -9,11 +9,13 @@ pub mod check_single_beam_mode;
 pub mod collate_metrics;
 pub mod collate_probe_metrics;
 pub mod compute_antigen_vdj_metrics;
+pub mod copy_chemistry_spec;
 pub mod create_multi_graph;
 pub mod demux_probe_bc_matrix;
 pub mod detect_chemistry;
 pub mod detect_chemistry_test;
 pub mod detect_vdj_receptor;
+pub mod extract_single_chemistry;
 pub mod get_chemistry_def;
 pub mod get_gdna_metrics;
 pub mod logic_not;
@@ -26,8 +28,9 @@ pub mod multi_setup_chunks;
 pub mod parse_multi_config;
 pub mod pick_beam_analyzer;
 pub mod rust_bridge;
-pub mod set_aligner_subsample_rate;
 pub mod set_targeted_umi_filter;
+pub mod setup_vdj_analysis;
+pub mod setup_vdj_demux;
 pub mod subsample_barcodes;
 pub mod write_barcode_index;
 pub mod write_barcode_summary;
@@ -40,5 +43,5 @@ pub mod write_pos_bam;
 
 #[cfg(feature = "tenx_internal")]
 mod internal;
-#[cfg(feature = "tenx_oss")]
+#[cfg(feature = "tenx_source_available")]
 mod stubs;

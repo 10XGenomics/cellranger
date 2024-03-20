@@ -51,8 +51,8 @@ impl From<VdjAggrCellsRow> for TableRow {
             src.sample_id,
             src.donor,
             src.origin,
-            PrettyMetric::integer(src.cells).0,
-            PrettyMetric::integer(src.clonotypes).0,
+            PrettyMetric::integer(src.cells as i64).0,
+            PrettyMetric::integer(src.clonotypes as i64).0,
             PrettyMetric::decimal(src.diversity).0,
         ])
     }

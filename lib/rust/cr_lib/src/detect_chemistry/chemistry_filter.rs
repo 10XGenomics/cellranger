@@ -2,17 +2,16 @@ use super::errors::DetectChemistryErrors;
 use super::identity_check::check_read_identity;
 use anyhow::Result;
 use cr_types::chemistry::ChemistryName;
-use cr_types::rna_read::LegacyLibraryType;
 use cr_types::sample_def::SampleDef;
+use cr_types::LibraryType;
 use fastq_set::filenames::FindFastqs;
 use fastq_set::read_pair::ReadPair;
 use fastq_set::read_pair_iter::{InputFastqs, ReadPairIter};
 use itertools::Itertools;
-use metric::{set, TxHashSet};
+use metric::TxHashSet;
 use parameters_toml;
 use stats::ReservoirSampler;
 use std::fmt::{Display, Formatter};
-use std::iter::zip;
 use std::path::PathBuf;
 
 const RANDOM_SEED: u64 = 124;
@@ -26,66 +25,65 @@ pub(crate) trait ChemistryFilter<'a> {
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
     ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors>;
+
     fn filter_chemistries(
         &mut self,
-        units: &[DetectChemistryUnit],
-        read_pairs_all_units: &[Vec<ReadPair>],
+        units: &[(DetectChemistryUnit, Vec<ReadPair>)],
     ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        use ChemistryName::{FivePrimePE, FivePrimeR2, MFRP, MFRP_47};
+        let per_unit_chems: Vec<_> = units
+            .iter()
+            .map(|(unit, read_pairs)| {
+                println!("\n{} for {unit}", Self::context());
+                let compatible_chems = self.process_unit(unit, read_pairs)?;
+                println!(
+                    "Compatible chemistries: {}",
+                    compatible_chems.iter().sorted().format(", ")
+                );
+                assert!(!compatible_chems.is_empty());
+                Ok(compatible_chems)
+            })
+            .try_collect()?;
 
-        let mut result: TxHashSet<_> = self.input_chemistries();
-        let mut any_compatible: TxHashSet<_> = TxHashSet::default();
-        let mut per_unit_chems = Vec::new(); // For error reporting
-        for (unit, read_pairs) in zip(units, read_pairs_all_units) {
-            println!("\n\n{} for {unit}", Self::context());
-            let compatible_chems = self.process_unit(unit, read_pairs)?;
-            println!("Compatible chemistries: {compatible_chems:?}");
-            debug_assert!(!compatible_chems.is_empty());
-            for chem in &compatible_chems {
-                any_compatible.insert(*chem);
-            }
-            result = result.intersection(&compatible_chems).copied().collect();
-            println!("Result: {result:?}");
-            per_unit_chems.push(compatible_chems);
-        }
-
-        // we don't want to allow a situation where (SC5P-R2 + SC5P-PE -> SC5P-R2)
-        if (any_compatible.contains(&FivePrimePE) && any_compatible.contains(&FivePrimeR2))
-            && (!result.contains(&FivePrimePE) && result.contains(&FivePrimeR2))
-        {
-            return Err(DetectChemistryErrors::UnsupportedMixture {
-                mixture: set![FivePrimeR2, FivePrimePE],
-                specify: FivePrimeR2,
+        // Chemistries that are compatible with all libraries.
+        let result = per_unit_chems
+            .iter()
+            .fold(self.input_chemistries(), |acc, x| {
+                acc.intersection(x).copied().collect()
             });
+        if result.is_empty() {
+            println!("Result: none");
+        } else {
+            println!("Result: {}", result.iter().sorted().format(", "));
         }
+
         if result.is_empty() {
             return Err(DetectChemistryErrors::ConflictingChemistries {
-                units: units.to_vec(),
+                units: units.iter().map(|(unit, _)| unit.clone()).collect(),
                 per_unit_chems,
                 context: Self::context(),
             });
         }
 
-        Ok(self.finalize(if result == set![MFRP, MFRP_47] {
-            // Use MFRP when both MFRP and MFRP-47 are compatible, because MFRP is a subset of MFRP-47.
-            set![MFRP]
-        } else {
-            result
-        }))
-    }
-    fn default_finalize(&self, chemistries: TxHashSet<ChemistryName>) -> TxHashSet<ChemistryName> {
+        let result = self.post_process(result)?;
+
         // if we have more than 1 possible chemistry, remove the non-allowed ones
-        if chemistries.len() > 1 {
-            chemistries
+        Ok(if result.len() > 1 {
+            result
                 .intersection(self.allowed_chemistries())
                 .copied()
                 .collect()
         } else {
-            chemistries
-        }
+            result
+        })
     }
-    fn finalize(&self, chemistries: TxHashSet<ChemistryName>) -> TxHashSet<ChemistryName> {
-        self.default_finalize(chemistries)
+
+    /// Perform post-filtering processing on the mixture of chemistries resulting
+    /// from this filter.
+    fn post_process(
+        &self,
+        result: TxHashSet<ChemistryName>,
+    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
+        Ok(result)
     }
 }
 
@@ -94,7 +92,7 @@ pub struct DetectChemistryUnit {
     pub fastqs: Vec<InputFastqs>,
     pub group: Option<String>,
     pub read_path: PathBuf,
-    pub library_type: LegacyLibraryType,
+    pub library_type: LibraryType,
     pub r1_length: Option<usize>,
     pub r2_length: Option<usize>,
 }
@@ -106,7 +104,7 @@ impl Display for DetectChemistryUnit {
             "{}\"{}\"",
             match self.group {
                 Some(ref g) => format!("Sample {g} in "),
-                None => "".into(),
+                None => String::new(),
             },
             self.read_path.display()
         )
@@ -165,7 +163,7 @@ pub fn detect_chemistry_units(
                 library_type: sdef.library_type.unwrap_or_default(),
                 r1_length,
                 r2_length,
-            })
+            });
         }
     }
     Ok(units)

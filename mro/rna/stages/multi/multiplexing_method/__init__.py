@@ -4,9 +4,7 @@
 #
 """A helper stage to determine method used for multiplexed data."""
 
-import json
-
-from cellranger.multi import config as multi_config
+from cellranger.fast_utils import MultiGraph
 
 __MRO__ = """
 stage MULTIPLEXING_METHOD(
@@ -32,31 +30,25 @@ def main(args, outs):
         return
 
     # Read in the multi graph
-    with open(args.multi_graph) as in_file:
-        config = multi_config.CrMultiGraph.from_json_val(json.load(in_file))
-        multiplexing_type = config.get_cell_multiplexing_type()
+    config = MultiGraph.from_path(args.multi_graph)
 
-        if multiplexing_type is None:
-            outs.multiplexing_is_not_rtl = True
-            outs.multiplexing_is_not_cmo = True
-            outs.multiplexing_is_not_oh = True
-            outs.output_per_sample_raw_matrix = False
-        elif multiplexing_type == multi_config.CellMultiplexingType.CMO:
-            outs.multiplexing_is_not_rtl = True
-            outs.multiplexing_is_not_cmo = False
-            outs.multiplexing_is_not_oh = True
-            outs.output_per_sample_raw_matrix = False
-        elif multiplexing_type == multi_config.CellMultiplexingType.RTL:
-            outs.multiplexing_is_not_rtl = False
-            outs.multiplexing_is_not_cmo = True
-            outs.multiplexing_is_not_oh = True
-            outs.output_per_sample_raw_matrix = True
-        elif multiplexing_type == multi_config.CellMultiplexingType.OH:
-            outs.multiplexing_is_not_rtl = True
-            outs.multiplexing_is_not_cmo = True
-            outs.multiplexing_is_not_oh = False
-            outs.output_per_sample_raw_matrix = True
-        else:
-            raise NotImplementedError(
-                "Need to pass none or an enum value from multiplexing method."
-            )
+    if config.is_cmo_multiplexed():
+        outs.multiplexing_is_not_rtl = True
+        outs.multiplexing_is_not_cmo = False
+        outs.multiplexing_is_not_oh = True
+        outs.output_per_sample_raw_matrix = False
+    elif config.is_rtl_multiplexed():
+        outs.multiplexing_is_not_rtl = False
+        outs.multiplexing_is_not_cmo = True
+        outs.multiplexing_is_not_oh = True
+        outs.output_per_sample_raw_matrix = True
+    elif config.is_oh_multiplexed():
+        outs.multiplexing_is_not_rtl = True
+        outs.multiplexing_is_not_cmo = True
+        outs.multiplexing_is_not_oh = False
+        outs.output_per_sample_raw_matrix = True
+    else:
+        outs.multiplexing_is_not_rtl = True
+        outs.multiplexing_is_not_cmo = True
+        outs.multiplexing_is_not_oh = True
+        outs.output_per_sample_raw_matrix = False

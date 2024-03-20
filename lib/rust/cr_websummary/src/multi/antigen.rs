@@ -1,4 +1,5 @@
 use anyhow::Result;
+use cr_types::clonotype::ClonotypeId;
 use cr_websummary::{PlotlyChart, RawChartWithHelp, TitleWithHelp};
 use hclust::{ClusterDirection, DistanceMetric, HierarchicalCluster, LeafOrdering, LinkageMethod};
 use itertools::Itertools;
@@ -37,9 +38,9 @@ impl AntigenSpecificityRow {
             .as_ref()
             .and_then(|id| if id == "None" { None } else { Some(id.clone()) })
     }
-    fn sort_key(&self) -> (&Option<String>, &String, OrderedFloat<f64>) {
+    fn sort_key(&self) -> (Option<&str>, &str, OrderedFloat<f64>) {
         (
-            &self.raw_clonotype_id,
+            self.raw_clonotype_id.as_deref(),
             &self.antigen,
             self.antigen_specificity_score.into(),
         )
@@ -194,7 +195,6 @@ impl ClonotypeSpecificity {
             return None;
         }
         const MAX_GAPS: usize = 70;
-        const CLONOTYPE_PREFIX: &str = "clonotype";
 
         let total_clonotypes = self.clonotypes.len();
 
@@ -211,24 +211,24 @@ impl ClonotypeSpecificity {
 
         let x = clonotypes
             .into_iter()
-            .map(|cl| cl.trim_start_matches(CLONOTYPE_PREFIX).to_string())
+            .map(|cl| cl.parse::<ClonotypeId>().unwrap().id.to_string())
             .collect();
 
         // Unnecessary duplication here since the text needs to be per z-value
         // but is only a function of clonotype. We could instead just embed number of
         // cells into "x" itself and show that on hover, but we don't want it to show up in
         // the x labels.
-        let (z, text): (Vec<_>, Vec<_>) = median_specificity
+        let (z, text): (Vec<Vec<_>>, Vec<_>) = median_specificity
             .rows()
             .into_iter()
-            .map(|r| (r.iter().copied().collect_vec(), clonotype_sizes.clone()))
+            .map(|r| (r.iter().copied().collect(), clonotype_sizes.clone()))
             .unzip();
 
         let mut data = serde_json::to_value(
             HeatMap::new(x, antigens, z)
                 .reverse_scale(true)
                 .hover_template(
-                    format!("{CLONOTYPE_PREFIX}%{{x}} (%{{text}} cells)<br>Antigen: %{{y}}<br>Median specificity score: %{{z}}"),
+                    "Clonotype: %{x} (%{text} cells)<br>Antigen: %{y}<br>Median specificity score: %{z}",
                 )
                 .color_bar(ColorBar::new().title(Title::new("Antigen Specificity Score")).outline_width(0))
                 .color_scale(tenx_blue_colorscale())
@@ -295,6 +295,7 @@ pub fn clonotype_specificity_heatmap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cr_types::clonotype::ClonotypeId;
 
     #[test]
     fn test_no_clonotypes() {
@@ -313,7 +314,7 @@ mod tests {
             .unwrap()
             .clustermap()
             .is_none()
-        )
+        );
     }
 
     #[test]
@@ -327,12 +328,18 @@ mod tests {
                 control_umi: 2,
                 antigen_specificity_score: 99.852,
                 mhc_allele: None,
-                raw_clonotype_id: Some("clonotype1".into()),
+                raw_clonotype_id: Some(
+                    ClonotypeId {
+                        id: 1,
+                        sample_number: None,
+                    }
+                    .to_string()
+                ),
                 exact_subclonotype_id: Some("1".into()),
             }])
             .unwrap()
             .clustermap()
             .is_some()
-        )
+        );
     }
 }

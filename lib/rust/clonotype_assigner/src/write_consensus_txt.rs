@@ -4,6 +4,7 @@ use crate::assigner::ProtoBinFile;
 use crate::write_concat_ref_outs::{FastaFaiFile, FastaFile};
 use amino::aa_seq;
 use anyhow::Result;
+use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -64,6 +65,7 @@ pub struct ConsensusAnnotationCsvRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteConsensusTxtStageInputs {
+    pub sample_number: Option<usize>,
     pub enclone_output: ProtoBinFile,
 }
 
@@ -112,9 +114,13 @@ impl MartianMain for WriteConsensusTxt {
                 let fwr3_region = cl_chain.fwr3_region();
                 let fwr4_region = cl_chain.fwr4_region();
 
+                let clonotype_id = ClonotypeId {
+                    id: i + 1,
+                    sample_number: args.sample_number,
+                };
                 let row = ConsensusAnnotationCsvRow {
-                    clonotype_id: format!("clonotype{}", i + 1),
-                    consensus_id: format!("clonotype{}_consensus{}", i + 1, j + 1),
+                    clonotype_id: clonotype_id.to_string(),
+                    consensus_id: clonotype_id.consensus_name(j + 1),
                     length: seq.len(),
                     chain: cl_chain.chain_type.clone(),
                     v_gene: uref_items[cl_chain.v_idx as usize].display_name.clone(),
@@ -176,8 +182,12 @@ impl MartianMain for WriteConsensusTxt {
         let mut writer_fai = consensus_fasta_fai.buf_writer()?;
         let mut bytes_written = 0;
         for (i, clonotype) in enclone_outs.clonotypes.iter().enumerate() {
+            let clonotype_id = ClonotypeId {
+                id: i + 1,
+                sample_number: args.sample_number,
+            };
             for (j, chain) in clonotype.chains.iter().enumerate() {
-                let record_name = format!("clonotype{}_consensus_{}", i + 1, j + 1);
+                let record_name = clonotype_id.consensus_name(j + 1);
                 writeln!(writer, ">{record_name}")?;
                 bytes_written += record_name.len() + 2;
                 let seq = &chain.nt_sequence;

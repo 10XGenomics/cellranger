@@ -13,20 +13,21 @@ from cellranger.websummary.sample_properties import SampleDataPaths, VdjSamplePr
 
 __MRO__ = """
 stage SUMMARIZE_VDJ_REPORTS(
-    in  string sample_id,
-    in  string sample_desc,
-    in  string barcode_whitelist,
-    in  json[] summaries,
-    in  json   cell_barcodes,
-    in  csv    clonotype_summary,
-    in  csv    barcode_support,
-    in  string receptor,
-    out string receptor,
-    out json   metrics_summary_json,
-    out csv    metrics_summary_csv,
-    out html   web_summary,
-    out json   web_summary_data,
-    src py     "stages/vdj/summarize_reports",
+    in  string       sample_id,
+    in  string       sample_desc,
+    in  ChemistryDef vdj_chemistry_def,
+    in  json[]       summaries,
+    in  int          total_read_pairs,
+    in  json         cell_barcodes,
+    in  csv          clonotype_summary,
+    in  csv          barcode_support,
+    in  string       receptor,
+    out string       receptor,
+    out json         metrics_summary_json,
+    out csv          metrics_summary_csv,
+    out html         web_summary,
+    out json         web_summary_data,
+    src py           "stages/vdj/summarize_reports",
 ) split (
 ) retain (
     metrics_summary_json,
@@ -52,6 +53,8 @@ def join(args, outs, chunk_defs, chunk_outs):
         "sample_id": args.sample_id,
         "sample_desc": args.sample_desc,
         "chain_type": args.receptor,
+        # Hack to pass this metric at the per-sample level, CELLRANGER-7783
+        "VDJ_total_read_pairs": args.total_read_pairs,
     }
 
     cr_report.merge_jsons(args.summaries, outs.metrics_summary_json, dicts=[sample_info])
@@ -66,16 +69,16 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.receptor = args.receptor
 
     sample_properties = VdjSampleProperties(
-        sample_id=args.sample_id, sample_desc=args.sample_desc, chain_type=outs.receptor
+        sample_id=args.sample_id,
+        sample_desc=args.sample_desc,
+        chemistry_def=args.vdj_chemistry_def,
+        chain_type=outs.receptor,
     )
     sample_data = cr_webshim.load_sample_data(sample_properties, sample_data_paths)
 
-    if args.barcode_whitelist is not None:
-        ws_data = vdj_web.build_vdj_web_summary_html(
-            outs.web_summary, sample_properties, sample_data
-        )
-        with open(outs.web_summary_data, "w") as f:
-            json.dump(ws_data, f, indent=4)
-        cr_webshim.build_metrics_summary_csv(
-            outs.metrics_summary_csv, sample_properties, sample_data, PIPELINE_VDJ
-        )
+    ws_data = vdj_web.build_vdj_web_summary_html(outs.web_summary, sample_properties, sample_data)
+    with open(outs.web_summary_data, "w") as f:
+        json.dump(ws_data, f, indent=4)
+    cr_webshim.build_metrics_summary_csv(
+        outs.metrics_summary_csv, sample_properties, sample_data, PIPELINE_VDJ
+    )

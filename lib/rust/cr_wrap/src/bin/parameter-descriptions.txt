@@ -26,8 +26,8 @@ Section: [gene-expression]
         is detected automatically, which is the recommended mode. You usually
         will not need to specify a chemistry. Options are: 'auto' for
         autodetection, 'threeprime' for Single Cell 3', 'fiveprime' for
-        Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3' for Single Cell 3'
-        v1/v2/v3, 'SC5P-PE' or 'SC5P-R2' for Single Cell 5',
+        Single Cell 5', 'SC3Pv1' or 'SC3Pv2' or 'SC3Pv3' or 'SC3Pv4' for Single Cell 3'
+        v1/v2/v3/v4, 'SC5P-PE' or 'SC5P-R2' or 'SC5P-R2-v3' for Single Cell 5',
         paired-end/R2-only, 'SC-FB' for Single Cell Antibody-only 3' v2 or 5',
         'SFRP' for singleplex FRP and 'MFRP' for multiplex FRP. To analyse GEX
         portion of multiome data, chemistry must be set to 'ARC-v1'; 'ARC-v1'
@@ -39,9 +39,12 @@ Section: [gene-expression]
         detection. Default: detect cells using EmptyDrops.
     no-secondary <true|false>
         Optional. Disable secondary analysis, e.g. clustering. Default: false.
-    no-bam <true|false>
-        Optional. Disables BAM(.bai) file generation, saving disk space at the
-        expense of interrogable alignment records. Default: false.
+    create-bam <true|false>
+        Required. Enable or disable BAM file generation.
+        Setting --create-bam=false reduces the total computation time and the size of
+        the output directory (BAM file not generated).
+        We recommend setting --create-bam=true if unsure.
+        See https://10xgen.com/create-bam for additional guidance.
     check-library-compatibility <true|false>
         Optional. This option allows users to disable the check that evaluates
         10x Barcode overlap between libraries when multiple libraries are

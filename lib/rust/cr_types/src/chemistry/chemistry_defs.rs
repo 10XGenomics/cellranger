@@ -1,15 +1,32 @@
 //! Standard chemistry definitions imported from a json file
 
 use crate::chemistry::{ChemistryDef, ChemistryName};
+use anyhow::{Context, Result};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
 const CHEMISTRY_DEFS_JSON_STR: &str = std::include_str!("chemistry_defs.json");
 
+fn read_chemistry_defs_json() -> Result<String> {
+    let lib_bin_exe = std::env::current_exe()?;
+    let lib_bin_dir = lib_bin_exe.parent().context("parent failed")?;
+    let libdir = lib_bin_dir.parent().context("parent failed")?;
+    Ok(std::fs::read_to_string(
+        libdir.join("python/cellranger/chemistry_defs.json"),
+    )?)
+}
+
 lazy_static! {
-    static ref CHEMISTRY_DEF_MAP: HashMap<ChemistryName, ChemistryDef> =
-        serde_json::from_str(CHEMISTRY_DEFS_JSON_STR).unwrap();
+    static ref CHEMISTRY_DEF_MAP: HashMap<ChemistryName, ChemistryDef> = {
+        if let Ok(s) = read_chemistry_defs_json() {
+            // Use the chemistry_defs.json found in the tarball.
+            serde_json::from_str(&s).unwrap()
+        } else {
+            // Cannot find chemistry_defs.json. Use the chemistry defs stored in the executable.
+            serde_json::from_str(CHEMISTRY_DEFS_JSON_STR).unwrap()
+        }
+    };
 }
 
 /// Return the mapping of all static chemistry definitions.

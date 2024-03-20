@@ -55,7 +55,7 @@ entries = [
 
         [[library_cell_metrics.cell_associated_partitions.alerts]]
         rank = 1
-        context = { is_lt_chemistry = true }
+        conditions = { is_lt_chemistry = true }
         error_threshold = 10000
         warn_threshold = 1000
         warn_title = "High Number of Cells Detected for LT Chemistry"
@@ -172,7 +172,7 @@ entries = [
     [sequencing_metrics.unprocessed_reads]
     type = "usize"
     header = "Number of short reads skipped"
-    help = "Total number of read pairs that were ignored by the pipeline because they do not satisfy the minimum length requirements (for example Read-1 less that 26 bases in 3' v2 or 3' v3 or 5')."
+    help = "Total number of read pairs that were ignored by the pipeline because they do not satisfy the minimum length requirements (for example Read-1 less that 26 bases for 3' v2/v3/v4 or 5')."
 
     [sequencing_metrics.q30_barcode]
     type = "PercentF1"
@@ -183,7 +183,7 @@ entries = [
         error_threshold = 0.45
         warn_threshold = 0.55
         warn_title = "Fraction of cell barcode bases with Q-score >= 30 is low"
-        detail = "Ideal > 55%. Fraction of cell barcode bases (R1 for Single Cell 3' v2/v3 and Single Cell 5', or either R1 or R2 for Fixed RNA Profiling) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+        detail = "Ideal > 55%. Fraction of cell barcode bases (R1 for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Fixed RNA Profiling) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
     [sequencing_metrics.q30_gem_barcode]
     type = "PercentF1"
@@ -320,28 +320,28 @@ entries = [
     help = "Fraction of reads confidently mapped to the transcriptome, but on the opposite strand of their annotated gene. A read is counted as antisense if it has any alignments that are consistent with an exon of a transcript but antisense to it, and has no sense alignments."
 
         [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = false, is_hybrid_capture = false }
+        conditions = { include_introns = false, is_hybrid_capture = false }
         error_threshold = 0.3
         warn_threshold = 0.1
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 10% for single cell samples. High antisense mapping rate can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = true, is_hybrid_capture = false }
+        conditions = { include_introns = true, is_hybrid_capture = false }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 20%. Rates of up to 40% are common for single nuclei samples. Higher fraction of antisense reads may indicate use of an incorrect chemistry type, or an issue with the reference transcriptome."
 
         [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = false, is_hybrid_capture = true }
+        conditions = { include_introns = false, is_hybrid_capture = true }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 20%. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = true, is_hybrid_capture = true }
+        conditions = { include_introns = true, is_hybrid_capture = true }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
@@ -448,7 +448,7 @@ entries = [
     [rtl_probe_barcode_metrics.umi_per_probe_barcode]
     type = "CountAndPercent"
     header = "UMIs per probe barcode"
-    help = "Number and fraction of gene expression (or antibody) UMIs for this probe barcode (or antibody multiplexing barcode) amongst all UMIs for that library type in the raw feature-barcode matrix."
+    help = "Number and fraction of UMIs for this probe barcode amongst all UMIs for that library type in the raw feature-barcode matrix."
 
     [rtl_probe_barcode_metrics.cells_per_probe_barcode]
     type = "CountAndPercent"
@@ -504,13 +504,13 @@ entries = [
     [gex_physical_library_metrics.valid_barcodes]
     type = "Percent"
     header = "Valid barcodes"
-    help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction. If the data is from multi-sample Fixed RNA Profiling, the a cell barcode is the combination of the GEM barcode and probe barcode and both parts must be valid following correction."
+    help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction. If the data is from multi-sample Fixed RNA Profiling, the cell barcode is the combination of the GEM barcode and probe barcode and both parts must be valid following correction."
 
         [[gex_physical_library_metrics.valid_barcodes.alerts]]
         error_threshold = 0.5
         warn_threshold = 0.75
         warn_title = "Low Fraction Valid Barcodes"
-        detail = "Ideal > 75%. This may indicate a quality issue with the R1 read for Single Cell 3' v2/v3 and Single Cell 5', or either R1 or R2 for Fixed RNA Profiling. Application performance may be affected."
+        detail = "Ideal > 75%. This may indicate a quality issue with the R1 read for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Fixed RNA Profiling. Application performance may be affected."
 
     [gex_physical_library_metrics.valid_gem_barcodes]
     type = "Percent"
@@ -896,7 +896,7 @@ entries = [
     help = "Fraction of read pairs with valid barcodes that were removed because they are aggregates."
 
         [[antibody_library_mapping_metrics.fraction_reads_in_aggregate_barcodes.alerts]]
-        context = { is_rtl = true }
+        conditions = { is_rtl = true }
         error_threshold = 1.0
         warn_threshold = 0.20
         error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
@@ -904,7 +904,7 @@ entries = [
         detail = "Ideal < 20%. A high fraction of antibody reads were found to belong to barcodes identified as antibody aggregates and were removed from the final matrix."
 
         [[antibody_library_mapping_metrics.fraction_reads_in_aggregate_barcodes.alerts]]
-        context = { is_rtl = false }
+        conditions = { is_rtl = false }
         error_threshold = 1.0
         warn_threshold = 0.05
         error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
@@ -1116,9 +1116,71 @@ entries =[
         warn_title = "High Fraction of Antigen Reads in Aggregate Barcodes"
         detail = "Ideal < 5%. A high fraction of antigen reads were found to belong to barcodes identified as antigen aggregates, which were removed from the final matrix."
 
+# --------------------------------------------------------------------------------------------------
+# CRISPR -> Mapping Metrics (Amongst All Reads in Library)
+# --------------------------------------------------------------------------------------------------
+[crispr_library_mapping_metrics]
+title = "Mapping Metrics (Amongst All Reads in Library)"
+entries = [
+    "physical_library_id",
+    "number_of_reads",
+    "fraction_reads_with_putative_protospacer",
+    "fraction_guide_reads",
+    "fraction_guide_reads_usable",
+    "fraction_protospacer_not_recognized",
+]
+
+    [crispr_library_mapping_metrics.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+    help = "Unique identifier for each library."
+
+    [crispr_library_mapping_metrics.number_of_reads]
+    type = "usize"
+    json_key = "CRISPR_total_read_pairs"
+    header = "Number of reads"
+    help = "Total number of read pairs that were sequenced from this library."
+
+    [crispr_library_mapping_metrics.fraction_reads_with_putative_protospacer]
+    type = "Percent"
+    json_key = "CRISPR_feature_bc_extracted_frac"
+    header = "Fraction reads with putative protospacer sequence"
+    help = "Fraction of CRISPR library reads from which a putative protospacer sequence could be extracted."
+
+    [crispr_library_mapping_metrics.fraction_guide_reads]
+    type = "Percent"
+    json_key = "CRISPR_recognized_feature_bc_frac"
+    header = "Fraction guide reads"
+    help = "Fraction of CRISPR library reads with a recognized protospacer sequence."
+
+    [crispr_library_mapping_metrics.fraction_guide_reads_usable]
+    type = "Percent"
+    json_key = "CRISPR_frac_feature_reads_usable"
+    header = "Fraction guide reads usable"
+    help = "Fraction of CRISPR library reads with a recognized protospacer sequence, a valid UMI, and a cell-associated barcode."
+
+        [[crispr_library_mapping_metrics.fraction_guide_reads_usable.alerts]]
+        error_threshold = 0
+        warn_threshold = 0.20
+        error_title = "No Guide Reads Usable Found"
+        warn_title = "Low Fraction Guide Reads Usable"
+        detail = "Ideal > 20%. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
+
+    [crispr_library_mapping_metrics.fraction_protospacer_not_recognized]
+    type = "Percent"
+    json_key = "CRISPR_unrecognized_feature_bc_frac"
+    header = "Fraction protospacer not recognized"
+    help = "Among all CRISPR library reads with a putative protospacer sequence, the fraction with a protospacer sequence that did not match any specified in the Feature Reference CSV file provided to Cell Ranger."
+
+        [[crispr_library_mapping_metrics.fraction_protospacer_not_recognized.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.50
+        error_title = "No Recognized Protospacers Found"
+        warn_title = "High Fraction Unrecognized Protospacer"
+        detail = "Ideal < 50%. A high fraction of protospacer sequences in the CRISPR library do not match any provided in the Feature Reference CSV file. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
 
 # --------------------------------------------------------------------------------------------------
-# Crispr -> Metrics Per Physical Library
+# CRISPR -> Metrics Per Physical Library
 # --------------------------------------------------------------------------------------------------
 [crispr_physical_library_metrics]
 title = "Metrics Per Physical Library"
@@ -1127,14 +1189,12 @@ entries = [
     "physical_library_id",
     "number_of_reads",
     "valid_barcodes",
+    "valid_gem_barcodes",
+    "valid_probe_barcodes",
     "valid_umis",
     "sequencing_saturation",
     "reads_in_cell_associated_partitions",
     "mean_reads_per_cell_associated_partition",
-    "fraction_reads_with_putative_protospacer",
-    "fraction_guide_reads",
-    "fraction_guide_reads_usable",
-    "fraction_protospacer_not_recognized",
 ]
 
     [crispr_physical_library_metrics.physical_library_id]
@@ -1144,11 +1204,13 @@ entries = [
 
     [crispr_physical_library_metrics.number_of_reads]
     type = "usize"
+    json_key = "CRISPR_total_read_pairs"
     header = "Number of reads"
     help = "Total number of read pairs that were sequenced from this library."
 
     [crispr_physical_library_metrics.valid_barcodes]
     type = "Percent"
+    json_key = "CRISPR_good_bc_frac"
     header = "Valid barcodes"
     help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction."
 
@@ -1158,59 +1220,55 @@ entries = [
         warn_title = "Low Fraction Valid Barcodes"
         detail = "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance may be affected."
 
+    [crispr_physical_library_metrics.valid_gem_barcodes]
+    type = "Percent"
+    json_key = "CRISPR_good_bc_in_gel_bead_frac"
+    optional = true
+    header = "Valid GEM barcodes"
+    help = "Fraction of reads with GEM barcodes that are present in the whitelist after barcode correction."
+
+        [[crispr_physical_library_metrics.valid_gem_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid GEM Barcodes"
+        detail = "Ideal > 75%. This may indicate a read quality issue. Application performance may be affected."
+
+    [crispr_physical_library_metrics.valid_probe_barcodes]
+    type = "Percent"
+    json_key = "CRISPR_good_bc_in_probe_frac"
+    optional = true
+    header = "Valid probe barcodes"
+    help = "Fraction of reads with probe barcodes that are present in the whitelist after barcode correction."
+
+        [[crispr_physical_library_metrics.valid_probe_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Probe Barcodes"
+        detail = "Ideal > 75%. This may indicate a read quality issue. Application performance may be affected."
+
     [crispr_physical_library_metrics.valid_umis]
     type = "Percent"
+    json_key = "CRISPR_good_umi_frac"
     header = "Valid UMIs"
     help = "Fraction of reads with valid UMIs; i.e. UMI sequences that do not contain Ns and that are not homopolymers."
 
     [crispr_physical_library_metrics.sequencing_saturation]
     type = "Percent"
+    json_key = "CRISPR_multi_cdna_pcr_dupe_reads_frac"
     header = "Sequencing saturation"
     help = "The fraction of reads originating from an already-observed UMI. This is a function of library complexity and sequencing depth. More specifically, this is a ratio where: the denominator is the number of reads with a recognized protospacer sequence, valid cell-barcode, and valid UMI, and the numerator is the subset of those reads that had a non-unique combination of (cell-barcode, UMI, protospacer sequence)."
 
     [crispr_physical_library_metrics.reads_in_cell_associated_partitions]
     type = "Percent"
-    header = "Fraction reads in cells"
+    json_key = "CRISPR_feature_reads_in_cells"
+    header = "Guide reads in cells"
     help = "Among CRISPR library reads with a recognized protospacer sequence, a valid UMI, and a valid barcode, the fraction with cell-associated barcodes."
 
     [crispr_physical_library_metrics.mean_reads_per_cell_associated_partition]
     type = "FloatAsInt"
+    json_key = "CRISPR_reads_per_cell"
     header = "Mean reads per cell"
     help = "The total number of sequenced read pairs divided by the number of cell-associated barcodes."
-
-    [crispr_physical_library_metrics.fraction_reads_with_putative_protospacer]
-    type = "Percent"
-    header = "Fraction reads with putative protospacer sequence"
-    help = "Fraction of feature barcoding library reads from which a putative protospacer sequence could be extracted."
-
-    [crispr_physical_library_metrics.fraction_guide_reads]
-    type = "Percent"
-    header = "Fraction guide reads"
-    help = "Fraction of CRISPR library reads with a recognized protospacer sequence."
-
-    [crispr_physical_library_metrics.fraction_guide_reads_usable]
-    type = "Percent"
-    header = "Fraction guide reads usable"
-    help = "Fraction of CRISPR library reads with a recognized protospacer sequence, a valid UMI, and a cell-associated barcode."
-
-        [[crispr_physical_library_metrics.fraction_guide_reads_usable.alerts]]
-        error_threshold = 0
-        warn_threshold = 0.20
-        error_title = "No Guide Reads Usable Found"
-        warn_title = "Low Fraction Guide Reads Usable"
-        detail = "Ideal > 20%. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
-
-    [crispr_physical_library_metrics.fraction_protospacer_not_recognized]
-    type = "Percent"
-    header = "Fraction protospacer not recognized"
-    help = "Among all CRISPR library reads with a putative protospacer sequence, the fraction with a protospacer sequence that did not match any specified in the Feature Reference CSV file provided to Cell Ranger."
-
-        [[crispr_physical_library_metrics.fraction_protospacer_not_recognized.alerts]]
-        error_threshold = 1.0
-        warn_threshold = 0.50
-        error_title = "No Recognized Protospacers Found"
-        warn_title = "High Fraction Unrecognized Protospacer"
-        detail = "Ideal < 50%. A high fraction of protospacer sequences in the CRISPR library do not match any provided in the Feature Reference CSV file. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
 
 # --------------------------------------------------------------------------------------------------
 # Custom -> Metrics Per Physical Library
@@ -1551,7 +1609,7 @@ title = "Cells"
 entries = [
     "genome",
     "total_singlets",
-    "median_reads_per_singlet",
+    "mean_reads_per_cell",
     "median_reads_per_cell_on_target",
     "median_genes_per_singlet",
     "median_genes_per_cell_on_target",
@@ -1579,10 +1637,11 @@ entries = [
         warn_title = "Low Number of Cells Assigned to Sample"
         detail = "A low number of cells were found in this sample. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. At least 10 cells need to be assigned to a sample in order to obtain secondary analysis and visualization, such as tSNE plots. Application performance is likely to be affected."
 
-    [gex_sample_hero_metrics.median_reads_per_singlet]
+    [gex_sample_hero_metrics.mean_reads_per_cell]
     type = "FloatAsInt"
-    header = "Median reads per cell"
-    help = "Median number of read pairs sequenced from the cells called from this sample."
+    json_key = "filtered_reads_per_filtered_bc"
+    header = "Mean reads per cell"
+    help = "Mean number of read pairs sequenced from the cells called from this sample."
 
     [gex_sample_hero_metrics.median_reads_per_cell_on_target]
     type = "FloatAsInt"
@@ -1777,28 +1836,28 @@ entries = [
     help = "Fraction of reads confidently mapped to the transcriptome, but on the opposite strand of their annotated gene. A read is counted as antisense if it has any alignments that are consistent with an exon of a transcript but antisense to it, and has no sense alignments."
 
         [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = false, is_hybrid_capture = false }
+        conditions = { include_introns = false, is_hybrid_capture = false }
         error_threshold = 0.3
         warn_threshold = 0.1
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 10% for single cell samples. This metric will usually be higher if run with --include_introns. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = true, is_hybrid_capture = false }
+        conditions = { include_introns = true, is_hybrid_capture = false }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 10% for single cell samples, but rates of 20% to 40% are common for single nuclei samples. This metric will usually be higher if run with --include_introns. If this is a single cell sample, this can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = false, is_hybrid_capture = true }
+        conditions = { include_introns = false, is_hybrid_capture = true }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 20%. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        context = { include_introns = true, is_hybrid_capture = true }
+        conditions = { include_introns = true, is_hybrid_capture = true }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
@@ -2193,7 +2252,7 @@ entries = [
     "total_singlets",
     "median_umis_per_singlet",
     "antibody_reads_usable_per_cell",
-    "reads_in_cell_associated_partitions",
+    "reads_in_cells",
 ]
 
     [antibody_sample_hero_metrics.total_singlets]
@@ -2222,8 +2281,9 @@ entries = [
     header = "Mean antibody reads usable per cell"
     help = "Mean number of usable reads (valid UMI, recognized antibody Feature Barcode) sequenced from cells called from this sample."
 
-    [antibody_sample_hero_metrics.reads_in_cell_associated_partitions]
+    [antibody_sample_hero_metrics.reads_in_cells]
     type = "Percent"
+    optional = true
     json_key = "ANTIBODY_feature_reads_in_cells"
     header = "Antibody reads in cells"
     help = "The fraction of valid-barcode, valid-UMI, recognized antibody Feature Barcode reads with cell-associated barcodes."
@@ -2259,7 +2319,7 @@ entries = [
     help = "Fraction of read pairs with valid barcodes that were removed because they are aggregates out of all reads with valid barcodes that are assigned to this sample (not just reads from cells)."
 
         [[antibody_sample_mapping_metrics.fraction_reads_in_aggregate_barcodes.alerts]]
-        context = { is_rtl = true }
+        conditions = { is_rtl = true }
         error_threshold = 1.0
         warn_threshold = 0.20
         error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
@@ -2267,7 +2327,7 @@ entries = [
         detail = "Ideal < 20%. A high fraction of antibody reads were found to belong to barcodes identified as antibody aggregates and were removed from the final matrix."
 
         [[antibody_sample_mapping_metrics.fraction_reads_in_aggregate_barcodes.alerts]]
-        context = { is_rtl = false }
+        conditions = { is_rtl = false }
         error_threshold = 1.0
         warn_threshold = 0.05
         error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
@@ -2329,34 +2389,97 @@ entries = [
     "total_singlets",
     "median_umis_per_singlet",
     "guide_reads_usable_per_cell",
+    "reads_in_cells",
     "cells_with_one_or_more_protospacers_detected",
     "cells_with_two_or_more_protospacers_detected",
 ]
 
     [crispr_sample_hero_metrics.total_singlets]
     type = "usize"
+    json_key = "CRISPR_multi_filtered_bcs"
     header = "Cells"
     help = "Number of cells called from this sample."
 
     [crispr_sample_hero_metrics.median_umis_per_singlet]
     type = "FloatAsInt"
+    json_key = "CRISPR_multi_filtered_bcs_median_counts"
     header = "Median UMI counts per cell"
     help = "Median number of UMIs obtained from the cells called from this sample."
 
     [crispr_sample_hero_metrics.guide_reads_usable_per_cell]
     type = "FloatAsInt"
+    json_key = "CRISPR_multi_usable_reads_per_filtered_bc"
     header = "Mean guide reads usable per cell"
     help = "Mean number of usable reads (valid UMI, recognized protospacer sequence) sequenced from the cells called from this sample."
 
+    [crispr_sample_hero_metrics.reads_in_cells]
+    type = "Percent"
+    optional = true
+    json_key = "CRISPR_feature_reads_in_cells"
+    header = "Guide reads in cells"
+    help = "The fraction of valid-barcode, valid-UMI, recognized guide Feature Barcode reads with cell-associated barcodes."
+
     [crispr_sample_hero_metrics.cells_with_one_or_more_protospacers_detected]
     type = "Percent" # this was CountAndPercent in the mockup, if we want that need to tweak CRISPR metrics to keep the counts
+    json_key = "CRISPR_frac_cells_with_protospacer"
     header = "Cells with one or more protospacers detected"
     help = "Fraction of cells with one or more protospacers detected. In the multiplexing case, only cell-associated barcodes assigned exactly one CMO are included in this calculation."
 
     [crispr_sample_hero_metrics.cells_with_two_or_more_protospacers_detected]
     type = "Percent" # this was CountAndPercent in the mockup, if we want that need to tweak CRISPR metrics to keep the counts
+    json_key = "CRISPR_frac_cells_with_multiple_protospacer"
     header = "Cells with two or more protospacers detected"
     help = "Fraction of cells with two or more protospacers detected. In the multiplexing case, only cell-associated barcodes assigned exactly one CMO are included in this calculation."
+
+# --------------------------------------------------------------------------------------------------
+# CRISPR -> Mapping Metrics (Amongst Reads From Cells Assigned To Sample)
+# --------------------------------------------------------------------------------------------------
+[crispr_sample_mapping_metrics]
+title = "Mapping Metrics (Amongst Reads From Cells Assigned To Sample)"
+entries = [
+    "number_of_reads",
+    "fraction_reads_with_putative_protospacer",
+    "fraction_guide_reads",
+    "fraction_protospacer_not_recognized",
+]
+
+    [crispr_sample_mapping_metrics.number_of_reads]
+    type = "usize"
+    json_key = "CRISPR_total_read_pairs_in_filtered_barcodes"
+    header = "Number of reads from cells associated with this sample"
+    help = "The total number of reads from cells associated with this sample."
+
+    [crispr_sample_mapping_metrics.fraction_reads_with_putative_protospacer]
+    type = "Percent"
+    json_key = "CRISPR_feature_bc_extracted_frac_in_filtered_barcodes"
+    header = "Fraction reads with putative protospacer sequence"
+    help = "Fraction of CRISPR library reads from which a putative protospacer sequence could be extracted."
+
+    [crispr_sample_mapping_metrics.fraction_guide_reads]
+    type = "Percent"
+    json_key = "CRISPR_recognized_feature_bc_frac_in_filtered_barcodes"
+    header = "Fraction guide reads"
+    help = "Fraction of CRISPR library reads with a recognized protospacer sequence."
+
+        [[crispr_sample_mapping_metrics.fraction_guide_reads.alerts]]
+        error_threshold = 0
+        warn_threshold = 0.20
+        error_title = "No Guide Reads Found"
+        warn_title = "Low Fraction Guide Reads"
+        detail = "Ideal > 20%. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
+
+    [crispr_sample_mapping_metrics.fraction_protospacer_not_recognized]
+    type = "Percent"
+    json_key = "CRISPR_unrecognized_feature_bc_frac_in_filtered_barcodes"
+    header = "Fraction protospacer not recognized"
+    help = "Among all CRISPR library reads with a putative protospacer sequence, the fraction with a protospacer sequence that did not match any specified in the Feature Reference CSV file provided to Cell Ranger."
+
+        [[crispr_sample_mapping_metrics.fraction_protospacer_not_recognized.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.50
+        error_title = "No Recognized Protospacers Found"
+        warn_title = "High Fraction Unrecognized Protospacer"
+        detail = "Ideal < 50%. A high fraction of protospacer sequences in the CRISPR library do not match any provided in the Feature Reference CSV file. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
 
 # --------------------------------------------------------------------------------------------------
 # Custom -> Hero metrics

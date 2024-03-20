@@ -14,7 +14,6 @@ import cellranger.analysis.io as analysis_io
 import cellranger.h5_constants as h5_constants
 from cellranger.analysis.pca import load_pca_from_h5
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
-from cellranger.hacks import get_thread_request_from_mem_gb
 from cellranger.logperf import LogPerf
 
 __MRO__ = """
@@ -151,23 +150,19 @@ def split(args):
                 }
             )
 
-    if args.similarity_type == SNN_SIMILARITY:
-        join_mem_gb = 64
-        join_threads = 4  # Overallocate
-    else:
+    join_mem_gb = (
+        64
+        if args.similarity_type == SNN_SIMILARITY
         # Scale memory with size of nearest-neighbor adjacency matrix
-        join_mem_gb = max(
+        else max(
             h5_constants.MIN_MEM_GB,
             int(np.ceil((num_neighbors * len(use_bcs)) / NN_ENTRIES_PER_MEM_GB)),
         )
-        # HACK: use more threads for bigger mem requests to avoid mem oversubscription on clusters that don't enforce it
-        join_threads = get_thread_request_from_mem_gb(join_mem_gb)
-
+    )
     return {
         "chunks": chunks,
         "join": {
             "__mem_gb": join_mem_gb,
-            "__threads": join_threads,
         },
     }
 

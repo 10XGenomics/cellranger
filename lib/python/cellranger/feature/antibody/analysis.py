@@ -66,6 +66,8 @@ def filter_correction_table(correction_data: pd.DataFrame, library_type: str) ->
 
 def subselect_augmented_table(barcode_list, augmented_table: pd.DataFrame):
     """Make a slice of the barcode summary csv with the given list of barcodes."""
+    if isinstance(barcode_list, set):
+        barcode_list = list(barcode_list)
     subselected_table = augmented_table.loc[barcode_list].drop(
         ["reads", "candidate_dup_reads"], axis=1
     )

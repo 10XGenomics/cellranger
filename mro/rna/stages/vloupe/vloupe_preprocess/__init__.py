@@ -43,10 +43,12 @@ def main(args, outs):
     as of yet).
     """
     if args.disable_vloupe:
+        outs.output_for_vloupe = None
         return
 
     if args.enclone_output is None or not os.path.isfile(args.enclone_output):
         martian.log_info("Proto file missing - cannot make vloupe file")
+        outs.output_for_vloupe = None
         return
 
     call = [

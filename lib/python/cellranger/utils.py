@@ -9,8 +9,6 @@ in that module.
 
 from __future__ import annotations
 
-import collections
-import csv
 import json
 import os
 from collections.abc import Collection, Generator, Iterable, Sequence
@@ -19,8 +17,10 @@ from typing import IO, AnyStr, overload
 import numpy as np
 
 import cellranger.constants as cr_constants
-import tenkit.log_subprocess as tk_subproc
 import tenkit.seq as tk_seq
+from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
+    FilteredBarcodes,
+)
 
 
 def get_gem_group_from_barcode(barcode: bytes | None) -> int | None:
@@ -352,33 +352,14 @@ def get_fasta_iter(f: IO[bytes]) -> Generator[tuple[bytes, bytes], None, None]:
         yield hdr, seq
 
 
-def get_unmapped_read_count_from_indexed_bam(bam_file_name: str | bytes | os.PathLike) -> int:
-    """Get number of unmapped reads from an indexed BAM file.
-
-    Args:
-        bam_file_name (str): Name of indexed BAM file.
-
-    Returns:
-        int: number of unmapped reads in the BAM
-
-    Note:
-        BAM must be indexed for lookup using samtools.
-    """
-    index_output = tk_subproc.check_output(["samtools", "idxstats", bam_file_name])
-    return int(index_output.strip().rsplit(b"\n", maxsplit=1)[-1].rsplit(maxsplit=1)[-1])
-
-
 def load_barcode_csv(barcode_csv: str | bytes | os.PathLike) -> dict[bytes, list[bytes]]:
     """Load a csv file of (genome,barcode)."""
-    bcs_per_genome: collections.defaultdict[bytes, list[bytes]] = collections.defaultdict(list)
-    with open(barcode_csv) as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) != 2:
-                raise ValueError("Bad barcode file: %s" % barcode_csv)
-            (genome, barcode) = row
-            bcs_per_genome[genome.encode()].append(barcode.encode())
-    return bcs_per_genome
+    if isinstance(barcode_csv, bytes):
+        barcode_csv = barcode_csv.decode()
+    return {
+        genome.encode(): barcodes
+        for genome, barcodes in FilteredBarcodes(barcode_csv).per_genome_barcodes().items()
+    }
 
 
 def get_cell_associated_barcode_set(

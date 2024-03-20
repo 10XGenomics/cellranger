@@ -14,7 +14,7 @@ where
     fn to_json_reporter(&self) -> JsonReporter {
         match self {
             Some(j) => j.to_json_reporter(),
-            None => JsonReporter::new(),
+            None => JsonReporter::default(),
         }
     }
 }
@@ -29,9 +29,6 @@ impl<M> Metric for Option<M>
 where
     M: Metric,
 {
-    fn new() -> Self {
-        None
-    }
     fn merge(&mut self, other: Self) {
         match (self.as_mut(), other) {
             (Some(t1), Some(t2)) => t1.merge(t2),
@@ -50,7 +47,7 @@ mod tests {
 
     #[test]
     fn test_option_metric() {
-        let mut count1: Option<CountMetric> = Option::new();
+        let mut count1: Option<CountMetric> = Option::default();
         assert_eq!(count1, None);
         // None + None = None
         count1.merge(None);
@@ -70,8 +67,8 @@ mod tests {
 
     #[test]
     fn test_option_report() {
-        let count: Option<CountMetric> = Option::new();
-        assert_eq!(count.to_json_reporter(), JsonReporter::new());
+        let count: Option<CountMetric> = None;
+        assert_eq!(count.to_json_reporter(), JsonReporter::default());
 
         let inner = CountMetric::from(100);
         let inner_report = inner.to_json_reporter();

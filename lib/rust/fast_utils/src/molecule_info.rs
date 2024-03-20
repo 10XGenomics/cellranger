@@ -6,8 +6,7 @@ use cr_h5::molecule_info::{
     BarcodeIdxType, FeatureIdxType, FullUmiCount, GemGroupType, LibraryIdxType,
     MoleculeInfoIterator, MoleculeInfoReader, MoleculeInfoWriter, PerLibrarySubSampler,
 };
-use cr_types::rna_read::LegacyLibraryType;
-use cr_types::LibraryInfo;
+use cr_types::{LibraryInfo, LibraryType};
 use itertools::Itertools;
 use numpy::PyArray1;
 use pyo3::exceptions::PyIOError;
@@ -100,7 +99,7 @@ pub(crate) fn count_usable_reads(_py: Python<'_>, mol_info_path: String) -> Hash
         .unwrap()
         .map(|x| x.umi_data)
         .filter(|x| {
-            if library_types[&x.library_idx] != LegacyLibraryType::GeneExpression {
+            if library_types[&x.library_idx] != LibraryType::Gex {
                 return true;
             };
             let Some(gex_target_set) = gex_target_set else {
@@ -147,4 +146,38 @@ pub(crate) fn concatenate_molecule_infos(
         }
         Err(_e) => Err(PyIOError::new_err("Could not open output file")),
     }
+}
+
+pub(crate) struct LibraryAndFeatureIdxFilter {
+    pub(crate) library_idxs: Vec<LibraryIdxType>,
+    pub(crate) feature_idxs: HashSet<FeatureIdxType>,
+}
+
+impl LibraryAndFeatureIdxFilter {
+    fn passes_filter(&self, umi: &FullUmiCount) -> bool {
+        self.library_idxs.contains(&umi.umi_data.library_idx)
+            && self.feature_idxs.contains(&umi.umi_data.feature_idx)
+    }
+}
+
+#[pyfunction]
+pub(crate) fn get_num_umis_per_barcode(
+    _py: Python<'_>,
+    mol_info_path: String,
+    library_idxs: Vec<LibraryIdxType>,
+    target_feature_indices: Vec<FeatureIdxType>,
+) -> PyResult<Vec<usize>> {
+    let cur_path = Path::new(&mol_info_path);
+    let filter = LibraryAndFeatureIdxFilter {
+        library_idxs,
+        feature_idxs: target_feature_indices.into_iter().collect(),
+    };
+    let counts = MoleculeInfoIterator::new(cur_path)
+        .expect("Could not open molecule info")
+        .filter_map(|x| filter.passes_filter(&x).then_some(x.barcode_idx))
+        .dedup_with_count()
+        .map(|(count, _)| count)
+        .sorted()
+        .collect();
+    Ok(counts)
 }

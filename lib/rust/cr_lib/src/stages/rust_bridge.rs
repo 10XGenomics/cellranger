@@ -4,8 +4,9 @@ use crate::barcode_sort::BarcodeOrder;
 use crate::types::ReadShardFile;
 use anyhow::Result;
 use barcode::Barcode;
+use cr_types::chemistry::ChemistryDefs;
 use cr_types::rna_read::RnaRead;
-use cr_types::types::{GemWell, LibraryFeatures};
+use cr_types::types::{GemWell, LibraryType};
 use cr_types::{BcCountFormat, MetricsFile};
 use itertools::{GroupBy, Itertools};
 use martian::prelude::*;
@@ -14,14 +15,13 @@ use martian_filetypes::bin_file::BincodeFile;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::lz4_file::Lz4;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO, LazyWrite};
-use metric::{JsonReport, JsonReporter, Metric, SimpleHistogram};
+use metric::{JsonReport, JsonReporter, SimpleHistogram};
 use parameters_toml::vdj_max_reads_per_barcode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use shardio::{Range, ShardReader, SortKey};
 use stats::ReservoirSampler;
 use std::fs::File;
-use umi::HasUmi;
 
 /// This will determine the number of chunks in the stages
 /// after barcode correction in VDJ. At 5k read pairs per cell,
@@ -33,12 +33,12 @@ pub const MAX_CHUNKS: usize = 250;
 
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct RustBridgeStageInputs {
+    pub chemistry_defs: ChemistryDefs,
     pub gem_well: GemWell,
     pub valid_uncorrected: Vec<ReadShardFile>,
     pub valid_corrected: Vec<ReadShardFile>,
     pub raw_barcode_counts: BcCountFormat,
     pub corrected_barcode_counts: BcCountFormat,
-    pub paired_end: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
@@ -144,7 +144,9 @@ impl MartianStage for RustBridge {
         let mut read_lazy_writer = chunk_bc_sorted_rna_reads.lazy_writer()?;
         let mut n50s = Vec::new();
 
-        let max_read_pairs_per_barcode = if args.paired_end {
+        // CELLRANGER-7889 "VDJ" is hardcoded in the MRO chemistry map.
+        let chemistry_def = &args.chemistry_defs[&LibraryType::VdjAuto];
+        let max_read_pairs_per_barcode = if chemistry_def.is_paired_end() {
             *vdj_max_reads_per_barcode()? / 2
         } else {
             *vdj_max_reads_per_barcode()?
@@ -156,7 +158,7 @@ impl MartianStage for RustBridge {
                 max_read_pairs_per_barcode,
                 fxhash::hash64(&barcode), // seed for subsampling
             );
-            let mut umi_read_counts = SimpleHistogram::new();
+            let mut umi_read_counts = SimpleHistogram::default();
             processed_read_pairs += subsampled_reads.len() as u64;
             for rna_read in subsampled_reads {
                 let rna_read = rna_read?;
@@ -165,7 +167,7 @@ impl MartianStage for RustBridge {
             }
             if let Some(n50) = stats::n50(umi_read_counts.raw_counts().filter(|&&count| count > 1))
             {
-                n50s.push(n50 as u32)
+                n50s.push(n50 as u32);
             }
             barcodes.push(barcode.unwrap());
         }
@@ -197,7 +199,7 @@ impl MartianStage for RustBridge {
             .read()?
             .into_iter()
             .filter_map(|(k, v)| match k {
-                LibraryFeatures::Vdj(_) => Some(v),
+                LibraryType::Vdj(_) => Some(v),
                 _ => None,
             })
             .exactly_one()
@@ -208,7 +210,7 @@ impl MartianStage for RustBridge {
             .read()?
             .into_iter()
             .filter_map(|(k, v)| match k {
-                LibraryFeatures::Vdj(_) => Some(v),
+                LibraryType::Vdj(_) => Some(v),
                 _ => None,
             })
             .exactly_one()
@@ -222,7 +224,7 @@ impl MartianStage for RustBridge {
         }
         let n50_n50_rpu = stats::n50(&n50s).unwrap_or(0);
 
-        let mut metrics = JsonReporter::new();
+        let mut metrics = JsonReporter::default();
         metrics.insert("n50_n50_rpu", n50_n50_rpu);
 
         Ok(RustBridgeStageOutputs {

@@ -1,8 +1,16 @@
 [dependencies]
+numpy = '0.19'
+
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.arrayvec]
+workspace = true
+
+[dependencies.barcodes_folder]
+path = '../barcodes_folder'
+
+[dependencies.blas-src]
 workspace = true
 
 [dependencies.itertools]
@@ -11,21 +19,45 @@ workspace = true
 [dependencies.martian]
 workspace = true
 
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.metric]
+path = '../metric'
+
+[dependencies.ndarray]
+workspace = true
+
 [dependencies.prost]
 optional = true
-version = '>= 0.7, < 0.12'
+version = '0.11'
 
 [dependencies.prost-build]
 optional = true
-version = '>= 0.7, < 0.12'
+version = '0.11'
+
+[dependencies.pyanyhow]
+path = '../pyanyhow'
+
+[dependencies.pyo3]
+workspace = true
 
 [dependencies.serde]
 workspace = true
 
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.strum_macros]
+workspace = true
+
 [features]
-default = ['tenx_oss']
+default = ['tenx_source_available']
 tenx_internal = ['prost', 'prost-build']
-tenx_oss = []
+tenx_source_available = []
 
 [lib]
 test = false

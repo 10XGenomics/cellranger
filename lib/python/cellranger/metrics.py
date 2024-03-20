@@ -24,6 +24,7 @@ class BarcodeFilterResults(Metrics):
         self.filtered_bcs_ub = default_value
         self.filtered_bcs_var = default_value
         self.filtered_bcs_cv = float(default_value)
+        self.filtered_bcs_cutoff = default_value
 
     @staticmethod
     def init_with_constant_call(n_bcs: int) -> BarcodeFilterResults:
@@ -33,6 +34,7 @@ class BarcodeFilterResults(Metrics):
         res.filtered_bcs_ub = n_bcs
         res.filtered_bcs_var = 0
         res.filtered_bcs_cv = 0
+        res.filtered_bcs_cutoff = 0
         return res
 
     def to_dict_with_prefix(

@@ -481,18 +481,23 @@ def _get_log2_fold_change(
         if target in filter_list:
             continue
 
-        log2_fc[name] = _get_ko_per_target(this_results, target)
-        log2_cis[name] = _get_fold_change_cis(matrix, target, group_a, group_b, local_params)
+        deg_result = _get_ko_per_target(this_results, target)
+        if deg_result is not None:
+            log2_fc[name] = deg_result
+            log2_cis[name] = _get_fold_change_cis(matrix, target, group_a, group_b, local_params)
 
     return (log2_fc, log2_cis)
 
 
 def _get_ko_per_target(results, target):
+    deg_result = results.loc[results["Gene ID"] == target]
+    if deg_result.empty:
+        return None
     return (
-        results.loc[results["Gene ID"] == target]["log2_fold_change"].values[0],
-        results.loc[results["Gene ID"] == target]["p_value"].values[0],
-        results.loc[results["Gene ID"] == target]["sum_a"].values[0],
-        results.loc[results["Gene ID"] == target]["sum_b"].values[0],
+        deg_result["log2_fold_change"].values[0],
+        deg_result["p_value"].values[0],
+        deg_result["sum_a"].values[0],
+        deg_result["sum_b"].values[0],
     )
 
 

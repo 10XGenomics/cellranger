@@ -267,12 +267,12 @@ pub fn check_and_setup_path() {
     if Path::new("../../../lib/bin/samtools").exists() {
         // When running under bazel test
         paths.insert(0, "../../../lib/bin".into());
-        set_var("PATH", join_paths(paths.iter()).unwrap());
+        set_var("PATH", join_paths(paths).unwrap());
     } else if Path::new("../../../bazel-bin/lib/bin/samtools").exists() {
         // When running under cargo test in a tree where bazel build has
         // produced a samtools binary at some point.
         paths.insert(0, "../../../bazel-bin/lib/bin".into());
-        set_var("PATH", join_paths(paths.iter()).unwrap());
+        set_var("PATH", join_paths(paths).unwrap());
     }
     if let Err(e) = Command::new("samtools")
         .stdout(Stdio::null())

@@ -3,15 +3,14 @@
 use crate::detect_chemistry::chemistry_filter::detect_chemistry_units;
 use anyhow::{bail, Result};
 use cr_types::reference::feature_reference::{BeamMode, FeatureConfig, FeatureReferenceFile};
-use cr_types::rna_read::LegacyLibraryType;
 use cr_types::sample_def::SampleDef;
+use cr_types::LibraryType;
 use fastq_set::read_pair::{ReadPart, WhichRead};
 use fastq_set::read_pair_iter::ReadPairIter;
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
-use metric::{Metric, TxHashSet};
-use metric_derive::Metric;
+use metric::TxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::iter::zip;
@@ -47,7 +46,7 @@ pub struct DetectVdjReceptorStageOutputs {
 // This is our stage struct
 pub struct DetectVdjReceptor;
 
-#[derive(Debug, Metric, Serialize, Deserialize)]
+#[derive(Default)]
 struct ClassificationStats {
     tcr_reads: i64,
     ig_reads: i64,
@@ -110,17 +109,19 @@ fn check_feature_ref_and_config(
         None => false,
         Some(sdef) => sdef
             .into_iter()
-            .any(|s| s.library_type.unwrap_or_default() == LegacyLibraryType::AntigenCapture),
+            .any(|s| s.library_type == Some(LibraryType::Antigen)),
     };
-    if has_antigen && (feature_ref.is_none() || vdj_receptor.is_none()) {
-        panic!(
+    let beam_mode = if has_antigen {
+        assert!(
+            feature_ref.is_some() && vdj_receptor.is_some(),
             "Expecting a valid feature reference and a specific VDJ receptor with Antigen Capture libraries!"
-        )
-    }
-    let beam_mode = match (has_antigen, vdj_receptor.unwrap()) {
-        (true, VdjReceptor::TR | VdjReceptor::TRGD) => Some(BeamMode::BeamT),
-        (true, VdjReceptor::IG) => Some(BeamMode::BeamAB),
-        (false, _) => None,
+        );
+        Some(match vdj_receptor.unwrap() {
+            VdjReceptor::TR | VdjReceptor::TRGD => BeamMode::BeamT,
+            VdjReceptor::IG => BeamMode::BeamAB,
+        })
+    } else {
+        None
     };
     if let Some(beam) = beam_mode {
         if let Some(feature_config) = feature_config {
@@ -200,7 +201,7 @@ impl MartianMain for DetectVdjReceptor {
         };
         let mut per_unit_receptors = Vec::with_capacity(units.len());
         for unit in &units {
-            let mut stats = ClassificationStats::new();
+            let mut stats = ClassificationStats::default();
             for fastq in &unit.fastqs {
                 for read_pair in
                     ReadPairIter::from_fastq_files(fastq)?.take(MAX_READS_RECEPTOR_CLASSIFICATION)
@@ -231,7 +232,7 @@ impl MartianMain for DetectVdjReceptor {
                     );
                 }
             }
-            println!("{stats:?}");
+            println!("{stats}");
         }
 
         let receptor_choices: TxHashSet<_> = per_unit_receptors.iter().collect();
@@ -456,7 +457,7 @@ mod tests {
                 ),
                 feature_reference: Some("test/multi/beam/feature_beam_t.csv".into()),
                 gex_sample_def: Some(vec![SampleDef {
-                    library_type: Some(LegacyLibraryType::AntigenCapture),
+                    library_type: Some(LibraryType::Antigen),
                     ..Default::default()
                 }]),
                 vdj_sample_def: vec![SampleDef {

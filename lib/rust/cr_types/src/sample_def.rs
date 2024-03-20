@@ -2,9 +2,9 @@
 //! There is code in fastq_set::sample_def, but having it in Cellranger makes
 //! more sense
 
-use crate::rna_read::LegacyLibraryType;
 use crate::serde_helpers::NumberOrStr;
-use anyhow::{bail, Result};
+use crate::LibraryType;
+use anyhow::{bail, ensure, Result};
 use fastq_set::filenames::bcl2fastq::SampleNameSpec;
 use fastq_set::filenames::bcl_processor::SampleIndexSpec;
 use fastq_set::filenames::fastq_dir::{BclProcessorDir, FastqChecker};
@@ -63,7 +63,7 @@ pub struct SampleDef {
     pub gem_group: Option<u16>,
     #[serde(deserialize_with = "parse_lanes")]
     pub lanes: Option<Vec<usize>>,
-    pub library_type: Option<LegacyLibraryType>,
+    pub library_type: Option<LibraryType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r1_length: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +111,8 @@ impl SampleDef {
                     );
                 }
 
+                let lane_spec = self.lane_spec();
+
                 // Check for missing sample indices.
                 match self.sample_indices.as_deref() {
                     None | Some([]) => {
@@ -126,23 +128,36 @@ impl SampleDef {
                             .iter()
                             .filter(|si| !dir.contains_index(si))
                             .join(",");
-                        if !missing_sample_indices.is_empty() {
-                            bail!(
-                                "No input FASTQs were found for the sample indices {missing_sample_indices}"
-                            );
+
+                        ensure!(
+                            missing_sample_indices.is_empty(),
+                            "No input FASTQs were found for the sample indices \
+                                {missing_sample_indices} in the path: {read_path}"
+                        );
+
+                        if let LaneSpec::Lanes(lanes) = &lane_spec {
+                            for sample_index in sample_indices {
+                                ensure!(
+                                    lanes.iter().any(|lane| dir.contains_index_with_lane(sample_index, *lane)),
+                                    "No input FASTQs were found for the sample index {sample_index} \
+                                    and lanes {:?} in the path: {read_path}",
+                                    lanes.iter().sorted().join(",")
+                                );
+                            }
                         }
                     }
                 }
 
                 // Check for missing lanes.
-                if let LaneSpec::Lanes(lanes) = self.lane_spec() {
+                if let LaneSpec::Lanes(lanes) = lane_spec {
                     let missing_lanes = lanes
                         .into_iter()
                         .filter(|&lane| !dir.contains_lane(lane))
                         .join(",");
-                    if !missing_lanes.is_empty() {
-                        bail!("Lane(s) {missing_lanes} does not exist in the path {read_path}");
-                    }
+                    ensure!(
+                        missing_lanes.is_empty(),
+                        "Lane(s) {missing_lanes} does not exist in the path: {read_path}"
+                    );
                 }
             }
 
@@ -455,7 +470,7 @@ mod invalid_bcl2fastq_sample_def {
         };
         let check = sdef.check_fastqs(COUNT_HELP);
         println!("{check:#?}");
-        assert!(check.is_err())
+        assert!(check.is_err());
     }
 
     #[test]
@@ -528,7 +543,7 @@ mod invalid_bcl_proc_sample_def {
         };
         let check = sdef.check_fastqs(COUNT_HELP);
         println!("{check:#?}");
-        assert!(check.is_err())
+        assert!(check.is_err());
     }
 
     #[test]
@@ -579,6 +594,16 @@ mod invalid_bcl_proc_sample_def {
             "../dui_tests/test_resources/cellranger-count/cycle_failure_bc_v3",
             Some(vec![2]),
             Some(vec!["SI-P2-D3"]),
+        );
+    }
+
+    #[test]
+    fn test_index_lane_pair_missing() {
+        // Both the index and the lane are present, but the pair is missing
+        test_invalid_bcl_proc_input(
+            "../dui_tests/test_resources/cellranger-count/index_lane_pair_missing",
+            Some(vec![1]),
+            Some(vec!["TATCAGCCTA"]),
         );
     }
 }

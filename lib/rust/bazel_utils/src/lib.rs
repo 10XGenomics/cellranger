@@ -44,19 +44,11 @@ pub fn current_exe() -> Result<PathBuf, std::io::Error> {
     }
 
     // This could fail if you use relative paths in PATH and change your working
-    //   directory before calling this. Don't do that.
+    // directory before calling this. Don't do that.
     env::var_os("PATH")
-        .and_then(|paths| {
-            env::split_paths(&paths)
-                .filter_map(|path| {
-                    if is_executable_file(path.join(&exe)) {
-                        return canonicalize(&path).ok().map(|path| path.join(&exe));
-                    }
-                    None
-                })
-                .next()
-        })
-        .map_or_else(std::env::current_exe, Ok)
+        .and_then(|paths| env::split_paths(&paths).find(|path| is_executable_file(path.join(&exe))))
+        .and_then(|path| canonicalize(&path).ok())
+        .map_or_else(std::env::current_exe, |path| Ok(path.join(&exe)))
 }
 
 pub fn runfiles_dir() -> Result<PathBuf> {

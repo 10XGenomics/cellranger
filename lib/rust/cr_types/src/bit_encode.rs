@@ -33,6 +33,7 @@ impl<T: From<u8> + Into<u8>> BitEncoded<T> {
         self.bits |= bit_flag(val.into());
     }
     #[cfg(test)]
+    #[allow(unused)]
     pub fn inspect_bits(self) -> u8 {
         self.bits
     }
@@ -67,6 +68,15 @@ impl<T: From<u8> + Into<u8>> From<Vec<T>> for BitEncoded<T> {
             encoded.push(val);
         }
         encoded
+    }
+}
+
+impl<T: From<u8> + Into<u8>> IntoIterator for BitEncoded<T> {
+    type IntoIter = BitEncodedIter<T>;
+    type Item = T;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

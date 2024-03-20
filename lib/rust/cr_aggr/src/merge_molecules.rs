@@ -60,10 +60,12 @@ impl MartianStage for MergeMolecules {
             .sample_defs
             .iter()
             .map(|sample_def| {
-                Ok(std::mem::size_of::<Barcode>()
-                    * MoleculeInfoReader::read_barcodes_size(&sample_def.molecule_h5)?)
+                anyhow::Ok(
+                    std::mem::size_of::<Barcode>()
+                        * MoleculeInfoReader::read_barcodes_size(&sample_def.molecule_h5)?,
+                )
             })
-            .collect::<Result<_>>()?;
+            .try_collect()?;
 
         // Max mem for join step depends mostly on the size of the merged barcodes,
         // which are a concatenation of the (trimmed) barcodes of each sample.
@@ -146,9 +148,7 @@ impl MartianStage for MergeMolecules {
             }
             feature_ref = Some(fref);
         }
-        let feature_ref = if let Some(fref) = feature_ref {
-            fref
-        } else {
+        let Some(feature_ref) = feature_ref else {
             bail!("Invalid feature reference");
         };
 
@@ -214,15 +214,13 @@ impl MartianStage for MergeMolecules {
 
             let (mut pass_filter, genomes) = MoleculeInfoReader::read_barcode_info(&in_h5)?;
             // Offset the barcode index
-            pass_filter
-                .slice_mut(s![.., 0])
-                .iter_mut()
-                .for_each(|v| *v += barcode_idx_offset as u64);
+            for x in pass_filter.slice_mut(s![.., 0]) {
+                *x += barcode_idx_offset as u64;
+            }
             // Update libraries to new mapping
-            pass_filter
-                .slice_mut(s![.., 1])
-                .iter_mut()
-                .for_each(|v| *v = lib_idx_map[*v as usize] as u64);
+            for x in pass_filter.slice_mut(s![.., 1]) {
+                *x = lib_idx_map[*x as usize] as u64;
+            }
 
             bc_infos.push((pass_filter, genomes));
 
@@ -338,10 +336,10 @@ impl MartianStage for MergeMolecules {
 #[cfg(test)]
 mod merge_molecules_tests {
     use super::*;
-    use barcode::BcSeq;
+    use barcode::BarcodeContent;
     use cr_h5::molecule_info::FullUmiCount;
     use cr_types::reference::feature_reference::FeatureReferenceFile;
-    use cr_types::{FeatureType, LibraryFeatures, UmiCount};
+    use cr_types::{LibraryType, UmiCount};
     use martian::MartianTempFile;
     use std::io::Write;
     use tempfile::TempDir;
@@ -402,13 +400,13 @@ mod merge_molecules_tests {
                 b"AAACCCAAGAAACCAT",
                 b"AAACCCAAGAAACCCA",
             ]
-            .map(|x| BcSeq::from_bytes(x)),
+            .map(|x| BarcodeContent::from_bytes(x).unwrap()),
             [
                 b"AAACCCAAGAAACCCG",
                 b"AAACCCAAGAAACGTC",
                 b"AAACCCAAGAAACTTC",
             ]
-            .map(|x| BcSeq::from_bytes(x)),
+            .map(|x| BarcodeContent::from_bytes(x).unwrap()),
         ];
         let tfiles: Vec<_> = barcode_lists
             .into_iter()
@@ -420,8 +418,7 @@ mod merge_molecules_tests {
                         library_id: 0,
                         gem_group: 0,
                         target_set_name: None,
-                        library_type: LibraryFeatures::GeneExpression(FeatureType::Gene)
-                            .legacy_library_type(),
+                        library_type: LibraryType::Gex,
                     },
                 )];
 

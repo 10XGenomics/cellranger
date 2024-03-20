@@ -4,10 +4,11 @@ use crate::aligner::BarcodeSummary;
 use crate::testing::diff_metrics;
 use anyhow::{Context, Result};
 use cr_bam::bam::BamPosSort;
-use cr_types::MetricsFile;
-use itertools::Itertools;
+use cr_types::{FeatureBarcodeType, MetricsFile};
+use itertools::{zip_eq, Itertools};
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, LazyFileTypeIO};
+use metric::join_metric_name;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Record};
 use serde_json::value::Value;
@@ -21,10 +22,6 @@ use std::process::Command;
 // Correctness checks for the metric summary json
 // ##################################################################################
 pub fn check_metrics_correctness(actual: &MetricsFile, expected: &MetricsFile) -> Result<()> {
-    use cr_types::rna_read::LegacyLibraryType::{
-        AntibodyCapture, CrisprGuideCapture, Custom, Multiplexing,
-    };
-
     let mut actual_metrics: HashMap<_, _> = actual.read()?;
     let mut expected_metrics: HashMap<_, _> = expected.read()?;
 
@@ -36,13 +33,16 @@ pub fn check_metrics_correctness(actual: &MetricsFile, expected: &MetricsFile) -
         ),
         ("multi_transcriptome_conf_mapped_barcoded_reads_frac", None),
     ];
-    for library_type in &[AntibodyCapture, CrisprGuideCapture, Custom, Multiplexing] {
-        let prefix = library_type.metric_prefix().unwrap();
-        for (old, new) in &remapped_metrics {
-            let name = format!("{prefix}_{old}");
-            if let Some(v) = expected_metrics.remove(&name) {
+    for feature_barcode_type in [
+        FeatureBarcodeType::Antibody,
+        FeatureBarcodeType::Crispr,
+        FeatureBarcodeType::Custom,
+        FeatureBarcodeType::Multiplexing,
+    ] {
+        for (old, new) in remapped_metrics {
+            if let Some(v) = expected_metrics.remove(&join_metric_name(feature_barcode_type, old)) {
                 if let Some(new) = new {
-                    expected_metrics.insert(format!("{prefix}_{new}"), v);
+                    expected_metrics.insert(join_metric_name(feature_barcode_type, new), v);
                 }
             }
         }
@@ -252,7 +252,7 @@ fn check_bam_record_correctness(slfe_rec: &Record, master_rec: &Record) -> Resul
     let master_tags = collect_tags(master_rec);
     let slfe_display = format!("SLFE TAGS\n{}", bam_tag_display(&slfe_tags)?);
     let master_display = format!("MASTER TAGS\n{}", bam_tag_display(&master_tags)?);
-    for (s, m) in slfe_tags.iter().zip_eq(master_tags.iter()) {
+    for (s, m) in zip_eq(slfe_tags, master_tags) {
         // Master sets inconsistent UMIs for primary and secondary alignments
         // of a read with a low support UMI. So ignore the UMI correctness check for
         // secondary alignments.
@@ -262,10 +262,8 @@ fn check_bam_record_correctness(slfe_rec: &Record, master_rec: &Record) -> Resul
         assert_eq!(
             s,
             m,
-            "Tag check failed on qname {}.\n{}\n{}",
+            "Tag check failed on qname {}.\n{slfe_display}\n{master_display}",
             std::str::from_utf8(slfe_rec.qname()).unwrap(),
-            slfe_display,
-            master_display
         );
     }
     Ok(())
@@ -296,13 +294,7 @@ pub fn check_bam_file_correctness(actual_bam: &Path, expected_bam: &Path) -> Res
 }
 
 fn check_bam_header_correctness(actual_bam: &Path, expected_bam: &Path) -> Result<()> {
-    let tags_to_check = vec![
-        "@HD",
-        "@SQ",
-        "@RG",
-        "@CO\t10x_bam_to_fastq:R",
-        // "@CO\tlibrary_info", // `library_id` is an int instead of string
-    ];
+    let tags_to_check = ["@HD", "@SQ", "@RG", "@CO\t10x_bam_to_fastq:R"];
     let pred = |x: &&str| -> bool {
         tags_to_check
             .iter()

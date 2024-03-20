@@ -1,8 +1,14 @@
 use crate::barcode_data::{BarcodeDataBrief, ContigChimeraData, ContigJunctionData};
 use crate::filter_log::{AsmCellFilter, FilterLogEntry, FilterLogger, LowConfidenceReason};
 use anyhow::Result;
+use barcode::whitelist::BarcodeId;
+use barcode::BcSegSeq;
+use cr_types::chemistry::BarcodeReadComponent;
 use debruijn::dna_string::DnaString;
+use metric::TxHashMap;
 use std::cmp::{max, min};
+use std::collections::HashSet;
+use std::ops::Range;
 use tenkit2::pack_dna::pack_bases_80;
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_types::{VdjChain, VdjRegion};
@@ -165,6 +171,41 @@ pub fn cell_filter(
     is_cell
 }
 
+pub fn map_multiplexing_seq_to_id(
+    barcode: &str,
+    seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
+    multiplexing_seq_range: &Range<usize>,
+) -> BarcodeId {
+    let seq = &BcSegSeq::from_bytes(&barcode.as_bytes()[multiplexing_seq_range.clone()]);
+    seq_to_id_map[seq]
+}
+
+pub fn overhang_demux_filter(
+    overhang_read_component: &BarcodeReadComponent,
+    valid_overhang_ids: HashSet<BarcodeId>,
+    barcode_cell_info: &mut Vec<BarcodeCellInfo>,
+    mut filter_logger: Option<&mut FilterLogger>,
+) {
+    let overhang_range = overhang_read_component.offset()
+        ..overhang_read_component.offset() + overhang_read_component.length();
+    let overhang_seq_to_id = overhang_read_component.build_seq_to_id_map().unwrap();
+
+    for bc in barcode_cell_info {
+        let multiplexing_id =
+            map_multiplexing_seq_to_id(&bc.barcode, &overhang_seq_to_id, &overhang_range);
+        if !valid_overhang_ids.contains(&multiplexing_id) {
+            bc.now_a_cell = false;
+        }
+        if let Some(ref mut logger) = filter_logger {
+            logger.log(&FilterLogEntry::cell_calling(
+                bc.barcode.clone(),
+                AsmCellFilter::DifferentOverhang {
+                    overhang_id: multiplexing_id.as_str().to_owned(),
+                },
+            ));
+        }
+    }
+}
 #[derive(Default, Clone)]
 pub struct Contigs {
     pub good_contigs: Vec<ContigAnnotation>,
@@ -193,7 +234,7 @@ impl Contigs {
                             v_ref_id: v as usize,
                             umi_count: contig.umi_count,
                             productive: contig.productive.unwrap() && is_cell,
-                        })
+                        });
                     }
                 }
             }

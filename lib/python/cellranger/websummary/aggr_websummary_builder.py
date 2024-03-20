@@ -14,7 +14,8 @@ from cellranger.targeted.targeted_constants import TARGETING_METHOD_TL
 from cellranger.webshim.common import load_sample_data
 from cellranger.webshim.constants.shared import CELLRANGER_COMMAND_NAME, PIPELINE_AGGR
 from cellranger.websummary import plotly_tools as pltly
-from cellranger.websummary.analysis_tab_core import TSNE_LAYOUT_CONFIG, get_tsne_key
+from cellranger.websummary.analysis_tab_core import TSNE_LAYOUT_CONFIG
+from cellranger.websummary.helpers import get_tsne_key
 from cellranger.websummary.metrics import (
     MetricAnnotations,
     SpatialAggrMetricAnnotations,
@@ -23,11 +24,11 @@ from cellranger.websummary.metrics import (
     TargetedAggrMetricAnnotations,
     TemplateLigationAggrMetricAnnotations,
 )
+from cellranger.websummary.numeric_converters import round_floats_in_list
 from cellranger.websummary.react_components import (
     PlotWithHeader,
-    round_floats_in_list,
-    write_html_file,
 )
+from cellranger.websummary.react_summarize import write_html_file
 from cellranger.websummary.spatial_utils import SPATIAL_COMMAND_NAME
 from cellranger.websummary.web_summary_builder import build_web_summary_html_sc_and_aggr
 

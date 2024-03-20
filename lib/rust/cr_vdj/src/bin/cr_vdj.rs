@@ -84,7 +84,7 @@ fn main() -> Result<()> {
         clonotype_assigner::Assigner,
         clonotype_assigner::write_clonotype_outs::WriteClonotypeOuts,
         clonotype_assigner::fill_clonotype_info::FillClonotypeInfo,
-        clonotype_assigner::handle_no_ref::HandleNoRef,
+        clonotype_assigner::handle_no_clonotyping::HandleNoClonotyping,
         clonotype_assigner::write_concat_ref_outs::WriteConcatRefOuts,
         clonotype_assigner::write_consensus_bam::WriteConsensusBam,
         clonotype_assigner::write_consensus_txt::WriteConsensusTxt,
@@ -94,7 +94,9 @@ fn main() -> Result<()> {
         vdj_asm_asm::write_contig_outs::WriteContigOuts,
         vdj_asm_asm::handle_gex_cells::HandleGexCells,
         vdj_asm_asm::make_filter_switch::MakeFilterSwitch,
+        vdj_asm_asm::merge_per_sample_annotations::MergePerSampleAnnotations,
         vdj_asm_asm::write_ann_csv::WriteAnnCsv,
+        vdj_asm_asm::subset_assembly_outs::SubsetAssemblyOuts,
     ];
 
     if args.cmd_martian {

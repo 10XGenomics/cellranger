@@ -154,6 +154,15 @@ def classify_gems(
             counts1[counts1 > counts0], analysis_constants.MULTIPLET_PROB_THRESHOLD * 100.0
         )
 
+    # If input is a pure species instead of a mixture then modeling counts independently
+    # can result in an absurdly low threshold for the missing species causing FP labels that
+    # show up as an inflated number of Multiplets.
+    thresholds = sorted([thresh0, thresh1])
+    fold_change = thresholds[1] / thresholds[0]
+    if (thresholds[0] < 50) and (fold_change > 25):
+        thresh0 = thresh1 = np.percentile(
+            counts0 + counts1, analysis_constants.MULTIPLET_PROB_THRESHOLD * 100.0
+        )
     doublet = np.logical_and(counts0 >= thresh0, counts1 >= thresh1)
     dtype = np.dtype(("S", max(len(cls) for cls in analysis_constants.GEM_CLASSES)))
     result = np.where(
@@ -226,7 +235,7 @@ class MultiGenomeAnalysis:
         np.random.seed(0)
 
         n_multiplet_boot: np.ndarray[int, np.dtype[np.float_]] = np.zeros(bootstraps)
-        for i in range(0, bootstraps):
+        for i in range(bootstraps):
             boot_idx = np.random.choice(len(counts0), len(counts0))
             counts0_boot = counts0[boot_idx]
             counts1_boot = counts1[boot_idx]

@@ -1,4 +1,3 @@
-use crate::env::{PkgEnv, TENX_COPYRIGHT};
 use crate::mrp_args::MrpArgs;
 use crate::utils::{validate_ascii_identifier, CliPath};
 use crate::{execute_to_status, make_mro, IntoExitCode};
@@ -36,12 +35,17 @@ pub struct MkrefShared {
 }
 
 impl MkrefShared {
-    /// Populate the mkref_version field.
-    pub fn populate_version(&mut self, pkg_env: &PkgEnv) {
-        self.mkref_version = format!(
-            "{0} mkref {1}\n{TENX_COPYRIGHT}",
-            pkg_env.tenx_product, pkg_env.tenx_version
-        );
+    /// Set mkref_version to "x.y.z". `version_description` is of the form
+    /// product-x.y.z or yyyy.mmdd.z or yyyy.mmdd.z-n-hash.
+    pub fn populate_version(&mut self, version: &str) {
+        self.mkref_version = if version.matches('-').count() == 1 {
+            // product-x.y.z
+            version.split_once('-').unwrap().1
+        } else {
+            // yyyy.mmdd.z or yyyy.mmdd.z-n-hash
+            version
+        }
+        .to_string();
     }
 }
 

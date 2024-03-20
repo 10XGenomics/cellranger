@@ -186,15 +186,24 @@ def split(args):
         num_barcodes = mc.get_ref_column_lazy("barcodes").shape[0]
 
         for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
-            mol_mem_gb = MoleculeCounter.estimate_mem_gb(chunk_len, scale=1.0, cap=False)
-            print("molecule_info mem_gb = %d" % mol_mem_gb)
+            # 1024**3 / (1e9 / 28) = 30.07 bytes per molecule
+            mol_mem_gib = MoleculeCounter.estimate_mem_gb(chunk_len, scale=1.0, cap=False)
 
             # Worst case number of nonzero elements in chunk matrix
-            num_nonzero = chunk_len
-            matrix_mem_gb = 0.5 * CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, num_nonzero)
-            print("matrix mem_gb = %d" % matrix_mem_gb)
+            # 1024**3 / 50e6 = 21.47 bytes per molecule
+            # 1024**3 / 10e6 = 107.37 bytes per barcode
+            matrix_mem_gib = CountMatrix.get_mem_gb_from_matrix_dim(
+                num_barcodes, chunk_len, scale=1.0
+            )
 
-            mem_gb = 2 + matrix_mem_gb + mol_mem_gb
+            barcodes_mem_gib = round(140 * num_barcodes / 1024**3, 1)
+
+            # bytes per molecule = 30.07 + 21.47 = 51.54
+            # bytes per barcode = 107.37 + 140 = 247.37
+            mem_gib = 2 + matrix_mem_gib + mol_mem_gib + barcodes_mem_gib
+            print(
+                f"chunk={len(chunks)},{chunk_len=},{num_barcodes=},{mol_mem_gib=},{matrix_mem_gib=},{barcodes_mem_gib=},{mem_gib=}"
+            )
 
             chunks.append(
                 {
@@ -204,7 +213,7 @@ def split(args):
                     "chunk_len": chunk_len,
                     "reads_per_library": reads_per_library,
                     # Request enough for two copies
-                    "__mem_gb": mem_gb,
+                    "__mem_gb": mem_gib,
                 }
             )
 
@@ -213,6 +222,7 @@ def split(args):
     # are being aggregated.
     # WRITE_MATRICES will use the precise nnz counts to make an appropriate mem request.
     join_mem_gb = max(1 + (num_barcodes * MAX_BARCODE_LENGTH) / 1e9, h5_constants.MIN_MEM_GB)
+    print(f"{num_barcodes=},{join_mem_gb=}")
     return {"chunks": chunks, "join": {"__mem_gb": join_mem_gb, "__threads": 2}}
 
 

@@ -34,7 +34,7 @@ struct AntigenAggrResults(
 struct VdjAggrResults(
     tsv    airr_rearrangement,
     csv    clonotypes,
-    fa     donor_ref_fa,
+    fa     donor_regions,
     fasta  consensus_fasta,
     csv    filtered_contig_annotations_csv,
     csv    consensus_annotations_csv,

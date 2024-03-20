@@ -14,16 +14,12 @@ pub struct CountMetric {
 }
 
 impl Metric for CountMetric {
-    /// Create a new `CountMetric` and initialize the counter with 0
-    fn new() -> Self {
-        CountMetric { count: 0 }
-    }
     /// Merging two `CountMetric` objects is just adding up the two counts
     ///
     /// # Example
     /// ```rust
     /// use metric::{Metric, CountMetric};
-    /// let mut c1 = CountMetric::new(); // Initialize to zero
+    /// let mut c1 = CountMetric::default(); // Initialize to zero
     /// c1.increment(); // Now it is 1
     /// let c2 = CountMetric::from(50);
     /// c1.merge(c2);
@@ -40,7 +36,7 @@ impl CountMetric {
     /// # Example
     /// ```rust
     /// use metric::{Metric, CountMetric};
-    /// let mut c1 = CountMetric::new(); // Initialize to zero
+    /// let mut c1 = CountMetric::default(); // Initialize to zero
     /// c1.increment(); // Now it is 1
     /// assert!(c1 == CountMetric::from(1))
     /// ```
@@ -54,7 +50,7 @@ impl CountMetric {
     /// # Example
     /// ```rust
     /// use metric::{Metric, CountMetric};
-    /// let mut c1 = CountMetric::new(); // Initialize to zero
+    /// let mut c1 = CountMetric::default(); // Initialize to zero
     /// c1.increment_by(10); // Now it is 10
     /// assert!(c1 == CountMetric::from(10))
     /// ```
@@ -79,7 +75,7 @@ impl CountMetric {
 /// ```rust
 /// use metric::{Metric, CountMetric};
 /// let c1 = CountMetric::from(100);
-/// let mut c2 = CountMetric::new();
+/// let mut c2 = CountMetric::default();
 /// c2.increment_by(100);
 /// assert!(c1==c2);
 /// ```
@@ -96,7 +92,7 @@ where
 ///
 impl JsonReport for CountMetric {
     fn to_json_reporter(&self) -> JsonReporter {
-        let mut reporter = JsonReporter::new();
+        let mut reporter = JsonReporter::default();
         reporter.insert("count", self.count);
         reporter
     }
@@ -138,7 +134,7 @@ impl ::std::ops::AddAssign for CountMetric {
 /// * test_merge_count_metric() - Merge a vector of CountMetrics
 impl ::std::iter::Sum for CountMetric {
     fn sum<I: Iterator<Item = CountMetric>>(iter: I) -> CountMetric {
-        iter.fold(CountMetric::new(), |a, b| a + b)
+        iter.fold(CountMetric::default(), |a, b| a + b)
     }
 }
 
@@ -150,7 +146,7 @@ mod tests {
     #[test]
     fn test_merge_count_metric() {
         let counts: Vec<_> = (1..10).map(CountMetric::from).collect();
-        let merged = counts.iter().fold(CountMetric::new(), |mut acc, &c| {
+        let merged = counts.iter().fold(CountMetric::default(), |mut acc, &c| {
             acc.merge(c);
             acc
         });

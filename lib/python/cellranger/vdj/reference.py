@@ -4,23 +4,21 @@
 
 from __future__ import annotations
 
-import collections
-import hashlib
 import os
-import shutil
-from typing import AnyStr, NamedTuple, TypedDict
+from typing import NamedTuple, TypedDict
 
-import pysam
 from six import ensure_binary, ensure_str
 
 import cellranger.constants as cr_constants
-import cellranger.reference as cr_reference
 import cellranger.utils as cr_utils
 import cellranger.vdj.chain_types as chain_types
 import cellranger.vdj.constants as vdj_constants
-import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_safe_json
-import tenkit.seq as tk_seq
+from cellranger.reference_hash import compute_hash_of_file
+
+
+class VDJReferenceConstructionError(Exception):
+    """Raise for customer-facing errors in VDJ reference construction."""
 
 
 class VdjAnnotationFeature(NamedTuple):
@@ -134,297 +132,8 @@ def infer_ensembl_isotype(gene_name):
     return gene_name[3:]
 
 
-def get_gtf_iter(gtf_filename):
-    gtf_file = open(gtf_filename)
-    for line_num, line in enumerate(gtf_file):
-        line = line.strip()
-        if line.startswith("#"):
-            continue
-
-        row = line.split("\t")
-        if len(row) != 9:
-            raise ValueError(
-                "Encountered malformed GTF at line %d. Expected 9 columns but found %d: %s"
-                % (1 + line_num, len(row), line)
-            )
-        properties = cr_reference.NewGtfParser().get_properties_dict(
-            row[8], line_num + 1, gtf_filename, uniquify_keys=True
-        )
-        yield GtfEntry(*row[:9], attributes=properties)
-
-
 def get_duplicate_feature_key(f):
     return (f.display_name, f.region_type, f.sequence, f.chain_type, f.chain, f.isotype)
-
-
-def _index_genome_fasta(reference_path, genome_fasta_path):
-    # Note: We cannot symlink here because some filesystems in the wild
-    #       do not support symlinks.
-    print("Copying genome reference sequence...")
-    os.makedirs(os.path.dirname(get_vdj_reference_fasta(reference_path)))
-    tmp_genome_fa_path = os.path.join(reference_path, "genome.fasta")
-    shutil.copy(genome_fasta_path, tmp_genome_fa_path)
-    print("...done.\n")
-
-    print("Indexing genome reference sequence...")
-    tk_subproc.check_call(["samtools", "faidx", tmp_genome_fa_path])
-    print("...done.\n")
-
-    return tmp_genome_fa_path
-
-
-def build_reference_fasta_from_ensembl(
-    gtf_paths,
-    transcripts_to_remove_path,
-    genome_fasta_path,
-    reference_path,
-    reference_name,
-    ref_version,
-    mkref_version,
-):
-    """Create cellranger-compatible vdj reference files from a list of ENSEMBL-like GTF files.
-
-    Input files are concatenated. No attempt to merge/reconcile information
-    across them is made. Providing the files in a different order might change the
-    output in cases where there are multiple entries with the same transcript id
-    and the same feature type (eg. V-region).
-    """
-    transcripts: collections.defaultdict[tuple, list[GtfEntry]] = collections.defaultdict(list)
-
-    if transcripts_to_remove_path:
-        with open(transcripts_to_remove_path) as f:
-            rm_transcripts = {line.strip() for line in f.readlines()}
-    else:
-        rm_transcripts = set()
-
-    tmp_genome_fa_path = _index_genome_fasta(reference_path, genome_fasta_path)
-
-    print("Loading genome reference sequence...")
-    genome_fasta = pysam.FastaFile(tmp_genome_fa_path)
-    print("...done.\n")
-
-    print("Computing hash of genome FASTA file...")
-    fasta_hash = cr_reference.compute_hash_of_file(tmp_genome_fa_path)
-    print("...done.\n")
-
-    for gtf in gtf_paths:
-        print(f"Reading GTF {gtf}")
-
-        for line_no, entry in enumerate(get_gtf_iter(gtf)):
-            if not entry.feature in [ENSEMBL_FIVE_PRIME_UTR_FEATURE, ENSEMBL_CDS_FEATURE]:
-                continue
-            transcript_id: str = entry.attributes.get("transcript_id")
-            transcript_biotype = entry.attributes.get("transcript_biotype")
-            gene_biotype = entry.attributes.get("gene_biotype")
-            gene_name = entry.attributes.get("gene_name")
-
-            # Skip irrelevant biotypes
-            if (
-                transcript_biotype not in ENSEMBL_VDJ_BIOTYPES
-                and not gene_biotype in ENSEMBL_VDJ_BIOTYPES
-            ):
-                continue
-
-            # Skip blacklisted gene names
-            if transcript_id in rm_transcripts:
-                continue
-
-            # Warn and skip if transcript_id missing
-            if transcript_id is None:
-                print("Warning: Entry on row %d has no transcript_id" % line_no)
-                continue
-
-            # Warn and skip if gene_name missing
-            if gene_name is None:
-                print(
-                    "Warning: Transcript %s on row %d has biotype %s but no gene_name. Skipping."
-                    % (transcript_id, line_no, transcript_biotype)
-                )
-                continue
-
-            # Infer region type from biotype
-            if transcript_biotype in ENSEMBL_VDJ_BIOTYPES:
-                vdj_feature = infer_ensembl_vdj_feature_type(entry.feature, transcript_biotype)
-            else:
-                vdj_feature = infer_ensembl_vdj_feature_type(entry.feature, gene_biotype)
-
-            # Warn and skip if region type could not be inferred
-            if vdj_feature is None:
-                print(
-                    f"Warning: Transcript {transcript_id} has biotype {transcript_biotype}. Could not infer VDJ gene type. Skipping."
-                )
-                continue
-
-            # Features that share a transcript_id and feature type are presumably exons
-            # so keep them together.
-            transcripts[(transcript_id, vdj_feature)].append(entry)
-
-        print("...done.\n")
-
-    print("Computing hash of genes GTF files...")
-    digest = hashlib.sha1()
-    # concatenate all the hashes into a string and then hash that string
-    for gtf in gtf_paths:
-        digest.update(cr_reference.compute_hash_of_file(gtf).encode())
-    gtf_hash = digest.hexdigest()
-    print("...done.\n")
-
-    print("Fetching sequences...")
-    out_fasta = open(get_vdj_reference_fasta(reference_path), "w")
-
-    feature_id = 1
-    seen_features = set()
-
-    for (transcript_id, region_type), regions in transcripts.items():
-        if not all(r.chrom == regions[0].chrom for r in regions):
-            chroms: list[str] = list(sorted({r.chrom for r in regions}))
-            print(
-                f"Warning: Transcript {transcript_id} spans multiple contigs: {chroms!s}. Skipping."
-            )
-            continue
-
-        if not all(r.strand == regions[0].strand for r in regions):
-            print("Warning: Transcript %s spans multiple strands. Skipping." % transcript_id)
-            continue
-
-        chrom: str = regions[0].chrom
-        strand: str = regions[0].strand
-        ens_gene_name = standardize_ensembl_gene_name(regions[0].attributes["gene_name"])
-        transcript_id: str = regions[0].attributes["transcript_id"]
-
-        if chrom not in genome_fasta:
-            print(
-                f'Warning: Transcript {transcript_id} is on contig "{chrom}" which is not in the provided reference fasta. Skipping.'
-            )
-            continue
-
-        # Build sequence
-        regions.sort(key=lambda r: r.start)
-        seq = b""
-        for region in regions:
-            # GTF coordinates are 1-based
-            start, end = int(region.start) - 1, int(region.end)
-            seq += ensure_binary(genome_fasta.fetch(chrom, start, end))
-
-        # Revcomp if transcript on reverse strand
-        if strand == "-":
-            seq = tk_seq.get_rev_comp(seq)
-
-        # Strip Ns from termini
-        if b"N" in seq:
-            print(
-                "Warning: Feature %s contains Ns. Stripping from the ends."
-                % str((ens_gene_name, transcript_id, region_type))
-            )
-            seq = seq.strip(b"N")
-
-        if len(seq) == 0:
-            print(
-                "Warning: Feature %s is all Ns. Skipping."
-                % str((ens_gene_name, transcript_id, region_type))
-            )
-            continue
-
-        # Infer various attributes from the Ensembl gene name
-        record_id = transcript_id
-        gene_name = ens_gene_name
-        display_name = make_display_name(gene_name=gene_name, allele_name=None)
-        chain = infer_ensembl_vdj_chain(gene_name)
-        chain_type = infer_ensembl_vdj_chain_type(gene_name)
-        # Ensembl doesn't encode alleles
-        allele_name = b"00"
-
-        # Disallow spaces in these fields
-        if " " in region_type:
-            raise ValueError('Spaces not allowed in region type: "%s"' % region_type)
-        if " " in gene_name:
-            raise ValueError('Spaces not allowed in gene name: "%s"' % gene_name)
-        if " " in record_id:
-            raise ValueError('Spaces not allowed in record ID: "%s"' % record_id)
-
-        # Warn on features we couldn't classify properly
-        if chain_type not in chain_types.VDJ_CHAIN_TYPES:
-            print(
-                (
-                    "Warning: Could not infer chain type for: %s. "
-                    + "Expected the first two characters of the gene name to be in %s. Feature skipped."
-                )
-                % (
-                    str((gene_name, record_id, region_type)),
-                    str(tuple(chain_types.VDJ_CHAIN_TYPES)),
-                )
-            )
-            continue
-
-        if (
-            region_type in vdj_constants.VDJ_C_FEATURE_TYPES
-            and chain in vdj_constants.CHAINS_WITH_ISOTYPES
-        ):
-            isotype = infer_ensembl_isotype(ens_gene_name)
-        else:
-            isotype = None
-
-        assert isinstance(chain_type, bytes)
-
-        def _bytes_or_none(maybe_str: AnyStr | None) -> bytes | None:
-            if maybe_str is None:
-                return None
-            return ensure_binary(maybe_str)
-
-        gene_name = _bytes_or_none(gene_name)
-        display_name = _bytes_or_none(display_name)
-        region_type = _bytes_or_none(region_type)
-        chain = _bytes_or_none(chain)
-        isotype = _bytes_or_none(isotype)
-        record_id = record_id.encode()
-        feature = VdjAnnotationFeature(
-            feature_id=feature_id,
-            record_id=record_id,
-            display_name=display_name,
-            gene_name=gene_name,
-            region_type=region_type,
-            chain_type=chain_type,
-            chain=chain,
-            isotype=isotype,
-            allele_name=allele_name,
-            sequence=seq,
-        )
-
-        # Don't add duplicate entries
-        feat_key = get_duplicate_feature_key(feature)
-        if feat_key in seen_features:
-            print(
-                f"Warning: Skipping duplicate entry for {display_name} ({region_type}, {record_id})."
-            )
-            continue
-        seen_features.add(feat_key)
-
-        feature_id += 1
-
-        out_fasta.write(convert_vdj_feature_to_fasta_entry(feature) + "\n")
-    print("...done.\n")
-
-    print("Deleting copy of genome fasta...")
-    os.remove(tmp_genome_fa_path)
-    os.remove(tmp_genome_fa_path + ".fai")
-    print("...done.\n")
-
-    print("Writing metadata JSON file into reference folder...")
-    metadata = {
-        cr_constants.REFERENCE_GENOMES_KEY: reference_name,
-        cr_constants.REFERENCE_FASTA_HASH_KEY: fasta_hash,
-        cr_constants.REFERENCE_GTF_HASH_KEY: gtf_hash,
-        cr_constants.REFERENCE_INPUT_FASTA_KEY: os.path.basename(genome_fasta_path),
-        cr_constants.REFERENCE_INPUT_GTF_KEY: ",".join(
-            [os.path.basename(gtf_path) for gtf_path in gtf_paths]
-        ),
-        cr_constants.REFERENCE_VERSION_KEY: ref_version,
-        cr_constants.REFERENCE_MKREF_VERSION_KEY: mkref_version,
-        cr_constants.REFERENCE_TYPE_KEY: vdj_constants.REFERENCE_TYPE,
-    }
-    with open(os.path.join(reference_path, cr_constants.REFERENCE_METADATA_FILE), "w") as json_file:
-        tk_safe_json.dump_numpy(metadata, json_file, sort_keys=True, indent=4)
-    print("...done.\n")
 
 
 def build_reference_fasta_from_fasta(
@@ -447,14 +156,22 @@ def build_reference_fasta_from_fasta(
 
             # Enforce unique feature IDs
             if feat.feature_id in seen_ids:
-                raise ValueError("Duplicate feature ID found in input FASTA: %d." % feat.feature_id)
+                raise VDJReferenceConstructionError(
+                    "Duplicate feature ID found in input FASTA: %d." % feat.feature_id
+                )
             # Sanity check values
             if b" " in feat.region_type:
-                raise ValueError('Spaces not allowed in region type: "%s"' % feat.region_type)
+                raise VDJReferenceConstructionError(
+                    'Spaces not allowed in region type: "%s"' % feat.region_type
+                )
             if b" " in feat.gene_name:
-                raise ValueError('Spaces not allowed in gene name: "%s"' % feat.gene_name)
+                raise VDJReferenceConstructionError(
+                    'Spaces not allowed in gene name: "%s"' % feat.gene_name
+                )
             if b" " in feat.record_id:
-                raise ValueError('Spaces not allowed in record ID: "%s"' % feat.record_id)
+                raise VDJReferenceConstructionError(
+                    'Spaces not allowed in record ID: "%s"' % feat.record_id
+                )
 
             key = get_duplicate_feature_key(feat)
             if key in seen_features:
@@ -505,6 +222,14 @@ def build_reference_fasta_from_fasta(
             features.append(new_feat)
     print("...done.\n")
 
+    if len(seen_features) == 0:
+        raise VDJReferenceConstructionError(
+            "An empty constant regions file was "
+            "generated/detected for your custom species. "
+            "Please check if there are hits to the IMGT database "
+            "or run cellranger vdj in denovo mode without reference."
+        )
+
     print("Writing sequences...")
     os.makedirs(os.path.dirname(get_vdj_reference_fasta(reference_path)))
     with open(get_vdj_reference_fasta(reference_path), "w") as out_fasta:
@@ -513,7 +238,7 @@ def build_reference_fasta_from_fasta(
     print("...done.\n")
 
     print("Computing hash of input FASTA file...")
-    fasta_hash = cr_reference.compute_hash_of_file(fasta_path)
+    fasta_hash = compute_hash_of_file(fasta_path)
     print("...done.\n")
 
     print("Writing metadata JSON file into reference folder...")
@@ -559,13 +284,13 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
 
     # Check the header
     if len(words) != 2:
-        raise ValueError(
+        raise VDJReferenceConstructionError(
             'Expected two strings separated by a space in FASTA header. Found "%s"' % header
         )
 
     values1 = words[0].split(b"|")
     if len(values1) != len(REF_FASTA_FIELDS):
-        raise ValueError(
+        raise VDJReferenceConstructionError(
             "First string in FASTA header (record ID) must consist of the "
             'following %d fields separated by "|": %s. Found %d values: %s'
             % (
@@ -578,7 +303,7 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
 
     values2 = words[1].split(b"|")
     if len(values2) != len(REF_FASTA_AUX_FIELDS):
-        raise ValueError(
+        raise VDJReferenceConstructionError(
             "Second string in FASTA header (description) must consist of the "
             'following %d fields separated by "|": %s. Found %d values: %s'
             % (
@@ -600,7 +325,7 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
         if feature_id < 1:
             raise ValueError()
     except ValueError:
-        raise ValueError(
+        raise VDJReferenceConstructionError(
             'The feature ID must be an integer greater than 0. Found: "%s"' % str(feature_id)
         )
     fields["sequence"] = sequence

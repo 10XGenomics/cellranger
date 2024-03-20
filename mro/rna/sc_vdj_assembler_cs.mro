@@ -4,6 +4,7 @@
 
 @include "sc_multi_core.mro"
 @include "sc_multi_cs.mro"
+@include "_cr_lib_stages.mro"
 @include "_sc_multi_defs.mro"
 @include "_sc_vdj_assembler_stages.mro"
 
@@ -29,6 +30,7 @@ pipeline SC_VDJ_ASSEMBLER_CS(
     in  string       sample_desc,
     in  path         vdj_reference_path,
     in  bool         denovo,
+    in  bool         skip_clonotyping,
     in  path         inner_enrichment_primers,
     in  string       chain_type,
     out html         web_summary                      "Run summary HTML",
@@ -59,6 +61,7 @@ pipeline SC_VDJ_ASSEMBLER_CS(
     out VdjRefFolder vdj_reference                    "V(D)J reference",
     out tsv          airr_rearrangement               "AIRR Rearrangement TSV",
     out pb           vdj_contig_info                  "All contig info (ProtoBuf format)",
+    out fa           donor_regions                    "Inferred germline sequences",
 )
 {
     call VDJ_PREFLIGHT as VDJ_PREFLIGHT_LOCAL(
@@ -93,12 +96,12 @@ pipeline SC_VDJ_ASSEMBLER_CS(
         vdj_inputs   = [
             {
                 chain_type:               self.chain_type,
+                chemistry_spec:           "SCVDJ_auto",
                 denovo:                   self.denovo,
                 inner_enrichment_primers: self.inner_enrichment_primers,
                 physical_library_id:      null,
                 r1_length:                null,
                 r2_length:                null,
-                r2_revcomp:               false,
                 sample_def:               self.sample_def,
             },
         ],
@@ -124,7 +127,9 @@ pipeline SC_VDJ_ASSEMBLER_CS(
                 shared_contig_filter: null,
                 umi_baseline_filter:  null,
             },
+            min_contig_length:  null,
             reference_path:     null,
+            skip_clonotyping:   self.skip_clonotyping,
             vdj_reference_path: self.vdj_reference_path,
         },
         basic_config          = _STRUCTIFY.config,
@@ -132,13 +137,26 @@ pipeline SC_VDJ_ASSEMBLER_CS(
         is_pd                 = false,
         count_allowed_chems   = null,
         count_pipestance_type = "SC_RNA_COUNTER_CS",
+        vdj_allowed_chems     = [
+            "SCVDJ_auto",
+            "custom",
+            "SCVDJ",
+            "SCVDJ-R2",
+            "SCVDJ-R2-v3",
+            "SCVDJ-R1",
+        ],
         is_multi              = false,
         feature_config        = null,
         no_preflight          = false,
     )
 
     call BUILD_VDJ_OUTPUTS_CS(
-        multi_core = SC_MULTI_CORE,
+        vdj_t_assembler    = SC_MULTI_CORE.multi_gw.vdj_t.assembler_outs,
+        vdj_t_analyzer     = SC_MULTI_CORE.multi_gw.vdj_t.lib_level,
+        vdj_t_gd_assembler = SC_MULTI_CORE.multi_gw.vdj_t_gd.assembler_outs,
+        vdj_t_gd_analyzer  = SC_MULTI_CORE.multi_gw.vdj_t_gd.lib_level,
+        vdj_b_assembler    = SC_MULTI_CORE.multi_gw.vdj_b.assembler_outs,
+        vdj_b_analyzer     = SC_MULTI_CORE.multi_gw.vdj_b.lib_level,
     )
 
     call PICK_VDJ_OUTS(

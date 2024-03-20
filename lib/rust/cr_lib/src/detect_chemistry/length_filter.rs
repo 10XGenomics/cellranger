@@ -2,12 +2,10 @@ use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
 use anyhow::Result;
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
-use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile};
-use cr_types::FeatureType;
+use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile, FeatureType};
 use fastq_set::read_pair::ReadPair;
 use fastq_set::WhichRead;
-use metric::{Metric, SimpleHistogram, TxHashMap, TxHashSet};
-use std::convert::TryFrom;
+use metric::{SimpleHistogram, TxHashMap, TxHashSet};
 use std::fmt;
 
 pub(crate) const WHICH_LEN_READS: [WhichRead; 3] = [WhichRead::R1, WhichRead::R2, WhichRead::I1];
@@ -44,7 +42,7 @@ impl LengthStats {
     ) -> bool {
         WHICH_LEN_READS
             .iter()
-            .filter(|r| !skip.map(|m| m.contains_key(r)).unwrap_or(false))
+            .filter(|r| !skip.is_some_and(|m| m.contains_key(r)))
             .all(|&r| self.median[&r] >= chem_def.min_read_length(r))
     }
 }
@@ -77,15 +75,18 @@ impl<'a> ChemistryFilter<'a> for LengthFilter<'a> {
             Ok(compatible_chems)
         }
     }
-    fn finalize(&self, mut chemistries: TxHashSet<ChemistryName>) -> TxHashSet<ChemistryName> {
+    fn post_process(
+        &self,
+        mut result: TxHashSet<ChemistryName>,
+    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
         use ChemistryName::{FivePrimePE, FivePrimeR2, VdjPE, VdjR2};
-        if chemistries.contains(&FivePrimePE) {
-            chemistries.remove(&FivePrimeR2);
+        if result.contains(&FivePrimePE) {
+            result.remove(&FivePrimeR2);
         }
-        if chemistries.contains(&VdjPE) {
-            chemistries.remove(&VdjR2);
+        if result.contains(&VdjPE) {
+            result.remove(&VdjR2);
         }
-        self.default_finalize(chemistries)
+        Ok(result)
     }
 }
 
@@ -135,7 +136,7 @@ impl<'a> LengthFilter<'a> {
                 let max_len = max_lengths.get(&which_read).unwrap_or(&std::usize::MAX);
                 read_length_histograms
                     .entry(which_read)
-                    .or_insert_with(SimpleHistogram::new)
+                    .or_insert_with(SimpleHistogram::default)
                     .observe(&rp.len(which_read).unwrap_or(0).min(*max_len));
             }
         }
@@ -146,33 +147,35 @@ impl<'a> LengthFilter<'a> {
                 .collect(),
         };
 
-        if let Ok(feature_type) = FeatureType::try_from(unit.library_type) {
+        if let Some(feature_type) = unit.library_type.feature_barcode_type() {
             // non-gene feature types get evaluated against the feature reference
-            if feature_type != FeatureType::Gene {
-                if let Some(min_lengths) = self.min_feature_read_lengths.get(&feature_type) {
-                    for (&read, &obs_len) in &stats.median {
-                        let min_len = min_lengths.get(&read).copied().unwrap_or(0);
-                        if obs_len < min_len {
-                            println!("read {read} with obs_len {obs_len} failed min_len {min_len}");
-                            return Err(DetectChemistryErrors::FeatureTypeNotEnoughReadLength {
-                                unit: Box::new(unit.clone()),
-                                stats,
-                                min_lengths: self.min_feature_read_lengths.clone(),
-                                max_lengths,
-                            });
-                        }
-                    }
-                    let compatible_chems = self
-                        .chem_defs
-                        .iter()
-                        .filter(|def| stats.is_compatible(def, Some(min_lengths)))
-                        .map(|def| def.name)
-                        .collect();
-                    return Ok((stats, compatible_chems, max_lengths));
-                } else {
-                    return Err(DetectChemistryErrors::FeatureTypeNotInReference { feature_type });
+            let Some(min_lengths) = self
+                .min_feature_read_lengths
+                .get(&FeatureType::Barcode(feature_type))
+            else {
+                return Err(DetectChemistryErrors::FeatureTypeNotInReference {
+                    feature_type: FeatureType::Barcode(feature_type),
+                });
+            };
+            for (&read, &obs_len) in &stats.median {
+                let min_len = min_lengths.get(&read).copied().unwrap_or(0);
+                if obs_len < min_len {
+                    println!("read {read} with obs_len {obs_len} failed min_len {min_len}");
+                    return Err(DetectChemistryErrors::FeatureTypeNotEnoughReadLength {
+                        unit: Box::new(unit.clone()),
+                        stats,
+                        min_lengths: self.min_feature_read_lengths.clone(),
+                        max_lengths,
+                    });
                 }
             }
+            let compatible_chems = self
+                .chem_defs
+                .iter()
+                .filter(|def| stats.is_compatible(def, Some(min_lengths)))
+                .map(|def| def.name)
+                .collect();
+            return Ok((stats, compatible_chems, max_lengths));
         }
 
         let compatible_chems = self

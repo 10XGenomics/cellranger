@@ -2,138 +2,216 @@
 #
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved
 #
-"""Assign protospacers to cells i.e.identify which cells express.
+"""Assign protospacers to cells.
 
-which protospacers above background
+Identify which cells express which protospacers above background.
 """
 
+import csv
 import json
+import math
+import operator
+from collections import defaultdict
+from collections.abc import Iterable
+from functools import reduce
+from statistics import median, pstdev
 
-import numpy as np
-from six import ensure_str
-
-import cellranger.feature.utils as feature_utils
-import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
 from cellranger.feature.feature_assigner import GuideAssigner
-from cellranger.pandas_utils import sanitize_dataframe
+from cellranger.feature.utils import write_json_from_dict
+from cellranger.matrix import CountMatrix
 
 __MRO__ = """
 stage CALL_PROTOSPACERS(
-    in  csv    filtered_barcodes,
-    in  h5     filtered_feature_counts_matrix,
-    in  json   counter_metrics_json,
-    out csv    protospacer_calls_summary,
-    out csv    protospacer_calls_per_cell,
-    out json   protospacer_call_metrics_json,
-    out json   cells_per_protospacer,
-    out json   protospacer_umi_thresholds_json,
-    out csv    protospacer_umi_thresholds_csv,
-    src py     "stages/feature/call_protospacers",
+    in  h5   filtered_feature_counts_matrix,
+    out csv  protospacer_calls_summary,
+    out csv  protospacer_calls_per_cell,
+    out json protospacer_call_metrics_json,
+    out json cells_per_protospacer,
+    out json protospacer_umi_thresholds_json,
+    out csv  protospacer_umi_thresholds_csv,
+    src py   "stages/feature/call_protospacers",
+) split (
+    in  int  chunk_start,
+    in  int  chunk_end,
+    out json chunk_cells_per_protospacer,
+    out json chunk_protospacer_umi_thresholds,
 ) using (
-    mem_gb = 6,
+    volatile = strict,
 )
 """
 
 
-def set_empty(outs):
-    """Set outs to empty."""
-    outs.protospacer_calls_per_cell = None
-    outs.protospacer_calls_summary = None
-    outs.cells_per_protospacer = None
-    outs.protospacer_umi_thresholds_json = None
-    outs.protospacer_umi_thresholds_csv = None
-    outs.protospacer_call_metrics_json = None
+def split(args):
+    num_features = CountMatrix.load_feature_ref_from_h5_file(
+        args.filtered_feature_counts_matrix
+    ).get_count_of_feature_type(rna_library.CRISPR_LIBRARY_TYPE)
+    _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(
+        args.filtered_feature_counts_matrix
+    )
+    mem_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1)
+    print(f"{num_features=},{num_barcodes=},{nnz=},{mem_gib=}")
 
+    if num_barcodes == 0:
+        return {"chunks": []}
 
-def write_csv_from_dict(input_dict, out_file_name, header=None):
-    with open(out_file_name, "w") as f:
-        if header is not None:
-            f.write(header)
-        for key, value in input_dict.items():
-            if isinstance(key, bytes):
-                key = ensure_str(key)
-            elif not isinstance(key, str):
-                key = str(key)
-            f.write(key)
-            f.write(",")
-            if isinstance(value, bytes):
-                value = ensure_str(value)
-            elif not isinstance(value, str):
-                value = str(value)
-            f.write(value)
-            f.write("\n")
+    num_chunks = min(100, num_features, math.ceil(max(num_features / 100, num_barcodes / 10_000)))
+    num_features_per_chunk = math.ceil(num_features / num_chunks)
+    return {
+        "chunks": [
+            {
+                "chunk_start": i * num_features_per_chunk,
+                "chunk_end": min(num_features, (i + 1) * num_features_per_chunk),
+                "__mem_gb": mem_gib,
+            }
+            for i in range(num_chunks)
+        ],
+        "join": {"__mem_gb": mem_gib},
+    }
 
 
 def main(args, outs):
-    input_files = [args.filtered_feature_counts_matrix, args.filtered_barcodes]
-    all_inputs_present = feature_utils.all_files_present(input_files)
-
-    no_cells_found = len(feature_utils.get_gex_cell_list(args.filtered_barcodes)) == 0
-
-    if not (all_inputs_present) or no_cells_found:
-        set_empty(outs)
-        return
-
-    with open(args.counter_metrics_json) as f:
-        protospacer_call_metrics = json.load(f)
-
-    filtered_feature_counts_matrix = cr_matrix.CountMatrix.load_h5_file(
-        args.filtered_feature_counts_matrix
+    filtered_feature_counts_matrix = (
+        CountMatrix.load_h5_file(args.filtered_feature_counts_matrix)
+        .select_features_by_type(rna_library.CRISPR_LIBRARY_TYPE)
+        .select_features(range(args.chunk_start, args.chunk_end))
     )
-    filtered_guide_counts_matrix = filtered_feature_counts_matrix.select_features_by_type(
-        rna_library.CRISPR_LIBRARY_TYPE
-    )
-
-    if feature_utils.check_if_none_or_empty(filtered_guide_counts_matrix):
-        set_empty(outs)
-        return
-
-    # Protospacer calling
     guide_assigner = GuideAssigner(
         matrix=filtered_feature_counts_matrix,
         feature_type=rna_library.CRISPR_LIBRARY_TYPE,
     )
-
     guide_assigner.assignments = guide_assigner.get_feature_assignments()
-    guide_assigner.features_per_cell_table = guide_assigner.get_features_per_cell_table()
-    guide_assigner.assignment_metadata = guide_assigner.compute_assignment_metadata()
-    guide_assigner.feature_calls_summary = guide_assigner.get_feature_calls_summary()
-    guide_assigner.cells_per_feature = guide_assigner.get_cells_per_feature()
+    write_json_from_dict(guide_assigner.get_cells_per_feature(), outs.chunk_cells_per_protospacer)
+    write_json_from_dict(
+        guide_assigner.compute_assignment_metadata().umi_thresholds,
+        outs.chunk_protospacer_umi_thresholds,
+    )
 
-    guide_assignments_matrix = guide_assigner.create_guide_assignments_matrix()
-    features_per_cell_table = guide_assignments_matrix.get_features_per_cell_table()
-    cells_per_feature = guide_assignments_matrix.get_cells_per_feature()
-    feature_calls_summary = guide_assignments_matrix.get_feature_calls_summary()
-    # temporary assertions to make sure these outputs do not change
-    # when we switch to using feature assignments matrix
-    assert cells_per_feature == guide_assigner.cells_per_feature
-    for bc, row in guide_assigner.features_per_cell_table.iterrows():
-        assert (row == features_per_cell_table.loc[bc]).all()
-    for bc, row in guide_assigner.feature_calls_summary.iloc[4:, :].iterrows():
-        old_values = np.array(row, dtype="float")
-        new_values = np.array(feature_calls_summary.loc[ensure_str(bc)], dtype="float")
-        assert np.allclose(
-            old_values, new_values, atol=0.05  # new_values is rounded to 1 decimal point
+
+def dump_json(obj, filename, *, indent=4):
+    """Dump a JSON object to a file with a trailing newline."""
+    with open(filename, "w") as f:
+        json.dump(obj, f, indent=indent)
+        f.write("\n")
+
+
+def get_counts_for_features(
+    matrix: CountMatrix, barcode: bytes, features: list[str]
+) -> Iterable[int]:
+    """Return the counts for the given features in the given barcode."""
+    barcode_index = matrix.bc_to_int(barcode)
+    return (matrix.m[matrix.feature_id_to_int(x.encode()), barcode_index] for x in features)
+
+
+def join(args, outs, _chunk_defs, chunk_outs):
+    matrix = CountMatrix.load_h5_file(args.filtered_feature_counts_matrix).select_features_by_type(
+        rna_library.CRISPR_LIBRARY_TYPE
+    )
+    num_cells = matrix.bcs_dim
+    if num_cells == 0:
+        for out in outs.items():
+            setattr(outs, out, None)
+        return
+
+    # cells_per_protospacer.json
+    cells_per_protospacer: dict[str, list[str]] = reduce(
+        operator.ior,
+        (json.load(open(chunk.chunk_cells_per_protospacer)) for chunk in chunk_outs),
+    )
+    dump_json(cells_per_protospacer, outs.cells_per_protospacer, indent=2)
+
+    # protospacer_calls_per_cell.csv
+    protospacer_calls_per_cell: dict[bytes, list[str]] = defaultdict(list)
+    for protospacer, cells in cells_per_protospacer.items():
+        for cell in cells:
+            protospacer_calls_per_cell[cell.encode()].append(protospacer)
+    del cells_per_protospacer
+    with open(outs.protospacer_calls_per_cell, "w") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(("cell_barcode", "num_features", "feature_call", "num_umis"))
+        for barcode, protospacers in protospacer_calls_per_cell.items():
+            counts = "|".join(map(str, get_counts_for_features(matrix, barcode, protospacers)))
+            writer.writerow((barcode.decode(), len(protospacers), "|".join(protospacers), counts))
+
+    # protospacer_call_metrics_json.json
+    num_cells_with_single_protospacer: float = sum(
+        len(x) == 1 for x in protospacer_calls_per_cell.values()
+    )
+    num_cells_with_multiple_protospacer = sum(
+        len(x) >= 2 for x in protospacer_calls_per_cell.values()
+    )
+    num_cells_with_protospacer = (
+        num_cells_with_single_protospacer + num_cells_with_multiple_protospacer
+    )
+    num_cells_without_protospacer = num_cells - num_cells_with_protospacer
+    num_cells_with_no_guide_molecules = sum(x == 0 for x in matrix.get_counts_per_bc())
+    frac_cells_with_single_protospacer = num_cells_with_single_protospacer / num_cells
+    frac_cells_with_multiple_protospacer = num_cells_with_multiple_protospacer / num_cells
+    frac_cells_with_protospacer = num_cells_with_protospacer / num_cells
+    frac_cells_without_protospacer = num_cells_without_protospacer / num_cells
+    frac_cells_with_no_guide_molecules = num_cells_with_no_guide_molecules / num_cells
+    dump_json(
+        {
+            "CRISPR_frac_cells_with_single_protospacer": frac_cells_with_single_protospacer,
+            "CRISPR_frac_cells_with_multiple_protospacer": frac_cells_with_multiple_protospacer,
+            "CRISPR_frac_cells_with_protospacer": frac_cells_with_protospacer,
+        },
+        outs.protospacer_call_metrics_json,
+    )
+
+    # protospacer_calls_summary.csv
+    protospacer_calls_summary: dict[str, list[int]] = defaultdict(list)
+    for barcode, protospacers in protospacer_calls_per_cell.items():
+        protospacer_calls_summary["|".join(protospacers)].append(
+            int(sum(get_counts_for_features(matrix, barcode, protospacers)))
         )
+    del matrix, protospacer_calls_per_cell
 
-    protospacer_call_metrics.update(guide_assigner.get_feature_assignment_metrics())
+    with open(outs.protospacer_calls_summary, "w") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(("feature_call", "num_cells", "pct_cells", "median_umis", "stddev_umis"))
+        for name, num, frac in (
+            (
+                "No guide molecules",
+                num_cells_with_no_guide_molecules,
+                frac_cells_with_no_guide_molecules,
+            ),
+            ("No confident call", num_cells_without_protospacer, frac_cells_without_protospacer),
+            (
+                "1 protospacer assigned",
+                num_cells_with_single_protospacer,
+                frac_cells_with_single_protospacer,
+            ),
+            (
+                "More than 1 protospacer assigned",
+                num_cells_with_multiple_protospacer,
+                frac_cells_with_multiple_protospacer,
+            ),
+        ):
+            writer.writerow((name, num, frac, "None", "None"))
 
-    sanitize_dataframe(guide_assigner.features_per_cell_table, inplace=True).to_csv(
-        outs.protospacer_calls_per_cell
-    )
-    sanitize_dataframe(guide_assigner.feature_calls_summary, inplace=True).to_csv(
-        outs.protospacer_calls_summary
-    )
-    feature_utils.write_json_from_dict(guide_assigner.cells_per_feature, outs.cells_per_protospacer)
-    feature_utils.write_json_from_dict(
-        guide_assigner.assignment_metadata.umi_thresholds, outs.protospacer_umi_thresholds_json
-    )
+        for feature_call, umis in protospacer_calls_summary.items():
+            writer.writerow(
+                (
+                    feature_call,
+                    len(umis),
+                    len(umis) / num_cells,
+                    median(umis),
+                    pstdev(umis) if len(umis) >= 2 else 0,
+                )
+            )
+        del protospacer_calls_summary
 
-    write_csv_from_dict(
-        guide_assigner.assignment_metadata.umi_thresholds,
-        outs.protospacer_umi_thresholds_csv,
-        "Protospacer,UMI threshold\n",
+    # protospacer_umi_thresholds_json.json
+    protospacer_umi_thresholds = reduce(
+        operator.ior,
+        (json.load(open(chunk.chunk_protospacer_umi_thresholds)) for chunk in chunk_outs),
     )
+    dump_json(protospacer_umi_thresholds, outs.protospacer_umi_thresholds_json)
 
-    feature_utils.write_json_from_dict(protospacer_call_metrics, outs.protospacer_call_metrics_json)
+    # protospacer_umi_thresholds_csv.csv
+    with open(outs.protospacer_umi_thresholds_csv, "w") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(("Protospacer", "UMI threshold"))
+        for protospacer, umi_threshold in protospacer_umi_thresholds.items():
+            writer.writerow((protospacer, umi_threshold))

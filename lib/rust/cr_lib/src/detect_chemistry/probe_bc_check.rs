@@ -2,26 +2,31 @@ use super::errors::DetectChemistryErrors;
 use crate::detect_chemistry::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use crate::detect_chemistry::length_filter::LengthFilter;
 use anyhow::Result;
-use barcode::{BcSegSeq, WhitelistSource};
+use barcode::BcSegSeq;
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile};
+use cr_types::LibraryType;
 use fastq_set::read_pair::{ReadPair, ReadPart};
 use metric::{set, PercentMetric, SimpleHistogram, TxHashSet};
 use parameters_toml::min_major_probe_bc_frac;
-use std::iter::zip;
 
 pub(crate) const MIN_VALID_PROBE_BCS: usize = 1_000;
 
-pub(crate) fn check_probe_bc(
-    units: &[DetectChemistryUnit],
-    read_pairs_all_units: &[Vec<ReadPair>],
+pub(crate) fn validate_no_probe_bc_mixture_in_sfrp(
+    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
     feature_ref: Option<&FeatureReferenceFile>,
     feature_config: Option<&FeatureConfig>,
 ) -> Result<()> {
-    use ChemistryName::{MFRP, MFRP_R1, SFRP};
-    let allowed_chems = set![SFRP, MFRP, MFRP_R1];
+    use ChemistryName::{MFRP_Ab, MFRP_Ab_R1, MFRP_CRISPR, MFRP_RNA, MFRP_RNA_R1, SFRP};
 
-    for (unit, read_pairs) in zip(units, read_pairs_all_units) {
+    for (unit, read_pairs) in units {
+        // Subset allowed chems down to just the ones relevant for the library type.
+        let allowed_chems = match unit.library_type {
+            LibraryType::Gex => set![SFRP, MFRP_RNA, MFRP_RNA_R1],
+            LibraryType::Antibody => set![SFRP, MFRP_Ab, MFRP_Ab_R1],
+            LibraryType::Crispr => set![SFRP, MFRP_CRISPR],
+            _ => unreachable!(),
+        };
         // Check that read length is compatibe with MFRP i.e. includes probe barcodes
         let chemistries: Vec<ChemistryName> =
             LengthFilter::new(&allowed_chems, &allowed_chems, feature_ref, feature_config)?
@@ -39,16 +44,17 @@ pub(crate) fn check_probe_bc(
             }
             [chemistry] => *chemistry,
             // Both MFRP and MFRP-R1 are compatible, so use MFRP.
-            [..] if chemistries.contains(&MFRP) => MFRP,
+            [..] if chemistries.contains(&MFRP_RNA) => MFRP_RNA,
+            // Both MFRP-Ab and MFRP-Ab-R1 are compatible, so use MFRP.
+            [..] if chemistries.contains(&MFRP_Ab) => MFRP_Ab,
             [..] => unreachable!(),
         };
 
         let chem_def = ChemistryDef::named(chemistry);
-        let whitelist_source =
-            WhitelistSource::from_spec(chem_def.barcode_whitelist().probe(), true, None)?;
-        let whitelist = whitelist_source.as_whitelist()?;
-        let id_map = whitelist_source.as_raw_seq_to_id()?;
         let bc_range = chem_def.barcode_range().probe();
+        let whitelist_source = chem_def.barcode_whitelist().probe().as_source(true)?;
+        let id_map = whitelist_source.as_raw_seq_to_id()?;
+        let whitelist = whitelist_source.as_whitelist()?;
 
         println!("\nChecking probe barcode mixtures in {unit}");
         let bc_counts: SimpleHistogram<_> = read_pairs

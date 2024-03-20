@@ -2,6 +2,7 @@
 
 use lazy_static::lazy_static;
 use std::borrow::Borrow;
+use std::iter::zip;
 
 // Code copied from rust-bio
 lazy_static! {
@@ -10,7 +11,7 @@ lazy_static! {
         for (v, a) in comp.iter_mut().enumerate() {
             *a = v as u8;
         }
-        for (&a, &b) in b"AGCTYRWSKMDVHBN".iter().zip(b"TCGARYWSMKHBDVN".iter()) {
+        for (&a, &b) in zip(b"AGCTYRWSKMDVHBN", b"TCGARYWSMKHBDVN") {
             comp[a as usize] = b;
             comp[a as usize + 32] = b + 32;  // lowercase variants
         }

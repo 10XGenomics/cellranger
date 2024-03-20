@@ -11,7 +11,7 @@ def load_go_deps():
         commit = "89cc312b4da3004d3b5382cf2b37d70e901b1c36",
         importpath = "github.com/youtube/vitess",
         patch_args = ["-p1"],
-        patches = ["//third-party:com_github_youtube_vitess.patch"],
+        patches = ["@cellranger//third-party:com_github_youtube_vitess.patch"],
         build_file_proto_mode = "disable_global",
         build_directives = [
             "gazelle:exclude data",

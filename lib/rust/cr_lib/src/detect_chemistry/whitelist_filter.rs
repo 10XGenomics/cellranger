@@ -5,10 +5,8 @@ use barcode::{BarcodeConstruct, BcSegSeq, Whitelist, WhitelistSpec};
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use fastq_set::read_pair::{ReadPair, ReadPart, RpRange};
 use itertools::Itertools;
-use metric::{set, Metric, PercentMetric, TxHashMap, TxHashSet};
-use metric_derive::Metric;
+use metric::{set, PercentMetric, TxHashMap, TxHashSet};
 use parameters_toml::min_fraction_whitelist_match;
-use serde::{Deserialize, Serialize};
 
 pub(crate) struct WhitelistMatchFilter<'a> {
     allowed_chems: &'a TxHashSet<ChemistryName>,
@@ -36,7 +34,7 @@ impl<'a> WhitelistMatchFilter<'a> {
             .unique()
         {
             index_map.insert(wl, wl_matchers.len());
-            wl_matchers.push(WhitelistMatcher::new(wl, None)?);
+            wl_matchers.push(WhitelistMatcher::new(wl)?);
         }
         let index_of_chem = chem_defs
             .iter()
@@ -66,7 +64,10 @@ impl<'a> ChemistryFilter<'a> for WhitelistMatchFilter<'a> {
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
     ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        use ChemistryName::{MFRP, MFRP_R1};
+        // Special case for HD CELLRANGER-7761
+        if self.chem_defs.len() == 1 && self.chem_defs[0].name == ChemistryName::SpatialHdV1 {
+            return Ok(set![ChemistryName::SpatialHdV1]);
+        }
 
         let min_frac_whitelist_match = *min_fraction_whitelist_match()
             .map_err(DetectChemistryErrors::MissingParametersToml)?;
@@ -101,21 +102,38 @@ impl<'a> ChemistryFilter<'a> for WhitelistMatchFilter<'a> {
             })
             .collect();
 
-        if compatible_chems.is_superset(&set![MFRP, MFRP_R1]) {
-            // Both MFRP and MFRP-R1 are compatible. Use whichever has more valid barcodes.
-            let inferior_chemistry = if sufficient_matches[&MFRP] < sufficient_matches[&MFRP_R1] {
-                MFRP
-            } else {
-                MFRP_R1
-            };
-            assert!(compatible_chems.remove(&inferior_chemistry));
+        // Prefer the more specific chemistry when MFRP_47 and at least one other more specific
+        // MFRP chemistry are compatible.
+        if compatible_chems
+            .iter()
+            .any(|chem| matches!(chem, ChemistryName::MFRP_RNA | ChemistryName::MFRP_Ab))
+        {
+            compatible_chems.remove(&ChemistryName::MFRP_47);
+        }
+
+        // Use the chemistry with more valid barcodes when both R1 and R2 chemistries are compatible.
+        let select_superior_matches_of_pair = [
+            (ChemistryName::MFRP_RNA, ChemistryName::MFRP_RNA_R1),
+            (ChemistryName::MFRP_Ab, ChemistryName::MFRP_Ab_R1),
+            (ChemistryName::MFRP_Ab_R2pos50, ChemistryName::MFRP_Ab_R1),
+        ];
+        for (r2_chem, r1_chem) in select_superior_matches_of_pair {
+            if compatible_chems.is_superset(&set![r2_chem, r1_chem]) {
+                let inferior_chemistry =
+                    if sufficient_matches[&r2_chem] < sufficient_matches[&r1_chem] {
+                        r2_chem
+                    } else {
+                        r1_chem
+                    };
+                assert!(compatible_chems.remove(&inferior_chemistry));
+            }
         }
 
         Ok(compatible_chems)
     }
 }
 
-#[derive(Metric, Serialize, Deserialize, Copy, Clone)]
+#[derive(Default)]
 struct WhitelistMatchStats {
     total_reads: i64,
     reads_with_bc: i64,
@@ -135,12 +153,9 @@ pub struct WhitelistMatcher {
 }
 
 impl WhitelistMatcher {
-    pub fn new(
-        barcode_whitelist: BarcodeConstruct<&WhitelistSpec>,
-        assay: Option<barcode::whitelist::Assay>,
-    ) -> Result<Self> {
+    pub fn new(barcode_whitelist: BarcodeConstruct<&WhitelistSpec>) -> Result<Self> {
         Ok(WhitelistMatcher {
-            whitelist: Whitelist::construct(barcode_whitelist, false, assay)?,
+            whitelist: Whitelist::construct(barcode_whitelist, false)?,
         })
     }
 
@@ -149,7 +164,7 @@ impl WhitelistMatcher {
         read_pairs: &[ReadPair],
         bc_range: BarcodeConstruct<RpRange>,
     ) -> WhitelistMatchStats {
-        let mut stats = WhitelistMatchStats::new();
+        let mut stats = WhitelistMatchStats::default();
         for read_pair in read_pairs {
             stats.total_reads += 1;
             if let Some(seq) = bc_range.map_option(|r| read_pair.get_range(r, ReadPart::Seq)) {

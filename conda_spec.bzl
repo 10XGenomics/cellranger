@@ -35,11 +35,12 @@ def anaconda_workspace(name = "anaconda"):
         dist_name = "_libgcc_mutex-0.1-conda_forge",
         sha256 = "fe51de6107f9edc7aa4f786a70f4a883943bc9d39b3bb7307c04c41410990726",
     )
+
     conda_package_repository(
         name = "conda_package_aiohttp",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "aiohttp-3.8.3-py310h5eee18b_0",
-        sha256 = "14b41023cf91768861026fc0648e65f2c984722b897ec0baa0ad438f70fe62f5",
+        dist_name = "aiohttp-3.9.3-py310h5eee18b_0",
+        sha256 = "995eca9ba00c8fb849daf2f30e5b0bbf5ea20bd16955bbfcc79f5fde087ff58b",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -52,16 +53,16 @@ def anaconda_workspace(name = "anaconda"):
 
     conda_package_repository(
         name = "conda_package_altair",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "altair-5.0.1-py310h06a4308_0",
-        sha256 = "b66f981cd0f83b06c4974824c23c5867b33055fa9dc58d1cb85a1d319a595197",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "altair-5.2.0-pyhd8ed1ab_0",
+        sha256 = "9fbaf9d1d8b3c8b5649a36c27311d2a1ad4874ac69b2f8b77bb45989e1d0042d",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_anndata",
         base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "anndata-0.9.2-pyhd8ed1ab_0",
-        sha256 = "3e7824452f15e280d8a546f377a05fd0f1baa1d097f6204ae802bfdb837d46e2",
+        dist_name = "anndata-0.10.5.post1-pyhd8ed1ab_0",
+        sha256 = "2d44fefa2de465ed2d89675f3b0ca2eb18f5eb28da873940daf895f7a05ee352",
         archive_type = "conda",
     )
 
@@ -73,6 +74,14 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_anywidget",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "anywidget-0.9.2-pyhd8ed1ab_0",
+        sha256 = "a0ddf6859f628f35daa3d13141eb5c343d51b8c46622c4bb38ac1d129084219b",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_aom",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
         dist_name = "aom-3.5.0-h27087fc_0",
@@ -83,6 +92,20 @@ def anaconda_workspace(name = "anaconda"):
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
         dist_name = "appdirs-1.4.4-pyhd3eb1b0_0",
         sha256 = "4d849f6c8a4b60166ec21c7716de9589c083c74416a64876dd9ac6c613520a08",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_argcomplete",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
+        dist_name = "argcomplete-1.12.0-py_0",
+        sha256 = "f3691e54a40781baccbd9908d3b9ea0f46dbed51b2d35ceca9fe4b458281fc56",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_argh",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "argh-0.26.2-py310h06a4308_0",
+        sha256 = "0b7a14345f5530fa2c0309d82eb7519c3c171ecebbb5f78b537826152d8fdfc9",
         archive_type = "conda",
     )
 
@@ -100,6 +123,14 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "9b28e9c71766ffaca51b804f4f6983ce6d0b6d59af40669e345fb244d0b9ca9c",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_array_api_compat",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "array-api-compat-1.4.1-pyhd8ed1ab_0",
+        sha256 = "5af8f09ca354c8e9975a03bc4c60435851949667fe36a430624a52cfdb1e19cb",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_asgiref",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -122,26 +153,37 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_async_lru",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "async-lru-2.0.4-py310h06a4308_0",
+        sha256 = "4c372f7ff35907acd8784e7eb966d8ccb2a18d35caf0b8dde74786e6944181f0",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_async_timeout",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "async-timeout-4.0.2-py310h06a4308_0",
-        sha256 = "050e0e505fd1ce1af8ccea7fda485f7fde07200d46c3dd88b108a30add039352",
+        dist_name = "async-timeout-4.0.3-py310h06a4308_0",
+        sha256 = "cd787203575715d98aaa1b646330e0cf05adc1947d74dc25ced1794d1d8f2f9e",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_attrs",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "attrs-22.1.0-py310h06a4308_0",
-        sha256 = "8fec596cd33491febc9fbb0744c06b71396b46ece1036c9cc9d0b0809f82ffcc",
+        dist_name = "attrs-23.1.0-py310h06a4308_0",
+        sha256 = "2588c15f4598616bc6f98472b30e9bc1cf5f12048f3e134f6dae120be326021f",
         archive_type = "conda",
     )
+
     conda_package_repository(
-        name = "conda_package_backcall",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "backcall-0.2.0-pyhd3eb1b0_0",
-        sha256 = "09f2cf5b30825a39257320204b08146367f4346655197515b2cabcd363736488",
+        name = "conda_package_babel",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "babel-2.11.0-py310h06a4308_0",
+        sha256 = "f0156d4ec5400fdbd77ece47657beb59022308008105620bf6a4f1d05c61d603",
+        archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_bamtools",
         base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
@@ -151,8 +193,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_bcbio_gff",
         base_urls = ["https://conda.anaconda.org/bioconda/noarch"],
-        dist_name = "bcbio-gff-0.7.0-pyh7cba7a3_0",
-        sha256 = "e1f1c973321b44649f7237f2e840347fedf7e0d6b13833d369f7eb653803acc3",
+        dist_name = "bcbio-gff-0.7.1-pyh7cba7a3_0",
+        sha256 = "8a41f31ac1ba826c56b82c3d9626cd84d54f5a22aff0b38f515c8a5c2260f910",
     )
 
     conda_package_repository(
@@ -166,10 +208,17 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_bedtools",
         base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
-        dist_name = "bedtools-2.31.0-hf5e1c6e_2",
-        sha256 = "a9a9aa812c5c68c34cf6a0ee40ad9380b1a4e10c776d9ea435f5e6d0bd363604",
+        dist_name = "bedtools-2.31.1-hf5e1c6e_0",
+        sha256 = "ecabdcdd4a7c96a3303dea991fe4ab25d359f951893509a2bafa7f9e3d84c958",
         licenses = ["@rules_license//licenses/spdx:MIT"],
     )
+    conda_package_repository(
+        name = "conda_package_biocantor",
+        base_urls = ["https://conda.anaconda.org/bioconda/noarch"],
+        dist_name = "biocantor-1.1.0-pyh7cba7a3_0",
+        sha256 = "9eb68b9559ae1b574ba7e49d4e8568cd3db883a65c9627191936fc9992d411ea",
+    )
+
     conda_package_repository(
         name = "conda_package_biopython",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -183,8 +232,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_black",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "black-23.3.0-py310h06a4308_0",
-        sha256 = "1d6e458e21f3ed89f65c8a3eae724439cefbfe37f2fe15ad8513f13cce7345cc",
+        dist_name = "black-23.11.0-py310h06a4308_0",
+        sha256 = "758d7d2bcf707a2854791960e8221cedb887b7ad2f67eab5f560cd9417403267",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -194,6 +243,25 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "05f806e9b610f80e15f2c8d7b4e9a7a2817ed4870b85427acb2a89a1db44ec0e",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_blast",
+        base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
+        dist_name = "blast-2.14.1-pl5321h6f7f691_0",
+        sha256 = "a83d7e119a32a39d9d839c691d811dcea091e06dd4eac3032ab3244be606baa6",
+        exclude_deps = [
+            "curl",
+            "perl",
+            "perl-archive-tar",
+            "perl-json",
+            "perl-list-moreutils",
+        ],
+        exclude = [
+            "bin/legacy_blast.pl",
+            "bin/update_blastdb.pl",
+            "bin/update_blastdb.pl.bak",
+        ],
+    )
+
     conda_package_repository(
         name = "conda_package_bleach",
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
@@ -219,8 +287,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_bottleneck",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "bottleneck-1.3.5-py310ha9d4c09_0",
-        sha256 = "e0c83435cf7b1f3f76f41058b3f230459d3a3ad15cf16f6a9a723b7d30538061",
+        dist_name = "bottleneck-1.3.7-py310ha9d4c09_0",
+        sha256 = "bb6fd915ba147c9390cfd422422bc43e6bed52a50a229ddbf943b2adcd6f75b8",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -237,14 +305,14 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "ea5d7916a2856e0b0f004cf7a181430df3f22f72eedb391f96c030b237d1f1a8",
         archive_type = "conda",
     )
-
     conda_package_repository(
-        name = "conda_package_brotlipy",
+        name = "conda_package_brotli_python",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "brotlipy-0.7.0-py310h7f8727e_1002",
-        sha256 = "c887a0aeba9ce2dab9ad891b676f0c1e43ca1fe7c6075ac3f14a052ccaa31d4a",
+        dist_name = "brotli-python-1.0.9-py310h6a678d5_7",
+        sha256 = "a08ea0fbd5a3b8490fa8f4b03afd033e643a793da3f1d16c8383f60f57ea34f1",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_brunsli",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -252,11 +320,12 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "931b2dfe51265fa8c1d240a91fd4b763302ec3a550e7ff0b0ab5ed68ff17b6c7",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_bx_python",
         base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
-        dist_name = "bx-python-0.10.0-py310h551a815_0",
-        sha256 = "cc2fded93cc59dd6605f64cd4e93f3fa0ec753fc31390ac34dec3b45894e7aef",
+        dist_name = "bx-python-0.11.0-py310h551a815_0",
+        sha256 = "3fce0cff8d9ea28b29523091ab87ea4c5dcece28134c4cc53f8bd631e059c8af",
     )
 
     conda_package_repository(
@@ -273,8 +342,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_c_ares",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "c-ares-1.19.0-h5eee18b_0",
-        sha256 = "9dc6071ead1a6a30a995052e26ba231149043fc9ed0e6ad924de71db5f7df944",
+        dist_name = "c-ares-1.19.1-h5eee18b_0",
+        sha256 = "4d1eab39e366dc7b3016664ab1f6f24a61731fa7d420fd28fa24bb9bbbae03ed",
         archive_type = "conda",
         exclude = [
             "share/man",
@@ -283,15 +352,15 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_c_blosc2",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "c-blosc2-2.8.0-h6a678d5_0",
-        sha256 = "678dd3302f9ad8cd1c06f2a3d5869a770641dfa566cce35b2c85e13fe9cf3915",
+        dist_name = "c-blosc2-2.12.0-h80c7b02_0",
+        sha256 = "12056bc7dba4a536e1b8c04e1fcc314b7b7c1c63aec1a32de3420f62877a3914",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_ca_certificates",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "ca-certificates-2023.05.30-h06a4308_0",
-        sha256 = "e2dc562f4567c280ef284c5009f6cedea8ebba621b9072abdff9714d58d15a3c",
+        dist_name = "ca-certificates-2023.12.12-h06a4308_0",
+        sha256 = "6f44489c14ade5c1e9cb4865304d38c78c2b660bd80898b8e526689ba84fe57a",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -304,15 +373,15 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_certifi",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "certifi-2023.7.22-py310h06a4308_0",
-        sha256 = "430b179cecc26a7d21a4639c6ce885fadd45458180486191815d116e82ad86cf",
+        dist_name = "certifi-2024.2.2-py310h06a4308_0",
+        sha256 = "28fb49ce583c71f4c911dc71051e4d8d4bf5cf4e7b88e9cb4e450c67a53d4537",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_cffi",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "cffi-1.15.1-py310h5eee18b_3",
-        sha256 = "6439ba585aff2f07eb246cb3dfcb957ff51f624891c38130656f0b353694b8f0",
+        dist_name = "cffi-1.16.0-py310h5eee18b_0",
+        sha256 = "b0386f73c9633cf1913cc77cbba1cdc1c00bb119140afc19ec627b57d3666028",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -327,6 +396,7 @@ def anaconda_workspace(name = "anaconda"):
         dist_name = "charls-2.3.4-h9c3ff4c_0",
         sha256 = "28c3070a07d7bd441043c49dd7265acd0af824a6c0431ac891503e0973f9b0d3",
     )
+
     conda_package_repository(
         name = "conda_package_charset_normalizer",
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
@@ -337,8 +407,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_click",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "click-8.0.4-py310h06a4308_0",
-        sha256 = "cf83af3fa088d2d351f6e84e0b864894bfd36697dfb01c9c129971f7475eac9a",
+        dist_name = "click-8.1.7-py310h06a4308_0",
+        sha256 = "9c70a9b59f098e233a232eca41e50ac4bea40ecab677c0be812b5a3404c07c54",
         archive_type = "conda",
     )
 
@@ -368,8 +438,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_conda",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "conda-23.7.2-py310h06a4308_0",
-        sha256 = "a0ab1d60fce12b6b768f88c6c3a685fe4bf7ce0126706129a6d722354284cfe8",
+        dist_name = "conda-23.9.0-py310h06a4308_0",
+        sha256 = "9a5c9602059e358346c2007ba98e2ec76ab2e9586332c024a4e12e4f3df8d518",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -389,8 +459,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_contourpy",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "contourpy-1.0.5-py310hdb19cb5_0",
-        sha256 = "a3015c66bc6fbd3c4ca337c38cfc89a2955b4e531a1b5734f06f031d63dfb3b6",
+        dist_name = "contourpy-1.2.0-py310hdb19cb5_0",
+        sha256 = "89baefad13ebd2cf8547bd27b3fee49e2a3d5b2d154b2e8ec250271b5bbd1adb",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -401,10 +471,18 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_cramjam",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "cramjam-2.7.0-py310ha89cbab_0",
+        sha256 = "9f4513d5a0ae9c66c0d670d734cfb90de32fc056108402838e80a6d72d02dea1",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_cryptography",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "cryptography-41.0.2-py310h774aba0_0",
-        sha256 = "0d4d5f42f41a722932b5f55772e9df5a60e64bd451ba5e28a254b00dc73d2cef",
+        dist_name = "cryptography-41.0.3-py310h130f0dd_0",
+        sha256 = "5b75df158d31fe69be4faf281c8e157b5a5b9386e120210285d8ecff9700c7d7",
         archive_type = "conda",
         exclude_deps = ["openssl<1.1.2a"],
     )
@@ -425,15 +503,15 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_cython",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "cython-3.0.0-py310h5eee18b_0",
-        sha256 = "2144216fd09cbeb141fbbbb058260667aa548065de1a099644dc3571daef1d49",
+        dist_name = "cython-3.0.8-py310h5eee18b_0",
+        sha256 = "322bde7517f154118e6ba77a69a0cc1684e8975098577022eeef263a29f83a23",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_cytoolz",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "cytoolz-0.12.0-py310h5eee18b_0",
-        sha256 = "39358f98d3e50ff9de5bae6a806d6b4d69c991e1919f7809ec8d4cf9624a4edc",
+        dist_name = "cytoolz-0.12.2-py310h5eee18b_0",
+        sha256 = "4feff9665ca3774e1a229ad6140686132c0b916d200c505f663c6ebc4dccb2a6",
         archive_type = "conda",
         exclude = [
             "lib/python*/site-packages/cytoolz/tests",
@@ -442,8 +520,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_dask_core",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "dask-core-2023.6.0-py310h06a4308_0",
-        sha256 = "43f2288cecb701778b5418dfd8fcf03f263042e224441ccb067311a5124817b5",
+        dist_name = "dask-core-2023.11.0-py310h06a4308_0",
+        sha256 = "89fe385484549dbc36957dbf051b23e3e6412d24e7c401ed862cd00d0a0fc168",
         archive_type = "conda",
         exclude = [
             "site-packages/dask/*/tests",
@@ -451,6 +529,14 @@ def anaconda_workspace(name = "anaconda"):
             "site-packages/dask/tests",
         ],
     )
+    conda_package_repository(
+        name = "conda_package_dataclasses",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
+        dist_name = "dataclasses-0.8-pyh6d0b6a4_7",
+        sha256 = "42e2905720b277a93a04059391c516b375b1a6b76448a00acc2d03a318b01047",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_dav1d",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
@@ -481,8 +567,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_dill",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "dill-0.3.6-py310h06a4308_0",
-        sha256 = "6dcdc99408e2c19b494ec54ada24618ad1ea480a4c589a97e0a99898b2337f82",
+        dist_name = "dill-0.3.7-py310h06a4308_0",
+        sha256 = "8a98b56e34d096cab9edc22d48ab18cb27210aa886ce0ea596077db8b7ea0d6f",
         archive_type = "conda",
     )
 
@@ -499,17 +585,17 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_eigen",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "eigen-3.3.7-hd09550d_1",
-        sha256 = "4926eb83cdfeaf5c3ad2ff3aaefe0844a12dce94eb3e728bc6e722270b10a196",
+        dist_name = "eigen-3.4.0-hdb19cb5_0",
+        sha256 = "150e42f5b5950eb0c1f40a5b29e2e71400cc965e0c97dd7a533ccc28e7903476",
         archive_type = "conda",
     )
     conda_package_repository(
-        name = "conda_package_entrypoints",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "entrypoints-0.4-py310h06a4308_0",
-        sha256 = "04240db33a19536fbe79db29c976d9e172c28183225c6218c23860a43381e391",
-        archive_type = "conda",
+        name = "conda_package_entrez_direct",
+        base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
+        dist_name = "entrez-direct-16.2-he881be0_1",
+        sha256 = "7c582b64e1c870704c3e705849f0277cb102a97387dc488e8384a89be762f941",
     )
+
     conda_package_repository(
         name = "conda_package_et_xmlfile",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -521,8 +607,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_exceptiongroup",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "exceptiongroup-1.0.4-py310h06a4308_0",
-        sha256 = "81a3cbe8408d73bd40c7d6bcb3ad0254e3b42b39d11d3bf8c87700cf0ffb99f0",
+        dist_name = "exceptiongroup-1.2.0-py310h06a4308_0",
+        sha256 = "32402e5e05f57a5b035a5902cc3c1c37519b335b70f6145ac6de25018374c310",
         archive_type = "conda",
     )
 
@@ -531,6 +617,13 @@ def anaconda_workspace(name = "anaconda"):
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
         dist_name = "executing-0.8.3-pyhd3eb1b0_0",
         sha256 = "19861fd553ee36da352401ece4564271be8a958726a527b9731f229fa6131c5d",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_fastparquet",
+        base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
+        dist_name = "fastparquet-2023.10.1-py310h1f7b6fc_0",
+        sha256 = "66cd5afe619110fbcbb64f01321e7f114c02d500cb5278b627a6e4e6f2a08aab",
         archive_type = "conda",
     )
 
@@ -559,16 +652,16 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_frozenlist",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "frozenlist-1.3.3-py310h5eee18b_0",
-        sha256 = "51b86ac7ae8204a97bf7cb0f9035ed3905c2841672cee077ffaabade3461095b",
+        dist_name = "frozenlist-1.4.0-py310h5eee18b_0",
+        sha256 = "ffe8132ef12d5c853e7c5d6ff0bc6f71ad2ef71f0fc17e163fb3ec9a67532071",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_fsspec",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "fsspec-2023.4.0-py310h06a4308_0",
-        sha256 = "f97bd2abcb6ae231aaa8449ee77819a13490a7420ef545867ce815716f25c16f",
+        dist_name = "fsspec-2023.10.0-py310h06a4308_0",
+        sha256 = "4f91b8e0d1c77d1383b599b1a0f3fc5f22036cf8fbef05cbd2decea253281412",
         archive_type = "conda",
     )
 
@@ -586,6 +679,12 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "1481d198037b9877abc927f9a78edc1f193b528ae0894bc89243ffde892ca9fb",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_gffutils",
+        base_urls = ["https://conda.anaconda.org/bioconda/noarch"],
+        dist_name = "gffutils-0.12-pyh7cba7a3_0",
+        sha256 = "73056ec25b0ccb9a6bee9fb397a89091eab15507b7182e31267951f3bc21106d",
+    )
 
     conda_package_repository(
         name = "conda_package_giflib",
@@ -597,11 +696,12 @@ def anaconda_workspace(name = "anaconda"):
         ],
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_h11",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "h11-0.12.0-pyhd3eb1b0_0",
-        sha256 = "d6ec3d283b9373610c573a5b4fb92f23dc0ce975b8382c940ff7b34f50cb2b70",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "h11-0.14.0-py310h06a4308_0",
+        sha256 = "30175d0063ed1e13d8406bf23b7e7a38659fe6cfefc536426d5159ccb15b2e6d",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -624,8 +724,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_htmltools",
         base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "htmltools-0.3.0-pyhd8ed1ab_0",
-        sha256 = "04f3215f095d6de32f4c91d336904b4bd66a53c34be1e0d69f79ea939674ba7a",
+        dist_name = "htmltools-0.5.1-pyhd8ed1ab_0",
+        sha256 = "98b564b30b29f41061518529629d27c6eb79aa00ca347c5938cb7e14a20802c6",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -644,6 +744,7 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "df5149066130aace35588ab59d28a02f85a8a93be7c461fe2e7f0318d3113ec1",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_idna",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -651,17 +752,19 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "2f0a7c1c45943cbc02e987a9e682290b15a08a940ecdff9cd82e83e84919dcd3",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_imagecodecs",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
         dist_name = "imagecodecs-2022.8.8-py310hd3ecb60_3",
         sha256 = "f1beffbd17840e1ddaae531d8fb1e6c54b8a4677cce425c53fda5a0f9c5caf62",
     )
+
     conda_package_repository(
         name = "conda_package_imageio",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "imageio-2.31.1-py310h06a4308_0",
-        sha256 = "af5704eaffb39947c24bee7b9bc66662070cc6b50adc16a7844c0392ee4d7f14",
+        dist_name = "imageio-2.33.1-py310h06a4308_0",
+        sha256 = "f93817bd8497fad6f50ab60f402d8d1c4f5cffa076516102a82e5ae7b768bdf2",
         exclude = [
             "site-packages/imageio/resources/images",
         ],
@@ -670,8 +773,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_importlib_metadata",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "importlib-metadata-6.0.0-py310h06a4308_0",
-        sha256 = "9da94bc6d2050e37311395674574e55bfeb54b99189a8040bc401f79bfe8df44",
+        dist_name = "importlib-metadata-7.0.1-py310h06a4308_0",
+        sha256 = "8f0355f1c0631bbe08bed4627a7477a17255d731f6b95e369506c9de2db7b91c",
         archive_type = "conda",
     )
 
@@ -688,7 +791,7 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "6a2d668a0a33fddbf047f8ef55c29ba5f803ef2c6fed923b7c753a836f4ce002",
         patch_args = ["-p1"],
         # Override libgomp with libiomp5.so.
-        patches = ["//third-party:intel-openmp-symlinks.patch"],
+        patches = ["@cellranger//third-party:intel-openmp-symlinks.patch"],
         patch_cmds = [
             "ln -s libiomp5.so lib/libgomp.so",
             "ln -s libiomp5.so lib/libgomp.so.1",
@@ -705,24 +808,19 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_ipykernel",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "ipykernel-6.25.0-py310h2f386ee_0",
-        sha256 = "a2972599df779fb0eddeceb4184df0972cc54e1874aa605c456a572da44719d6",
+        dist_name = "ipykernel-6.28.0-py310h06a4308_0",
+        sha256 = "b4ed43f0129e25857a60ea6227c21ad84a36458dd8f9aac11d2da97a8373195c",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_ipython",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "ipython-8.12.2-py310h06a4308_0",
-        sha256 = "de4a3854684614987589aff4c2f030aed2a228db3095abfdc7f43c28d1d892f0",
+        dist_name = "ipython-8.20.0-py310h06a4308_0",
+        sha256 = "9e63f2361252e6113abc865d5563f5d6745d3d6316e200e23d97b925ef604963",
         archive_type = "conda",
+        exclude = ["share/man"],
     )
-    conda_package_repository(
-        name = "conda_package_ipython_genutils",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "ipython_genutils-0.2.0-pyhd3eb1b0_1",
-        sha256 = "57b26ed1992a45f5c3c1261001956cd31c05ffe7c57c452af07bc3417c57d143",
-        archive_type = "conda",
-    )
+
     conda_package_repository(
         name = "conda_package_ipywidgets",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -761,8 +859,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_jinja2",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "jinja2-3.1.2-py310h06a4308_0",
-        sha256 = "1464e3a3cc3eb67f9951c1ef7e8225a1b25b4a5742c1f52a02930f3df2923e7e",
+        dist_name = "jinja2-3.1.3-py310h06a4308_0",
+        sha256 = "64465b3ecb4971606dda5e5b71f9bac661af3b7ff1d788f00db6bc86aaa48fd3",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -787,6 +885,14 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_json5",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
+        dist_name = "json5-0.9.6-pyhd3eb1b0_0",
+        sha256 = "595b96c7e20703125ff4865ee55ba282357b57438a609dd7660610318127ca2e",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_jsonpatch",
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
         dist_name = "jsonpatch-1.32-pyhd3eb1b0_0",
@@ -804,33 +910,68 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_jsonschema",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "jsonschema-4.17.3-py310h06a4308_0",
-        sha256 = "e0f9cbfefe951f57df257ce31f2fdf9187c6e53eafbe8c20588f1e717093d348",
+        dist_name = "jsonschema-4.19.2-py310h06a4308_0",
+        sha256 = "6290d88f033a380687d959551cc8961610f0c41da7c94236eed83326bef57868",
         archive_type = "conda",
         exclude = [
             "site-packages/jsonschema/tests",
         ],
     )
     conda_package_repository(
+        name = "conda_package_jsonschema_specifications",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "jsonschema-specifications-2023.7.1-py310h06a4308_0",
+        sha256 = "d8474b700978f7066e22283e2d13d6ff54f8c23d994ff707bdd51dddf5a24a98",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_jupyter_lsp",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "jupyter-lsp-2.2.0-py310h06a4308_0",
+        sha256 = "8a6625d46ab3828bd05de341aa1e3c3a7099a07e16481b0c935c633f1d360dc3",
+        archive_type = "conda",
+    )
+    conda_package_repository(
         name = "conda_package_jupyter_client",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "jupyter_client-7.4.9-py310h06a4308_0",
-        sha256 = "76e9a94610d90d853121f7b8fcb4a47aa27a4e9ddf13d3085025934288c481bd",
+        dist_name = "jupyter_client-8.6.0-py310h06a4308_0",
+        sha256 = "afdb4f76401900e8c44b9fba778bc8a27328f81ff380be24c90df744ca8d6fd3",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_jupyter_core",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "jupyter_core-5.3.0-py310h06a4308_0",
-        sha256 = "7c7bdbb012c4041e98f9af9c071b4c14e30c97ae78e9e6abf5349e97594f0e30",
+        dist_name = "jupyter_core-5.5.0-py310h06a4308_0",
+        sha256 = "6d5d5ac73ab2fdc1b7b21496c371bfbc688516e5f1d3017ebea1cd374c44ca47",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_jupyter_events",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "jupyter_events-0.8.0-py310h06a4308_0",
+        sha256 = "e2f731bb787896ec3c2a45a7487ce5ff11e3835a9a4d411360f04596027578e3",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_jupyter_server",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "jupyter_server-1.23.4-py310h06a4308_0",
-        sha256 = "e53f26cf49722752dcfc0e9a8a8116fe157b1251043d886613f2354458880308",
+        dist_name = "jupyter_server-2.10.0-py310h06a4308_0",
+        sha256 = "c1445997637c506e91710e8e4c6518127e73d6aa2f2d84a408a132c05d5af79a",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_jupyter_server_terminals",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "jupyter_server_terminals-0.4.4-py310h06a4308_1",
+        sha256 = "e43f976c2a67955d13f345a718c360f11c1777527cb8aa4cc37744183046b50f",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_jupyterlab",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "jupyterlab-4.0.11-py310h06a4308_0",
+        sha256 = "5a8cb657cedf9d1ee90ad386e3c3a7262fbc179cc42733303a87d2e8464b1df1",
         archive_type = "conda",
     )
 
@@ -842,10 +983,18 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_jupyterlab_server",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "jupyterlab_server-2.25.1-py310h06a4308_0",
+        sha256 = "b5cf46953da32bce6aa325e72bf49b5f6120ecd6136ce80b2015ccb071657570",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_jupyterlab_widgets",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "jupyterlab_widgets-3.0.5-py310h06a4308_0",
-        sha256 = "1f08b9c816e12faa6858b382d5d94bb53ca26d621a8e967f354e53c0c14509cf",
+        dist_name = "jupyterlab_widgets-3.0.9-py310h06a4308_0",
+        sha256 = "83344ddb846c312ac0b0563a389945834ae648996084ff4d5f8a083dd6256621",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -855,6 +1004,7 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "26d8bdd124ba25a45425c18b41d9765db810deba870d55082104e011a4c6d7be",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_kiwisolver",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -884,8 +1034,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_lazy_loader",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "lazy_loader-0.2-py310h06a4308_0",
-        sha256 = "7f71cec2a6e88cb044ca69b91f4c94e8e385710c24ecaaf6c1bd902b975ef23e",
+        dist_name = "lazy_loader-0.3-py310h06a4308_0",
+        sha256 = "d4981bcfb4fab059f9f41cf9ecf2e2c9bcb512a23ed97c4e02c252ce2b7bacfa",
         archive_type = "conda",
     )
 
@@ -911,10 +1061,12 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_libaec",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
-        dist_name = "libaec-1.0.6-hcb278e6_1",
-        sha256 = "4df6a29b71264fb25462065e8cddcf5bca60776b1801974af8cbd26b7425fcda",
+        dist_name = "libaec-1.1.2-h59595ed_1",
+        sha256 = "fdde15e74dc099ab1083823ec0f615958e53d9a8fae10405af977de251668bea",
         archive_type = "conda",
+        exclude = ["share/man"],
     )
+
     conda_package_repository(
         name = "conda_package_libavif",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
@@ -927,6 +1079,7 @@ def anaconda_workspace(name = "anaconda"):
         dist_name = "libblas-3.9.0-12_linux64_mkl",
         sha256 = "743a53d7f746d6ef4c3c943044a3d5415e791b3b0683a79578aeba5f13e2d7bb",
     )
+
     conda_package_repository(
         name = "conda_package_libbrotlicommon",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -965,8 +1118,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_libedit",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "libedit-3.1.20221030-h5eee18b_0",
-        sha256 = "a173782157a51369f2a6dbdaaad3dfbc78d1ad4b76a5648fe55bca9acc7f0205",
+        dist_name = "libedit-3.1.20230828-h5eee18b_0",
+        sha256 = "73ade0165c148c617287f2d910c6aa4e4162f86cd1993b84a95fa6eb2ba72582",
         exclude = [
             "share/man",
         ],
@@ -982,6 +1135,7 @@ def anaconda_workspace(name = "anaconda"):
             "share/man",
         ],
     )
+
     conda_package_repository(
         name = "conda_package_libffi",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -994,11 +1148,12 @@ def anaconda_workspace(name = "anaconda"):
         ],
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_libgcc_ng",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
-        dist_name = "libgcc-ng-13.1.0-he5830b7_0",
-        sha256 = "fba897a02f35b2b5e6edc43a746d1fa6970a77b422f258246316110af8966911",
+        dist_name = "libgcc-ng-13.2.0-h807b86a_5",
+        sha256 = "d32f78bfaac282cfe5205f46d558704ad737b8dbf71f9227788a5ca80facaba4",
         exclude = [
             "lib/libgomp.so*",
             "x86_64-conda_cos6-linux-gnu/sysroot/lib/libgomp.so*",
@@ -1023,6 +1178,14 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "83df17eb4be4232b6616f4a713624fab63cd8c41ea9957941b85e302b8954268",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_libidn2",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "libidn2-2.3.4-h5eee18b_0",
+        sha256 = "fbecaec657b4d13762ef560af6628110bab4f0adf489762ef69c889dcc118953",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_libllvm14",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -1081,10 +1244,11 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_libstdcxx_ng",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
-        dist_name = "libstdcxx-ng-13.1.0-hfd8a6a1_0",
-        sha256 = "6f9eb2d7a96687938c0001166a3b308460a8eb02b10e9d0dd9e251f0219ea05c",
+        dist_name = "libstdcxx-ng-13.2.0-h7e041cc_5",
+        sha256 = "a56c5b11f1e73a86e120e6141a42d9e935a99a2098491ac9e15347a1476ce777",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_libtiff",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
@@ -1092,27 +1256,26 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "1ffb2f138bb44a59d3e51d65cb471dece8cf46ec2d0fbdcbb1ab820edaa5706d",
     )
     conda_package_repository(
+        name = "conda_package_libunistring",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "libunistring-0.9.10-h27cfd23_0",
+        sha256 = "e513b61d4b848d68a26ce89b00c90cd2958403026a6dea396af870f317199def",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_libuuid",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
         dist_name = "libuuid-1.41.5-h5eee18b_0",
         sha256 = "2a401aafabac51b7736cfe12d2ab205d29052640ea8183253c9d0a8e7ed0d49a",
         archive_type = "conda",
     )
-    conda_package_repository(
-        name = "conda_package_libwebp",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "libwebp-1.2.4-h11a3e52_1",
-        sha256 = "e3329353356fbee47b5947773bd555526459f51ea31982667f3c9a9e9d365535",
-        exclude = [
-            "share/man",
-        ],
-        archive_type = "conda",
-    )
+
     conda_package_repository(
         name = "conda_package_libwebp_base",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "libwebp-base-1.2.4-h5eee18b_1",
-        sha256 = "1749b5bf683234089fe8d7a405c6b1af5c4017febbeda572b77737224fb2625b",
+        dist_name = "libwebp-base-1.3.2-h5eee18b_0",
+        sha256 = "3a79101d96374cce0cdb4a6e6e699379930b6b3bcb4e5e2a23a47949a8958718",
         exclude = [
             "share/man",
         ],
@@ -1132,20 +1295,22 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "b7d6dee99369d2e602bb0901e7d468db3d6567a4af3666b75213ef268c560d39",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_lima",
         base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
-        dist_name = "lima-2.7.1-h9ee0642_0",
-        sha256 = "dfec086cb7083d1789bf0a15f2f1d989aa80441c519f63387d4d0b269f68ee81",
+        dist_name = "lima-2.9.0-h9ee0642_1",
+        sha256 = "e884929a272592556fdfb3d5af315dea563494098cca3ad55fbae1562b991e15",
     )
 
     conda_package_repository(
         name = "conda_package_line_profiler",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "line_profiler-4.0.3-py310hdb19cb5_0",
-        sha256 = "d2fd08498584dea058584280dc6a2825681f61113a256b0afc796acf9a1b2f2e",
+        dist_name = "line_profiler-4.1.1-py310hdb19cb5_0",
+        sha256 = "efcfdf19d098a6bfda9811e8b5750975f7dcf6871b8d544bce5ec36ba9ab50ee",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_linkify_it_py",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -1156,8 +1321,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_llvmlite",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "llvmlite-0.40.0-py310he621ea3_0",
-        sha256 = "ccac2f86974927260b967b67fb2d22e418a94af7370dc40d8ed8c59db573d644",
+        dist_name = "llvmlite-0.42.0-py310h6a678d5_0",
+        sha256 = "66f12f904f0b1e59eb3423dada0fe0aa71487f260f6b0d156d4b9a753be0f0fc",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -1201,17 +1366,45 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_markupsafe",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "markupsafe-2.1.1-py310h7f8727e_0",
-        sha256 = "5b40bb8a880629c15057c34f750b75a3585f4c4aedd3dda6ca168331ca4fba18",
+        dist_name = "markupsafe-2.1.3-py310h5eee18b_0",
+        sha256 = "09e967a42e1121502264ed7acc7961c0df119131f498d51492b5c36a6833e6d1",
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_marshmallow",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "marshmallow-3.19.0-py310h06a4308_0",
+        sha256 = "bee2521a77afa9af09a944fcd9b69de26547461a06cde0eeb841d3b87f6570c3",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_marshmallow_dataclass",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "marshmallow-dataclass-8.6.0-pyhd8ed1ab_0",
+        sha256 = "0c3b747e8071d5d89de86180d196ddf038d137e7e6c25c695060c273c52aeb08",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_marshmallow_enum",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "marshmallow-enum-1.5.1-py310h06a4308_0",
+        sha256 = "c9ed3f85461f6ef14e012ae9c36237f305b11ec132a285f00af92e38ad0fe48d",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_marshmallow_union",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "marshmallow-union-0.1.15.post1-pyhd8ed1ab_0",
+        sha256 = "4910a2d4bbe0d1484b45a1b739256d81d1bb06de0dd7051c0cd8683cf54dc878",
+    )
+
+    conda_package_repository(
         name = "conda_package_matplotlib_base",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "matplotlib-base-3.7.1-py310h1128e8f_1",
-        sha256 = "d7af83b5e4a47b0d0845df1e2eddc233a27ce25e022d5427037bd2c79ac26637",
+        dist_name = "matplotlib-base-3.8.0-py310h1128e8f_0",
+        sha256 = "a12d6b8af019a6d1f564bf2e60ace3e288b22d707ac0063bbff35de8c9eb4f7c",
         patch_args = ["-p1"],
-        patches = ["//third-party:matplotlib-base-3.5.0-mplconfigdir.patch"],
+        patches = ["@cellranger//third-party:matplotlib-base-3.7.2-mplconfigdir.patch"],
         exclude = [
             "lib/python3.*/site-packages/matplotlib/__pycache__/__init__.*.pyc",
             "lib/python3.*/site-packages/matplotlib/mpl-data/sample_data",
@@ -1242,13 +1435,23 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "8cf83b57ce58e9491a4eadd05f9cd9a7f5eab8845cf03d0b97d3583241a43cfb",
         archive_type = "conda",
     )
-
     conda_package_repository(
         name = "conda_package_mdurl",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
         dist_name = "mdurl-0.1.0-py310h06a4308_0",
         sha256 = "ec6c4866d8463004450f3dee0853ee1889c31b7ac8928a20eaccefeb0816f2b1",
         archive_type = "conda",
+    )
+
+    conda_package_repository(
+        name = "conda_package_melt",
+        base_urls = ["https://conda.anaconda.org/bioconda/noarch"],
+        dist_name = "melt-1.0.3-pyh864c0ab_4",
+        sha256 = "4f79a1a3481d9cffd63fc6ede3122fca0733e702583e65166af634bed2f902d6",
+        licenses = ["@rules_license//licenses/spdx:AGPL-3.0"],
+        extra_deps = [
+            "setuptools",
+        ],
     )
 
     conda_package_repository(
@@ -1259,10 +1462,18 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_methodtools",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "methodtools-0.4.7-pyhd8ed1ab_0",
+        sha256 = "e47f64c8a567a088d4dc58e74709f47551a3e0096007dcfc77232f16099a4891",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_mistune",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "mistune-0.8.4-py310h7f8727e_1000",
-        sha256 = "e2fcd229069ed18c1216199fa5da8cbbd3e85faeb5b68f3cf9954fccfb81c8d7",
+        dist_name = "mistune-2.0.4-py310h06a4308_0",
+        sha256 = "4e35eac45425afc2b040b5049fca3d1c8007955da284a097bde65101c23b2900",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -1272,13 +1483,18 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "58cb5ed4263f1bc5eadd08824eaedfd80719c6eff4cfa2bcac0f1a39a9aca1e5",
         exclude = [
             "lib/libmkl_*avx512_mic.so.1",
+            "lib/libmkl_blacs_*mpi_*.so*",
+            "lib/libmkl_blacs_sgimpt*.so*",
+            "lib/libmkl_pgi_thread.so*",
+            "lib/libmkl_scalapack*.so*",
+            "lib/libmkl_*_ilp64.so*",
         ],
         patch_args = ["-p1"],
         # Normally these symlinks would come from the libblas package, but the
         # bazel rules won't generate those because they're broken symlinks in
         # that package.  So we add them here instead.  Otherwise opencv ends up
         # linking openblas, which causes problems.
-        patches = ["//third-party:mkl-libblas-symlinks.patch"],
+        patches = ["@cellranger//third-party:mkl-libblas-symlinks.patch"],
         patch_cmds = [
             "ln -s libmkl_rt.so.1 lib/libblas.so",
             "ln -s libmkl_rt.so.1 lib/libblas.so.3",
@@ -1335,8 +1551,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_multidict",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "multidict-6.0.2-py310h5eee18b_0",
-        sha256 = "2415ebc156ff2ad50392b3097affca8b481cf0fba832c6287adb286d2b4e0d3d",
+        dist_name = "multidict-6.0.4-py310h5eee18b_0",
+        sha256 = "cb9ff543ed1507df7b6821e613fecb75ee227dd4d8ca57a62b9248905de7a444",
         archive_type = "conda",
     )
 
@@ -1350,10 +1566,11 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_mypy_extensions",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "mypy_extensions-0.4.3-py310h06a4308_0",
-        sha256 = "f762e923ac2fdd7707e389e0ecfe1780200ae66f5ce56c0774bcbb6bba979800",
+        dist_name = "mypy_extensions-1.0.0-py310h06a4308_0",
+        sha256 = "849744d03d1de7447f6202a42c051215e6ff66238d40d26a99be4df01fb7ec3e",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_natsort",
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
@@ -1363,36 +1580,40 @@ def anaconda_workspace(name = "anaconda"):
     )
 
     conda_package_repository(
-        name = "conda_package_nbclassic",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "nbclassic-0.5.5-py310h06a4308_0",
-        sha256 = "c2ee3828eae95fb49af7ea4e33a9b52534a7226cde2952957c8b53d950ef3dee",
-        archive_type = "conda",
-    )
-
-    conda_package_repository(
         name = "conda_package_nbclient",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "nbclient-0.5.13-py310h06a4308_0",
-        sha256 = "36ea6780a98d968788e452b997f09c0b2c43cc09809c5683611fb0c728acff76",
+        dist_name = "nbclient-0.8.0-py310h06a4308_0",
+        sha256 = "e5ac289d950d1afc8cbfeec6d220fd9b6b7cc60fa6b73ead4ce2f404f9c43ec5",
         exclude = ["site-packages/nbclient/tests"],
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_nbconvert",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "nbconvert-6.4.4-py310h06a4308_0",
-        sha256 = "a3fb8d128644399d208b07260d2235e1db871ca6bbba2c38fe497ee6abe51108",
+        dist_name = "nbconvert-7.10.0-py310h06a4308_0",
+        sha256 = "e0a03f76f8ac5523daad61833ab7c614586e495305e40878c85fab7df58ef213",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_nbformat",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "nbformat-5.7.0-py310h06a4308_0",
-        sha256 = "42b6a4fb15aa601db5332f5b2d47ba59e171aa6585d730ec139c92ee55d397fa",
+        dist_name = "nbformat-5.9.2-py310h06a4308_0",
+        sha256 = "d955273c4147d99453a755990591c3ba5b59fcdc5d90aaf1f6f562ee8103191b",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_ncbi_vdb",
+        base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
+        dist_name = "ncbi-vdb-2.11.0-h1b792b2_1",
+        sha256 = "babda6a7705288f2e149554f1b0541136f0d5d1a98b33e520f98dff5f62ee4be",
+        exclude_deps = [
+            "perl",
+            "perl-xml-libxml",
+            "perl-uri",
+        ],
+    )
+
     conda_package_repository(
         name = "conda_package_ncurses",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -1433,33 +1654,33 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_notebook",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "notebook-6.5.4-py310h06a4308_1",
-        sha256 = "1dea837ab4d05279db1648ee0844ec7f26a5c8b59cde83581413f66d17b2dde5",
+        dist_name = "notebook-7.0.8-py310h06a4308_0",
+        sha256 = "9af3dcc6e5ce84b3cfe1321b7f93f4e7b2c577469f15e7c544c9f8602a1a8f11",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_notebook_shim",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "notebook-shim-0.2.2-py310h06a4308_0",
-        sha256 = "c37add2abe5f38dc4ed90ef6b035a8bd3c6769f1aec2d55a65dbc72df019fe2f",
+        dist_name = "notebook-shim-0.2.3-py310h06a4308_0",
+        sha256 = "cd2fa58e6aa64feaa023c03609f8a6b38bd9979a4be112fbe5b406d807e2dad8",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_numba",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
-        dist_name = "numba-0.57.1-py310h0f6aa51_0",
-        sha256 = "4fc115078403e79bcfb1ec9b0649618b6af634e14d57c5172fed1f7bae45dec5",
+        dist_name = "numba-0.59.0-py310h7dc5dd1_1",
+        sha256 = "bdf13fdeb3fdb4ca5380bba9716d7f7e8e1ac1ff299fb8f9fafa49893bcb5f1f",
         patch_args = ["-p1"],
-        patches = ["//third-party:numba-0.55.1-nocache.patch"],
+        patches = ["@cellranger//third-party:numba-0.55.1-nocache.patch"],
         exclude = [
             "lib/python3.*/site-packages/numba/core/__pycache__/ccallback.cpython-*.pyc",
             "lib/python3.*/site-packages/numba/core/__pycache__/dispatcher.cpython-*.pyc",
             "lib/python3.*/site-packages/numba/cuda/tests",
             "lib/python3.*/site-packages/numba/np/ufunc/__pycache__/ufuncbuilder.cpython-*.pyc",
         ],
-        archive_type = "conda",
         exclude_deps = ["_openmp_mutex"],
+        archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_numexpr",
@@ -1498,6 +1719,7 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "7db5ad4d3119105b26a023702b24eb4d190700e9393df04aec3ad1e0f07c7354",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_openpyxl",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -1508,22 +1730,31 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_openssl",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "openssl-1.1.1v-h7f8727e_0",
-        sha256 = "6037df8c37cf2d2230de8d9a10e5bb7ee24d2bee24f64d5cfd5519c163213402",
+        dist_name = "openssl-1.1.1w-h7f8727e_0",
+        sha256 = "4e659c1be67de22803c1ddc269b6b74fdbdcb56a4fa18ab689891b35a6b644b5",
         archive_type = "conda",
     )
+
+    conda_package_repository(
+        name = "conda_package_overrides",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "overrides-7.4.0-py310h06a4308_0",
+        sha256 = "3ed69c123c974e1ce101ee4f826363fe2a23976ed27e3a90b6f5abbb7f2a79d7",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_packaging",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "packaging-23.0-py310h06a4308_0",
-        sha256 = "63c368d865f8b211c406f6682b8777b1de4ffea05c88c4b3c95ebc718a61f6f2",
+        dist_name = "packaging-23.1-py310h06a4308_0",
+        sha256 = "ca899b50ca1e06c15e8319a47100a28a4403a3d3a6ef806c06069f416d8cab91",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_pandas",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pandas-1.5.3-py310h1128e8f_0",
-        sha256 = "9ffc6adee3b700b86fbde49afc6e4037b82a849460832aa37eee6ef319f08a9a",
+        dist_name = "pandas-2.1.4-py310h1128e8f_0",
+        sha256 = "a81c828829f9be27e2a0a6a10e25055a12267f79a3473cabf030a3d515b9d8e7",
         exclude = [
             "lib/python3.*/site-packages/pandas/tests",
         ],
@@ -1556,9 +1787,9 @@ def anaconda_workspace(name = "anaconda"):
     )
     conda_package_repository(
         name = "conda_package_partd",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "partd-1.2.0-pyhd3eb1b0_1",
-        sha256 = "7cb5bebcd6698effe5162a353fd7d6e0275a4ca07168f730b1917d587a134d13",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "partd-1.4.1-py310h06a4308_0",
+        sha256 = "449b10fc76a3f2116a18cb96f30ac329bf6cfa2f44c608370c0fc01a07392a55",
         archive_type = "conda",
     )
 
@@ -1582,8 +1813,22 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_pbmm2",
         base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
-        dist_name = "pbmm2-1.12.0-h9ee0642_0",
-        sha256 = "fcc27c3a0cb947d30cf91e0deb12e51a49dd7a5e3c3b93a436663b8643525e34",
+        dist_name = "pbmm2-1.13.1-h9ee0642_0",
+        sha256 = "3f2b39a6dd5fd9bbd198db8e0c1a630e02686d6413ff2a58cd8555e006ede21d",
+    )
+    conda_package_repository(
+        name = "conda_package_pbtk",
+        base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
+        dist_name = "pbtk-3.1.1-h9ee0642_0",
+        sha256 = "eab789f3a406ebcd9e332438cc48d135960360c3472702cd204d2b1bd37d5eba",
+    )
+
+    conda_package_repository(
+        name = "conda_package_pcre",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "pcre-8.45-h295c915_0",
+        sha256 = "2bf0144c02007ade42d6a5305987974cc751c7f2e2107d6f88c23d43ce354d5a",
+        archive_type = "conda",
     )
 
     conda_package_repository(
@@ -1593,40 +1838,34 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "fb4b14fdb5e57becda5b8b88b453626ce12edb49fc8cec88ddaea40b52277494",
         archive_type = "conda",
     )
-    conda_package_repository(
-        name = "conda_package_pickleshare",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "pickleshare-0.7.5-pyhd3eb1b0_1003",
-        sha256 = "c4c974ac5bab1628bc472eb271903206ebc349f30cf590740560b6284118852a",
-        archive_type = "conda",
-    )
+
     conda_package_repository(
         name = "conda_package_pillow",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pillow-9.4.0-py310h6a678d5_0",
-        sha256 = "3f74cb9e4ce8725d9f5a97d5629065d2af83d2ee74f6ef9daf6abe9472721fbd",
+        dist_name = "pillow-10.2.0-py310h5eee18b_0",
+        sha256 = "c50e2ed54d58c69e006cd392c421b3910e6f08ae692da62ef1135de79ad02706",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_pip",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pip-23.2.1-py310h06a4308_0",
-        sha256 = "83ad542a684efeabd394c8a8a1cbe10c11090e308e135bf1ae4872f7ff2ed212",
+        dist_name = "pip-23.3.1-py310h06a4308_0",
+        sha256 = "e481caeffc4f5307ff0312d9c2ad8d29c2a6464bcf8225a3f489577d0d6477f1",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_platformdirs",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "platformdirs-2.5.2-py310h06a4308_0",
-        sha256 = "45c27cda159170c55b98959f80abb5db174d7ad765605fb15738687430ae9475",
+        dist_name = "platformdirs-3.10.0-py310h06a4308_0",
+        sha256 = "ff615f4b426f74304dadd47c92da03c15043ce19655a893ca5c2b2f76b3ce8e4",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_plotly",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "plotly-5.9.0-py310h06a4308_0",
-        sha256 = "5876445c7e290a5842d524476c6fcb3b77e1151fb4352aa2c80b823b1ef53bb1",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "plotly-5.19.0-pyhd8ed1ab_0",
+        sha256 = "fa9ae81e1f304f1480378ea25d559748e061c5b8d55b3ade433c3bc483dbae9e",
         license_file = "info/licenses/LICENSE0.txt",
         archive_type = "conda",
         exclude = [
@@ -1648,11 +1887,27 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
-        name = "conda_package_preseq",
-        base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
-        dist_name = "preseq-3.2.0-h867801b_3",
-        sha256 = "2e57a0ea997f85fb16385f82adcfa786c87cea7e6809cf193d5dc400c2ac9ca8",
+        name = "conda_package_polars",
+        base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
+        dist_name = "polars-0.20.8-py310h0dd625b_0",
+        sha256 = "c8162ea63b0094f3b36cc469f53062be3f00341700026e8edbefac907ac908b6",
+        archive_type = "conda",
     )
+
+    conda_package_repository(
+        name = "conda_package_primer3_py",
+        base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
+        dist_name = "primer3-py-0.6.1-py310h1425a21_1",
+        sha256 = "9eea67e71932a5c8d2e0d2b901d62e5bd9ab5ac36fa98cf4d4b4e89bdf1a57c5",
+    )
+    conda_package_repository(
+        name = "conda_package_progressbar2",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "progressbar2-4.2.0-py310h06a4308_0",
+        sha256 = "e7756f96535408c49aaac28d1caaebc5ad1eae3815b067d6fd6cf443c2cd855d",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_prometheus_client",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -1663,9 +1918,10 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_prompt_toolkit",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "prompt-toolkit-3.0.36-py310h06a4308_0",
-        sha256 = "f20ab57dc5c6033117f843dce3a958315fca629b4c5484e9401c08e0f3f7b76a",
+        dist_name = "prompt-toolkit-3.0.43-py310h06a4308_0",
+        sha256 = "c76a44f0ee5e0e1e6928ccfed8d844b6dfee831eb809b1d02ae916509b3def6e",
         archive_type = "conda",
+        exclude_deps = ["prompt_toolkit"],
     )
     conda_package_repository(
         name = "conda_package_protobuf",
@@ -1685,6 +1941,14 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_psygnal",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "psygnal-0.9.5-pyhd8ed1ab_0",
+        sha256 = "13cf2597cb932c8eaac12f0f332cac84800cde01ba41d525fcbf53929baabf7d",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
         name = "conda_package_ptyprocess",
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
         dist_name = "ptyprocess-0.7.0-pyhd3eb1b0_2",
@@ -1700,9 +1964,9 @@ def anaconda_workspace(name = "anaconda"):
     )
     conda_package_repository(
         name = "conda_package_py_cpuinfo",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "py-cpuinfo-8.0.0-pyhd3eb1b0_1",
-        sha256 = "34e7595c7b0108a46b926c69b0044f8cb7c09ef0f3864eae225a0ee7e3649b50",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "py-cpuinfo-9.0.0-py310h06a4308_0",
+        sha256 = "42746476b851db37ae58663299aea917a705c0c144144c8d932d2449dcdfdf7c",
         archive_type = "conda",
     )
 
@@ -1727,8 +1991,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_pycosat",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pycosat-0.6.4-py310h5eee18b_0",
-        sha256 = "f2090e325f6814535eb79596ae383bdf0b9f998d9a3d114a6d2385de2721a5af",
+        dist_name = "pycosat-0.6.6-py310h5eee18b_0",
+        sha256 = "7fd707082d89c63a7914f51fa3bfd7dc7adc02a1155742d1b3678f925032876a",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -1741,14 +2005,14 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_pyfaidx",
         base_urls = ["https://conda.anaconda.org/bioconda/noarch"],
-        dist_name = "pyfaidx-0.7.2.1-pyh7cba7a3_1",
-        sha256 = "efc210ae9c68769a3f7f53e12aeea3b30fd72fb6d4fe8c1c935899fda662d8ab",
+        dist_name = "pyfaidx-0.8.1.1-pyhdfd78af_0",
+        sha256 = "35d79d8bd350f9f4a21a4890a438514a14860821933fb0c61db1237cfcf922c0",
     )
     conda_package_repository(
         name = "conda_package_pyflakes",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pyflakes-3.0.1-py310h06a4308_0",
-        sha256 = "e76a5b4f34acc8f80887df84d8529af8067f6ea84952fe4dd15b1cb5fa71a7fb",
+        dist_name = "pyflakes-3.1.0-py310h06a4308_0",
+        sha256 = "0ca3865f1f3c7c787c95242d09c38d32170f65508a38b63cab78c81f304c7be4",
         exclude = [
             "site-packages/pyflakes/test",
         ],
@@ -1792,13 +2056,7 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "51d91572177b29deb88a0ffa070a2fe34151d41a91d747833fd988cdf1d446e5",
         archive_type = "conda",
     )
-    conda_package_repository(
-        name = "conda_package_pyrsistent",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pyrsistent-0.18.0-py310h7f8727e_0",
-        sha256 = "b483798bf271cf332da9db1cdb458096d03a30add7ae1c63b18969e154c58389",
-        archive_type = "conda",
-    )
+
     conda_package_repository(
         name = "conda_package_pysam",
         base_urls = ["https://conda.anaconda.org/bioconda/linux-64"],
@@ -1812,13 +2070,14 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "4ae4c13a181087485244bfdfe3cee8d3e69ca53d87f3f3fe30f2874b833359b3",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_pytables",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pytables-3.8.0-py310hb8ae3fc_3",
-        sha256 = "039ff5414b5afdd58abacc428617cb02aa232217e712a5c2e4a61ec87eb3155c",
+        dist_name = "pytables-3.9.2-py310h0016290_0",
+        sha256 = "be5a30d03ace1a6934752d997ebd1addaec7013ab1e5b91fc8beb0c4e437845b",
         patch_args = ["-p1"],
-        patches = ["//third-party:pytables-3.8.0-slurmdir.patch"],
+        patches = ["@cellranger//third-party:pytables-3.8.0-slurmdir.patch"],
         exclude = [
             "lib/python3.*/site-packages/tables/tests/*.h5",
             "lib/python3.*/site-packages/tables/tests/*/*",
@@ -1836,6 +2095,7 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "ac00883262681ad623e3edcb9327ed637689fd3d990a10ed6282ffeb9f4aa29f",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_python",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -1860,8 +2120,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_python_annoy",
         base_urls = ["https://conda.anaconda.org/conda-forge/linux-64"],
-        dist_name = "python-annoy-1.17.2-py310hc6cd4ac_0",
-        sha256 = "f85c2f389e2a2716941007ee028f1fcf9e79f7b548c3c9a7d1defbd803981ff2",
+        dist_name = "python-annoy-1.17.2-py310hc6cd4ac_1",
+        sha256 = "98bbb3aa7ae9a56049c3cfe03a12e695420be1a313b4b327c76cb750ed9e9e6f",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -1878,12 +2138,34 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "880d013dbc49a59080388275e84299201aef91ac0079b6b75f3c2dc143b70a1d",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_python_json_logger",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "python-json-logger-2.0.7-py310h06a4308_0",
+        sha256 = "8401ca0a45ef113d0bebf0e5e8f3cefa736d9fb55560902d40bd162e13f54c78",
+        archive_type = "conda",
+    )
 
     conda_package_repository(
         name = "conda_package_python_multipart",
-        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "python-multipart-0.0.6-pyhd8ed1ab_0",
-        sha256 = "2a9b8d02a6ec9862433cfc2741c4cbfe321e4ae3bab066f7ed84bc00effb73d7",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "python-multipart-0.0.6-py310h06a4308_0",
+        sha256 = "c54dff2f9f43dce8c9f6c2e0964552a563e6cc0456239062046530ad93a50e8c",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_python_tzdata",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
+        dist_name = "python-tzdata-2023.3-pyhd3eb1b0_0",
+        sha256 = "df49723e943a5a7b8bfe3b0f7463b39225aedba73f75d4cb4cb5a794c2a4755d",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
+        name = "conda_package_python_utils",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "python-utils-3.3.3-py310h06a4308_0",
+        sha256 = "73e1fdfada4c7aa92ceaac282d621a57568b5561597d9072ac0335680834f01b",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -1896,8 +2178,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_pytz",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pytz-2022.7-py310h06a4308_0",
-        sha256 = "90736f2257bea1c0269d5382a25b9f081b3b36293df1d4c1d9957678298bb4bc",
+        dist_name = "pytz-2023.3.post1-py310h06a4308_0",
+        sha256 = "9ffcdfd341efcb12a208f88b1e77790144118409789af39bf2086294dfc2a3a9",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -1910,8 +2192,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_pywavelets",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pywavelets-1.4.1-py310h5eee18b_0",
-        sha256 = "72a2adef2834a58e54687c642eb898e15f36bb0c8d5c7f8c41ba6f58565e9b1f",
+        dist_name = "pywavelets-1.5.0-py310ha9d4c09_0",
+        sha256 = "aa6e014c51b10bf85f8fa3cae27f7a743250816681241ebfadb1d7525944a1cc",
         exclude = [
             "lib/python*/site-packages/pywt/tests",
         ],
@@ -1920,29 +2202,51 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_pyyaml",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pyyaml-6.0-py310h5eee18b_1",
-        sha256 = "6e558d45b805c3031933a372ec802449b7ed595a04b1feebe32364fde60ad5c9",
+        dist_name = "pyyaml-6.0.1-py310h5eee18b_0",
+        sha256 = "ac5e6f9bd2f4a1b8d2732c8db1e6e42c77a6068d570e246e1fbb6fb1f580bc8f",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_pyzmq",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "pyzmq-23.2.0-py310h6a678d5_0",
-        sha256 = "c9bc9c5c9002438d17c3ef725cbdb10a8c12dde43355a979ba5eb3563cd8e479",
+        dist_name = "pyzmq-25.1.2-py310h6a678d5_0",
+        sha256 = "d854bef34433aa80fe4e096a6b6bdc4b4f2e5de0c4682a1adf2627b06f074d69",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_read_roi",
         base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
         dist_name = "read-roi-1.6.0-py_0",
         sha256 = "509231a8a4418deceadb533de00ea44eabddb4bf4aeebcea6383b240ee4f62ba",
     )
+    conda_package_repository(
+        name = "conda_package_referencing",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "referencing-0.30.2-py310h06a4308_0",
+        sha256 = "8974294ff981de1c8c1bdce18ef2e757d4e6f088c312800699a9ae0ccb83f0dc",
+        archive_type = "conda",
+    )
 
     conda_package_repository(
         name = "conda_package_requests",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "requests-2.31.0-py310h06a4308_0",
-        sha256 = "23417b09593a32fa446b36fbf5949ae6a6aa59e4b66091850f973fea92c6992b",
+        dist_name = "requests-2.31.0-py310h06a4308_1",
+        sha256 = "fafa8ab94fb2f3f55ad7ac32f2651ec9626e8db55c250c011b2aa50669c03c33",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_rfc3339_validator",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "rfc3339-validator-0.1.4-py310h06a4308_0",
+        sha256 = "9189da6e54e336dae363271ae3bae61fb5525a1ef371b292f4d1966be949fdf4",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_rfc3986_validator",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "rfc3986-validator-0.1.1-py310h06a4308_0",
+        sha256 = "7d20a096e0efd817c71ddba2072b43236f6ecc7ff316c35d04e1292189b9c50c",
         archive_type = "conda",
     )
 
@@ -1951,6 +2255,13 @@ def anaconda_workspace(name = "anaconda"):
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
         dist_name = "rich-13.3.5-py310h06a4308_0",
         sha256 = "911aeca5dff5054a42d5c584bc2bae98b7b205585a24dde197e289a78ce0dff1",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_rpds_py",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "rpds-py-0.10.6-py310hb02cf49_0",
+        sha256 = "49ec3fd910dded20a912137576a2cdd45365cdefbcd7dee51d6bcd5d9ae4aff3",
         archive_type = "conda",
     )
 
@@ -1974,7 +2285,7 @@ def anaconda_workspace(name = "anaconda"):
         dist_name = "scikit-image-0.20.0-py310h6a678d5_0",
         sha256 = "b7b8f64a2c4154454bc5778509b5586fb510a69fe08090f456c3acd60a58499d",
         patch_args = ["-p1"],
-        patches = ["//third-party:scikit-image-0.20.0-nocache.patch"],
+        patches = ["@cellranger//third-party:scikit-image-0.20.0-nocache.patch"],
         exclude = [
             "lib/python*/site-packages/skimage/data/__pycache__/_fetchers.cpython-*.pyc",
             "lib/python*/site-packages/skimage/*/tests",
@@ -1986,8 +2297,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_scikit_learn",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "scikit-learn-1.3.0-py310h1128e8f_0",
-        sha256 = "1e0ffdb710fbe0de53a1260fd9efdd9c1813c45b4b5b89df376f561454fa42c0",
+        dist_name = "scikit-learn-1.3.0-py310h1128e8f_1",
+        sha256 = "4d7c912ae2edec45609e8aeced31b768c6b9efc05728aa0c5bf2e0700d1e75cb",
         exclude = [
             "lib/python*/site-packages/sklearn/*/*/tests",
             "lib/python*/site-packages/sklearn/*/tests",
@@ -2017,15 +2328,15 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_seaborn",
         base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "seaborn-0.12.2-hd8ed1ab_0",
-        sha256 = "5da994167d7ab394295a73feb26330704c625a78633cba3375628951060dfffc",
+        dist_name = "seaborn-0.13.2-hd8ed1ab_0",
+        sha256 = "60a49c630bf429ae5264ee52f1e6a08df1d8b98c93047ec57f58786ef3094854",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_seaborn_base",
         base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "seaborn-base-0.12.2-pyhd8ed1ab_0",
-        sha256 = "92e4368ff90873716c637f6bd957506cf39288f9230bd7c75ca13082f5c8d7a1",
+        dist_name = "seaborn-base-0.13.2-pyhd8ed1ab_0",
+        sha256 = "0c40edc2f36edbeeb38dd8fb667f63ce7759a2c148d5d5ca2044a791fe9898a1",
         exclude = [
             "site-packages/seaborn/tests",
         ],
@@ -2033,16 +2344,16 @@ def anaconda_workspace(name = "anaconda"):
     )
     conda_package_repository(
         name = "conda_package_send2trash",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "send2trash-1.8.0-pyhd3eb1b0_1",
-        sha256 = "81f8bc2fa5d8ffe03fa591777e06c424959d2599252374d08d4e1bf77136d8d9",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "send2trash-1.8.2-py310h06a4308_0",
+        sha256 = "02ee705a78b5d4a3d5a3875b592e5147adeced041ae7436bf5db38fe773b8dfe",
         archive_type = "conda",
     )
     conda_package_repository(
         name = "conda_package_setuptools",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "setuptools-68.0.0-py310h06a4308_0",
-        sha256 = "8a232e3112039ac68585a7d6ab8e9b69461cbfcdfb8965f99e195e6f160b0282",
+        dist_name = "setuptools-68.2.2-py310h06a4308_0",
+        sha256 = "202b26687d1ec2bf41a4f5d755bd89e2b1aa409f2219f780cd42cb1e58b55e22",
         exclude = [
             "lib/python*/site-packages/setuptools/command/launcher manifest.xml",
             "lib/python*/site-packages/setuptools/script (dev).tmpl",
@@ -2069,8 +2380,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_shiny",
         base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "shiny-0.5.1-pyhd8ed1ab_0",
-        sha256 = "34ea071801a7306e1d0d2123d7bf606c20ed1d2eda2e72e5847f2bb39d2e7f33",
+        dist_name = "shiny-0.7.1-pyhd8ed1ab_0",
+        sha256 = "519e3e9e0e9e4e84a69597dffcee9b50a60cc58a2b000f1bcf44715c25c4967b",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -2078,6 +2389,13 @@ def anaconda_workspace(name = "anaconda"):
         base_urls = ["https://conda.anaconda.org/simpleitk/linux-64"],
         dist_name = "simpleitk-2.2.1-py310h3fd9d12_0",
         sha256 = "bbe4fce613459cf15d5c176b30ecc0d8b7c17d594822c36af9b3d735c7283aee",
+    )
+    conda_package_repository(
+        name = "conda_package_simplejson",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "simplejson-3.17.6-py310h7f8727e_0",
+        sha256 = "07d6c0295283f45d3cb8aa2d7d34849ab91a6e86ebcbf3824b05ef29bb501b48",
+        archive_type = "conda",
     )
 
     conda_package_repository(
@@ -2090,15 +2408,16 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_snappy",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "snappy-1.1.9-h295c915_0",
-        sha256 = "d073a1e9f4cb5d86aae341338aee24b5dd4e7ea658892f28dfab4c05766aa6d2",
+        dist_name = "snappy-1.1.10-h6a678d5_1",
+        sha256 = "6ddf69653484d028101db1789a441cb0d55d13a2c88b5c54b8073f5214ce5f7f",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_sniffio",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "sniffio-1.2.0-py310h06a4308_1",
-        sha256 = "da0df26b8dfc41404748b9504bed4e6fa8eb544f7fd8351274aad90da3767c98",
+        dist_name = "sniffio-1.3.0-py310h06a4308_0",
+        sha256 = "426ff95abfe75f118ca1b2d08758506d5934c9d7f57200a4e549b16cb7c13b70",
         archive_type = "conda",
     )
 
@@ -2112,8 +2431,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_soupsieve",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "soupsieve-2.4-py310h06a4308_0",
-        sha256 = "a4ae8d35c4533fe2ea8ec5713ea20f76c09b461e857598f4730a7f33a7fb0927",
+        dist_name = "soupsieve-2.5-py310h06a4308_0",
+        sha256 = "ae93e7e389608c52260ca9efb2445570ce2a821f0ef89cb47ef109ede0dcb593",
         archive_type = "conda",
     )
 
@@ -2139,9 +2458,9 @@ def anaconda_workspace(name = "anaconda"):
     )
     conda_package_repository(
         name = "conda_package_starlette",
-        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
-        dist_name = "starlette-0.31.0-pyhd8ed1ab_0",
-        sha256 = "8dacbe6098ba428d0915fd22b0d876a5edecfde16c55f40ebaabc5489cc34615",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "starlette-0.27.0-py310h06a4308_0",
+        sha256 = "87cc33d1aa014b4f26b05399f92e4b3a53b76c75b84f981b0262ab029ef1df51",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -2190,13 +2509,6 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "c6631fff3a2c46e80c54c9c41d3b33c4a6a4d43d5cac7f84fe10750769030fb2",
         archive_type = "conda",
     )
-    conda_package_repository(
-        name = "conda_package_testpath",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "testpath-0.6.0-py310h06a4308_0",
-        sha256 = "8ed872136576862d2af43ba94ad1a9068358ed9895a8915888502a05cdced3b3",
-        archive_type = "conda",
-    )
 
     conda_package_repository(
         name = "conda_package_threadpoolctl",
@@ -2221,6 +2533,13 @@ def anaconda_workspace(name = "anaconda"):
             # directly.
             "imagecodecs",
         ],
+    )
+    conda_package_repository(
+        name = "conda_package_tinycss2",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "tinycss2-1.2.1-py310h06a4308_0",
+        sha256 = "4117e0fe9d8edc9603e59f1c6a5e73f258fe46620e2da83d333d2e4f7f04093f",
+        archive_type = "conda",
     )
 
     conda_package_repository(
@@ -2256,8 +2575,8 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_tornado",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "tornado-6.3.2-py310h5eee18b_0",
-        sha256 = "b3d7c3d85388033e6afb6465230ae88191999ca777b1ea2b120fc6c4f547c4d9",
+        dist_name = "tornado-6.3.3-py310h5eee18b_0",
+        sha256 = "10971d7b0b6d57f51639f80e8d9aa0d57b20c9c21da5916b4fae026c3d2c4d2f",
         exclude = [
             "site-packages/toolz/tests",
         ],
@@ -2278,21 +2597,45 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "0e8840d04b642f0049b962b29a85dc7a42e6b4d1aee4f1791378e5879d75e46a",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_truststore",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "truststore-0.8.0-py310h06a4308_0",
+        sha256 = "4f1a06a38e260a1c6a0b934c3b8740caf7a781e52c814e0f0dbe550fac858d6f",
+        archive_type = "conda",
+    )
+
+    conda_package_repository(
+        name = "conda_package_typeguard",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "typeguard-3.0.2-py310h06a4308_0",
+        sha256 = "4c434179e128252191cd24fd95775bb0068847214ef1ea9bd585503afdf98250",
+        archive_type = "conda",
+    )
 
     conda_package_repository(
         name = "conda_package_typing_extensions",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "typing_extensions-4.7.1-py310h06a4308_0",
-        sha256 = "7061fea2bc4a1a3cee1385e5dd2429435b39dc0d921cbdd2411306337bb59b33",
+        dist_name = "typing_extensions-4.9.0-py310h06a4308_1",
+        sha256 = "b3ed9c59006fefb13291386ae5a1f2e9aae9c375bf137826c7d39528b37cc00f",
         archive_type = "conda",
     )
     conda_package_repository(
-        name = "conda_package_tzdata",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "tzdata-2023c-h04d1e81_0",
-        sha256 = "aa653896749686eb15c28c719a57df597bced46f983b1fdbcc9db3e2db9cc795",
+        name = "conda_package_typing_inspect",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "typing_inspect-0.9.0-py310h06a4308_0",
+        sha256 = "6598a3f1a73b121a6327e11df2aa6d309f5abf94209c0534b1a22150956a26ef",
         archive_type = "conda",
     )
+
+    conda_package_repository(
+        name = "conda_package_tzdata",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
+        dist_name = "tzdata-2023d-h04d1e81_0",
+        sha256 = "4a8401b42e13d3d000f4679b7a9295b250499e3f6d264636df1a3ca2f97d5112",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_uc_micro_py",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -2312,10 +2655,11 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_urllib3",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "urllib3-1.26.16-py310h06a4308_0",
-        sha256 = "1898febc8a84d5001bd9936db18b07de3c1c1d2dbf58f222e2d0d4a58c193ee1",
+        dist_name = "urllib3-2.1.0-py310h06a4308_1",
+        sha256 = "d30c8aba7250191facc74a5fb6b27f27f88ae7dd9260724b0a95cfced1d6b52f",
         archive_type = "conda",
     )
+
     conda_package_repository(
         name = "conda_package_uvicorn",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
@@ -2323,6 +2667,14 @@ def anaconda_workspace(name = "anaconda"):
         sha256 = "36f03491ec8ce7c3da2108f6c630adfed1073a97908060bb917aad6b115c282c",
         archive_type = "conda",
     )
+    conda_package_repository(
+        name = "conda_package_watchfiles",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "watchfiles-0.21.0-py310hb02cf49_0",
+        sha256 = "0a40b2ebace843972ade3379b195c2bcf3ee0811f091cceab34e45bd2840c3cf",
+        archive_type = "conda",
+    )
+
     conda_package_repository(
         name = "conda_package_wcwidth",
         base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
@@ -2352,10 +2704,23 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
     )
     conda_package_repository(
+        name = "conda_package_wget",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "wget-1.21.4-h91b91d3_1",
+        sha256 = "a39b8e7a12ce968e734bfe384f450082f0bf202e82aed80f30286f483a2391ae",
+        archive_type = "conda",
+        license_file = "info/licenses/COPYING",
+        exclude = [
+            "share/info",
+            "share/locale",
+        ],
+    )
+
+    conda_package_repository(
         name = "conda_package_wheel",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "wheel-0.38.4-py310h06a4308_0",
-        sha256 = "b60c6ba0e6a36dce117f693f224589bc541646e3a93e206077ed3a2e9d194540",
+        dist_name = "wheel-0.41.2-py310h06a4308_0",
+        sha256 = "38d0762eab9ce4c1b50a11c9ef148e68a8d8281c50ea769e86aaa118b380bdd6",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -2363,6 +2728,13 @@ def anaconda_workspace(name = "anaconda"):
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
         dist_name = "widgetsnbextension-4.0.5-py310h06a4308_0",
         sha256 = "baf373b0cf8775f4bf00fdb202b69d83f27ce30b97866a3b5490911c319edc39",
+        archive_type = "conda",
+    )
+    conda_package_repository(
+        name = "conda_package_wirerope",
+        base_urls = ["https://conda.anaconda.org/conda-forge/noarch"],
+        dist_name = "wirerope-0.4.7-pyhd8ed1ab_0",
+        sha256 = "b8efbb2ff354dc47899339d048140b01a11fe964f3f9c2ff468d4ba394f4f6dd",
         archive_type = "conda",
     )
 
@@ -2376,9 +2748,9 @@ def anaconda_workspace(name = "anaconda"):
     )
     conda_package_repository(
         name = "conda_package_xmltodict",
-        base_urls = ["https://repo.anaconda.com/pkgs/main/noarch"],
-        dist_name = "xmltodict-0.12.0-pyhd3eb1b0_0",
-        sha256 = "fa1c75fae09458af981e05d61ae4cd6f34f561ca9281089c7bcba3397cb2ecf3",
+        base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
+        dist_name = "xmltodict-0.13.0-py310h06a4308_0",
+        sha256 = "f72cbd9c66ee9cbaaa1e69f627bd7c229ecfb8709f36ba693897f523fb3b82fa",
         archive_type = "conda",
     )
     conda_package_repository(
@@ -2409,16 +2781,16 @@ def anaconda_workspace(name = "anaconda"):
     conda_package_repository(
         name = "conda_package_yarl",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "yarl-1.8.1-py310h5eee18b_0",
-        sha256 = "8651d80743853e3d6f83eb664f06dcd9058d303da90d5dabf3d6d9b1863a3b2f",
+        dist_name = "yarl-1.9.3-py310h5eee18b_0",
+        sha256 = "5c897f2689526832a1e3fa0e0bed381ee6032c2f9b4cc3fdb72668640f6030a0",
         archive_type = "conda",
     )
 
     conda_package_repository(
         name = "conda_package_zeromq",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "zeromq-4.3.4-h2531618_0",
-        sha256 = "3d338592b4515c84764249b5a7be8ebfdd82d1e79953ceb0c23352bf2f6817b6",
+        dist_name = "zeromq-4.3.5-h6a678d5_0",
+        sha256 = "0fbbf456eb2df2968a83a37d66e906b2cac55d37d1d09ed93b52f6f1898a84cf",
         exclude = [
             "share/man",
         ],
@@ -2432,11 +2804,12 @@ def anaconda_workspace(name = "anaconda"):
         archive_type = "conda",
         exclude_deps = ["_openmp_mutex"],
     )
+
     conda_package_repository(
         name = "conda_package_zipp",
         base_urls = ["https://repo.anaconda.com/pkgs/main/linux-64"],
-        dist_name = "zipp-3.11.0-py310h06a4308_0",
-        sha256 = "e4a0c0aeb4e82a116d4d440bcb7e9ff5430803136555d0939a1e3d51de99a595",
+        dist_name = "zipp-3.17.0-py310h06a4308_0",
+        sha256 = "bc38d4147d2ebcc3f46dcf007a49c14436baa76c6856f28752c6e09f91fbea1d",
         archive_type = "conda",
     )
 
@@ -2485,30 +2858,37 @@ def anaconda_workspace(name = "anaconda"):
             "altair",
             "anndata",
             "anyio",
+            "anywidget",
             "aom",
             "appdirs",
+            "argcomplete",
+            "argh",
             "argon2-cffi",
             "argon2-cffi-bindings",
+            "array-api-compat",
             "asgiref",
             "astroid",
             "asttokens",
+            "async-lru",
             "async-timeout",
             "attrs",
-            "backcall",
+            "babel",
             "bamtools",
             "bcbio-gff",
             "beautifulsoup4",
             "bedtools",
+            "biocantor",
             "biopython",
             "black",
             "blas",
+            "blast",
             "bleach",
             "blosc",
             "boltons",
             "bottleneck",
             "brotli",
             "brotli-bin",
-            "brotlipy",
+            "brotli-python",
             "brunsli",
             "bx-python",
             "bzip2",
@@ -2530,12 +2910,14 @@ def anaconda_workspace(name = "anaconda"):
             "conda-package-streaming",
             "contourpy",
             "coverage",
+            "cramjam",
             "cryptography",
             "curl",
             "cycler",
             "cython",
             "cytoolz",
             "dask-core",
+            "dataclasses",
             "dav1d",
             "debugpy",
             "decorator",
@@ -2543,16 +2925,18 @@ def anaconda_workspace(name = "anaconda"):
             "dill",
             "docopt",
             "eigen",
-            "entrypoints",
+            "entrez-direct",
             "et_xmlfile",
             "exceptiongroup",
             "executing",
+            "fastparquet",
             "fonttools",
             "freetype",
             "frozenlist",
             "fsspec",
             "future",
             "geos",
+            "gffutils",
             "giflib",
             "h11",
             "h5py",
@@ -2569,7 +2953,6 @@ def anaconda_workspace(name = "anaconda"):
             "intervaltree",
             "ipykernel",
             "ipython",
-            "ipython_genutils",
             "ipywidgets",
             "isort",
             "isoseq",
@@ -2578,13 +2961,20 @@ def anaconda_workspace(name = "anaconda"):
             "jinja2",
             "joblib",
             "jpeg",
+            "json5",
             "jsonpatch",
             "jsonpointer",
             "jsonschema",
+            "jsonschema-specifications",
+            "jupyter-lsp",
             "jupyter_client",
             "jupyter_core",
+            "jupyter_events",
             "jupyter_server",
+            "jupyter_server_terminals",
+            "jupyterlab",
             "jupyterlab_pygments",
+            "jupyterlab_server",
             "jupyterlab_widgets",
             "jxrlib",
             "kiwisolver",
@@ -2608,6 +2998,7 @@ def anaconda_workspace(name = "anaconda"):
             # DO NOT REMOVE, DO NOT ADD libgfortran(non_ng)
             "libgfortran-ng",
             "libgfortran5",
+            "libidn2",
             "libllvm14",
             "libnghttp2",
             "libpng",
@@ -2616,8 +3007,8 @@ def anaconda_workspace(name = "anaconda"):
             "libssh2",
             "libstdcxx-ng",
             "libtiff",
+            "libunistring",
             "libuuid",
-            "libwebp",
             "libwebp-base",
             "libzlib",
             "libzopfli",
@@ -2631,12 +3022,18 @@ def anaconda_workspace(name = "anaconda"):
             "lzstring",
             "markdown-it-py",
             "markupsafe",
+            "marshmallow",
+            "marshmallow-dataclass",
+            "marshmallow-enum",
+            "marshmallow-union",
             "matplotlib-base",
             "matplotlib-inline",
             "mccabe",
             "mdit-py-plugins",
             "mdurl",
+            "melt",
             "memory_profiler",
+            "methodtools",
             "mistune",
             "mkl",
             "mkl-include",
@@ -2647,10 +3044,10 @@ def anaconda_workspace(name = "anaconda"):
             "munkres",
             "mypy_extensions",
             "natsort",
-            "nbclassic",
             "nbclient",
             "nbconvert",
             "nbformat",
+            "ncbi-vdb",
             "ncurses",
             "nest-asyncio",
             "networkx",
@@ -2663,6 +3060,7 @@ def anaconda_workspace(name = "anaconda"):
             "openjpeg",
             "openpyxl",
             "openssl",
+            "overrides",
             "packaging",
             "pandas",
             "pandocfilters",
@@ -2672,18 +3070,22 @@ def anaconda_workspace(name = "anaconda"):
             "pathspec",
             "patsy",
             "pbmm2",
+            "pbtk",
+            "pcre",
             "pexpect",
-            "pickleshare",
             "pillow",
             "pip",
             "platformdirs",
             "plotly",
             "pluggy",
-            "preseq",
+            "polars",
+            "primer3-py",
+            "progressbar2",
             "prometheus_client",
             "prompt-toolkit",
             "protobuf",
             "psutil",
+            "psygnal",
             "ptyprocess",
             "pure_eval",
             "py-cpuinfo",
@@ -2698,7 +3100,6 @@ def anaconda_workspace(name = "anaconda"):
             "pynndescent",
             "pyopenssl",
             "pyparsing",
-            "pyrsistent",
             "pysam",
             "pysocks",
             "pytables",
@@ -2707,7 +3108,10 @@ def anaconda_workspace(name = "anaconda"):
             "python-annoy",
             "python-dateutil",
             "python-fastjsonschema",
+            "python-json-logger",
             "python-multipart",
+            "python-tzdata",
+            "python-utils",
             "python_abi",
             "pytz",
             "pyvcf3",
@@ -2715,8 +3119,12 @@ def anaconda_workspace(name = "anaconda"):
             "pyyaml",
             "pyzmq",
             "read-roi",
+            "referencing",
             "requests",
+            "rfc3339-validator",
+            "rfc3986-validator",
             "rich",
+            "rpds-py",
             "ruamel.yaml",
             "ruamel.yaml.clib",
             "scikit-image",
@@ -2730,6 +3138,7 @@ def anaconda_workspace(name = "anaconda"):
             "shellcheck",
             "shiny",
             "simpleitk",
+            "simplejson",
             "six",
             "snappy",
             "sniffio",
@@ -2743,9 +3152,9 @@ def anaconda_workspace(name = "anaconda"):
             "tbb-devel",
             "tenacity",
             "terminado",
-            "testpath",
             "threadpoolctl",
             "tifffile",
+            "tinycss2",
             "tk",
             "tomli",
             "tomlkit",
@@ -2753,18 +3162,24 @@ def anaconda_workspace(name = "anaconda"):
             "tornado",
             "tqdm",
             "traitlets",
+            "truststore",
+            "typeguard",
             "typing_extensions",
+            "typing_inspect",
             "tzdata",
             "uc-micro-py",
             "umap-learn",
             "urllib3",
             "uvicorn",
+            "watchfiles",
             "wcwidth",
             "webencodings",
             "websocket-client",
             "websockets",
+            "wget",
             "wheel",
             "widgetsnbextension",
+            "wirerope",
             "wrapt",
             "xmltodict",
             "xz",
@@ -2777,13 +3192,18 @@ def anaconda_workspace(name = "anaconda"):
             "zlib-ng",
             "zstandard",
             "zstd",
-            "cas",
+            "cellarium",
             "fbpca",
+            "faicons",
             "hjson",
+            "ipytablewidgets",
             "moods",
             "py-opencv",
+            "shiny_semantic",
+            "shinywidgets",
             "tenxpy",
             "tsne",
+            "vega",
         ],
         executable_packages = [
             "conda",
@@ -2800,10 +3220,14 @@ def anaconda_workspace(name = "anaconda"):
             "Bio": "biopython",
             "importlib_metadata": "importlib-metadata",
             "matplotlib": "matplotlib-base",
+            "melting": "melt",
             "MOODS": "moods",
             "parasail": "parasail-python",
             "PIL": "pillow",
             "pyBigWig": "pybigwig",
+            "primer3": "primer3-py",
+            "progressbar": "progressbar2",
+            "prompt_toolkit": "prompt-toolkit",
             "SimpleITK": "simpleitk",
             "skimage": "scikit-image",
             "sklearn": "scikit-learn",

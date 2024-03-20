@@ -1,14 +1,13 @@
 use anyhow::{bail, Context, Result};
 use cr_types::reference::feature_reference::{
-    FeatureDef, FeatureReference, TargetSet, REQUIRED_FEATURE_TAGS,
+    FeatureDef, FeatureReference, FeatureType, TargetSet, REQUIRED_FEATURE_TAGS,
 };
-use cr_types::types::FeatureType;
 use fastq_set::read_pair::WhichRead;
 use hdf5::types::FixedAscii;
 use hdf5::{Group, H5Type};
 use itertools::Itertools;
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::str::FromStr;
 use transcriptome::Gene;
@@ -26,22 +25,21 @@ pub fn to_h5(featref: &FeatureReference, group: &mut Group) -> Result<()> {
     }
 
     // write the custom tags that we don't have built-in support for
-    let custom_tags: HashSet<&String> = featref
+    let custom_tags: Vec<_> = featref
         .feature_defs
         .iter()
         .flat_map(|d| d.tags.keys())
+        .map(String::as_str)
+        .unique()
+        .sorted()
         .collect();
-    let mut custom_tags: Vec<String> = custom_tags.into_iter().cloned().collect();
-    custom_tags.sort();
+    all_tag_keys.extend(&custom_tags);
 
-    let empty = String::default();
-    for tag in &custom_tags {
-        mk_string_col(featref, group, tag.as_str(), |feat| {
-            feat.tags.get(tag).unwrap_or(&empty)
+    for tag in custom_tags {
+        mk_string_col(featref, group, tag, |feat| {
+            feat.tags.get(tag).map_or("", String::as_str)
         })?;
     }
-
-    all_tag_keys.extend(custom_tags.iter().map(String::as_str));
 
     // write the list of tags that are present in this feature reference
     let all_tag_keys_h5: Vec<_> = all_tag_keys
@@ -84,7 +82,7 @@ pub fn to_h5(featref: &FeatureReference, group: &mut Group) -> Result<()> {
                     WhichRead::I2 => "I2",
                 }
             }
-        })?
+        })?;
     }
 
     // write target set if we have one
@@ -227,7 +225,7 @@ pub fn from_h5(group: &Group) -> Result<FeatureReference> {
             index: i,
             id: id[i].clone(),
             name: name[i].clone(),
-            genome: genome[i].clone(),
+            genome: genome[i].as_str().into(),
             sequence: sequence[i].clone(),
             pattern: pattern[i].clone(),
             read: read[i],
@@ -235,7 +233,7 @@ pub fn from_h5(group: &Group) -> Result<FeatureReference> {
             tags,
         };
 
-        features.push(f)
+        features.push(f);
     }
 
     let mut feature_maps = HashMap::new();

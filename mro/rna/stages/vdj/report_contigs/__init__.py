@@ -23,15 +23,16 @@ from cellranger.library_constants import MULTI_REFS_PREFIX
 
 __MRO__ = """
 stage REPORT_CONTIGS(
-    in  path  vdj_reference_path,
-    in  json  cell_barcodes,
-    in  fasta contigs,
-    in  json  annotations,
-    in  csv   filter_summary,
-    in  tsv   contig_summary,
-    in  tsv   umi_summary,
-    out json  summary,
-    src py    "stages/vdj/report_contigs",
+    in  path   vdj_reference_path,
+    in  json   cell_barcodes,
+    in  fasta  contigs,
+    in  json   annotations,
+    in  csv    filter_summary,
+    in  tsv    contig_summary,
+    in  tsv    umi_summary,
+    in  string prefix,
+    out json   summary,
+    src py     "stages/vdj/report_contigs",
 ) split using (
 )
 """
@@ -63,13 +64,17 @@ def split(args):
 
 
 def main(args, outs):
-    reporter = vdj_report.VdjReporter()
+    prefix = ""
+    if args.prefix is not None:
+        prefix = ensure_str(args.prefix)
+    print(prefix)
+    reporter = vdj_report.VdjReporter(prefix)
 
     # Set a default value of 0 for number of paired cells so that it will be
     # present in the metric summary csv even when there are no paired cells
     # or in denovo mode
     reporter._get_metric_attr(
-        "vdj_assembly_contig_pair_productive_full_len_bc_count", MULTI_REFS_PREFIX
+        prefix + "vdj_assembly_contig_pair_productive_full_len_bc_count", MULTI_REFS_PREFIX
     ).set_value(0)
 
     barcode_contigs: dict[bytes, list[tuple[bytes, bytes]]] = defaultdict(list)
@@ -159,8 +164,7 @@ def main(args, outs):
     for barcode in barcodes:  # type: bytes
         contigs = barcode_contigs[barcode]
         annotations = [contig_annotations[contig[0]] for contig in contigs]
-
-        reporter.vdj_barcode_contig_cb(barcode, contigs, annotations, reference)
+        reporter.vdj_barcode_contig_cb(barcode, contigs, annotations, reference, prefix)
 
         if not contig_summary is None and barcode in contig_summary.groups:
             bc_contig_summary = contig_summary.get_group(barcode)
@@ -172,7 +176,7 @@ def main(args, outs):
         else:
             bc_umi_summary = None
 
-        reporter.vdj_assembly_cb(bc_contig_summary, bc_umi_summary, annotations, reference)
+        reporter.vdj_assembly_cb(bc_contig_summary, bc_umi_summary, annotations, reference, prefix)
 
     reporter.report_summary_json(outs.summary)
 

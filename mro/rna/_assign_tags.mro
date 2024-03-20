@@ -12,7 +12,7 @@ filetype html;
 filetype pickle;
 
 pipeline _ASSIGN_TAGS(
-    in  ChemistryDef       chemistry_def,
+    in  map<ChemistryDef>  chemistry_defs,
     in  csv                filtered_barcodes,
     in  h5                 filtered_feature_counts_matrix,
     in  h5                 raw_feature_bc_matrix,
@@ -54,7 +54,7 @@ pipeline _ASSIGN_TAGS(
     )
 
     call CALL_TAGS_RTL(
-        chemistry_def              = self.chemistry_def,
+        chemistry_defs             = self.chemistry_defs,
         raw_feature_bc_matrix      = self.raw_feature_bc_matrix,
         filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
         multi_graph                = self.multi_graph,
@@ -63,7 +63,7 @@ pipeline _ASSIGN_TAGS(
     )
 
     call CALL_TAGS_OH(
-        chemistry_def         = self.chemistry_def,
+        chemistry_defs        = self.chemistry_defs,
         raw_feature_bc_matrix = self.raw_feature_bc_matrix,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_oh,
@@ -108,7 +108,6 @@ pipeline _ASSIGN_TAGS(
             force_sample_barcodes:         self.force_sample_barcodes,
             frp_gem_barcode_overlap:       CALL_TAGS_RTL.frp_gem_barcode_overlap,
             gem_well_inferred_throughputs: self.inferred_throughputs,
-            gem_well_throughput:           self.throughput,
             jibes_model_summary:           CALL_TAGS_JIBES.jibes_model_summary,
             jibes_parameters:              CALL_TAGS_JIBES.jibes_parameters,
             jibes_summary_data:            CALL_TAGS_JIBES.jibes_summary_data,

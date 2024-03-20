@@ -1,7 +1,7 @@
 use crate::align_metrics::{AlignAndCountVisitor, BarcodeMetrics, LibFeatThenBarcodeOrder};
 use crate::aligner::BarcodeSummary;
 use anyhow::Result;
-use cr_types::types::LibraryFeatures;
+use cr_types::types::LibraryType;
 use fxhash::FxHashMap;
 use martian_filetypes::LazyWrite;
 use rand::Rng;
@@ -19,7 +19,7 @@ pub(crate) struct StageVisitor<W>
 where
     W: LazyWrite<ReadAnnotations, BufWriter<File>>,
 {
-    visitors: FxHashMap<LibraryFeatures, AlignAndCountVisitor>,
+    visitors: FxHashMap<LibraryType, AlignAndCountVisitor>,
     ann_writer: Option<(W, f32, ChaCha20Rng)>,
     // Number of reads written to the `ann_writer`
     ann_writer_num_reads: usize,
@@ -97,13 +97,13 @@ where
             }
         }
 
-        match self.visitors.entry(annotation.read.library_feats()) {
+        match self.visitors.entry(annotation.read.library_type) {
             Occupied(mut occ) => {
                 occ.get_mut().visit_read_annotation(annotation);
             }
             Vacant(vac) => {
                 vac.insert(AlignAndCountVisitor::new(
-                    annotation.read.library_feats(),
+                    annotation.read.library_type,
                     self.metrics_sender.clone(),
                     self.target_genes.clone(),
                 ))

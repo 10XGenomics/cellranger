@@ -16,9 +16,9 @@ import cellranger.websummary.plotly_tools as pltly
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
 from cellranger.spatial.data_utils import IMAGEX_LOWRES, IMAGEY_LOWRES
 from cellranger.spatial.image import WebImage
+from cellranger.websummary.numeric_converters import round_floats_in_list
 from cellranger.websummary.react_components import (
     SharedCoordinatePlotCollection,
-    round_floats_in_list,
 )
 
 SPATIAL_PIPELINE_NAME = "count"

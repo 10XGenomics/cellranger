@@ -16,7 +16,6 @@ import numpy as np
 import scipy.sparse as sp_sparse
 from six import ensure_binary, ensure_str
 
-import cellranger.cr_bisect as cr_bisect  # pylint: disable=no-name-in-module
 import cellranger.cr_io as cr_io
 import cellranger.h5_constants as h5_constants
 import cellranger.hdf5 as cr_h5
@@ -24,6 +23,9 @@ import cellranger.rna.library as rna_library
 import cellranger.sparse as cr_sparse
 import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
+from cellranger.fast_utils import (  # pylint: disable=no-name-in-module, invalid-name
+    MatrixBarcodeIndex,
+)
 from cellranger.feature_ref import GENOME_FEATURE_TAG, FeatureDef, FeatureReference
 from cellranger.wrapped_tables import tables
 
@@ -307,9 +309,10 @@ class CountMatrix:
         bc_array.flags.writeable = False
         self.bcs: np.ndarray[int, np.dtype[np.bytes_]] = bc_array
         (self.bcs_dim,) = self.bcs.shape
-        bcs_idx = np.argsort(self.bcs).astype(np.int32)
-        bcs_idx.flags.writeable = False
-        self.bcs_idx: np.ndarray[int, np.dtype[np.int32]] = bcs_idx
+
+        self.bcs_idx = MatrixBarcodeIndex.from_raw_bytes(
+            self.bcs.tobytes(), self.bcs.dtype.itemsize
+        )
 
         self.m: sp_sparse.spmatrix = matrix
         assert self.m.shape[1] == len(self.bcs), "Barcodes must be equal to cols of matrix"
@@ -451,36 +454,12 @@ class CountMatrix:
         Returns:
             int: the barcode index.
         """
-        # Don't do a conversion for bc, because it's much more efficient to just
-        # load the barcodes in the correct format in the first place.  Just
-        # raise an exception so we get a nice stack trace and clear error.
-        if not isinstance(bc, bytes):
-            raise ValueError(f"barcode must be bytes, but was {type(bc)}")
-        j = cr_bisect.bisect_left(self.bcs_idx, bc, self.bcs)
-        if j >= self.bcs_dim or self.bcs[j] != bc:
-            raise KeyError(f"Specified barcode not found in matrix: {bc.decode()}")
-        return j
+        return self.bcs_idx.bc_to_int(bc)
 
     def bcs_to_ints(self, bcs: Sequence[bytes], return_sorted: bool = True) -> list[int]:
         if isinstance(bcs, set):
             bcs = list(bcs)
-        n = len(self.bcs_idx) - 1
-        as_str_array = np.array(bcs, dtype=bytes)
-        bcs_array = np.argsort(as_str_array)
-        indices = [-1] * len(bcs)
-        guess = 0
-        for i, v in enumerate(bcs_array):
-            bc = as_str_array[v]
-            if self.bcs[guess] == bc:
-                pos = guess
-            else:
-                pos = self.bc_to_int(bc)
-                guess = min(pos + 1, n)
-            if return_sorted:
-                indices[i] = pos
-            else:
-                indices[v] = pos
-        return indices
+        return self.bcs_idx.bcs_to_ints(bcs, sort=return_sorted)
 
     def int_to_bc(self, j: int) -> bytes:
         return self.bcs[j]
@@ -530,7 +509,7 @@ class CountMatrix:
             self.save_h5_group(group)
 
     def save_h5_group(self, group: h5.Group) -> None:
-        """Save this matrix to an HDF5 (h5py) group."""
+        """Save this matrix to an HDF5 (h5py) group and converts the matrix to csc format if not already."""
         self.sort_indices()
 
         # Save the feature reference
@@ -558,7 +537,7 @@ class CountMatrix:
         """Load the matrix shape from an HDF5 group."""
         (rows, cols) = group[h5_constants.H5_MATRIX_SHAPE_ATTR][:]
         entries = len(group[h5_constants.H5_MATRIX_DATA_ATTR])
-        return (rows, cols, entries)
+        return (int(rows), int(cols), entries)
 
     @staticmethod
     def load_dims_from_h5(filename) -> tuple[int, int, int]:
@@ -592,73 +571,50 @@ class CountMatrix:
             return CountMatrix._load_dims_from_legacy_v1_h5_handle(f)
 
     @staticmethod
+    def get_anndata_mem_gb_from_matrix_h5(
+        filename: str | bytes,
+    ) -> float:
+        """Estimate memory usage of anndata object from the matrix."""
+        num_features, num_bcs, nonzero_entries = CountMatrix.load_dims_from_h5(filename)
+        return (
+            num_features * h5_constants.MEM_BYTES_PER_MATRIX_FEATURE_H5AD
+            + num_bcs * h5_constants.MEM_BYTES_PER_MATRIX_BARCODE_H5AD
+            + nonzero_entries * h5_constants.MEM_BYTES_PER_MATRIX_NNZ_H5AD
+            + h5_constants.MEM_BYTES_CONSTANT_H5AD
+        ) / 1024**3
+
+    @staticmethod
     def get_mem_gb_from_matrix_dim(
         num_barcodes: int,
         nonzero_entries: int,
         scale: float = h5_constants.MATRIX_MEM_GB_MULTIPLIER,
+        ceil: bool = True,
     ) -> float:
         """Estimate memory usage of loading a matrix."""
         matrix_mem_gb = float(nonzero_entries) / h5_constants.NUM_MATRIX_ENTRIES_PER_MEM_GB
         # We store a list and a dict of the whitelist. Based on empirical obs.
         matrix_mem_gb += float(num_barcodes) / h5_constants.NUM_MATRIX_BARCODES_PER_MEM_GB
-
-        return scale * np.ceil(matrix_mem_gb)
+        return scale * np.ceil(matrix_mem_gb) if ceil else scale * matrix_mem_gb
 
     @staticmethod
     def get_mem_gb_from_group(
         group: h5.Group,
         scale: float = h5_constants.MATRIX_MEM_GB_MULTIPLIER,
+        ceil: bool = True,
     ) -> float:
         """Estimate memory usage from an HDF5 group."""
         _, num_bcs, nonzero_entries = CountMatrix.load_dims(group)
-        return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries, scale)
-
-    @staticmethod
-    def get_mem_gb_crconverter_estimate_from_h5(filename) -> float:
-        """Estimate the amount of memory needed for the crconverter program to process a GEX matrix.
-
-        See the commit message for a full explanation of this process.
-        """
-        filename = ensure_binary(filename)
-        h5_version = CountMatrix.get_format_version_from_h5(filename)
-        if h5_version == 1:
-            # Estimate memory usage from a legacy h5py.File (format version 1)
-            _, _, nonzero_entries = CountMatrix._load_dims_from_legacy_v1_h5(filename)
-        else:
-            with h5.File(filename, "r") as f:
-                _, _, nonzero_entries = CountMatrix.load_dims(f[MATRIX])
-        return CountMatrix._get_mem_gb_crconverter_estimate_from_nnz(nonzero_entries)
-
-    @staticmethod
-    def _get_mem_gb_crconverter_estimate_from_nnz(nnz: int) -> float:
-        # Empirically determined baseline + ~45 bytes per nnz
-        estimate = 1.691 + 4.505e-8 * nnz
-        # Arbitrary safety factor
-        estimate *= 1.2
-        return np.ceil(estimate)
+        return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries, scale, ceil)
 
     @staticmethod
     def get_mem_gb_from_matrix_h5(
         filename: str | bytes,
         scale: float = h5_constants.MATRIX_MEM_GB_MULTIPLIER,
+        ceil: bool = True,
     ) -> float:
         """Estimate memory usage from an HDF5 file."""
-        filename = ensure_binary(filename)
-        h5_version = CountMatrix.get_format_version_from_h5(filename)
-        if h5_version == 1:
-            return CountMatrix._get_mem_gb_from_legacy_v1_h5(filename, scale)
-        else:
-            with h5.File(filename, "r") as f:
-                return CountMatrix.get_mem_gb_from_group(f[MATRIX], scale)
-
-    @staticmethod
-    def _get_mem_gb_from_legacy_v1_h5(
-        filename: str | bytes,
-        scale: float = h5_constants.MATRIX_MEM_GB_MULTIPLIER,
-    ) -> float:
-        """Estimate memory usage from a legacy h5py.File (format version 1)."""
-        _, num_bcs, nonzero_entries = CountMatrix._load_dims_from_legacy_v1_h5(filename)
-        return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries, scale)
+        _, num_bcs, nonzero_entries = CountMatrix.load_dims_from_h5(filename)
+        return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries, scale, ceil)
 
     @classmethod
     def load(cls, group: h5.Group) -> CountMatrix:
@@ -818,6 +774,16 @@ class CountMatrix:
         # Convert from lil to csc matrix for efficiency when analyzing data
         if type(self.m) is not sp_sparse.csc_matrix:
             self.m = self.m.tocsc()
+
+    def tocsr(self):
+        """Convert to a csr matrix if not already.
+
+        Returns:
+            None, mutates in place
+        """
+        # Convert from lil to csc matrix for efficiency when analyzing data
+        if type(self.m) is not sp_sparse.csr_matrix:
+            self.m = self.m.tocsr()
 
     def select_axes_above_threshold(
         self, threshold: int = 0
@@ -1081,7 +1047,7 @@ class CountMatrix:
         - subset by list of barcodes
         - subset by library_type
         """
-        subselect_matrix = copy.deepcopy(self)
+        subselect_matrix = self
 
         if library_type is not None:
             assert (
@@ -1480,6 +1446,7 @@ def inplace_csc_column_normalize_l2(X):
     True
     """
     assert X.getnnz() == 0 or isinstance(X.data[0], np.float32 | float)
+    assert isinstance(X, sp_sparse.csc_matrix)
     for i in range(X.shape[1]):
         s = 0.0
         for j in range(X.indptr[i], X.indptr[i + 1]):

@@ -1,4 +1,5 @@
 //! Detection of probe barcode pairing between gene expression and feature barcoding.
+use super::chemistry_filter::DetectChemistryUnit;
 use crate::barcode_overlap::{
     calculate_frp_gem_barcode_overlap, FRPGemBarcodeOverlapRow, GelBeadBarcodesPerProbeBarcode,
     ProbeBarcodeGelBeadGrouper,
@@ -6,11 +7,13 @@ use crate::barcode_overlap::{
 use anyhow::Result;
 use barcode::whitelist::{categorize_multiplexing_barcode_id, BarcodeId, MultiplexingBarcodeType};
 use barcode::{BarcodeConstruct, BcSegSeq, WhitelistSource};
-use cr_types::chemistry::ChemistryDef;
+use cr_types::chemistry::ChemistryDefs;
+use cr_types::LibraryType;
 use fastq_set::read_pair::{ReadPair, ReadPart};
 use itertools::Itertools;
+use metric::TxHashMap;
 use multi::config::MultiConfigCsv;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Return true if we should detect probe barcode pairings.
 pub fn should_detect_probe_barcode_pairing(multi_config: &MultiConfigCsv) -> bool {
@@ -28,32 +31,53 @@ pub type BestPairs = Vec<(BarcodeId, BarcodeId)>;
 /// Ignore any probe barcode that was only observed in a trivial fraction of all GEMs.
 /// Return the overlap matrix and the best pairings.
 pub fn detect_probe_barcode_pairing(
-    chemistry_def: &ChemistryDef,
-    reads: &[Vec<ReadPair>],
+    chemistry_defs: &ChemistryDefs,
+    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
 ) -> Result<(Vec<FRPGemBarcodeOverlapRow>, BestPairs)> {
-    let whitelist_source =
-        WhitelistSource::construct(chemistry_def.barcode_whitelist(), false, None)?;
-    let probe_barcode_seq_to_id = whitelist_source.as_ref().probe().as_raw_seq_to_id()?;
-    let whitelist = whitelist_source
-        .as_ref()
-        .map_result(WhitelistSource::as_whitelist)?;
-    let bp_range = chemistry_def.barcode_range();
-    let mut gel_bead_barcodes_per_probe_barcode = ProbeBarcodeGelBeadGrouper::group_all(
+    let whitelist_sources: HashMap<_, _> = chemistry_defs
+        .iter()
+        .map(|(library_type, chemistry_def)| {
+            anyhow::Ok((
+                library_type,
+                WhitelistSource::construct(chemistry_def.barcode_whitelist(), false)?,
+            ))
+        })
+        .try_collect()?;
+
+    // Flatten all probe barcode seq to ID mappings into a single mapping.
+    let probe_barcode_seq_to_id = flatten_probe_barcode_seq_to_id(&whitelist_sources)?;
+
+    let whitelists: HashMap<_, _> = whitelist_sources
+        .into_iter()
+        .map(|(library_type, whitelist_source)| {
+            anyhow::Ok((
+                library_type,
+                whitelist_source.map_result(|x| x.as_whitelist())?,
+            ))
+        })
+        .try_collect()?;
+
+    let barcodes_iter = units.iter().flat_map(|(unit, reads)| {
+        let bc_range = chemistry_defs[&unit.library_type].barcode_range();
+        let whitelist = whitelists[&unit.library_type].as_ref();
+
         reads
             .iter()
-            .flatten()
-            .filter_map(|read_pair| bp_range.map_option(|r| read_pair.get_range(r, ReadPart::Seq)))
+            .filter_map(move |read| {
+                bc_range.map_option(|range| read.get_range(range, ReadPart::Seq))
+            })
             .map(|seqs| seqs.map(BcSegSeq::from_bytes))
             .filter_map(move |seqs| {
-                seqs.zip(whitelist.as_ref())
-                    .map_option(|(seq, wl)| wl.match_to_whitelist(seq))
+                seqs.zip(whitelist)
+                    .map_option(|(seq, whitelist)| whitelist.match_to_whitelist(seq))
             })
             .map(|barcode_components| match barcode_components {
-                BarcodeConstruct::GelBeadAndProbe(comps) => comps,
-                other => panic!("expected gel bead and probe construct but found {other:?}"),
-            }),
-        &probe_barcode_seq_to_id,
-    );
+                BarcodeConstruct::GelBeadAndProbe(x) => x,
+                _ => unreachable!("unexpected {barcode_components:?}"),
+            })
+    });
+    let mut gel_bead_barcodes_per_probe_barcode =
+        ProbeBarcodeGelBeadGrouper::group_all(barcodes_iter, &probe_barcode_seq_to_id);
     filter_gel_bead_barcodes_per_probe_barcode(&mut gel_bead_barcodes_per_probe_barcode);
 
     let overlaps = calculate_frp_gem_barcode_overlap(&gel_bead_barcodes_per_probe_barcode);
@@ -63,6 +87,26 @@ pub fn detect_probe_barcode_pairing(
             .filter_map(|row| Some((get_rtl_and_ab_barcode_from_row(row)?, row.overlap))),
     );
     Ok((overlaps, pairings))
+}
+
+fn flatten_probe_barcode_seq_to_id(
+    whitelist_sources: &HashMap<&LibraryType, BarcodeConstruct<WhitelistSource>>,
+) -> Result<TxHashMap<BcSegSeq, BarcodeId>> {
+    let mut seq_to_id: TxHashMap<_, _> = Default::default();
+    for whitelist_source in whitelist_sources
+        .values()
+        .map(|whitelist_source| whitelist_source.as_ref().probe())
+    {
+        for (seq, id) in whitelist_source.as_raw_seq_to_id()? {
+            let id_mapping = seq_to_id.entry(seq).or_insert(id);
+            assert!(
+                id == *id_mapping,
+                "probe barcode sequence {seq} maps to more than one ID: {id}, {}",
+                *id_mapping
+            );
+        }
+    }
+    Ok(seq_to_id)
 }
 
 /// Filter the mapping from probe barcode to gel bead barcodes.
@@ -102,9 +146,12 @@ pub fn get_rtl_and_ab_barcode_from_row(
 /// Calculate a maximum weight matching of a bipartite graph using a greedy heuristic.
 /// See https://en.wikipedia.org/wiki/Assignment_problem
 /// and https://en.wikipedia.org/wiki/Maximum_weight_matching
-fn calculate_matching(overlaps: impl Iterator<Item = ((BarcodeId, BarcodeId), f64)>) -> BestPairs {
+fn calculate_matching(
+    overlaps: impl IntoIterator<Item = ((BarcodeId, BarcodeId), f64)>,
+) -> BestPairs {
     let mut matched = HashSet::new();
     overlaps
+        .into_iter()
         .sorted_by(|a, b| {
             a.1.partial_cmp(&b.1)
                 .unwrap()
@@ -169,6 +216,6 @@ mod test {
         ]
         .map(|x| (BarcodeId::pack(x.0), BarcodeId::pack(x.1)));
 
-        assert_eq!(calculate_matching(overlaps.into_iter()), result);
+        assert_eq!(calculate_matching(overlaps), result);
     }
 }

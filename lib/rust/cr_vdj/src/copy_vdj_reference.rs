@@ -11,7 +11,6 @@ use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::PathBuf;
 
 martian_filetype! {FaFile, "fa"}
@@ -19,7 +18,6 @@ martian_filetype! {FaFile, "fa"}
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 struct VdjRefFastaFolder {
     regions: FaFile,
-    donor_regions: FaFile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
@@ -31,9 +29,6 @@ struct VdjRefFolder {
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct CopyVdjReferenceStageInputs {
     vdj_reference_path: Option<PathBuf>,
-    vdj_t_donor_ref_fa: Option<FaFile>,
-    vdj_t_gd_donor_ref_fa: Option<FaFile>,
-    vdj_b_donor_ref_fa: Option<FaFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
@@ -65,22 +60,6 @@ impl MartianMain for CopyVdjReference {
                                 )
                             })?;
                             dest
-                        },
-                        donor_regions: {
-                            let fa: FaFile = rover.make_path("donor_regions");
-                            let mut contents = String::new();
-                            for in_fa in [
-                                args.vdj_t_donor_ref_fa,
-                                args.vdj_t_gd_donor_ref_fa,
-                                args.vdj_b_donor_ref_fa,
-                            ]
-                            .iter()
-                            .flatten()
-                            {
-                                contents.push_str(&std::fs::read_to_string(in_fa)?);
-                            }
-                            fa.buf_writer()?.write_all(contents.as_bytes())?;
-                            fa
                         },
                     }
                 },
@@ -114,9 +93,6 @@ mod tests {
         assert!(CopyVdjReference
             .test_run_tmpdir(CopyVdjReferenceStageInputs {
                 vdj_reference_path: None,
-                vdj_t_donor_ref_fa: None,
-                vdj_t_gd_donor_ref_fa: None,
-                vdj_b_donor_ref_fa: None,
             })
             .unwrap()
             .vdj_reference
@@ -134,9 +110,6 @@ mod tests {
                         "../dui_tests/test_resources/reference/vdj_GRCh38_alts_ensembl-4.0.0/"
                             .into(),
                     ),
-                    vdj_t_donor_ref_fa: None,
-                    vdj_t_gd_donor_ref_fa: None,
-                    vdj_b_donor_ref_fa: None,
                 },
             )
             .unwrap()
@@ -157,63 +130,5 @@ mod tests {
                 "../dui_tests/test_resources/reference/vdj_GRCh38_alts_ensembl-4.0.0/fasta/regions.fa",
             ),
         );
-    }
-
-    #[test]
-    fn test_with_one_donor_ref() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let vdj_ref = CopyVdjReference
-            .test_run(
-                &dir,
-                CopyVdjReferenceStageInputs {
-                    vdj_reference_path: Some(
-                        "../dui_tests/test_resources/reference/vdj_GRCh38_alts_ensembl-4.0.0/"
-                            .into(),
-                    ),
-                    vdj_t_donor_ref_fa: None,
-                    vdj_t_gd_donor_ref_fa: None,
-                    vdj_b_donor_ref_fa: Some("test/vdj_donor_ref/vdj_b_donor.fa".into()),
-                },
-            )?
-            .vdj_reference
-            .unwrap();
-        println!("{vdj_ref:#?}");
-        assert!(vdj_ref.reference.as_ref().exists());
-        assert!(vdj_ref.fasta.regions.as_ref().exists());
-        assert!(vdj_ref.fasta.donor_regions.as_ref().exists());
-        ensure_no_diff(
-            &vdj_ref.fasta.donor_regions,
-            Path::new("test/vdj_donor_ref/vdj_b_donor.fa"),
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_with_both_donor_ref() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let vdj_ref = CopyVdjReference
-            .test_run(
-                &dir,
-                CopyVdjReferenceStageInputs {
-                    vdj_reference_path: Some(
-                        "../dui_tests/test_resources/reference/vdj_GRCh38_alts_ensembl-4.0.0/"
-                            .into(),
-                    ),
-                    vdj_t_donor_ref_fa: Some("test/vdj_donor_ref/vdj_t_donor.fa".into()),
-                    vdj_t_gd_donor_ref_fa: None,
-                    vdj_b_donor_ref_fa: Some("test/vdj_donor_ref/vdj_b_donor.fa".into()),
-                },
-            )?
-            .vdj_reference
-            .unwrap();
-        println!("{vdj_ref:#?}");
-        assert!(vdj_ref.reference.as_ref().exists());
-        assert!(vdj_ref.fasta.regions.as_ref().exists());
-        assert!(vdj_ref.fasta.donor_regions.as_ref().exists());
-        ensure_no_diff(
-            &vdj_ref.fasta.donor_regions,
-            Path::new("test/vdj_donor_ref/combined.fa"),
-        );
-        Ok(())
     }
 }

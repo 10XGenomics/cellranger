@@ -1,23 +1,28 @@
 use crate::probe_set::is_deprecated_probe;
 use crate::reference::reference_info::ReferenceInfo;
-use crate::types::FeatureType;
+use crate::types::{FeatureBarcodeType, GenomeName};
+use crate::LibraryType;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use csv::{self, StringRecord};
 use fastq_set::read_pair::WhichRead;
 use itertools::{process_results, Itertools};
+use martian::{AsMartianPrimaryType, MartianPrimaryType};
 use martian_derive::{martian_filetype, MartianStruct, MartianType};
 use martian_filetypes::tabular_file::{Csv, CsvFileNoHeader, DelimitedFormat, TableConfig};
 use martian_filetypes::{table_config, LazyFileTypeIO};
-use metric::{TxHashMap, TxHashSet};
+use metric::{AsMetricPrefix, TxHashMap, TxHashSet};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Write};
 use std::path::Path;
 use std::str::{self, FromStr};
 use std::string::String;
+use strum::IntoEnumIterator;
 use strum_macros::Display;
 use transcriptome::{Gene, Transcriptome};
 
@@ -174,13 +179,99 @@ impl TargetSet {
     }
 }
 
+// NOTE: we cannot use serde(untagged) due to incompatibility with bincode.
+// Thus the use of SerializeDisplay and DeserializeFromStr.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SerializeDisplay, DeserializeFromStr,
+)]
+pub enum FeatureType {
+    Gene,
+    Barcode(FeatureBarcodeType),
+}
+
+impl AsMartianPrimaryType for FeatureType {
+    fn as_martian_primary_type() -> MartianPrimaryType {
+        MartianPrimaryType::Str
+    }
+}
+
+impl FeatureType {
+    pub fn is_multiplexing(&self) -> bool {
+        *self == Self::Barcode(FeatureBarcodeType::Multiplexing)
+    }
+
+    const GENE_EXP_SNAKE_CASE: &'static str = "gene_expression";
+
+    /// Return a snake_case representation of this feature type.
+    pub fn as_snake_case(&self) -> &'static str {
+        match self {
+            Self::Gene => Self::GENE_EXP_SNAKE_CASE,
+            Self::Barcode(bc) => bc.as_snake_case(),
+        }
+    }
+
+    /// Parse a snake-case representation of this feature type.
+    pub fn from_snake_case(s: &str) -> Result<Self> {
+        if s == Self::GENE_EXP_SNAKE_CASE {
+            return Ok(Self::Gene);
+        }
+        if let Ok(fbt) = FeatureBarcodeType::from_snake_case(s) {
+            return Ok(Self::Barcode(fbt));
+        }
+        bail!("unable to parse '{s}' as a feature type");
+    }
+}
+
+impl Display for FeatureType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Gene => {
+                write!(f, "Gene Expression")
+            }
+            Self::Barcode(ft) => {
+                write!(f, "{ft}")
+            }
+        }
+    }
+}
+
+impl FromStr for FeatureType {
+    type Err = <FeatureBarcodeType as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "Gene Expression" {
+            return Ok(Self::Gene);
+        }
+        Ok(Self::Barcode(FeatureBarcodeType::from_str(s)?))
+    }
+}
+
+impl From<FeatureType> for LibraryType {
+    fn from(value: FeatureType) -> Self {
+        match value {
+            FeatureType::Gene => LibraryType::Gex,
+            FeatureType::Barcode(ft) => LibraryType::FeatureBarcodes(ft),
+        }
+    }
+}
+
+impl AsMetricPrefix for FeatureType {
+    /// Return the metric prefix for this feature type.
+    fn as_metric_prefix(&self) -> Option<&str> {
+        match self {
+            Self::Gene => None,
+            Self::Barcode(ft) => ft.as_metric_prefix(),
+        }
+    }
+}
+
 /// Feature reference entry
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FeatureDef {
     pub index: usize,
     pub id: String,
     pub name: String,
-    pub genome: String,
+    pub genome: GenomeName,
     pub sequence: String,
     pub pattern: String,
     pub read: WhichRead,
@@ -233,19 +324,22 @@ impl FeatureDef {
         for i in 0..headers.len() {
             if REQUIRED_FEATURE_REF_COLS.contains(&&headers[i]) {
                 continue;
-            } else {
-                // skip extra CSV columns with an empty header name: fixes CR-4396
-                if !headers[i].is_empty() {
-                    tags.insert(headers[i].to_string(), data[i].to_string());
-                }
+            }
+            // skip extra CSV columns with an empty header name: fixes CR-4396
+            if !headers[i].is_empty() {
+                tags.insert(headers[i].to_string(), data[i].to_string());
             }
         }
 
-        let feature_type = FeatureType::from_str(get_col("feature_type")).with_context(|| format!(
-            r#"Unknown feature_type: '{}'.
-The 'feature_type' field in the feature reference must be one of 'CRISPR Guide Capture', or 'Antibody Capture', 'Multiplexing Capture', or 'Custom'."#,
-            get_col("feature_type")
-        ))?;
+        let feature_type =
+            FeatureBarcodeType::from_str(get_col("feature_type")).with_context(|| {
+                format!(
+                    r#"Unknown feature_type: '{}'.
+The 'feature_type' field in the feature reference must be one of {}."#,
+                    get_col("feature_type"),
+                    FeatureBarcodeType::iter().format(", ")
+                )
+            })?;
 
         let read = match WhichRead::from_str(get_col("read")) {
             Ok(WhichRead::R1) => WhichRead::R1,
@@ -258,30 +352,29 @@ The 'feature_type' field in the feature reference must be one of 'CRISPR Guide C
 
         let id = get_col("id").to_string();
         for (i, c) in id.chars().enumerate() {
-            if c.is_ascii_whitespace() {
-                bail!("Feature id field cannot contain whitespace: '{}'", c);
-            } else {
-                let c_index = c as usize;
-                if c_index >= VALID_ID_CHARS.len() || !VALID_ID_CHARS[c_index] {
-                    bail!(
-                        r#"Feature id field contains illegal character at position {}: '{}'
-Feature ids may only ASCII characters, and must not use whitespace slash, quote or comma characters."#,
-                        i + 1,
-                        id
-                    );
-                }
-            }
+            ensure!(
+                !c.is_ascii_whitespace(),
+                "Feature id field cannot contain whitespace: '{c}'",
+            );
+            let c_index = c as usize;
+            ensure!(
+                c_index < VALID_ID_CHARS.len() && VALID_ID_CHARS[c_index],
+                "Feature id field contains illegal character at position {}: '{id}'. \
+                 Feature ids may only ASCII characters, and must not use whitespace, \
+                 slash, quote, or comma characters.",
+                i + 1
+            );
         }
 
         Ok(FeatureDef {
             index,
             id: get_col("id").to_string(),
             name: get_col("name").to_string(),
-            genome: String::default(),
+            genome: GenomeName::default(),
             sequence: get_col("sequence").to_string(),
             pattern: get_col("pattern").to_string(),
             read,
-            feature_type,
+            feature_type: FeatureType::Barcode(feature_type),
             tags,
         })
     }
@@ -321,7 +414,7 @@ Feature ids may only ASCII characters, and must not use whitespace slash, quote 
 }
 
 fn validate_headers(record: &StringRecord) -> Result<()> {
-    let hdrs = record.iter().collect::<TxHashSet<_>>();
+    let hdrs: TxHashSet<_> = record.iter().collect();
     let (found, missing) = REQUIRED_FEATURE_REF_COLS
         .iter()
         .partition::<Vec<&str>, _>(|&req| hdrs.contains(req));
@@ -472,19 +565,28 @@ impl FeatureReference {
         target_gene_ids: Option<&[String]>,
         feature_config: Option<&FeatureConfig>,
     ) -> Result<FeatureReference> {
-        fn get_genome_from_str(feature: &str, genomes: &[String], targeted: bool) -> String {
+        fn get_genome_from_str(
+            feature: &str,
+            genomes: &[GenomeName],
+            targeted: bool,
+        ) -> GenomeName {
             if genomes.len() == 1 {
                 return genomes[0].clone();
             }
             for genome in genomes {
-                if feature.starts_with(genome)
-                    || (targeted && is_deprecated_probe(feature) && feature.contains(genome))
+                if feature.starts_with(genome.as_str())
+                    || (targeted
+                        && is_deprecated_probe(feature)
+                        && feature.contains(genome.as_str()))
                 {
                     return genome.clone();
                 }
             }
 
-            panic!("couldn't find genome for feature {feature} in genome list {genomes:?}");
+            panic!(
+                "couldn't find genome for feature {feature} in genome list {}",
+                genomes.iter().format(", ")
+            );
         }
 
         let mut gene_to_index = HashMap::new();
@@ -495,8 +597,7 @@ impl FeatureReference {
 
         if use_feature_types
             .as_ref()
-            .map(|x| x.contains(&FeatureType::Gene))
-            .unwrap_or(true)
+            .map_or(true, |x| x.contains(&FeatureType::Gene))
         {
             // Create gene expression features
             fmaps.insert(FeatureType::Gene, HashMap::new());
@@ -621,12 +722,11 @@ impl FeatureReference {
 
                 if use_feature_types
                     .as_ref()
-                    .map(|x| !x.contains(&fdef.feature_type))
-                    .unwrap_or(false)
+                    .is_some_and(|x| !x.contains(&fdef.feature_type))
                 {
                     continue;
                 }
-                if fdef.feature_type == FeatureType::Multiplexing {
+                if fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing) {
                     let line = record.position().unwrap().line();
                     match cmo_ids.entry(fdef.id.clone()) {
                         Entry::Occupied(o) => {
@@ -642,7 +742,7 @@ impl FeatureReference {
                         }
                     }
                 }
-                if fdef.feature_type == FeatureType::Antigen {
+                if fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antigen) {
                     if let Some(feature_config) = feature_config {
                         if let Some(specificity_controls) = &feature_config.specificity_controls {
                             // Add tags corresponding to control id
@@ -722,7 +822,7 @@ impl FeatureReference {
                         fdef.add_tag(TARGETING_ANTIGEN.to_string(), "Null".to_string())?;
                     }
                 }
-                if matches!(last_feature_type, None) {
+                if last_feature_type.is_none() {
                     last_feature_type = Some(fdef.feature_type);
                     feature_types_seen.insert(fdef.feature_type);
                 } else if fdef.feature_type != last_feature_type.unwrap()
@@ -817,13 +917,13 @@ impl FeatureReference {
         //   2) the feature-ref
         //   3) builtins
         for mut fdef in fdefs.iter().cloned() {
-            assert!(fdef.feature_type == FeatureType::Multiplexing);
+            assert!(fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing));
             fdef.index = self.feature_defs.len();
             self.feature_maps
                 .entry(fdef.feature_type)
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(fdef.sequence.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(fdef.index);
             self.feature_defs.push(fdef);
         }
@@ -836,14 +936,14 @@ impl FeatureReference {
         feature_type: FeatureType,
         barcode: &str,
     ) -> Option<Vec<&FeatureDef>> {
-        self.feature_maps
-            .get(&feature_type)
-            .and_then(|defs| defs.get(barcode))
-            .map(|idxs| {
-                idxs.iter()
-                    .map(|&i| &self.feature_defs[i])
-                    .collect::<Vec<_>>()
-            })
+        Some(
+            self.feature_maps
+                .get(&feature_type)?
+                .get(barcode)?
+                .iter()
+                .map(|&i| &self.feature_defs[i])
+                .collect(),
+        )
     }
 
     pub fn gene_index(&self, gene: &Gene) -> usize {
@@ -874,9 +974,9 @@ impl FeatureReference {
     pub fn multiplexing_ids(&self) -> TxHashSet<String> {
         self.feature_defs
             .iter()
-            .filter(|x| x.feature_type == FeatureType::Multiplexing)
+            .filter(|x| x.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing))
             .map(|x| x.id.clone())
-            .collect::<TxHashSet<_>>()
+            .collect()
     }
 
     /// Get the minimum read lengths per feature type
@@ -894,7 +994,7 @@ impl FeatureReference {
                         Entry::Vacant(e) => {
                             e.insert(len);
                         }
-                        _ => {}
+                        Entry::Occupied(_) => {}
                     },
                     Entry::Vacant(e) => {
                         let mut v = TxHashMap::default();
@@ -908,16 +1008,14 @@ impl FeatureReference {
 
     /// Write the feature reference to a CSV file.
     pub fn to_csv(&self, w: &mut impl Write) -> Result<()> {
-        let mut custom_tags = self
+        let custom_tags: Vec<_> = self
             .feature_defs
             .iter()
             .flat_map(|d| d.tags.keys())
-            .collect::<HashSet<_>>()
-            .into_iter()
+            .unique()
+            .sorted()
             .cloned()
-            .collect::<Vec<String>>();
-        custom_tags.sort();
-        let empty = String::default();
+            .collect();
         write!(w, "{}", REQUIRED_FEATURE_REF_COLS.join(","))?;
         for ctag in &custom_tags {
             write!(w, ",{ctag}")?;
@@ -941,7 +1039,8 @@ impl FeatureReference {
                 fdef.id, fdef.name, fdef.pattern, fdef.sequence, fdef.feature_type,
             )?;
             for ctag in &custom_tags {
-                write!(w, ",{}", fdef.tags.get(ctag).unwrap_or(&empty))?;
+                let s = fdef.tags.get(ctag).map_or("", String::as_str);
+                write!(w, ",{s}")?;
             }
             writeln!(w)?;
         }
@@ -960,14 +1059,14 @@ impl FeatureReference {
     /// Check that the input antigen features are restricted to 10x whitelist
     pub fn check_tenx_beam(&self) -> Result<()> {
         let tenx_beam = load_default_beam_set().unwrap();
-        let tenx_beam = tenx_beam
+        let tenx_beam: TxHashSet<_> = tenx_beam
             .iter()
             .map(|x| (x.read, &x.pattern, &x.sequence))
-            .collect::<TxHashSet<_>>();
+            .collect();
         for fdef in self
             .feature_defs
             .iter()
-            .filter(|f| f.feature_type == crate::types::FeatureType::Antigen)
+            .filter(|f| f.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antigen))
         {
             if !tenx_beam.contains(&(fdef.read, &fdef.pattern, &fdef.sequence)) {
                 bail!(
@@ -983,69 +1082,67 @@ impl FeatureReference {
     /// Validate Beam feature reference (make sure at most one non-targeting antigen_type per beam-ab feature ref
     /// and one non-targeting per allele for beam-t)
     pub fn validate_beam_feature_ref(&self, beam_mode: BeamMode) -> Result<()> {
-        let empty = String::default();
-        let mut antigen_type_per_allele: HashMap<String, Vec<String>> = HashMap::new();
-        for fd in &self.feature_defs {
-            if fd.feature_type != FeatureType::Antigen {
-                continue;
-            }
-            let allele = fd.tags.get(MHC_ALLELE).unwrap_or(&empty);
-            let antigen_type = fd
-                .tags
-                .get(TARGETING_ANTIGEN)
-                .unwrap_or(&empty)
-                .to_lowercase();
-            match antigen_type_per_allele.contains_key(allele) {
-                false => drop(
-                    antigen_type_per_allele.insert(allele.to_string(), vec![antigen_type.clone()]),
-                ),
-                true => antigen_type_per_allele
-                    .get_mut(allele)
-                    .unwrap()
-                    .push(antigen_type.clone()),
-            }
-        }
+        let antigen_type_per_allele = self
+            .feature_defs
+            .iter()
+            .filter(|fdef| fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antigen))
+            .map(|fdef| {
+                let allele = fdef.tags.get(MHC_ALLELE).map_or("", String::as_str);
+                let antigen_type = fdef
+                    .tags
+                    .get(TARGETING_ANTIGEN)
+                    .map_or("", String::as_str)
+                    .to_lowercase();
+                (allele, antigen_type)
+            })
+            .into_group_map();
+
         for (allele, antigen_types) in antigen_type_per_allele {
-            if beam_mode == BeamMode::BeamT && allele == empty {
-                bail!(
+            match beam_mode {
+                BeamMode::BeamAB => ensure!(
+                    allele.is_empty(),
+                    "Error parsing feature reference: Value '{allele}' provided for mhc_allele. \
+                     The `mhc_allele` column is invalid for BCR Antigen Capture.",
+                ),
+                BeamMode::BeamT => ensure!(
+                    !allele.is_empty(),
                     "Error parsing feature reference: Missing value for mhc_allele. \
-                    The `mhc_allele` column is required for TCR Antigen capture"
-                );
+                     The `mhc_allele` column is required for TCR Antigen capture"
+                ),
             }
-            if beam_mode == BeamMode::BeamAB && allele != empty {
-                bail!(
-                    "Error parsing feature reference: Value '{}' provided for mhc_allele. \
-                    The `mhc_allele` column is invalid for BCR Antigen Capture.",
-                    allele
-                );
-            }
+
             let num_empty = antigen_types.iter().filter(|&f| f.is_empty()).count();
-            let num_non_targeting = antigen_types.iter().filter(|&f| *f == "False").count();
-            if num_empty != 0 && num_empty != antigen_types.len() {
-                if allele != empty {
-                    bail!(
-                        "Error parsing feature reference: Empty values for antigen_type detected for mhc_allele: '{}'",
-                        allele
-                    );
-                } else {
-                    bail!(
+            ensure!(
+                num_empty == 0 || num_empty == antigen_types.len(),
+                if allele.is_empty() {
+                    anyhow!(
                         "Error parsing feature reference: Empty values for antigen_type detected"
-                    );
-                }
-            }
-            if num_non_targeting > 1 {
-                if allele != empty {
-                    bail!(
-                        "Error parsing feature reference: More than one non-targeting antigen_type detected for mhc_allele: '{}'",
-                        allele
-                    );
+                    )
                 } else {
-                    bail!(
-                        "Error parsing feature reference: More than one non-targeting antigen_type detected"
-                    );
+                    anyhow!(
+                        "Error parsing feature reference: Empty values for antigen_type detected \
+                         for mhc_allele: '{allele}'"
+                    )
                 }
-            }
+            );
+
+            let num_non_targeting = antigen_types.into_iter().filter(|f| f == "False").count();
+            ensure!(
+                num_non_targeting < 2,
+                if allele.is_empty() {
+                    anyhow!(
+                        "Error parsing feature reference: More than one non-targeting \
+                         antigen_type detected"
+                    )
+                } else {
+                    anyhow!(
+                        "Error parsing feature reference: More than one non-targeting \
+                         antigen_type detected for mhc_allele: '{allele}'"
+                    )
+                }
+            );
         }
+
         Ok(())
     }
 

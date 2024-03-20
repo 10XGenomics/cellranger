@@ -6,7 +6,6 @@
 
 import cellranger.feature.utils as feature_utils
 import cellranger.matrix as cr_matrix
-import cellranger.molecule_counter as cr_mc
 import cellranger.rna.library as rna_library
 
 # from cellranger.feature.feature_assigner import AntibodyAssigner
@@ -18,8 +17,8 @@ from cellranger.websummary.treemaps import MIN_ANTIBODY_UMI, make_antibody_treem
 __MRO__ = """
 stage CALL_ANTIBODIES(
     in  h5   filtered_feature_counts_matrix,
-    in  h5   molecule_info,
     in  bool is_antibody,
+    in  bool is_spatial,
     out json antibody_histograms_json,
     out json antibody_treemap_json,
     src py   "stages/feature/call_antibodies",
@@ -70,12 +69,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.antibody_histograms_json = None
         outs.antibody_treemap_json = None
         return
-    # Spatial doesn't have reanalyze so assume it's SC if mol info isn't there
-    if args.molecule_info:
-        counter = cr_mc.MoleculeCounter.open(args.molecule_info, "r")
-        is_spatial = counter.is_spatial_data()
-    else:
-        is_spatial = False
 
     filtered_feature_counts_matrix = cr_matrix.CountMatrix.load_h5_file(
         args.filtered_feature_counts_matrix
@@ -96,9 +89,11 @@ def join(args, outs, chunk_defs, chunk_outs):
     # ab_assigner.assignments = ab_assigner.get_feature_assignments()
     # ab_assigner.assignment_metadata = ab_assigner.compute_assignment_metadata()
 
-    antibody_histograms = make_antibody_histograms(filtered_ab_counts_matrix, is_spatial=is_spatial)
+    antibody_histograms = make_antibody_histograms(
+        filtered_ab_counts_matrix, is_spatial=args.is_spatial
+    )
     antibody_treemap = make_antibody_treemap_plot(
-        filtered_ab_counts_matrix, feature_type, MIN_ANTIBODY_UMI, is_spatial
+        filtered_ab_counts_matrix, feature_type, MIN_ANTIBODY_UMI, args.is_spatial
     )
     if antibody_histograms is None:
         outs.antibody_histograms_json = None

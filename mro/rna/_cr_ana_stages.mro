@@ -35,7 +35,6 @@ stage RUN_GRAPH_CLUSTERING_NG(
     in  int    input_pcs,
     in  float  resolution,
     in  int    random_seed,
-    in  bool   is_antibody_only,
     in  int    threads,
     in  bool   parallel_clustering,
     out h5     clusters_h5,
@@ -44,15 +43,12 @@ stage RUN_GRAPH_CLUSTERING_NG(
 ) split (
     in  string feature_type,
 ) using (
-    mem_gb   = 1,
-    threads  = 1,
     volatile = strict,
 )
 
 stage RUN_HIERARCHICAL_CLUSTERING(
     in  h5     matrix_h5,
     in  h5     graph_clusters_h5,
-    in  bool   is_antibody_only,
     out h5     clusters_h5,
     out path   clusters_csv,
     src comp   "cr_ana martian hierarchical_clustering_stage",
@@ -75,8 +71,6 @@ stage RUN_PCA_NG(
 ) split (
     in  string          feature_type,
 ) using (
-    mem_gb   = 1,
-    threads  = 1,
     volatile = strict,
 )
 
@@ -87,8 +81,6 @@ stage RUN_PCA2(
     src comp "cr_ana martian pca2_stage",
 ) split (
 ) using (
-    mem_gb   = 1,
-    threads  = 1,
     volatile = strict,
 )
 
@@ -103,7 +95,6 @@ stage RUN_TSNE_NG(
     in  int    stop_lying_iter,
     in  int    mom_switch_iter,
     in  float  theta,
-    in  bool   is_antibody_only,
     out h5     tsne_h5,
     out path   tsne_csv,
     src comp   "cr_ana martian tsne_stage",
@@ -111,8 +102,6 @@ stage RUN_TSNE_NG(
     in  int    tsne_dims,
     in  string feature_type,
 ) using (
-    mem_gb   = 1,
-    threads  = 1,
     volatile = strict,
 )
 
@@ -125,7 +114,6 @@ stage RUN_UMAP(
     in  int    max_dims,
     in  float  min_dist,
     in  string metric,
-    in  bool   is_antibody_only,
     in  string implementation,
     out h5     umap_h5,
     out path   umap_csv,
@@ -134,7 +122,5 @@ stage RUN_UMAP(
     in  int    umap_dims,
     in  string feature_type,
 ) using (
-    mem_gb   = 1,
-    threads  = 1,
     volatile = strict,
 )

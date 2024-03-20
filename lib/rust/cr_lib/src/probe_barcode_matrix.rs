@@ -1,14 +1,13 @@
 //! Probe barcode matrix I/O
 
-use crate::count_matrix::{write_barcodes_column, MAT_H5_BUF_SZ};
-use crate::CountShardFile;
 use anyhow::{bail, Context, Result};
 use barcode::Barcode;
+use cr_h5::count_matrix::{write_barcodes_column, MAT_H5_BUF_SZ};
 use cr_h5::feature_reference_io::{make_fixed_ascii, write_target_set_group, FA_LEN};
 use cr_h5::{extend_dataset, make_column_ds, write_column_ds};
 use cr_types::probe_set::{is_deprecated_probe, Probe, ProbeRegion, ProbeSetReference};
 use cr_types::reference::feature_reference::TargetSet;
-use cr_types::{BarcodeIndex, ProbeBarcodeCount};
+use cr_types::{BarcodeIndex, CountShardFile, ProbeBarcodeCount};
 use hdf5::types::FixedAscii;
 use hdf5::{File, Group};
 use itertools::{process_results, Itertools};
@@ -177,7 +176,7 @@ fn write_probe_matrix_h5_helper(
     group: &mut Group,
     reader: &ShardReader<ProbeBarcodeCount>,
     psr: &ProbeSetReference,
-    barcode_index: &BarcodeIndex<Barcode>,
+    barcode_index: &BarcodeIndex,
     filtered_probe_set: &TxHashSet<String>,
     filtered_barcodes: &[bool],
     probe_set_name: &str,
@@ -278,7 +277,7 @@ pub fn write_probe_bc_matrix(
     reference_path: &Path,
     probe_barcode_path: &[CountShardFile],
     h5_path: &Path,
-    bc_index: &BarcodeIndex<Barcode>,
+    bc_index: &BarcodeIndex,
     filtered_probe_set: &TxHashSet<String>,
     filtered_barcodes: &[bool],
     probe_set_name: &str,
@@ -324,8 +323,13 @@ pub fn read_bc_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use barcode::BcSeq;
     use std::fs::write;
     use tempfile::tempdir;
+
+    fn barcode(seq: &[u8]) -> Barcode {
+        Barcode::with_seq(1, BcSeq::from_bytes(seq), true)
+    }
 
     #[test]
     /// Test function fo read_bc_json
@@ -350,16 +354,16 @@ mod tests {
             (
                 String::from("Sample1"),
                 vec![
-                    Barcode::new(1, b"AAACTGGGTAAAGGCCATCCCAAC", true),
-                    Barcode::new(1, b"AAAGCGAAGACCATGGATCCCAAC", true),
+                    barcode(b"AAACTGGGTAAAGGCCATCCCAAC"),
+                    barcode(b"AAAGCGAAGACCATGGATCCCAAC"),
                 ],
             ),
             (
                 String::from("Sample2"),
                 vec![
-                    Barcode::new(1, b"TTGAGCGAGTCAACTTAACGCCGA", true),
-                    Barcode::new(1, b"TTGAGGTAGGGATGAAAACGCCGA", true),
-                    Barcode::new(1, b"TTGAGGAGTTAGTGAGAACGCCGA", true),
+                    barcode(b"TTGAGCGAGTCAACTTAACGCCGA"),
+                    barcode(b"TTGAGGTAGGGATGAAAACGCCGA"),
+                    barcode(b"TTGAGGAGTTAGTGAGAACGCCGA"),
                 ],
             ),
         ]);

@@ -1,16 +1,16 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@tenx_bazel_rules//rules:cython_library.bzl", "cython_library")
 load(
     "@rules_license//rules:license.bzl",
     "license",
 )
+load("@tenx_bazel_rules//rules:cython_library.bzl", "cython_library")
 load(
     "@tenx_bazel_rules//rules/conda:conda_manifest.bzl",
     "conda_deps",
     "conda_manifest",
 )
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
-load("@conda_package_python//:vars.bzl", "PYTHON_PREFIX")
 
 package(
     default_applicable_licenses = ["license"],

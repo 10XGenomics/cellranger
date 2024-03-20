@@ -1,9 +1,9 @@
 use crate::barcode_sort::ReadVisitor;
 use crate::per_type_metric;
 use anyhow::Result;
-use barcode::{BarcodeConstructMetric, BarcodeSegmentState, HasBarcode};
+use barcode::{BarcodeConstructMetric, BarcodeSegmentState};
 use cr_types::rna_read::RnaRead;
-use cr_types::types::LibraryFeatures;
+use cr_types::types::LibraryType;
 use fastq_set::read_pair::ReadPair;
 use json_report_derive::JsonReport;
 use martian_derive::martian_filetype;
@@ -13,7 +13,7 @@ use metric_derive::Metric;
 use serde::{Deserialize, Serialize};
 
 /// The metrics associated with BarcodeCorrection.
-#[derive(Clone, Serialize, Deserialize, Metric, JsonReport)]
+#[derive(Default, Serialize, Deserialize, Metric, JsonReport)]
 pub struct InnerBarcodeCorrectionMetrics {
     corrected_bc: PercentMetric,
     /// Fraction of corrected barcodes in each segment
@@ -40,19 +40,19 @@ impl InnerBarcodeCorrectionMetrics {
 per_type_metric!(
     BarcodeCorrectionMetrics,
     BarcodeCorrectionVisitor,
-    LibraryFeatures,
+    LibraryType,
     InnerBarcodeCorrectionMetrics
 );
 
 impl BarcodeCorrectionMetrics {
     pub fn with_valid(
-        lib_feats: LibraryFeatures,
+        library_type: LibraryType,
         num_valid_read_pairs: i64,
         num_valid_segments: BarcodeConstructMetric<CountMetric>,
     ) -> Self {
         let mut m = TxHashMap::default();
         m.insert(
-            lib_feats,
+            library_type,
             InnerBarcodeCorrectionMetrics::with_valid(num_valid_read_pairs, num_valid_segments),
         );
         BarcodeCorrectionMetrics(m)
@@ -85,8 +85,8 @@ impl ReadVisitor for BarcodeCorrectionVisitor {
 
         self.metrics
             .0
-            .entry(read.library_feats())
-            .or_insert_with(Metric::new)
+            .entry(read.library_type)
+            .or_default()
             .merge(metrics);
 
         Ok(())
@@ -100,3 +100,13 @@ impl ReadVisitor for BarcodeCorrectionVisitor {
 martian_filetype! { BarcodeCorrectionMetricsFiletype, "bcm" }
 pub type BarcodeCorrectionMetricsFormat =
     BinaryFormat<BarcodeCorrectionMetricsFiletype, BarcodeCorrectionMetrics>;
+
+/// Barcode diversity metrics
+#[derive(JsonReport)]
+pub(crate) struct BarcodeDiversityMetrics {
+    /// Number of barcodes detected
+    pub barcodes_detected: usize,
+
+    /// Effective barcode diversity
+    pub effective_barcode_diversity: f64,
+}

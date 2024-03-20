@@ -110,9 +110,7 @@ pipeline SC_RNA_AGGREGATOR(
 
     call _CRISPR_ANALYZER(
         filtered_feature_counts_matrix = WRITE_MATRICES.filtered_matrix_h5,
-        filtered_barcodes    = CRISPR_AGGR_INPUT_PREP.filtered_barcodes,
-        feature_reference    = CRISPR_AGGR_INPUT_PREP.feature_reference,
-        counter_metrics_json = CRISPR_AGGR_INPUT_PREP.counter_metrics_json,
+        feature_reference = CRISPR_AGGR_INPUT_PREP.feature_reference,
     ) using (
         disabled = SETUP_SAMPLES.disable_crispr_aggr,
     )
@@ -131,6 +129,7 @@ pipeline SC_RNA_AGGREGATOR(
             force_cells:                null,
             graphclust_neighbors:       self.graphclust_neighbors,
             graphclust_resolution:      null,
+            is_pd:                      self.is_pd,
             is_spatial:                 CHECK_MOLECULE_INFO_VERSION.is_spatial,
             is_visium_hd:               false,
             max_clusters:               self.max_clusters,

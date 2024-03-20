@@ -2,8 +2,7 @@
 //! This module defines the `MeanMetric` struct. This struct
 //! helps accumulate a mean value over observations.
 
-use crate::{JsonReport, JsonReporter, Metric};
-use serde_json::Value;
+use crate::Metric;
 use std::iter::{FromIterator, Sum};
 
 /// Use this struct to accumulate mean metrics
@@ -11,9 +10,9 @@ use std::iter::{FromIterator, Sum};
 /// # Example
 /// ```rust
 /// use metric::{Metric, MeanMetric};
-/// let mut c1 = MeanMetric::new(); // Initialize to zero
+/// let mut c1 = MeanMetric::default(); // Initialize to zero
 /// c1.record(1.0); // Now it is 1
-/// let mut c2 = MeanMetric::new();
+/// let mut c2 = MeanMetric::default();
 /// c2.record(3.0);
 /// c1.merge(c2);
 /// assert!((c1.mean() - 2.0).abs() < 0.00001)
@@ -30,7 +29,7 @@ impl MeanMetric {
     /// # Example
     /// ```rust
     /// use metric::{Metric, MeanMetric};
-    /// let mut c1 = MeanMetric::new();
+    /// let mut c1 = MeanMetric::default();
     /// c1.record(5.0);
     /// c1.record(7);
     /// assert!((c1.mean() - 6.0).abs() < 0.0001)
@@ -66,25 +65,6 @@ where
     }
 }
 
-impl From<&MeanMetric> for Value {
-    fn from(metric: &MeanMetric) -> Value {
-        let mean = metric.mean();
-        if mean.is_nan() {
-            Value::from("NaN")
-        } else {
-            Value::from(mean)
-        }
-    }
-}
-
-impl JsonReport for MeanMetric {
-    /// Use the key "mean" for reporting the mean metric.
-    /// Use "NaN" if the denominator is zero.
-    fn to_json_reporter(&self) -> JsonReporter {
-        JsonReporter::from(("mean", self))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,12 +74,12 @@ mod tests {
     fn test_merge_mean_metric() {
         let means: Vec<_> = (1..10)
             .map(|f| {
-                let mut m = MeanMetric::new();
+                let mut m = MeanMetric::default();
                 m.record(f);
                 m
             })
             .collect();
-        let merged = means.iter().fold(MeanMetric::new(), |mut acc, &c| {
+        let merged = means.iter().fold(MeanMetric::default(), |mut acc, &c| {
             acc.merge(c);
             acc
         });
@@ -109,6 +89,7 @@ mod tests {
 
     #[test]
     fn test_from_iter() {
+        #![allow(clippy::from_iter_instead_of_collect)]
         assert_eq!(MeanMetric::from_iter(0..10).mean(), 4.5);
         let xs: Vec<_> = (0..10).collect();
         assert_eq!(MeanMetric::from_iter(&xs).mean(), 4.5);
@@ -135,9 +116,9 @@ mod tests {
             let mean = (x + y + z) / 3.0;
             let tolerance = 0.0001 * [x, y, z].into_iter().map(f64::abs).max_by(f64::total_cmp).unwrap();
 
-            let mut m_x = MeanMetric::new();
+            let mut m_x = MeanMetric::default();
             m_x.record(x);
-            let mut m_yz = MeanMetric::new();
+            let mut m_yz = MeanMetric::default();
             m_yz.record(y);
             m_yz.record(z);
 

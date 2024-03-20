@@ -9,14 +9,6 @@
 @include "_run_kmeans.mro"
 @include "_sc_rna_analyzer_stages.mro"
 
-stage DISABLE_SECONDARY_ANALYSIS(
-    in  h5   filtered_matrices_h5,
-    in  h5   molecule_info,
-    in  bool no_secondary_analysis_in,
-    out bool no_secondary_analysis,
-    src py   "stages/common/disable_secondary_analysis",
-)
-
 pipeline SC_RNA_ANALYZER(
     in  csv                aggregate_barcodes,
     in  AnalyzerInputs     analyzer_inputs,
@@ -41,6 +33,7 @@ pipeline SC_RNA_ANALYZER(
         num_bcs         = self.analyzer_inputs.num_analysis_bcs,
         force_cells     = self.analyzer_inputs.force_cells,
         is_visium_hd    = self.analyzer_inputs.is_visium_hd,
+        is_pd           = self.analyzer_inputs.is_pd,
         get_peak_matrix = false,
         *               = ANALYZER_PREFLIGHT,
     ) using (
@@ -110,7 +103,6 @@ pipeline SC_RNA_ANALYZER(
         input_pcs           = null,
         resolution          = self.analyzer_inputs.graphclust_resolution,
         random_seed         = self.analyzer_inputs.random_seed,
-        is_antibody_only    = PREPROCESS_MATRIX.is_antibody_only,
         threads             = 4,
         parallel_clustering = false,
     ) using (
@@ -121,7 +113,6 @@ pipeline SC_RNA_ANALYZER(
     call RUN_HIERARCHICAL_CLUSTERING(
         matrix_h5         = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         graph_clusters_h5 = RUN_GRAPH_CLUSTERING.clusters_h5,
-        is_antibody_only  = PREPROCESS_MATRIX.is_antibody_only,
     ) using (
         disabled = PREPROCESS_MATRIX.disable_hierarchical_clustering,
         volatile = true,
@@ -149,33 +140,31 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call RUN_TSNE_NG as RUN_TSNE(
-        matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5           = RUN_PCA.pca_h5,
-        random_seed      = self.analyzer_inputs.random_seed,
-        perplexity       = self.analyzer_inputs.tsne_perplexity,
-        input_pcs        = self.analyzer_inputs.tsne_input_pcs,
-        max_dims         = self.analyzer_inputs.tsne_max_dims,
-        max_iter         = self.analyzer_inputs.tsne_max_iter,
-        stop_lying_iter  = self.analyzer_inputs.tsne_stop_lying_iter,
-        mom_switch_iter  = self.analyzer_inputs.tsne_mom_switch_iter,
-        theta            = self.analyzer_inputs.tsne_theta,
-        is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
+        matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5          = RUN_PCA.pca_h5,
+        random_seed     = self.analyzer_inputs.random_seed,
+        perplexity      = self.analyzer_inputs.tsne_perplexity,
+        input_pcs       = self.analyzer_inputs.tsne_input_pcs,
+        max_dims        = self.analyzer_inputs.tsne_max_dims,
+        max_iter        = self.analyzer_inputs.tsne_max_iter,
+        stop_lying_iter = self.analyzer_inputs.tsne_stop_lying_iter,
+        mom_switch_iter = self.analyzer_inputs.tsne_mom_switch_iter,
+        theta           = self.analyzer_inputs.tsne_theta,
     ) using (
-        disabled = PREPROCESS_MATRIX.skip,
+        disabled = PREPROCESS_MATRIX.skip_tsne,
         volatile = true,
     )
 
     call RUN_UMAP(
-        matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5           = RUN_PCA.pca_h5,
-        implementation   = self.analyzer_inputs.umap_implementation,
-        random_seed      = self.analyzer_inputs.random_seed,
-        n_neighbors      = self.analyzer_inputs.umap_n_neighbors,
-        input_pcs        = self.analyzer_inputs.umap_input_pcs,
-        max_dims         = self.analyzer_inputs.umap_max_dims,
-        min_dist         = self.analyzer_inputs.umap_min_dist,
-        metric           = self.analyzer_inputs.umap_metric,
-        is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
+        matrix_h5      = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5         = RUN_PCA.pca_h5,
+        implementation = self.analyzer_inputs.umap_implementation,
+        random_seed    = self.analyzer_inputs.random_seed,
+        n_neighbors    = self.analyzer_inputs.umap_n_neighbors,
+        input_pcs      = self.analyzer_inputs.umap_input_pcs,
+        max_dims       = self.analyzer_inputs.umap_max_dims,
+        min_dist       = self.analyzer_inputs.umap_min_dist,
+        metric         = self.analyzer_inputs.umap_metric,
     ) using (
         disabled = PREPROCESS_MATRIX.skip,
         volatile = true,
@@ -207,18 +196,18 @@ pipeline SC_RNA_ANALYZER(
     # Note this stage uses the original and the the preprocessed matrix.
     call _ANTIBODY_ANALYZER(
         filtered_feature_counts_matrix = self.analyzer_inputs.filtered_matrices_h5,
-        molecule_info      = self.analyzer_inputs.molecule_info,
         aggregate_barcodes = self.aggregate_barcodes,
         is_antibody        = true,
+        is_spatial         = self.analyzer_inputs.is_spatial,
     ) using (
         disabled = PREPROCESS_MATRIX.skip_antibody_analysis,
     )
 
     call _ANTIBODY_ANALYZER as _ANTIGEN_ANALYZER(
         filtered_feature_counts_matrix = self.analyzer_inputs.filtered_matrices_h5,
-        molecule_info      = self.analyzer_inputs.molecule_info,
         aggregate_barcodes = self.aggregate_barcodes,
         is_antibody        = false,
+        is_spatial         = self.analyzer_inputs.is_spatial,
     ) using (
         disabled = PREPROCESS_MATRIX.skip_antigen_analysis,
     )

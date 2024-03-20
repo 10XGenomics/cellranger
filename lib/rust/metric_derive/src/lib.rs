@@ -48,12 +48,6 @@
 //! }
 //! #[automatically_derived]
 //! impl Metric for Foo {
-//!     fn new() -> Self {
-//!         Foo {
-//!             bar1: Metric::new(),
-//!             bar2: Metric::new()
-//!         }
-//!     }
 //!     fn merge(&mut self, other: &Self) {
 //!         self.bar1.merge(&other.bar1);
 //!         self.bar2.merge(&other.bar2);
@@ -105,13 +99,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     #[automatically_derived]
                     #[allow(unused_attributes)]
                     impl #impl_generics Metric for #name #ty_generics #where_clause {
-                        fn new() -> Self {
-                            #name {
-                                #(
-                                    #fnames: Metric::new()
-                                ),*
-                            }
-                        }
                         fn merge(&mut self, other: Self) {
                             #(
                                 self.#fnames_copy1.merge(other.#fnames_copy2);
@@ -141,7 +128,7 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     #[allow(unused_attributes)]
                     impl #impl_generics ::std::iter::Sum for #name #ty_generics #where_clause {
                         fn sum<IteratorType: Iterator<Item=#name #ty_generics>>(iter: IteratorType) -> #name #ty_generics {
-                            iter.fold(Metric::new(), |a, b| a + b)
+                            iter.fold(Default::default(), |a, b| a + b)
                         }
                     }
                 }
@@ -157,17 +144,11 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     })
                     .collect::<Vec<_>>();
                 let indices_copy = indices.clone();
-                let new_tokens = (0..indices.len())
-                    .map(|_| quote! { Metric::new() })
-                    .collect::<Vec<_>>();
                 quote! {
                     // The generated impl
                     #[automatically_derived]
                     #[allow(unused_attributes)]
                     impl #impl_generics Metric for #name #ty_generics #where_clause {
-                        fn new() -> Self {
-                            #name(#(#new_tokens),*)
-                        }
                         fn merge(&mut self, other: Self) {
                             #(
                                 self.#indices.merge(other.#indices_copy);
@@ -197,7 +178,7 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     #[allow(unused_attributes)]
                     impl #impl_generics ::std::iter::Sum for #name #ty_generics #where_clause {
                         fn sum<IteratorType: Iterator<Item=#name #ty_generics>>(iter: IteratorType) -> #name #ty_generics {
-                            iter.fold(Metric::new(), |a, b| a + b)
+                            iter.fold(Default::default(), |a, b| a + b)
                         }
                     }
                 }

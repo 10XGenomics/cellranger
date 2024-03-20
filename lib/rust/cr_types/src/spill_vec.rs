@@ -165,7 +165,7 @@ mod tests {
             let tmp_dir = tempfile::tempdir().unwrap();
             let spill_file = BincodeFile::new(&tmp_dir, "prop_test_spill_vec_roundtrip");
             spill_vec_roundtrip(items, capacity, spill_file).unwrap();
-            drop(tmp_dir)
+            drop(tmp_dir);
         }
     }
 }

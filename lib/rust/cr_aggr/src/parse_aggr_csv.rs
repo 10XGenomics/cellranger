@@ -63,16 +63,16 @@ impl MultiFilePaths {
     fn sub_libraries(&self) -> Vec<MultiSubLibraries> {
         let mut ret_vec: Vec<MultiSubLibraries> = vec![];
         if self.count_v5.exists() || self.count_v6.exists() {
-            ret_vec.push(MultiSubLibraries::Count)
+            ret_vec.push(MultiSubLibraries::Count);
         }
         if self.vdjt.exists() {
-            ret_vec.push(MultiSubLibraries::VdjT)
+            ret_vec.push(MultiSubLibraries::VdjT);
         }
         if self.vdjtgd.exists() {
-            ret_vec.push(MultiSubLibraries::VdjTGD)
+            ret_vec.push(MultiSubLibraries::VdjTGD);
         }
         if self.vdjb.exists() {
-            ret_vec.push(MultiSubLibraries::VdjB)
+            ret_vec.push(MultiSubLibraries::VdjB);
         }
         ret_vec
     }
@@ -162,7 +162,7 @@ fn process_multi_libraries(
                     donor: donor.clone().unwrap(),
                     origin: origin.clone().unwrap(),
                     meta: vdj_meta.clone(),
-                })
+                });
             }
         }
     }
@@ -198,7 +198,7 @@ fn process_multi_libraries(
                     donor: donor.clone().unwrap(),
                     origin: origin.clone().unwrap(),
                     meta: vdj_meta.clone(),
-                })
+                });
             }
         }
     }
@@ -224,7 +224,7 @@ fn process_multi_libraries(
                     .to_owned(),
                 batch: mlib.meta.remove(BATCH_HEADER),
                 meta: mlib.meta.clone(),
-            })
+            });
         }
     }
 
@@ -404,16 +404,13 @@ trait AggrCsvParser {
             csv.set_line(i);
             let mut row = HashMap::new();
             for h in &all_headers {
-                let val = match csv.try_parse_field::<String>(&h.name, "string")? {
-                    Some(v) => v,
-                    None => {
-                        return Err(ParseAggrCsvErrors::EmptyField {
-                            path: csv.filename().into(),
-                            col: h.name.clone(),
-                            line: i + 2, // 1-based index, add one for header as well
-                        }
-                        .into());
+                let Some(val) = csv.try_parse_field::<String>(&h.name, "string")? else {
+                    return Err(ParseAggrCsvErrors::EmptyField {
+                        path: csv.filename().into(),
+                        col: h.name.clone(),
+                        line: i + 2, // 1-based index, add one for header as well
                     }
+                    .into());
                 };
                 let resolved_val = h
                     .kind
@@ -699,13 +696,13 @@ impl MartianMain for ParseAggrCsv {
         // - Count + Vdj aggr (multi)
 
         let Some(aggregation_csv) = args.aggregation_csv.as_ref() else {
-                return Ok(ParseAggrCsvStageOutputs {
-                    aggregation_csv: None,
-                    count_libraries: Vec::new(),
-                    vdj_aggr_inputs: Vec::new(),
-                    disable_count_aggr: true,
-                    disable_vdj_aggr: true,
-                });
+            return Ok(ParseAggrCsvStageOutputs {
+                aggregation_csv: None,
+                count_libraries: Vec::new(),
+                vdj_aggr_inputs: Vec::new(),
+                disable_count_aggr: true,
+                disable_vdj_aggr: true,
+            });
         };
 
         handle_deprecated_headers(aggregation_csv)?;

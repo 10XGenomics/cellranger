@@ -10,20 +10,29 @@ stage CALCULATE_TARGETED_METRICS(
     in  h5       filtered_gene_bc_matrices,
     in  json     basic_counter_summary,
     in  tps.json target_panel_summary,
+    in  bool     is_spatial,
     out json     summary,
     out csv      per_feature_metrics_csv,
     src py       "stages/targeted/calculate_targeted_metrics",
 ) split (
+) using (
+    volatile = strict,
 )
 
-stage DISABLE_GDNA_STAGES(
+stage DISABLE_TARGETED_STAGES(
     in  csv  probe_set,
+    in  bool is_visium_hd,
     out bool disable_targeted_gdna,
-    src py   "stages/targeted/disable_gdna_stages",
+    out bool disable_sampling_stages,
+    src py   "stages/targeted/disable_targeted_stages",
+) using (
+    volatile = strict,
 )
 
 stage GET_GDNA_PLOT(
     in  json gdna_plot_sufficient_stats,
     out json summary,
     src py   "stages/targeted/get_gdna_plot",
+) using (
+    volatile = strict,
 )

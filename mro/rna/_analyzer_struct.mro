@@ -25,6 +25,7 @@ struct AnalyzerInputs(
     bool   chemistry_batch_correction,
     bool   is_spatial,
     bool   is_visium_hd,
+    bool   is_pd,
     int    cbc_knn,
     float  cbc_alpha,
     float  cbc_sigma,

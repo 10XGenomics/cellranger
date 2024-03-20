@@ -26,6 +26,7 @@ stage PREPROCESS_MATRIX(
     in  bool get_peak_matrix,
     in  bool skip,
     in  bool is_visium_hd,
+    in  bool is_pd,
     in  bool is_antibody_only,
     in  bool disable_run_pca,
     in  bool disable_correct_chemistry_batch,
@@ -36,6 +37,7 @@ stage PREPROCESS_MATRIX(
     out h5   preprocessed_matrix_h5,
     out bool is_multi_genome,
     out bool skip,
+    out bool skip_tsne,
     out bool is_antibody_only,
     out bool disable_run_pca,
     out bool disable_correct_chemistry_batch,
@@ -134,7 +136,8 @@ def main(args, outs):
 
 def join(args, outs, chunk_defs, chunk_outs):
     outs.skip = args.skip
-    outs.disable_hierarchical_clustering = outs.skip or not args.is_visium_hd
+    outs.skip_tsne = outs.skip or args.is_visium_hd
+    outs.disable_hierarchical_clustering = outs.skip or not args.is_visium_hd or not args.is_pd
     outs.is_antibody_only = args.is_antibody_only
     outs.disable_run_pca = args.disable_run_pca
     outs.disable_correct_chemistry_batch = args.disable_correct_chemistry_batch

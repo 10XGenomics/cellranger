@@ -1,7 +1,7 @@
-#[cfg(feature = "tenx_oss")]
+#[cfg(feature = "tenx_source_available")]
 mod stubs;
-#[cfg(feature = "tenx_oss")]
-pub use crate::stubs::*;
+#[cfg(feature = "tenx_source_available")]
+pub use stubs::*;
 #[cfg(feature = "tenx_internal")]
 mod internal;
 #[cfg(feature = "tenx_internal")]

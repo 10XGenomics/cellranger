@@ -6,19 +6,19 @@ use crate::aligner::{Aligner, BarcodeSummary, MAX_ANNOTATIONS_IN_MEM};
 use crate::barcode_sort::BarcodeOrder;
 #[cfg(feature = "tenx_internal")]
 use crate::stages::internal::get_barcode_subsampling;
-#[cfg(feature = "tenx_oss")]
+#[cfg(feature = "tenx_source_available")]
 use crate::stages::stubs::get_barcode_subsampling;
 use crate::types::{
     BarcodeMetricsShardFile, FeatureReferenceFormat, ReadShardFile, ReadSpillFormat,
 };
-use crate::{AlignShardFile, BcUmiInfoShardFile, CountShardFile};
+use crate::{AlignShardFile, BcUmiInfoShardFile};
 use anyhow::{ensure, Result};
-use barcode::{Barcode, HasBarcode};
+use barcode::Barcode;
 use cr_bam::bam::BamPosSort;
 use cr_bam::constants::{
     ALN_BC_DISK_CHUNK_SZ, ALN_BC_GIB, ALN_BC_ITEM_BUFFER_SZ, ALN_BC_SEND_BUFFER_SZ,
 };
-use cr_types::chemistry::{ChemistryDef, ChemistryName};
+use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
 use cr_types::probe_set::{ProbeSetReference, ProbeSetReferenceMetadata};
 use cr_types::reference::feature_checker::compute_feature_dist;
 use cr_types::reference::feature_reference::TargetSetFile;
@@ -27,9 +27,11 @@ use cr_types::spill_vec::SpillVec;
 use cr_types::types::{
     BarcodeSetFormat, BcUmiInfo, FeatureBarcodeCount, GemWell, ProbeBarcodeCount,
 };
-use cr_types::{AlignerParam, FeatureCountFormat, TotalBcCountFormat};
+use cr_types::{
+    AlignerParam, BarcodeThenFeatureOrder, CountShardFile, FeatureCountFormat, TotalBcCountFormat,
+};
+use fastq_set::WhichEnd;
 use itertools::Itertools;
-use json_report_derive::JsonReport;
 use log::warn;
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
@@ -37,7 +39,7 @@ use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO};
-use metric::{CountMetric, JsonReport, Metric, TxHashSet};
+use metric::{CountMetric, TxHashSet};
 use orbit::{StarReference, StarSettings};
 use par_proc::par_proc::{group_by_processor, Proc, MAX_ITEMS_IN_MEM};
 use parameters_toml::star_parameters;
@@ -53,7 +55,6 @@ use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
 use std::fs::File;
 use std::io::Write;
-use std::iter::{repeat, FromIterator};
 use std::path::{Path, PathBuf};
 use tx_annotation::read::{AnnotationFiles, AnnotationInfo, ReadAnnotationsFormat, ReadAnnotator};
 use tx_annotation::visitor::AnnotatedReadVisitor;
@@ -74,8 +75,8 @@ pub const MAX_READ_ANN_SAMPLE: usize = 50_000_000;
 martian_filetype!(BarcodeSummaryFile, "bsf");
 
 /// ALIGN_AND_COUNT stage metrics
-#[derive(JsonReport)]
-struct AlignAndCountMetrics {
+#[derive(Serialize)]
+pub struct AlignAndCountMetrics {
     /// The aligner used to align reads to the transcriptome reference.
     alignment_aligner: AlignerParam,
     /// The minimum MAPQ threshold for a confidently-mapped read.
@@ -96,10 +97,9 @@ pub struct StageInputs {
     /// The target panel CSV file.
     pub target_set: Option<TargetSetFile>,
 
-    pub chemistry_def: ChemistryDef,
+    pub chemistry_defs: ChemistryDefs,
 
     pub aligner: Option<AlignerParam>,
-    pub aligner_subsample_rate: Option<f64>,
     pub include_exons: bool,
     pub include_introns: bool,
     pub is_pd: bool,
@@ -191,7 +191,7 @@ pub struct StageOutputs {
     pub per_barcode_metrics: Vec<BarcodeMetricsShardFile>,
 
     /// Metrics summary JSON.
-    pub summary: JsonFile<()>,
+    pub summary: JsonFile<AlignAndCountMetrics>,
 
     /// Used to disable useless passes over the asf files if
     /// they don't contain information from the star aligner
@@ -238,7 +238,7 @@ enum BarcodeSet {
 }
 
 impl BarcodeSet {
-    fn new(barcode_subset: &Option<BarcodeSetFormat>) -> Result<Self> {
+    fn new(barcode_subset: Option<&BarcodeSetFormat>) -> Result<Self> {
         Ok(match barcode_subset {
             Some(f) => BarcodeSet::SubSet(f.read()?),
             None => BarcodeSet::All,
@@ -259,8 +259,7 @@ where
     args: StageInputs,
     aligner: Aligner,
     bc_umi_info_sender: ShardSender<BcUmiInfo, BcUmiInfo>,
-    bc_counts_sender:
-        ShardSender<FeatureBarcodeCount<Barcode>, crate::BarcodeThenFeatureOrder<Barcode>>,
+    bc_counts_sender: ShardSender<FeatureBarcodeCount, BarcodeThenFeatureOrder>,
     bc_probe_counts_sender: Option<ShardSender<ProbeBarcodeCount>>,
     pos_reads_sender: ShardSender<Record, BamPosSort>,
     visitor: V,
@@ -370,7 +369,9 @@ fn max_items_in_range(
     };
     counts
         .fold(
-            BinaryHeap::from_iter(repeat(Reverse(PRESUMED_BARCODE_COUNT)).take(NUM_CHUNK_THREADS)),
+            std::iter::repeat(Reverse(PRESUMED_BARCODE_COUNT))
+                .take(NUM_CHUNK_THREADS)
+                .collect::<BinaryHeap<_>>(),
             |mut acc, (_, v)| {
                 acc.push(Reverse((v.count() as usize).min(limit)));
                 while acc.len() > NUM_CHUNK_THREADS {
@@ -381,21 +382,22 @@ fn max_items_in_range(
         )
         .into_iter()
         .map(|Reverse(v)| v)
-        .sum::<usize>()
+        .sum()
 }
 
 /// Choose an aligner based on the chemistry and target_set CSV file.
+/// Return STAR if target_set is null.
+/// Return the aligner specified by the aligner argument if specified.
+/// Return Hurtle if the chemistry is RTL and STAR otherwise.
+/// Return Hurtle if the target_set CSV file is a probe set and STAR otherwise.
 fn choose_aligner(
     arg_aligner: Option<AlignerParam>,
-    arg_chemistry_name: ChemistryName,
-    arg_target_set: Option<&TargetSetFile>,
+    is_rtl: Option<bool>,
+    target_set: Option<&TargetSetFile>,
 ) -> Result<AlignerParam> {
     use AlignerParam::{Hurtle, Star};
 
-    // Use STAR if target_set is null.
-    let target_set = if let Some(target_set) = arg_target_set {
-        target_set
-    } else {
+    let Some(target_set) = target_set else {
         ensure!(
             arg_aligner != Some(Hurtle),
             "aligner=hurtle is incompatible with target_set=null"
@@ -403,42 +405,29 @@ fn choose_aligner(
         return Ok(Star);
     };
 
-    // Choose the aligner based on the chemistry if aligner is null.
-    let aligner = if arg_aligner.is_some() {
-        arg_aligner
-    } else {
-        arg_chemistry_name
-            .is_rtl()
-            .map(|x| if x { Hurtle } else { Star })
-    };
-
     let is_probe_set = ProbeSetReferenceMetadata::load_from(target_set)?.is_probe_set_metadata();
-    Ok(match aligner {
-        Some(Star) => Star,
-        Some(Hurtle) => {
-            ensure!(
-                is_probe_set,
-                "aligner=hurtle is incompatible with target_set={}",
-                target_set.display()
-            );
-            Hurtle
-        }
-        None => {
-            // Choose the aligner based on the header of the target_set CSV file.
-            if is_probe_set {
-                Hurtle
-            } else {
-                Star
-            }
-        }
-    })
+    let aligner = arg_aligner.unwrap_or(if is_rtl.unwrap_or(is_probe_set) {
+        Hurtle
+    } else {
+        Star
+    });
+
+    if aligner == Hurtle {
+        ensure!(
+            is_probe_set,
+            "aligner=hurtle is incompatible with target_set={}",
+            target_set.display()
+        );
+    }
+
+    Ok(aligner)
 }
 
 /// Choose an aligner based on the chemistry and target_set CSV file.
 fn choose_aligner_from_args(args: &StageInputs) -> Result<AlignerParam> {
     choose_aligner(
         args.aligner,
-        args.chemistry_def.name,
+        args.chemistry_defs.is_rtl(),
         args.target_set.as_ref(),
     )
 }
@@ -523,7 +512,7 @@ impl MartianStage for AlignAndCount {
             n > 0,
             "Zero read-pairs in the input data were detected as valid for chemistry {}.\n\
              Check the --chemistry argument to Cell Ranger",
-            args.chemistry_def.name
+            args.chemistry_defs.name(),
         );
 
         // Create upto `MAX_ALIGN_CHUNKS_PER_LIB` chunks, with at least `READS_PER_CHUNK` read pairs per chunk
@@ -557,7 +546,7 @@ impl MartianStage for AlignAndCount {
             .try_collect()?;
 
         // PD uses more memory to produce annotation files.
-        Ok(stage_def.join_resource(Resource::with_mem_gb(if args.is_pd { 16 } else { 3 })))
+        Ok(stage_def.join_resource(Resource::with_mem_gb(if args.is_pd { 16 } else { 6 })))
     }
 
     fn main(
@@ -567,7 +556,7 @@ impl MartianStage for AlignAndCount {
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
         // Disable polyA and TSO trimming for 5' gene expression assay.
-        let args = if args.chemistry_def.endedness == Some(fastq_set::WhichEnd::FivePrime) {
+        let args = if args.chemistry_defs.endedness() == Some(WhichEnd::FivePrime) {
             Self::StageInputs {
                 trim_polya_min_score: None,
                 trim_tso_min_score: None,
@@ -616,15 +605,13 @@ impl MartianStage for AlignAndCount {
         let metrics_shard: BarcodeMetricsShardFile = rover.make_path("metrics_shard");
 
         // Count data ordered by barcode.
-        let mut bc_counts: ShardWriter<
-            FeatureBarcodeCount<Barcode>,
-            crate::BarcodeThenFeatureOrder<Barcode>,
-        > = ShardWriter::new(
-            &counts_bc_order_shard,
-            ALN_BC_SEND_BUFFER_SZ,
-            ALN_BC_DISK_CHUNK_SZ,
-            ALN_BC_ITEM_BUFFER_SZ,
-        )?;
+        let mut bc_counts: ShardWriter<FeatureBarcodeCount, BarcodeThenFeatureOrder> =
+            ShardWriter::new(
+                &counts_bc_order_shard,
+                ALN_BC_SEND_BUFFER_SZ,
+                ALN_BC_DISK_CHUNK_SZ,
+                ALN_BC_ITEM_BUFFER_SZ,
+            )?;
 
         let mut bc_probe_counts: Option<ShardWriter<ProbeBarcodeCount>> =
             probe_barcode_counts_shard.as_ref().map(|x| {
@@ -673,7 +660,7 @@ impl MartianStage for AlignAndCount {
 
         let annotator = ReadAnnotator::new(
             &args.reference_path,
-            &args.chemistry_def,
+            args.chemistry_defs.primary(),
             args.include_exons,
             args.include_introns,
         )?;
@@ -718,7 +705,7 @@ impl MartianStage for AlignAndCount {
             .iter()
             .enumerate()
             .map(|(idx, f)| {
-                Ok(AlignThreadProcessor {
+                anyhow::Ok(AlignThreadProcessor {
                     args: args.clone(),
                     aligner: aligner.clone(),
                     bc_umi_info_sender: bc_umi_info.get_sender(),
@@ -737,12 +724,12 @@ impl MartianStage for AlignAndCount {
                     } else {
                         StageVisitor::new(metrics_writer.get_sender(), target_genes.clone())
                     },
-                    barcode_set: BarcodeSet::new(&args.barcode_subset)?,
+                    barcode_set: BarcodeSet::new(args.barcode_subset.as_ref())?,
                     barcodes_to_subsample: barcodes_to_subsample.clone(),
                     barcode_subsample_rate,
                 })
             })
-            .collect::<Result<_>>()?;
+            .try_collect()?;
 
         // get the range of barcode we're going to analyze
         let read_iter = reader.iter_range(&chunk_args.range)?;
@@ -750,12 +737,8 @@ impl MartianStage for AlignAndCount {
         // Process barcode groups, using one thread for each processor
         // Return the processors when complete.
         // See impl Proc for AlignThreadProcessor above for the per-barcode inner loop.
-        let processors = group_by_processor(
-            read_iter,
-            processors,
-            HasBarcode::barcode,
-            rover.files_path(),
-        )?;
+        let processors =
+            group_by_processor(read_iter, processors, RnaRead::barcode, rover.files_path())?;
 
         // Pull together the lightweight bc summary info.
         let mut bc_summaries = Vec::new();
@@ -770,7 +753,7 @@ impl MartianStage for AlignAndCount {
             p.bc_umi_info_sender.finished()?;
             p.bc_counts_sender.finished()?;
             if let Some(x) = p.bc_probe_counts_sender.as_mut() {
-                x.finished().unwrap()
+                x.finished().unwrap();
             };
             p.pos_reads_sender.finished()?;
         }
@@ -833,13 +816,11 @@ impl MartianStage for AlignAndCount {
         };
         barcode_summary_filename.write(&barcode_summary)?;
 
-        let summary = rover.make_path("summary");
-        AlignAndCountMetrics {
+        let summary: JsonFile<AlignAndCountMetrics> = rover.make_path("summary");
+        summary.write(&AlignAndCountMetrics {
             alignment_aligner: choose_aligner_from_args(&args)?,
             alignment_high_conf_mapq: HIGH_CONF_MAPQ as i64,
-        }
-        .to_json_reporter()
-        .report(&summary)?;
+        })?;
 
         Ok(StageOutputs {
             counts_bc_order: chunk_outs
@@ -900,9 +881,8 @@ mod test {
 
     #[test]
     fn test_choose_aligner() -> Result<()> {
+        use cr_types::chemistry::ChemistryName::{SpatialThreePrimeV1, ThreePrimeV3, MFRP_RNA};
         use AlignerParam::{Hurtle, Star};
-        #[allow(clippy::enum_glob_use)]
-        use ChemistryName::*;
 
         let hybcap_file = "test/target_panels/Immunology_targeting_hybrid.csv".into();
         let hybcap = Some(&hybcap_file);
@@ -910,33 +890,30 @@ mod test {
         let rtl = Some(&rtl_file);
 
         // Test aligner and target_set=null.
-        assert_eq!(choose_aligner(None, Custom, None)?, Star);
-        assert!(choose_aligner(Some(Hurtle), Custom, None).is_err());
-        assert_eq!(choose_aligner(Some(Star), Custom, None)?, Star);
+        assert_eq!(choose_aligner(None, None, None)?, Star);
+        assert!(choose_aligner(Some(Hurtle), None, None).is_err());
+        assert_eq!(choose_aligner(Some(Star), None, None)?, Star);
 
         // Test aligner and target_panel_file_format.
-        assert_eq!(choose_aligner(None, Custom, hybcap)?, Star);
-        assert!(choose_aligner(Some(Hurtle), Custom, hybcap).is_err());
-        assert_eq!(choose_aligner(Some(Star), Custom, hybcap)?, Star);
+        assert_eq!(choose_aligner(None, None, hybcap)?, Star);
+        assert!(choose_aligner(Some(Hurtle), None, hybcap).is_err());
+        assert_eq!(choose_aligner(Some(Star), None, hybcap)?, Star);
 
         // Test aligner and probe_set_file_format.
-        assert_eq!(choose_aligner(None, Custom, rtl)?, Hurtle);
-        assert_eq!(choose_aligner(Some(Hurtle), Custom, rtl)?, Hurtle);
-        assert_eq!(choose_aligner(Some(Star), Custom, rtl)?, Star);
+        assert_eq!(choose_aligner(None, None, rtl)?, Hurtle);
+        assert_eq!(choose_aligner(Some(Hurtle), None, rtl)?, Hurtle);
+        assert_eq!(choose_aligner(Some(Star), None, rtl)?, Star);
 
         // Test chemistry and target_panel_file_format.
-        assert_eq!(choose_aligner(None, ThreePrimeV3, hybcap)?, Star);
-        assert_eq!(choose_aligner(None, SpatialThreePrimeV1, hybcap)?, Star);
-        assert_eq!(choose_aligner(None, SpatialThreePrimeV3, hybcap)?, Star);
-        assert!(choose_aligner(None, SFRP, hybcap).is_err());
-        assert!(choose_aligner(None, MFRP, hybcap).is_err());
+        let spatial_is_rtl = SpatialThreePrimeV1.is_rtl();
+        assert_eq!(choose_aligner(None, ThreePrimeV3.is_rtl(), hybcap)?, Star);
+        assert!(choose_aligner(None, MFRP_RNA.is_rtl(), hybcap).is_err());
+        assert_eq!(choose_aligner(None, spatial_is_rtl, hybcap)?, Star);
 
         // Test chemistry and probe_set_file_format.
-        assert_eq!(choose_aligner(None, ThreePrimeV3, rtl)?, Star);
-        assert_eq!(choose_aligner(None, SpatialThreePrimeV1, rtl)?, Hurtle);
-        assert_eq!(choose_aligner(None, SpatialThreePrimeV3, rtl)?, Hurtle);
-        assert_eq!(choose_aligner(None, SFRP, rtl)?, Hurtle);
-        assert_eq!(choose_aligner(None, MFRP, rtl)?, Hurtle);
+        assert_eq!(choose_aligner(None, ThreePrimeV3.is_rtl(), rtl)?, Star);
+        assert_eq!(choose_aligner(None, MFRP_RNA.is_rtl(), rtl)?, Hurtle);
+        assert_eq!(choose_aligner(None, spatial_is_rtl, rtl)?, Hurtle);
 
         Ok(())
     }

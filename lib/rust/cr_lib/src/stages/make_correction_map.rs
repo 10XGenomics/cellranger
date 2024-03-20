@@ -1,10 +1,10 @@
 //! Martian stage MAKE_CORRECTION_MAP
 
 use anyhow::Result;
-use barcode::{BarcodeConstruct, WhitelistSource};
+use barcode::BarcodeConstruct;
 use barcode_extensions::{CorrectionMap, CorrectionMapBuilder};
-use cr_types::chemistry::{BarcodeExtraction, ChemistryDef};
-use cr_types::{BcSegmentCountFormat, LibraryFeatures};
+use cr_types::chemistry::{BarcodeExtraction, ChemistryDef, ChemistryDefs, ChemistryDefsExt};
+use cr_types::{BcSegmentCountFormat, LibraryType};
 use itertools::Itertools;
 use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
@@ -15,11 +15,12 @@ use serde::{Deserialize, Serialize};
 
 martian_filetype!(CorrectionMapFile, "cmf");
 pub type CorrectionMapFormat =
-    BinaryFormat<CorrectionMapFile, TxHashMap<LibraryFeatures, BarcodeConstruct<CorrectionMap>>>;
+    BinaryFormat<CorrectionMapFile, TxHashMap<LibraryType, BarcodeConstruct<CorrectionMap>>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct MakeCorrectionMapStageInputs {
-    chemistry_def: ChemistryDef,
+    chemistry_defs: ChemistryDefs,
+
     /// Counts of uncorrected valid segments per library type
     pub barcode_segment_counts: BcSegmentCountFormat,
 }
@@ -56,7 +57,7 @@ fn is_two_part_joint_extraction(chemistry_def: &ChemistryDef) -> bool {
     }
 }
 
-#[make_mro]
+#[make_mro(volatile = strict)]
 impl MartianStage for MakeCorrectionMap {
     type StageInputs = MakeCorrectionMapStageInputs;
     type StageOutputs = MakeCorrectionMapStageOutputs;
@@ -68,7 +69,8 @@ impl MartianStage for MakeCorrectionMap {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        Ok(if is_two_part_joint_extraction(&args.chemistry_def) {
+        let chemistry_def = args.chemistry_defs.primary();
+        Ok(if is_two_part_joint_extraction(chemistry_def) {
             // ~6GB memory is needed to build all the sequences two edits away
             // from a whitelist of size 5k with 19 bases each in memory.
             // Once deduped, it reduces to ~2.5GB. Since we produce the sequences
@@ -85,7 +87,7 @@ impl MartianStage for MakeCorrectionMap {
         _chunk_args: Self::ChunkInputs,
         _rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
-        unreachable!("Stage only has a join!")
+        unreachable!()
     }
 
     fn join(
@@ -95,7 +97,8 @@ impl MartianStage for MakeCorrectionMap {
         _chunk_outs: Vec<Self::ChunkOutputs>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
-        if !is_two_part_joint_extraction(&args.chemistry_def) {
+        let chemistry_def = &args.chemistry_defs.primary();
+        if !is_two_part_joint_extraction(chemistry_def) {
             return Ok(MakeCorrectionMapStageOutputs {
                 correction_map: None,
             });
@@ -106,9 +109,10 @@ impl MartianStage for MakeCorrectionMap {
             .build_global()
             .unwrap();
 
-        let correction_map_builders = args.chemistry_def.barcode_construct().map_result(|bc| {
-            WhitelistSource::from_spec(bc.whitelist(), false, None)
-                .and_then(|src| src.as_vec().map(CorrectionMapBuilder::new))
+        let correction_map_builders = chemistry_def.barcode_construct().map_result(|bc| {
+            bc.whitelist()
+                .as_source(false)
+                .and_then(|src| src.as_whitelist().map(|wl| CorrectionMapBuilder::new(&wl)))
         })?;
 
         let correction_map: CorrectionMapFormat = rover.make_path("correction_map");

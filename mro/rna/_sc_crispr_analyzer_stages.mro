@@ -8,9 +8,7 @@ filetype h5;
 filetype json;
 
 stage CALL_PROTOSPACERS(
-    in  csv  filtered_barcodes,
     in  h5   filtered_feature_counts_matrix,
-    in  json counter_metrics_json,
     out csv  protospacer_calls_summary,
     out csv  protospacer_calls_per_cell,
     out json protospacer_call_metrics_json,
@@ -18,8 +16,13 @@ stage CALL_PROTOSPACERS(
     out json protospacer_umi_thresholds_json,
     out csv  protospacer_umi_thresholds_csv,
     src py   "stages/feature/call_protospacers",
+) split (
+    in  int  chunk_start,
+    in  int  chunk_end,
+    out json chunk_cells_per_protospacer,
+    out json chunk_protospacer_umi_thresholds,
 ) using (
-    mem_gb = 16,
+    volatile = strict,
 )
 
 stage MEASURE_PERTURBATIONS(
@@ -32,6 +35,8 @@ stage MEASURE_PERTURBATIONS(
     out path perturbation_effects_path,
     src py   "stages/feature/measure_perturbations",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage SUMMARIZE_CRISPR_ANALYSIS(
@@ -48,5 +53,6 @@ stage SUMMARIZE_CRISPR_ANALYSIS(
     out path crispr_analysis,
     src py   "stages/feature/summarize_crispr_analysis",
 ) using (
-    mem_gb = 4,
+    mem_gb   = 4,
+    volatile = strict,
 )

@@ -72,18 +72,6 @@ pub struct DupInfo {
 }
 
 impl DupInfo {
-    /// Return a DupInfo for a read that was discarded by subsampling.
-    pub fn new_discarded(processed_umi: UmiSeq) -> Self {
-        DupInfo {
-            processed_umi,
-            is_corrected: false,
-            umi_count: None,
-            is_umi_count: false,
-            is_low_support_umi: false,
-            is_filtered_target_umi: true,
-        }
-    }
-
     /// Return true if this read is representative of its UMI.
     pub fn is_umi_count(&self) -> bool {
         self.is_umi_count

@@ -1,4 +1,4 @@
-//! ProcessVdjProto stage code
+//! Martian stage PROCESS_VDJ_PROTO
 
 use crate::parse_aggr_csv::VdjAggrCsvLibrary;
 use anyhow::Result;
@@ -119,7 +119,7 @@ impl MartianMain for ProcessVdjProto {
                 }
                 map.get_mut(&meta.reference_fasta_hash)
                     .unwrap()
-                    .push(lib.clone())
+                    .push(lib.clone());
             }
             map
         };
@@ -135,7 +135,7 @@ impl MartianMain for ProcessVdjProto {
             for (lib, meta) in &metadata_map {
                 let receptor = meta.vdj_receptor();
                 map.entry(receptor).or_insert_with(Vec::new);
-                map.get_mut(&receptor).unwrap().push(lib.clone())
+                map.get_mut(&receptor).unwrap().push(lib.clone());
             }
             map
         };
@@ -247,7 +247,7 @@ mod tests {
             count_gem_well_map: Some(count_gem_well_map),
         };
         let outs = ProcessVdjProto.test_run_tmpdir(args)?;
-        insta::assert_json_snapshot!(&outs);
+        insta::assert_yaml_snapshot!(&outs);
         Ok(())
     }
 
@@ -262,7 +262,7 @@ mod tests {
             count_gem_well_map: None,
         };
         let outs = ProcessVdjProto.test_run_tmpdir(args)?;
-        insta::assert_json_snapshot!(&outs);
+        insta::assert_yaml_snapshot!(&outs);
         Ok(())
     }
 }

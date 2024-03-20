@@ -33,7 +33,6 @@ struct AssignTagsOuts(
     json               tag_contaminant_info          "tag_contaminant_info"                                                                                           "tag_contaminant_info.json",
     pickle             tag_assigner_pickle           "tag_assigner_pickle"                                                                                            "tag_assigner_pickle.pickle",
     map<json>          sample_assignment_metrics     "Per-sample sample assignment summary metrics"                                                                   "sample_assignment_metrics.json",
-    string             gem_well_throughput           "Gem well throughput"                                                                                            "gem_well_throughput.txt",
     json               gem_well_inferred_throughputs "Gem well inferred throughput"                                                                                   "gem_well_inferred_throughputs.json",
     bool               multiplexing_is_not_cmo,
     bool               output_per_sample_raw_matrix,
@@ -87,6 +86,8 @@ stage CALL_TAGS_JIBES(
     out json   non_singlet_barcodes,
     src py     "stages/feature/call_tags_jibes",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage DETERMINE_SAMPLE_ASSIGNMENTS(

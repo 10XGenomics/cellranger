@@ -5,6 +5,7 @@
 
 [gene-expression]
 reference,/path/to/transcriptome
+create-bam,false
 # probe-set,/path/to/probe/set, # Required, Fixed RNA Profiling only.
 # filter-probes,<true|false>, # Optional, Fixed RNA Profiling only.
 # r1-length,<int>
@@ -13,7 +14,6 @@ reference,/path/to/transcriptome
 # expect-cells,<int>
 # force-cells,<int>
 # no-secondary,<true|false>
-# no-bam,<true|false>
 # check-library-compatibility,<true|false>
 # include-introns,<true|false>
 # min-assignment-confidence,<0.9>, # Optional, Cell Multiplexing only.

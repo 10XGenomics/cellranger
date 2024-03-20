@@ -28,8 +28,8 @@ impl CellrangerFastqHeader {
     }
 
     #[cfg(test)]
-    fn get_tag(&self, tag: &str) -> Option<&String> {
-        self.tags.get(tag)
+    fn get_tag(&self, tag: &str) -> Option<&str> {
+        self.tags.get(tag).map(String::as_str)
     }
 }
 
@@ -209,8 +209,8 @@ mod tests {
     fn test_fastq_header() {
         let name = "D000684:775:H3YYTBCXY:1:1101:10541:57223|||BC|||TGGTAAAC|||UR|||AGAGCTGCCA|||UY|||IIIIIIIIII|||TR||||||CB|||TCAGATGCAGGCTCAC-1|||UB|||AGAGCTGCCA";
         let header = CellrangerFastqHeader::new(name.to_string());
-        assert_eq!(header.get_tag("BC"), Some(&(*"TGGTAAAC").to_string()));
-        assert_eq!(header.get_tag("TR"), Some(&String::default()));
+        assert_eq!(header.get_tag("BC"), Some("TGGTAAAC"));
+        assert_eq!(header.get_tag("TR"), Some(""));
         assert_eq!(header.get_tag("FOO"), None);
     }
 
@@ -219,7 +219,7 @@ mod tests {
         let fastq1 = Path::new("test/inputs/base_quals/test_base_quals_1.fastq");
         let fastq2 = Path::new("test/inputs/base_quals/test_base_quals_2.fastq");
 
-        let true_umis = vec![0, 0, 1, 1];
+        let true_umis = [0, 0, 1, 1];
 
         {
             // Paired, FR reads

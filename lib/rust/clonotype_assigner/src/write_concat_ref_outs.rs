@@ -1,4 +1,4 @@
-//! WriteConcatRefOuts stage code creates concat_ref.bam and concat_ref.bam.bai.
+//! Martian stage WRITE_CONCAT_REF_OUTS creates concat_ref.bam and concat_ref.bam.bai.
 
 use crate::assigner::{
     bam_record_from_align, replace_sam_by_indexed_bam, BamBaiFile, BamFile, ProtoBinFile, SamFile,
@@ -6,6 +6,7 @@ use crate::assigner::{
 };
 use anyhow::Result;
 use bio::alignment::pairwise::Aligner;
+use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
@@ -25,6 +26,7 @@ martian_filetype!(FastaFaiFile, "fasta.fai");
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteConcatRefOutsStageInputs {
+    pub sample_number: Option<usize>,
     pub enclone_output: ProtoBinFile,
     pub all_contig_annotations_json: JsonFile<Vec<ContigAnnotation>>,
 }
@@ -42,7 +44,7 @@ pub struct WriteConcatRefOuts;
 
 const CONCAT_REF: &str = "concat_ref";
 
-#[make_mro(mem_gb = 4, threads = 4)]
+#[make_mro(mem_gb = 5, threads = 4)]
 impl MartianMain for WriteConcatRefOuts {
     type StageInputs = WriteConcatRefOutsStageInputs;
     type StageOutputs = WriteConcatRefOutsStageOutputs;
@@ -76,8 +78,12 @@ impl MartianMain for WriteConcatRefOuts {
         let mut to_tid = HashMap::<(usize, usize), usize>::new();
         let mut count = 0;
         for (i, x) in enclone_outs.clonotypes.iter().enumerate() {
+            let clonotype_id = ClonotypeId {
+                id: i + 1,
+                sample_number: args.sample_number,
+            };
             for j in 0..x.chains.len() {
-                let record_name = format!("clonotype{}_concat_ref_{}", i + 1, j + 1);
+                let record_name = clonotype_id.concat_ref_name(j + 1);
                 let seq = &x.chains[j].universal_reference;
                 add_ref_to_bam_header(&mut header, &record_name, seq.len());
                 to_tid.insert((i, j), count);
@@ -125,6 +131,10 @@ impl MartianMain for WriteConcatRefOuts {
             results.par_iter_mut().for_each(|res| {
                 let i = res.0;
                 let x = &enclone_outs.clonotypes[i];
+                let clonotype_id = ClonotypeId {
+                    id: i + 1,
+                    sample_number: args.sample_number,
+                };
                 for j in 0..x.exact_clonotypes.len() {
                     let barcodes: &Vec<String> = &x.exact_clonotypes[j].cell_barcodes;
                     for k in 0..x.exact_clonotypes[j].chains.len() {
@@ -143,11 +153,10 @@ impl MartianMain for WriteConcatRefOuts {
 
                         // And now for the rest.
 
-                        let id = format!("clonotype{}_consensus_{}", i + 1, index + 1);
+                        let id = clonotype_id.consensus_name(index + 1);
                         let mut aligner = Aligner::new(-6, -1, &score);
                         let al = aligner.semiglobal(seq, concat);
-                        let rec =
-                            bam_record_from_align(&al, &id, refid, seq, &quals, &String::default());
+                        let rec = bam_record_from_align(&al, &id, refid, seq, &quals, "");
                         res.1.push(rec);
                         let contig_ids: &Vec<String> = &chain.contig_ids;
                         for (l, id) in contig_ids.iter().enumerate() {

@@ -21,6 +21,11 @@ import cellranger.targeted.simple_utils as tgt_simple_utils
 import tenkit.log_subprocess as tk_subproc
 import tenkit.preflight as tk_preflight
 from cellranger import csv_utils
+from cellranger.chemistry import (
+    CHEMISTRY_DESCRIPTION_FIELD,
+    CHEMISTRY_NAME_FIELD,
+    SC3P_V4_CHEMISTRIES,
+)
 from cellranger.fast_utils import validate_reference
 from cellranger.feature_ref import FeatureDefException
 from cellranger.molecule_counter import (
@@ -28,7 +33,7 @@ from cellranger.molecule_counter import (
     MOLECULE_INFO_TYPE_PERSAMPLE,
     MoleculeCounter,
 )
-from cellranger.reference_paths import get_reference_genomes
+from cellranger.reference_paths import get_ref_name_from_genomes, get_reference_genomes
 from cellranger.targeted.targeted_constants import (
     TARGETING_METHOD_FILE_NAMES,
     TARGETING_METHOD_TL_FILE_FORMAT,
@@ -510,7 +515,7 @@ def check_targeting_preflights(
 
         # Ensure that the reference genome of the transcriptome and probe set are identical for RTL only.
         if TARGETING_METHOD_TL_FILE_FORMAT in target_panel_metadata:
-            transcriptome_reference_genome = cr_reference.get_ref_name_from_genomes(
+            transcriptome_reference_genome = get_ref_name_from_genomes(
                 get_reference_genomes(reference_path)
             )
             probe_set_reference_genome = target_panel_metadata["reference_genome"]
@@ -667,6 +672,28 @@ def check_target_features_same(target_sets):
                 "Target sets are not the same. Found inconsistent genes: %s" % (inconsistent_genes)
             )
         counter += 1
+
+
+def check_chemistry(chemistry_desc, sample_def):
+    """Checks that the provided chemistry is compatible with features.
+
+    The v4 3-prime chemistry no longer has the CRISPR oligo and so is not compatible.
+    """
+    v4_chem_names = []
+    for chem in SC3P_V4_CHEMISTRIES:
+        v4_chem_names.append(chem[CHEMISTRY_DESCRIPTION_FIELD])
+        v4_chem_names.append(chem[CHEMISTRY_NAME_FIELD])
+
+    def is_crispr(sample):
+        library_type = sample.get("library_type")
+        if library_type is None:
+            return False
+        return library_type == rna_library.CRISPR_LIBRARY_TYPE
+
+    if any(is_crispr(x) for x in sample_def) and chemistry_desc in v4_chem_names:
+        raise PreflightException(
+            f"Provided chemistry {chemistry_desc} is not compatible with CRISPR Guide Capture Libraries."
+        )
 
 
 def check_sample_info(

@@ -188,7 +188,7 @@ impl From<crate::types::BarcodeData> for vdj_asm_utils::barcode_data::BarcodeDat
 }
 
 fn option_usize_to_i32(src: Option<usize>) -> i32 {
-    src.map(|x| x as i32).unwrap_or(-1i32)
+    src.map_or(-1i32, |x| x as i32)
 }
 
 fn i32_to_option_usize(src: i32) -> Option<usize> {
@@ -249,6 +249,7 @@ impl From<vdj_ann::annotate::ContigAnnotation> for crate::types::ContigAnnotatio
             cdr2: src.cdr2.map(Into::into),
             fwr3: src.fwr3.map(Into::into),
             fwr4: src.fwr4.map(Into::into),
+            sample: option_string_to_string(src.sample),
         }
     }
 }
@@ -296,6 +297,7 @@ impl From<crate::types::ContigAnnotation> for vdj_ann::annotate::ContigAnnotatio
             fwr3: src.fwr3.map(Into::into),
             fwr4: src.fwr4.map(Into::into),
             junction_support: src.junction_support.map(Into::into),
+            sample: string_to_option_string(src.sample),
         }
     }
 }

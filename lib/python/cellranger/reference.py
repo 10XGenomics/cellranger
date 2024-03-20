@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import collections
 import csv
-import hashlib
 import itertools
 import json
 import os
 import re
 import subprocess
-from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -45,14 +43,6 @@ class Transcript(NamedTuple):
     length: int | None
     gc_content: float | None
     intervals: list[Interval]
-
-
-def compute_hash_of_file(filename, block_size_bytes=2**20):
-    digest = hashlib.sha1()
-    with open(filename, "rb") as f:
-        for chunk in iter(lambda: f.read(block_size_bytes), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class GtfParser:
@@ -760,7 +750,3 @@ class NewGeneIndex(NewGtfParser):
         txs = {tx_id: tx for tx_id, tx in self.transcripts.items() if tx.gene.id in target_genes}
         self.transcripts = txs
         self.gene_ids_map = {gene.id: i for i, gene in enumerate(self.genes)}
-
-
-def get_ref_name_from_genomes(genomes: Iterable[str]):
-    return "_and_".join(genomes)

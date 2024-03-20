@@ -2,8 +2,9 @@
 
 use crate::io::{csv, h5};
 use crate::louvain::{run_louvain, run_louvain_parallel};
-use crate::types::{feature_prefixed, ClusteringResult, ClusteringType, FeatureType, H5File};
+use crate::types::{ClusteringResult, ClusteringType, H5File};
 use anyhow::Result;
+use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::read_adaptive_csr_matrix;
 use log::info;
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
@@ -19,7 +20,10 @@ const NEIGHBOR_A: f64 = -230.0;
 const NEIGHBOR_B: f64 = 120.0;
 const RESOLUTION: f64 = 1.0;
 const RANDOM_SEED: usize = 0xBADC0FFEE0DDF00D;
-const ACTIVE_FEATURE_TYPES: &[FeatureType] = &[FeatureType::Gene, FeatureType::Antibody];
+const ACTIVE_FEATURE_TYPES: &[FeatureType] = &[
+    FeatureType::Gene,
+    FeatureType::Barcode(cr_types::FeatureBarcodeType::Antibody),
+];
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, MartianType, Default,
@@ -42,7 +46,6 @@ pub struct GraphClusteringStageInputs {
     input_pcs: Option<usize>,
     resolution: Option<f64>,
     random_seed: Option<usize>,
-    is_antibody_only: bool,
     threads: usize,
     parallel_clustering: bool,
 }
@@ -54,14 +57,9 @@ impl GraphClusteringStageInputs {
             .next()
             .unwrap()
             .0;
-        let num_bcs = h5::load_transformed_pca(
-            &self.pca_h5,
-            feature_type,
-            self.input_pcs,
-            self.is_antibody_only,
-        )?
-        .1
-        .num_bcs;
+        let num_bcs = h5::load_transformed_pca(&self.pca_h5, feature_type, self.input_pcs)?
+            .1
+            .num_bcs;
         let neighbor_a = self.neighbor_a.unwrap_or(NEIGHBOR_A);
         let neighbor_b = self.neighbor_b.unwrap_or(NEIGHBOR_B);
         let k = (neighbor_a + neighbor_b * (num_bcs as f64).log10()).round() as usize;
@@ -85,7 +83,7 @@ pub struct GraphClusteringChunkInputs {
 
 pub struct GraphClusteringStage;
 
-#[make_mro(stage_name = RUN_GRAPH_CLUSTERING_NG, mem_gb = 1, threads = 1, volatile = strict)]
+#[make_mro(stage_name = RUN_GRAPH_CLUSTERING_NG, volatile = strict)]
 impl MartianStage for GraphClusteringStage {
     type StageInputs = GraphClusteringStageInputs;
     type StageOutputs = GraphClusteringStageOutputs;
@@ -97,36 +95,36 @@ impl MartianStage for GraphClusteringStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let mut mem_gb = h5::est_mem_gb_from_nnz(&args.matrix_h5)?;
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
         let num_bcs = h5::load_transformed_pca(
             &args.pca_h5,
             *feature_types.iter().next().unwrap().0,
             args.input_pcs,
-            args.is_antibody_only,
         )?
         .1
         .num_bcs;
         let k = args.compute_k()?;
         // (adjacency matrix + observed edge list + weighted edge list) * max no. edges
         // (u32 = 4 + u32 = 4 + usize = 8 + f64 = 8) = 24 * num_edges
-        mem_gb += ((4 + 4 + 8 + 8) * (num_bcs * k)) as f64 / 1e9 + 0.5;
-        let mut stage_def = StageDef::new();
-        for &feature_type in ACTIVE_FEATURE_TYPES {
-            // do not bother producing when the number of features is <2, or we don't have it
-            if feature_types
-                .get(&feature_type)
-                .map(|&count| count < 2)
-                .unwrap_or(true)
-            {
-                continue;
-            }
-            let chunk_resource = Resource::new()
-                .threads(args.threads.try_into().unwrap())
-                .mem_gb(mem_gb.ceil() as isize);
-            stage_def.add_chunk_with_resource(Self::ChunkInputs { feature_type }, chunk_resource);
-        }
-        Ok(stage_def)
+        let mem_gib = (2.5
+            + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?
+            + ((4 + 4 + 8 + 8) * (num_bcs * k)) as f64 / 1e9)
+            .ceil() as isize;
+
+        Ok(ACTIVE_FEATURE_TYPES
+            .iter()
+            .filter(|feature_type| {
+                feature_types
+                    .get(feature_type)
+                    .is_some_and(|&count| count >= 2)
+            })
+            .map(|&feature_type| {
+                (
+                    Self::ChunkInputs { feature_type },
+                    Resource::with_mem_gb(mem_gib).threads(args.threads.try_into().unwrap()),
+                )
+            })
+            .collect())
     }
 
     fn main(
@@ -138,12 +136,8 @@ impl MartianStage for GraphClusteringStage {
         rayon::ThreadPoolBuilder::new()
             .num_threads(args.threads)
             .build_global()?;
-        let proj = h5::load_transformed_pca_matrix(
-            &args.pca_h5,
-            chunk_args.feature_type,
-            args.input_pcs,
-            args.is_antibody_only,
-        )?;
+        let proj =
+            h5::load_transformed_pca_matrix(&args.pca_h5, chunk_args.feature_type, args.input_pcs)?;
         let (matrix, _) = read_adaptive_csr_matrix(&args.matrix_h5, None, None)?;
         let k = args.compute_k()?;
 
@@ -163,12 +157,8 @@ impl MartianStage for GraphClusteringStage {
             .into_iter()
             .map(|v| v as i64 + 1)
             .collect::<Vec<_>>();
-        let result = ClusteringResult::new(
-            ClusteringType::Louvain,
-            chunk_args.feature_type,
-            labels,
-            feature_prefixed(args.is_antibody_only, chunk_args.feature_type),
-        );
+        let result =
+            ClusteringResult::new(ClusteringType::Louvain, chunk_args.feature_type, labels);
         let clusters_h5 = rover.make_path("clusters_h5");
         h5::save_clustering(&clusters_h5, &result)?;
 

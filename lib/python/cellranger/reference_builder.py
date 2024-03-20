@@ -21,8 +21,8 @@ from cellranger.reference import (
     GexReferenceError,
     GtfParseError,
     NewGtfParser,
-    compute_hash_of_file,
 )
+from cellranger.reference_hash import compute_hash_of_file
 
 _LIB_BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "bin")
 

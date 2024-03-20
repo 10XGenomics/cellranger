@@ -1,19 +1,18 @@
 use crate::fit_piecewise_linear_model::{EstimatedModel, PiecewiseLinearData};
 use crate::probe_barcode_matrix::ProbeCounts;
-use crate::CountShardFile;
 use anyhow::Result;
 use barcode::Barcode;
 use cr_h5::molecule_info::MoleculeInfoIterator;
 use cr_types::probe_set::{ProbeRegion, ProbeSetReference};
 use cr_types::types::PROBE_IDX_SENTINEL_VALUE;
 use cr_types::utils::calculate_median_of_sorted;
-use cr_types::ProbeBarcodeCount;
+use cr_types::{CountShardFile, ProbeBarcodeCount};
 use itertools::{process_results, Itertools};
 use martian_filetypes::tabular_file::CsvFile;
-use metric::{JsonReport, JsonReporter, MeanMetric, PercentMetric, TxHashMap, TxHashSet};
+use metric::{MeanMetric, TxHashMap, TxHashSet};
 use ndarray::prelude::*;
 use ndarray::Array2;
-use serde_json::Value;
+use serde::Serialize;
 use shardio::ShardReader;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -24,44 +23,22 @@ fn calculate_median_of_unsorted(xs: impl Iterator<Item = usize>) -> usize {
     calculate_median_of_sorted(&xs.sorted().collect::<Vec<_>>()).unwrap_or(0)
 }
 
+#[derive(Serialize)]
 pub struct GdnaCorrectedMetrics {
-    mean_gdna_corrected_genes: MeanMetric,
-    mean_gdna_corrected_umis: MeanMetric,
+    mean_gdna_corrected_genes: f64,
+    mean_gdna_corrected_umis: f64,
     median_gdna_corrected_genes: usize,
     median_gdna_corrected_umis: usize,
 }
 
-impl JsonReport for GdnaCorrectedMetrics {
-    fn to_json_reporter(&self) -> JsonReporter {
-        JsonReporter::from_iter([
-            (
-                "mean_gdna_corrected_genes",
-                Value::from(&self.mean_gdna_corrected_genes),
-            ),
-            (
-                "mean_gdna_corrected_umis",
-                Value::from(&self.mean_gdna_corrected_umis),
-            ),
-            (
-                "median_gdna_corrected_genes",
-                Value::from(self.median_gdna_corrected_genes),
-            ),
-            (
-                "median_gdna_corrected_umis",
-                Value::from(self.median_gdna_corrected_umis),
-            ),
-        ])
-    }
-}
-
 /// GDNA_GENE_THRESHOLD is the minimum number of genes with both spliced and
 /// unspliced probes necessary to run gDNA analysis.
-/// Also used in mro/rna/stages/targeted/disable_gdna_stages/__init__.py
+/// Also used in mro/rna/stages/targeted/disable_targeted_stages/__init__.py
 const GDNA_GENE_THRESHOLD: usize = 10;
 /// Struct returned to the stage. Has estimates and things needed to plot
 pub struct MetricsComputed {
     pub estimated_gdna_per_probe: f64,
-    pub estimated_percentage_of_gdna_umi: PercentMetric,
+    pub estimated_percentage_of_gdna_umi: f64,
     pub unspliced_counts: Vec<f64>,
     pub spliced_counts: Vec<f64>,
     pub estimated_model: EstimatedModel<f64>,
@@ -97,13 +74,13 @@ pub fn compute_gdna_metrics(
             Some(ProbeRegion::Spliced) => {
                 *num_spliced_probes_per_gene
                     .entry(x.gene.id.as_str())
-                    .or_insert(0) += 1
+                    .or_insert(0) += 1;
             }
             Some(ProbeRegion::Unspliced) => {
                 number_of_unspliced_probes += 1.0;
                 *num_unspliced_probes_per_gene
                     .entry(x.gene.id.as_str())
-                    .or_insert(0) += 1
+                    .or_insert(0) += 1;
             }
             _ => (),
         }
@@ -159,11 +136,11 @@ pub fn compute_gdna_metrics(
                     match &probes[probe_idx as usize].region {
                         Some(ProbeRegion::Spliced) => {
                             *num_spliced_umis_per_gene.get_mut(gene_id).unwrap() +=
-                                (1.0) / (num_spliced_probes_per_gene[gene_id] as f64)
+                                (1.0) / (num_spliced_probes_per_gene[gene_id] as f64);
                         }
                         Some(ProbeRegion::Unspliced) => {
                             *num_unspliced_umis_per_gene.get_mut(gene_id).unwrap() +=
-                                (1.0) / (num_unspliced_probes_per_gene[gene_id] as f64)
+                                (1.0) / (num_unspliced_probes_per_gene[gene_id] as f64);
                         }
                         _ => (),
                     }
@@ -198,11 +175,10 @@ pub fn compute_gdna_metrics(
 
     // Compute the two metrics needed
     let estimated_gdna_per_probe = estimated_model.model.constant.exp() - 1.0;
-    let estimated_percentage_of_gdna_umi = PercentMetric::from_parts(
-        total_number_of_umis
-            .min((estimated_gdna_per_probe * number_of_unspliced_probes).round() as i64),
-        total_number_of_umis,
-    );
+    let estimated_percentage_of_gdna_umi = total_number_of_umis
+        .min((estimated_gdna_per_probe * number_of_unspliced_probes).round() as i64)
+        as f64
+        / total_number_of_umis as f64;
 
     MetricsComputed {
         unspliced_counts: data_to_fit.get_unspliced_counts(),
@@ -299,12 +275,12 @@ fn compute_filtered_probes(per_probe_metrics: Vec<ProbeCounts>) -> Result<Vec<Pr
             Some(ProbeRegion::Spliced) => {
                 *num_spliced_probes_per_gene
                     .entry(probe_record.gene_id.as_str())
-                    .or_insert(0) += 1
+                    .or_insert(0) += 1;
             }
             Some(ProbeRegion::Unspliced) => {
                 *num_unspliced_probes_per_gene
                     .entry(probe_record.gene_id.as_str())
-                    .or_insert(0) += 1
+                    .or_insert(0) += 1;
             }
             _ => (),
         }
@@ -344,12 +320,12 @@ fn compute_filtered_probes(per_probe_metrics: Vec<ProbeCounts>) -> Result<Vec<Pr
                 Some(ProbeRegion::Spliced) => {
                     num_spliced_and_unspliced.spliced += (probe_record.umis_in_filtered_barcodes
                         as f64)
-                        / (num_spliced_probes_per_gene[gene_id] as f64)
+                        / (num_spliced_probes_per_gene[gene_id] as f64);
                 }
                 Some(ProbeRegion::Unspliced) => {
                     num_spliced_and_unspliced.unspliced += (probe_record.umis_in_filtered_barcodes
                         as f64)
-                        / (num_unspliced_probes_per_gene[gene_id] as f64)
+                        / (num_unspliced_probes_per_gene[gene_id] as f64);
                 }
                 _ => (),
             }
@@ -491,9 +467,13 @@ pub fn compute_gdna_corrected_median_genes_per_spot(
         }
     })?;
 
+    let mean_gdna_corrected_genes: MeanMetric =
+        bc_gene_counts.values().map(|&x| x as i64).collect();
+    let mean_gdna_corrected_umis: MeanMetric = bc_umi_counts.values().map(|&x| x as i64).collect();
+
     Ok(GdnaCorrectedMetrics {
-        mean_gdna_corrected_genes: bc_gene_counts.values().map(|&x| x as i64).collect(),
-        mean_gdna_corrected_umis: bc_umi_counts.values().map(|&x| x as i64).collect(),
+        mean_gdna_corrected_genes: mean_gdna_corrected_genes.mean(),
+        mean_gdna_corrected_umis: mean_gdna_corrected_umis.mean(),
         median_gdna_corrected_genes: calculate_median_of_unsorted(bc_gene_counts.into_values()),
         median_gdna_corrected_umis: calculate_median_of_unsorted(bc_umi_counts.into_values()),
     })

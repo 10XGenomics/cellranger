@@ -117,7 +117,7 @@ impl SampleAssignmentCsv {
                 e.input.location_line(),
                 e.input.naive_get_utf8_column()
             ),
-            _ => anyhow!(
+            nom::Err::Incomplete(_) => anyhow!(
                 "failed to parse barcode sample assignment CSV {name}, \
                  incomplete information available to pinpoint error",
             ),
@@ -140,7 +140,7 @@ impl SampleAssignmentCsv {
                 .fold(sample_barcodes, |mut acc, row| match row.assignment {
                     Sample(ref sample_id) | SampleTag(ref sample_id, _) => {
                         acc.entry(sample_id.clone())
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(row.barcode.to_string());
                         acc
                     }
@@ -150,16 +150,18 @@ impl SampleAssignmentCsv {
         serde_json::to_writer_pretty(&mut writer, &sample_barcodes)?;
         Ok(())
     }
+
     pub fn to_cell_barcodes_json(&self, path: &Path) -> Result<()> {
-        let barcodes = self
+        let barcodes: Vec<_> = self
             .rows
             .iter()
             .map(|row| row.barcode.to_string())
-            .collect::<Vec<_>>();
+            .collect();
         let mut writer = BufWriter::new(File::create(path)?);
         serde_json::to_writer_pretty(&mut writer, &barcodes)?;
         Ok(())
     }
+
     pub fn to_non_singlet_barcodes_json(&self, path: &Path) -> Result<()> {
         let assignments = {
             let mut asgmts = TxHashMap::<String, Vec<String>>::default();
@@ -171,7 +173,7 @@ impl SampleAssignmentCsv {
         let assignments = self.rows.iter().fold(assignments, |mut acc, row| {
             if row.assignment.is_non_singlet() {
                 acc.entry(row.assignment.to_string())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(row.barcode.to_string());
             }
             acc
@@ -197,7 +199,7 @@ impl SampleAssignmentCsv {
                     if let Some(acc) = acc.as_mut() {
                         acc.entry(tag.clone())
                             .or_insert_with(Vec::new)
-                            .push(row.barcode.to_string())
+                            .push(row.barcode.to_string());
                     }
                     Continue(acc)
                 }
@@ -256,7 +258,7 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                 },
             )?
             .get_cmo_sample_map();
-        let samples = cmo_sample_map.values().cloned().collect::<TxHashSet<_>>();
+        let samples: TxHashSet<_> = cmo_sample_map.values().cloned().collect();
         let parser = CsvParser::new(sec.clone(), REQ_HDRS, OPT_HDRS)?;
         let mut rows = vec![];
         let hdr = &sec.name;
@@ -375,6 +377,7 @@ mod tests {
 [gene-expression]
 ref,/path/to/gex/ref
 barcode-sample-assignment,sample_bc_assignment_disallowed_sample_id.csv
+create-bam,true
 
 [libraries]
 fastq_id,fastqs,lanes,physical_library_id,feature_types,subsample_rate

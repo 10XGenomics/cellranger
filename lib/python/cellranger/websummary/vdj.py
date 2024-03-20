@@ -10,12 +10,13 @@ from six import ensure_binary
 import cellranger.vdj.chain_types as chain_types
 import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.constants.shared as shared
+from cellranger.vdj.clonotype import extract_clonotype_id_from_name
 from cellranger.webshim.constants.shared import CELLRANGER_COMMAND_NAME, PIPELINE_VDJ
 from cellranger.websummary.metrics import VDJMetricAnnotations
 from cellranger.websummary.react_components import WebSummaryData
+from cellranger.websummary.react_summarize import write_html_file
 from cellranger.websummary.sample_properties import VdjSampleProperties
 from cellranger.websummary.summary_tab import add_data, pipeline_info_table
-from cellranger.websummary.web_summary_builder import write_html_file
 
 if TYPE_CHECKING:
     from cellranger.webshim.data import SampleData
@@ -30,7 +31,8 @@ VDJ_RANK_PLOT_HELP = [
             "(In the denovo case, the only requirement is a contig's presence.) "
             "There must also be at least three filtered UMIs with at least two read pairs each. "
             "It is possible that a barcode with at least as many filtered UMIs as another cell-associated barcode is not identified as a targeted cell. "
-            "The color of the graph is based on the local density of cell-associated barcodes."
+            "The color of the graph is based on the local density of cell-associated barcodes. "
+            "Hovering over the plot displays the total number and percentage of barcodes in that region called as cells along with the number of UMI counts for those barcodes and barcode rank, ordered in descending order of UMI counts."
         ],
     ]
 ]
@@ -372,7 +374,7 @@ def vdj_clonotype_table(sample_data):
     for _, row in sample_data.vdj_clonotype_summary.iloc[0:10].iterrows():
         table_rows.append(
             [
-                row["clonotype_id"].replace("clonotype", ""),
+                str(extract_clonotype_id_from_name(row["clonotype_id"])),
                 row["cdr3s_aa"].replace(";", "<br>"),
                 "{}".format(row["frequency"]),
                 "{:.2%}".format(row["proportion"]),
@@ -419,7 +421,7 @@ def vdj_clonotype_chart(sample_properties, sample_data):
     x = []
     y = []
     for _, row in sample_data.vdj_clonotype_summary.iloc[0:10].iterrows():
-        x.append(row["clonotype_id"].replace("clonotype", ""))
+        x.append(extract_clonotype_id_from_name(row["clonotype_id"]))
         y.append(row["proportion"])
 
     chart["data"][0]["x"] = x

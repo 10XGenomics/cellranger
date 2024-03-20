@@ -1,18 +1,16 @@
-//! SummarizeVdjFilters stage code
+//! Martian stage SUMMARIZE_VDJ_FILTERS
 
 use crate::matrix::{gex_umi_counts_per_barcode, H5File};
 use anyhow::Result;
 use enclone_core::barcode_fate::BarcodeFate;
 use itertools::Itertools;
-use json_report_derive::JsonReport;
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::lz4_file::Lz4;
 use martian_filetypes::tabular_file::CsvFile;
-use martian_filetypes::{FileTypeRead, LazyFileTypeIO};
-use metric::{JsonReport, Metric, PercentMetric, TxHashMap};
-use metric_derive::Metric;
+use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO};
+use metric::{AsMetricPrefix, TxHashMap};
 use plotly::color::Rgba;
 use plotly::common::{Marker, TextPosition, Title};
 use plotly::layout::{Axis, AxisType, BarMode, HoverMode};
@@ -23,8 +21,8 @@ use serde::{Deserialize, Serialize};
 use statrs::statistics::OrderStatistics;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt;
 use std::path::{Path, PathBuf};
+use strum_macros::IntoStaticStr;
 use tenx_websummary::components::{HeroMetric, PlotlyChart, TitleWithHelp, WithTitle, WsNavBar};
 use tenx_websummary::{HtmlTemplate, SinglePageHtml};
 use vdj_ann::annotate::ContigAnnotation;
@@ -37,8 +35,11 @@ struct Cdr3Info {
     chain: String,
 }
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Hash, Eq, PartialEq, Ord, PartialOrd, IntoStaticStr, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum BarcodeCategory {
     Cell,
     GexFilter,
@@ -48,14 +49,7 @@ pub enum BarcodeCategory {
     EncloneGexFilter,
     UnknownFilter,
 }
-impl fmt::Display for BarcodeCategory {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut json_str = serde_json::to_string(&self).unwrap();
-        json_str.remove(0);
-        json_str.pop();
-        write!(f, "{json_str}")
-    }
-}
+
 impl BarcodeCategory {
     pub fn label(self) -> String {
         match self {
@@ -69,6 +63,7 @@ impl BarcodeCategory {
         }
         .to_string()
     }
+
     pub fn color(self, alpha: Option<f64>) -> Rgba {
         let a = alpha.unwrap_or(1.0);
         match self {
@@ -81,7 +76,8 @@ impl BarcodeCategory {
             BarcodeCategory::UnknownFilter => Rgba::new(127, 127, 127, a), // middle gray
         }
     }
-    fn abbreviation(self) -> String {
+
+    fn abbreviation(self) -> &'static str {
         match self {
             BarcodeCategory::Cell => "C",
             BarcodeCategory::GexFilter => "G",
@@ -91,7 +87,12 @@ impl BarcodeCategory {
             BarcodeCategory::EncloneGexFilter => "E+G",
             BarcodeCategory::UnknownFilter => "U",
         }
-        .to_string()
+    }
+}
+
+impl AsMetricPrefix for BarcodeCategory {
+    fn as_metric_prefix(&self) -> Option<&'static str> {
+        Some(self.into())
     }
 }
 
@@ -174,19 +175,14 @@ fn make_treemap(plot_data: Vec<TreeMapPlotUnit>) -> PlotlyChart {
     )
 }
 
-#[derive(Serialize, Deserialize, Metric, JsonReport, Clone)]
+#[derive(Serialize)]
 pub struct VdjFilterMetrics {
     pub barcodes_with_productive_contig: i64,
-    pub productive_contig_umis_in_cells: PercentMetric,
-    #[json_report(block)]
+    pub productive_contig_umis_in_cells_frac: f64,
     pub barcodes_with_productive_contig_per_filter_category: TxHashMap<BarcodeCategory, i64>,
-    #[json_report(block)]
     pub productive_contig_umis_per_filter_category: TxHashMap<BarcodeCategory, i64>,
-    #[json_report(block)]
     pub barcodes_with_productive_contig_per_asm_filter: Option<TxHashMap<String, i64>>,
-    #[json_report(block)]
     pub barcodes_with_productive_contig_per_enclone_filter: Option<TxHashMap<String, i64>>,
-    #[json_report(block)]
     pub unique_cdr3s_per_chain: HashMap<String, i64>,
 }
 
@@ -354,32 +350,27 @@ pub fn generate_filter_summary(
 
     let (barcode_info, enclone_filters) = annotations.load()?;
 
-    let barcodes_per_asm_filter = asm_filters.as_ref().map(|filters| {
+    let barcodes_per_asm_filter: Option<TxHashMap<_, _>> = asm_filters.as_ref().map(|filters| {
         filters
             .iter()
-            .filter_map(|(bc, f)| {
-                if barcode_info.contains_key(bc) {
-                    Some(f.iter())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(bc, f)| barcode_info.contains_key(bc).then_some(f))
             .flatten()
             .counts()
             .into_iter()
             .map(|(&k, v)| (k.to_string(), v as i64))
-            .collect::<TxHashMap<_, _>>()
+            .collect()
     });
 
-    let barcodes_per_enclone_filter = enclone_filters.as_ref().map(|filters| {
-        filters
-            .values()
-            .map(BarcodeFate::label)
-            .counts()
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v as i64))
-            .collect::<TxHashMap<_, _>>()
-    });
+    let barcodes_per_enclone_filter: Option<TxHashMap<_, _>> =
+        enclone_filters.as_ref().map(|filters| {
+            filters
+                .values()
+                .map(BarcodeFate::label)
+                .counts()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v as i64))
+                .collect()
+        });
 
     let mut barcode_treemap_data = vec![TreeMapPlotUnit {
         label: BC_WITH_PROD_CONTIGS.into(),
@@ -400,7 +391,7 @@ pub fn generate_filter_summary(
         categorized_barcodes
             .entry(info.category())
             .or_insert_with(Vec::new)
-            .push(bc)
+            .push(bc.as_str());
     }
     for (category, barcodes) in &categorized_barcodes {
         barcode_treemap_data.push(TreeMapPlotUnit {
@@ -450,8 +441,7 @@ pub fn generate_filter_summary(
                             .as_ref()
                             .unwrap()
                             .get(barcode)
-                            .map(BarcodeFate::label)
-                            .unwrap_or("UNKNOWN")
+                            .map_or("UNKNOWN", BarcodeFate::label)
                     })
                 {
                     barcode_treemap_data.push(TreeMapPlotUnit {
@@ -487,17 +477,17 @@ pub fn generate_filter_summary(
             let sub_filters: HashMap<_, _> = asm_filters
                 .iter()
                 .flatten()
-                .map(|(k, v)| (k, v.iter().unique().join("<br>")))
+                .map(|(k, v)| (k.as_str(), v.iter().unique().join("<br>")))
                 .chain(
                     enclone_filters
                         .iter()
                         .flatten()
-                        .map(|(k, v)| (k, v.label().to_string())),
+                        .map(|(k, v)| (k.as_str(), v.label().to_string())),
                 )
                 .collect();
             Some(WithTitle {
                 title: TitleWithHelp {
-                    help: "".into(),
+                    help: String::new(),
                     title: "GEX vs VDJ UMIs".into(),
                 }
                 .into(),
@@ -512,28 +502,24 @@ pub fn generate_filter_summary(
         None => None,
     };
 
-    let productive_contig_umis_in_cells = PercentMetric::from_parts(
-        barcode_info
-            .values()
-            .filter_map(|info| {
-                if info.is_cell {
-                    Some(info.num_umis as i64)
-                } else {
-                    None
-                }
-            })
-            .sum::<i64>(),
-        barcode_info
+    let productive_contig_umis_in_cells_frac = barcode_info
+        .values()
+        .filter_map(|info| {
+            if info.is_cell {
+                Some(info.num_umis as i64)
+            } else {
+                None
+            }
+        })
+        .sum::<i64>() as f64
+        / barcode_info
             .values()
             .map(|info| info.num_umis as i64)
-            .sum::<i64>(),
-    );
+            .sum::<i64>() as f64;
 
     let unique_cdr3s_per_chain: HashMap<String, i64> = {
         let mut cdr3s_per_chain = HashMap::new();
-        for Cdr3Info { cdr3_aa, chain, .. } in
-            barcode_info.values().flat_map(|info| info.cdr3s.iter())
-        {
+        for Cdr3Info { cdr3_aa, chain, .. } in barcode_info.values().flat_map(|info| &info.cdr3s) {
             cdr3s_per_chain
                 .entry(chain)
                 .or_insert_with(HashSet::new)
@@ -546,7 +532,7 @@ pub fn generate_filter_summary(
     };
 
     let content = WebSummaryContent {
-        umis_in_cells: productive_contig_umis_in_cells.fraction().map(|f| HeroMetric::new("VDJ UMIs in cells", format!("{:.1}%", 100.0 * f))),
+        umis_in_cells: (!productive_contig_umis_in_cells_frac.is_nan()).then(|| HeroMetric::new("VDJ UMIs in cells", format!("{:.1}%", 100.0 * productive_contig_umis_in_cells_frac))),
         barcode_filter_summary: WithTitle {
             title: TitleWithHelp {
                 help: "The plot shows a summary of where a barcode witha productive contig gets filtered in the pipeline".into(),
@@ -563,49 +549,49 @@ pub fn generate_filter_summary(
         },
         productive_contigs_per_barcode: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "Productive contigs per barcode".into(),
             }.into(),
             inner: make_contigs_per_barcode_plot(&categorized_barcodes, &barcode_info),
         },
         unique_cdr3s_per_chain: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "Unique CDR3s per chain".into(),
             }.into(),
             inner: make_unique_cdr3s_plot(&unique_cdr3s_per_chain),
         },
         umi_histogram_all: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "VDJ UMI Histogram".into(),
             }.into(),
             inner: make_umi_histogram(&categorized_barcodes, &barcode_info, false),
         },
         umi_histogram_categorized: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "VDJ UMI Histogram (Categorized)".into(),
             }.into(),
             inner: make_umi_histogram(&categorized_barcodes, &barcode_info, true),
         },
         cdr3_frequency: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "Top CDR3 AA distribution".into(),
             }.into(),
             inner: cdr3_freq_plot,
         },
         cdr3_frequency_umi: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "Top CDR3 AA distribution (UMI weighted)".into(),
             }.into(),
             inner: cdr3_freq_umi_plot,
         },
         cdr3_umi_distribution: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "Top CDR3 UMI distribution".into(),
             }.into(),
             inner: cdr3_umi_plot,
@@ -614,14 +600,14 @@ pub fn generate_filter_summary(
         gex_barcode_rank_plot: gex_umis.map(|g| {
             WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "Gex Barcode rank".into(),
             }.into(),
             inner: gex_barcode_rank_plot(&g),
         }}),
         vdj_barcode_rank_plot: WithTitle {
             title: TitleWithHelp {
-                help: "".into(),
+                help: String::new(),
                 title: "VDJ Barcode rank".into(),
             }.into(),
             inner: vdj_barcode_rank_plot(&barcode_info),
@@ -646,7 +632,7 @@ pub fn generate_filter_summary(
                 .collect(),
             barcodes_with_productive_contig_per_asm_filter: barcodes_per_asm_filter,
             barcodes_with_productive_contig_per_enclone_filter: barcodes_per_enclone_filter,
-            productive_contig_umis_in_cells,
+            productive_contig_umis_in_cells_frac,
             productive_contig_umis_per_filter_category: categorized_barcodes
                 .iter()
                 .map(|(category, barcodes)| {
@@ -713,7 +699,7 @@ fn gex_barcode_rank_plot(umis: &HashMap<String, u32>) -> PlotlyChart {
 }
 
 fn binned_hist(
-    values: impl Iterator<Item = f64>,
+    values: impl IntoIterator<Item = f64>,
     bin_width: f64,
 ) -> (Vec<f64>, Vec<usize>, Vec<String>) {
     let get_index = |value: f64| (value / bin_width).floor() as usize;
@@ -730,7 +716,7 @@ fn binned_hist(
         }
     };
 
-    let hist = values.map(get_index).counts();
+    let hist = values.into_iter().map(get_index).counts();
     let max_index = *hist.keys().max().unwrap_or(&0);
 
     let x = (0..=max_index).map(get_mid_x).collect();
@@ -743,7 +729,7 @@ fn binned_hist(
 }
 
 fn make_umi_histogram(
-    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&String>>,
+    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&str>>,
     barcode_info: &HashMap<String, BarcodeInfo>,
     per_category: bool,
 ) -> PlotlyChart {
@@ -797,7 +783,7 @@ fn make_umi_histogram(
             })
             .collect()
     } else {
-        let (x, y, text) = binned_hist(transformed_counts.into_iter(), bin_width);
+        let (x, y, text) = binned_hist(transformed_counts, bin_width);
         let bar = Bar::new(x, y)
             .hover_template("%{text}: %{y}")
             .text_array(text)
@@ -820,7 +806,7 @@ fn width_updated(bar: Box<Bar<f64, usize>>, bin_width: f64) -> serde_json::Value
 }
 
 fn make_contigs_per_barcode_plot(
-    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&String>>,
+    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&str>>,
     barcode_info: &HashMap<String, BarcodeInfo>,
 ) -> PlotlyChart {
     let per_category_histogram: BTreeMap<_, _> = categorized_barcodes
@@ -864,7 +850,7 @@ fn make_contigs_per_barcode_plot(
 }
 
 fn make_cdr3_plots(
-    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&String>>,
+    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&str>>,
     barcode_info: &HashMap<String, BarcodeInfo>,
 ) -> (PlotlyChart, PlotlyChart, PlotlyChart) {
     const N_CDR3: usize = 15;
@@ -892,14 +878,14 @@ fn make_cdr3_plots(
         .map(|(category, barcodes)| {
             let (x, y): (Vec<_>, Vec<_>) = barcodes
                 .iter()
-                .flat_map(|bc| barcode_info[*bc].cdr3s.iter())
+                .flat_map(|&bc| &barcode_info[bc].cdr3s)
                 .filter_map(
                     |Cdr3Info {
                          cdr3_aa, num_umis, ..
                      }| {
                         index_of_cdr3
                             .get(cdr3_aa)
-                            .map(|i| (*i as f32 + jitter.sample(&mut rng), *num_umis))
+                            .map(|&i| (i as f32 + jitter.sample(&mut rng), *num_umis))
                     },
                 )
                 .unzip();
@@ -934,7 +920,7 @@ fn make_cdr3_plots(
 }
 
 fn cdr3_frequency_plot(
-    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&String>>,
+    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&str>>,
     barcode_info: &HashMap<String, BarcodeInfo>,
     top_cdr3s: &[String],
     umi_weighted: bool,
@@ -946,9 +932,7 @@ fn cdr3_frequency_plot(
                 let mut counts = HashMap::new();
                 for Cdr3Info {
                     cdr3_aa, num_umis, ..
-                } in barcodes
-                    .iter()
-                    .flat_map(|bc| barcode_info[*bc].cdr3s.iter())
+                } in barcodes.iter().flat_map(|&bc| &barcode_info[bc].cdr3s)
                 {
                     *counts.entry(cdr3_aa).or_insert(0) += num_umis;
                 }
@@ -956,7 +940,7 @@ fn cdr3_frequency_plot(
             } else {
                 barcodes
                     .iter()
-                    .flat_map(|bc| barcode_info[*bc].cdr3s.iter().map(|c| &c.cdr3_aa))
+                    .flat_map(|&bc| barcode_info[bc].cdr3s.iter().map(|c| &c.cdr3_aa))
                     .counts()
             };
             Bar::new(
@@ -982,9 +966,9 @@ fn cdr3_frequency_plot(
 
 fn make_gex_vdj_umi_scatter(
     gex_umis: &HashMap<String, u32>,
-    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&String>>,
+    categorized_barcodes: &BTreeMap<BarcodeCategory, Vec<&str>>,
     barcode_info: &HashMap<String, BarcodeInfo>,
-    sub_filters: &HashMap<&String, String>,
+    sub_filters: &HashMap<&str, String>,
 ) -> PlotlyChart {
     let data = categorized_barcodes
         .iter()
@@ -1030,34 +1014,35 @@ fn make_gex_vdj_umi_scatter(
 
 martian_filetype! {HtmlFile, "html"}
 
-#[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Clone, Deserialize, MartianStruct)]
 pub struct SummarizeVdjFiltersStageInputs {
     sample_id: String,
     sample_description: Option<String>,
     all_contig_annotations: JsonFile<Vec<ContigAnnotation>>,
-    asm_filter_diagnostics: Lz4<JsonFile<Vec<FilterLogEntry>>>,
+    asm_filter_diagnostics: Option<Lz4<JsonFile<Vec<FilterLogEntry>>>>,
     enclone_barcode_fate: JsonFile<()>,
     raw_matrix_h5: Option<H5File>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Serialize, Deserialize, MartianStruct)]
 pub struct SummarizeVdjFiltersStageOutputs {
     filter_summary: HtmlFile,
-    metrics_summary: JsonFile<()>,
+    metrics_summary: JsonFile<VdjFilterMetrics>,
 }
 
 pub struct SummarizeVdjFilters;
 
-#[make_mro(mem_gb = 4)]
+#[make_mro(mem_gb = 5)]
 impl MartianMain for SummarizeVdjFilters {
     type StageInputs = SummarizeVdjFiltersStageInputs;
-    type StageOutputs = SummarizeVdjFiltersStageOutputs; // Use `MartianVoid` if empty
+    type StageOutputs = SummarizeVdjFiltersStageOutputs;
+
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let FilterSummary { html, metrics } = generate_filter_summary(
             &args.sample_id,
             args.sample_description.as_deref(),
             Annotations::json(&args.all_contig_annotations, &args.enclone_barcode_fate),
-            Some(&args.asm_filter_diagnostics),
+            args.asm_filter_diagnostics.as_ref(),
             args.raw_matrix_h5.as_ref(),
         )?;
 
@@ -1068,12 +1053,12 @@ impl MartianMain for SummarizeVdjFilters {
             websummary_build::build_files()?,
         )?;
 
-        let metrics_summary_json: JsonFile<()> = rover.make_path("metrics_summary");
-        metrics.report(&metrics_summary_json)?;
+        let metrics_summary: JsonFile<_> = rover.make_path("metrics_summary");
+        metrics_summary.write(&metrics)?;
 
         Ok(SummarizeVdjFiltersStageOutputs {
             filter_summary: filter_summary_html,
-            metrics_summary: metrics_summary_json,
+            metrics_summary,
         })
     }
 }

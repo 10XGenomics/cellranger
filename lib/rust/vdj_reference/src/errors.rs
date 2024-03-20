@@ -70,12 +70,12 @@ impl fmt::Display for FastaState {
             FastaState::ProcessedRecord { line_num, header } => {
                 write!(f, "LINE {:5}: {header}", line_num + 1)
             }
-            _ => write!(f, ""),
+            FastaState::Unknown => Ok(()),
         }
     }
 }
 
-fn _last_record_print(last: &Option<(usize, String)>) -> String {
+fn _last_record_print(last: Option<&(usize, String)>) -> String {
     match last.as_ref() {
         Some((n, line)) => {
             format!(
@@ -320,7 +320,7 @@ impl fmt::Display for HeaderErrors {
             DuplicateId { id, last_line } => format!(
                 "The feature ID '{}' is duplicated. {}",
                 id,
-                last_line.map_or("".into(), |line| format!(
+                last_line.map_or(String::new(), |line| format!(
                     "The same ID was encountered in line {}.",
                     line + 1
                 ))

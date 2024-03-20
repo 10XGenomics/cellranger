@@ -6,32 +6,36 @@
 @include "_cr_lib_stages.mro"
 
 pipeline _SLFE_CELLS_REPORTER(
-    in  path             reference_path,
-    in  CellCallingParam recovered_cells,
-    in  CellCallingParam force_cells,
-    in  frf.bincode      slfe_feature_reference,
-    in  tps.json         target_panel_summary,
-    in  h5               matrices_h5,
-    in  map[]            read_chunks,
-    in  int              gem_well,
-    in  bui[]            report_mol_inputs,
-    in  json             matrix_computer_summary,
-    in  h5               barcode_summary,
-    in  csv              filtered_barcodes,
-    in  csv              per_probe_metrics,
-    in  json             filter_barcodes_summary,
-    in  csv              per_barcode_metrics,
-    in  bool             include_introns,
-    in  bool             filter_probes,
-    in  string           multi_config_sha,
-    in  bi.bincode       barcode_index,
-    in  string           slide_serial_capture_area,
-    out json             summary,
-    out h5               molecule_info,
-    out pickle           merged_subsampling_metrics,
+    in  map<ChemistryDef> chemistry_defs,
+    in  path              reference_path,
+    in  CellCallingParam  recovered_cells,
+    in  CellCallingParam  force_cells,
+    in  frf.bincode       slfe_feature_reference,
+    in  tps.json          target_panel_summary,
+    in  h5                matrices_h5,
+    in  map[]             read_chunks,
+    in  int               gem_well,
+    in  bui[]             report_mol_inputs,
+    in  json              matrix_computer_summary,
+    in  h5                barcode_summary,
+    in  csv               filtered_barcodes,
+    in  csv               per_probe_metrics,
+    in  json              filter_barcodes_summary,
+    in  csv               per_barcode_metrics,
+    in  bool              include_introns,
+    in  bool              filter_probes,
+    in  bool              disable_ab_aggregate_detection,
+    in  bool              disable_high_occupancy_gem_detection,
+    in  bool              disable_subsampling,
+    in  string            multi_config_sha,
+    in  bi.bincode        barcode_index,
+    in  string            slide_serial_capture_area,
+    out json              summary,
+    out h5                molecule_info,
 )
 {
     call WRITE_MOLECULE_INFO(
+        chemistry_defs            = self.chemistry_defs,
         gem_well                  = self.gem_well,
         counts_bc_order           = self.report_mol_inputs,
         reference_path            = self.reference_path,
@@ -45,6 +49,8 @@ pipeline _SLFE_CELLS_REPORTER(
         per_probe_metrics         = self.per_probe_metrics,
         include_introns           = self.include_introns,
         filter_probes             = self.filter_probes,
+        disable_ab_aggregate_detection = self.disable_ab_aggregate_detection,
+        disable_high_occupancy_gem_detection = self.disable_high_occupancy_gem_detection,
         multi_config_sha          = self.multi_config_sha,
         sample_barcodes           = null,
         per_sample_metrics        = null,
@@ -57,6 +63,7 @@ pipeline _SLFE_CELLS_REPORTER(
         filtered_barcodes = self.filtered_barcodes,
         target_mode       = null,
     ) using (
+        disabled = self.disable_subsampling,
         volatile = true,
     )
 
@@ -81,9 +88,8 @@ pipeline _SLFE_CELLS_REPORTER(
     )
 
     return (
-        summary                    = SUMMARIZE_BASIC_REPORTS.summary,
-        molecule_info              = WRITE_MOLECULE_INFO.single_mol_info.h5_file,
-        merged_subsampling_metrics = SUBSAMPLE_READS.merged_metrics,
+        summary       = SUMMARIZE_BASIC_REPORTS.summary,
+        molecule_info = WRITE_MOLECULE_INFO.single_mol_info.h5_file,
     )
 }
 
@@ -104,7 +110,6 @@ pipeline _SAMPLE_CELLS_REPORTER(
     in  json             targeted_analyzer_metrics,
     in  tps.json         target_panel_summary,
     out json             summary,
-    out pickle           merged_subsampling_metrics,
 )
 {
     call SUBSAMPLE_READS(
@@ -138,7 +143,6 @@ pipeline _SAMPLE_CELLS_REPORTER(
     )
 
     return (
-        summary                    = SUMMARIZE_BASIC_REPORTS.summary,
-        merged_subsampling_metrics = SUBSAMPLE_READS.merged_metrics,
+        summary = SUMMARIZE_BASIC_REPORTS.summary,
     )
 }

@@ -23,6 +23,7 @@ filetype cmf.bincode;
 filetype csf;
 filetype csv;
 filetype fbc.bincode;
+filetype fprint.json;
 filetype frf.bincode;
 filetype h5;
 filetype json;
@@ -96,25 +97,6 @@ struct AnnotationFiles(
     ann.bincode.lz4[] files,
 )
 
-struct VdjInputs(
-    map[]        sample_def,
-    string       chemistry,
-    ChemistryDef custom_chemistry_def,
-    map[]        primers,
-    float        subsample_rate,
-    int          initial_reads,
-    int          primer_initial_reads,
-    string[]     special_genomic_regions,
-    bool         denovo,
-    int          r1_length,
-    int          r2_length,
-    path         ground_truth_clonotype_path,
-    path         inner_enrichment_primers,
-    string       chain_type,
-    string       physical_library_id,
-    bool         r2_revcomp,
-)
-
 struct VdjFilterFlags(
     bool multiplet_filter,
     bool shared_contig_filter,
@@ -124,7 +106,9 @@ struct VdjFilterFlags(
 struct VdjGenInputs(
     path           reference_path,
     path           vdj_reference_path,
+    int            min_contig_length,
     VdjFilterFlags filter_flags,
+    bool           skip_clonotyping,
 )
 
 struct SampleMetrics(
@@ -168,14 +152,16 @@ struct CommonInputs(
 )
 
 struct CellCallingParam(
-    int      per_gem_well,
-    map<int> per_sample,
+    float      per_gem_well,
+    map<float> per_sample,
 )
 
 struct CellCalling(
     CellCallingParam recovered_cells,
     CellCallingParam force_cells,
     CellCallingParam emptydrops_minimum_umis,
+    CellCallingParam global_minimum_umis,
+    CellCallingParam max_mito_percent,
     json             cell_barcodes,
     string           override_mode,
     string[]         override_library_types,
@@ -191,7 +177,7 @@ struct BarcodeAssignments(
 
 struct CountInputs(
     map[]              sample_def,
-    string             chemistry,
+    map<string>        chemistry_specs,
     ChemistryDef       custom_chemistry_def,
     path               reference_path,
     json               gene_index,
@@ -221,6 +207,24 @@ struct CountInputs(
     bool               tenx_cmos,
     float              min_assignment_confidence,
     csv[]              annotations,
+    string             cas_model,
+)
+
+struct VdjInputs(
+    map[]        sample_def,
+    string       chemistry_spec,
+    ChemistryDef custom_chemistry_def,
+    map[]        primers,
+    float        subsample_rate,
+    int          initial_reads,
+    int          primer_initial_reads,
+    string[]     special_genomic_regions,
+    bool         denovo,
+    int          r1_length,
+    int          r2_length,
+    path         inner_enrichment_primers,
+    string       chain_type,
+    string       physical_library_id,
 )
 
 struct BasicPipelineConfig(
@@ -241,6 +245,40 @@ struct BeamAnalyzerOutputs(
     csv            per_barcode,
 )
 
+struct VdjAnalysisConfig(
+    bool per_sample,
+    bool is_multi,
+    bool has_no_vdj_ref,
+    bool denovo,
+    bool has_antigen,
+    bool skip_clonotyping,
+)
+
+struct GexMatrices(
+    h5  filtered_matrix_h5,
+    h5  raw_matrix_h5,
+    csv filtered_barcodes,
+)
+
+struct VdjDemuxSampleInfo(
+    string      sample_id,
+    int         sample_number,
+    GexMatrices gex_matrices,
+    fprint.json fingerprint,
+)
+
+struct SampleMatrices(
+    string sample,
+    h5     filtered_matrix_h5,
+    path   filtered_matrix_mex,
+    h5     raw_matrix_h5,
+    h5     raw_probe_bc_matrix,
+    path   raw_matrix_mex,
+    csv    filtered_barcodes,
+    csv    aggregate_barcodes,
+    csv    per_probe_metrics,
+)
+
 struct SampleMoleculeInfo(
     string sample,
     h5     h5_file,
@@ -255,134 +293,139 @@ struct SampleBamFile(
 )
 
 stage ALIGN_AND_COUNT(
-    in  int             gem_well,
-    in  map[]           read_chunks,
-    in  path            reference_path,
-    in  ReadShards      read_shards,
-    in  fbc.bincode     feature_counts,
-    in  frf.bincode     feature_reference,
-    in  csv             target_set,
-    in  ChemistryDef    chemistry_def,
-    in  string          aligner,
-    in  float           aligner_subsample_rate,
-    in  bool            include_exons,
-    in  bool            include_introns,
-    in  bool            is_pd,
-    in  bool            no_bam,
-    in  int             targeted_umi_min_read_count,
-    in  int             transcriptome_min_score,
-    in  int             trim_polya_min_score,
-    in  int             trim_tso_min_score,
-    in  tbcc.bincode    total_barcode_counts,
-    in  blf.json        barcode_subset,
-    in  float           chevron_correction_factor,
-    in  json            chevron_affected_barcodes,
-    out csf[]           counts_bc_order,
-    out csf[]           probe_barcode_counts,
-    out bui[]           bc_umi_info,
-    out asf[]           pos_sorted,
-    out path            bam_header,
-    out csv             barcode_summary,
-    out AnnotationFiles annotation_files,
-    out bmsf[]          per_barcode_metrics,
-    out json            summary,
-    out bool            no_star_alignments,
-    src comp            "cr_lib martian align_and_count",
+    in  int               gem_well,
+    in  map[]             read_chunks,
+    in  path              reference_path,
+    in  ReadShards        read_shards,
+    in  fbc.bincode       feature_counts,
+    in  frf.bincode       feature_reference,
+    in  csv               target_set,
+    in  map<ChemistryDef> chemistry_defs,
+    in  string            aligner,
+    in  bool              include_exons,
+    in  bool              include_introns,
+    in  bool              is_pd,
+    in  bool              no_bam,
+    in  int               targeted_umi_min_read_count,
+    in  int               transcriptome_min_score,
+    in  int               trim_polya_min_score,
+    in  int               trim_tso_min_score,
+    in  tbcc.bincode      total_barcode_counts,
+    in  blf.json          barcode_subset,
+    in  float             chevron_correction_factor,
+    in  json              chevron_affected_barcodes,
+    out csf[]             counts_bc_order,
+    out csf[]             probe_barcode_counts,
+    out bui[]             bc_umi_info,
+    out asf[]             pos_sorted,
+    out path              bam_header,
+    out csv               barcode_summary,
+    out AnnotationFiles   annotation_files,
+    out bmsf[]            per_barcode_metrics,
+    out json              summary,
+    out bool              no_star_alignments,
+    src comp              "cr_lib martian align_and_count",
 ) split (
-    in  map             range,
-    in  float           read_ann_subsample_rate,
-    out csf             counts_bc_order_shard,
-    out csf             probe_barcode_counts_shard,
-    out bui             bc_umi_info_shard,
-    out asf             pos_sorted_shard,
-    out bsf.bincode     barcode_summary_shard,
-    out bmsf            metrics_shard,
+    in  map               range,
+    in  float             read_ann_subsample_rate,
+    out csf               counts_bc_order_shard,
+    out csf               probe_barcode_counts_shard,
+    out bui               bc_umi_info_shard,
+    out asf               pos_sorted_shard,
+    out bsf.bincode       barcode_summary_shard,
+    out bmsf              metrics_shard,
 ) using (
     mem_gb   = 4,
     volatile = strict,
 )
 
 stage BARCODE_CORRECTION(
-    in  int          gem_well,
-    in  shard[]      invalid_uncorrected,
-    in  ChemistryDef chemistry_def,
-    in  bsc.bincode  barcode_segment_counts,
-    in  bcc.bincode  barcode_counts,
-    in  bcm.bincode  valid_read_metrics,
-    in  string[]     libraries_to_translate,
-    in  cmf.bincode  correction_map,
-    in  int          min_reads_to_report_bc,
-    out shard[]      valid_corrected,
-    out shard[]      invalid,
-    out json         summary,
-    out bcc.bincode  corrected_barcode_counts,
-    out tbcc.bincode total_barcode_counts,
-    src comp         "cr_lib martian barcode_correction",
+    in  int               gem_well,
+    in  shard[]           invalid_uncorrected,
+    in  map<ChemistryDef> chemistry_defs,
+    in  bsc.bincode       barcode_segment_counts,
+    in  bcc.bincode       barcode_counts,
+    in  bcm.bincode       valid_read_metrics,
+    in  string[]          libraries_to_translate,
+    in  cmf.bincode       correction_map,
+    in  int               min_reads_to_report_bc,
+    out shard[]           valid_corrected,
+    out shard[]           invalid,
+    out json              summary,
+    out bcc.bincode       corrected_barcode_counts,
+    out tbcc.bincode      total_barcode_counts,
+    src comp              "cr_lib martian barcode_correction",
 ) split (
-    in  map          range,
-    out shard        valid_shard,
-    out shard        invalid_shard,
-    out bcm.bincode  chunk_summary,
+    in  map               range,
+    out shard             valid_shard,
+    out shard             invalid_shard,
+    out bcm.bincode       chunk_summary,
 ) using (
     mem_gb   = 4,
     volatile = strict,
 )
 
-stage BUILD_VDJ_WS_CONTENTS(
-    in  json         metrics_summary,
-    in  string       receptor,
-    in  VdjInputs    vdj_inputs,
-    in  VdjGenInputs vdj_gen_inputs,
-    in  smf.json     sequencing_metrics,
-    in  json         vdj_ws_json,
-    in  json         filter_metrics,
-    out vwc.json     vdj_ws_contents,
-    src comp         "cr_lib martian build_vdj_ws_contents",
+stage BUILD_PER_SAMPLE_VDJ_WS_CONTENTS(
+    in  json          lib_level_metrics,
+    in  map<json>     per_sample_metrics,
+    in  string        receptor,
+    in  string        physical_library_id,
+    in  VdjGenInputs  vdj_gen_inputs,
+    in  smf.json      sequencing_metrics,
+    in  map<json>     vdj_ws_json,
+    in  map<json>     filter_metrics,
+    out map<vwc.json> vdj_ws_contents,
+    src comp          "cr_lib martian build_per_sample_vdj_ws_contents",
+) split (
+    in  string        sample,
+    out vwc.json      vdj_ws,
 ) using (
     volatile = strict,
 )
 
 stage CALL_TAGS_OH(
-    in  ChemistryDef chemistry_def,
-    in  h5           raw_feature_bc_matrix,
-    out json         barcodes_per_tag,
-    out json         summary,
-    src comp         "cr_lib martian call_tags_oh",
+    in  map<ChemistryDef> chemistry_defs,
+    in  h5                raw_feature_bc_matrix,
+    out json              barcodes_per_tag,
+    out json              summary,
+    src comp              "cr_lib martian call_tags_oh",
 ) using (
     mem_gb   = 8,
     volatile = strict,
 )
 
 stage CALL_TAGS_RTL(
-    in  ChemistryDef chemistry_def,
-    in  h5           raw_feature_bc_matrix,
-    in  h5           filtered_feature_bc_matrix,
-    in  json         multi_graph,
-    out json         barcodes_per_tag,
-    out csv          frp_gem_barcode_overlap,
-    out json         summary,
-    src comp         "cr_lib martian call_tags_rtl",
+    in  map<ChemistryDef> chemistry_defs,
+    in  h5                raw_feature_bc_matrix,
+    in  h5                filtered_feature_bc_matrix,
+    in  json              multi_graph,
+    out json              barcodes_per_tag,
+    out csv               frp_gem_barcode_overlap,
+    out json              summary,
+    src comp              "cr_lib martian call_tags_rtl",
 ) split (
 ) using (
     volatile = strict,
 )
 
 stage CHECK_BARCODES_COMPATIBILITY(
-    in  ChemistryDef chemistry_def,
-    in  map[]        sample_def,
-    in  bool         check_library_compatibility,
-    out string[]     libraries_to_translate,
-    src comp         "cr_lib martian check_barcodes_compatibility",
+    in  map<ChemistryDef> chemistry_defs,
+    in  map[]             sample_def,
+    in  bool              check_library_compatibility,
+    out string[]          libraries_to_translate,
+    src comp              "cr_lib martian check_barcodes_compatibility",
+) using (
+    mem_gb = 2,
 )
 
 stage CHECK_BARCODES_COMPATIBILITY_VDJ(
-    in  ChemistryDef vdj_chemistry_def,
-    in  map[]        vdj_sample_def,
-    in  ChemistryDef gex_chemistry_def,
-    in  map[]        gex_sample_def,
-    in  bool         check_library_compatibility,
-    out float        similarity_score,
-    src comp         "cr_lib martian check_barcodes_compatibility_vdj",
+    in  ChemistryDef      vdj_chemistry_def,
+    in  map[]             vdj_sample_def,
+    in  map<ChemistryDef> count_chemistry_defs,
+    in  map[]             gex_sample_def,
+    in  bool              check_library_compatibility,
+    out float             similarity_score,
+    src comp              "cr_lib martian check_barcodes_compatibility_vdj",
 )
 
 stage CHECK_SINGLE_BEAM_MODE(
@@ -422,7 +465,8 @@ stage COLLATE_PROBE_METRICS(
     out json       estimated_gdna_metrics,
     src comp       "cr_lib martian collate_probe_metrics",
 ) using (
-    mem_gb = 8,
+    mem_gb   = 8,
+    volatile = strict,
 )
 
 stage COMPUTE_ANTIGEN_VDJ_METRICS(
@@ -433,6 +477,15 @@ stage COMPUTE_ANTIGEN_VDJ_METRICS(
     src comp           "cr_lib martian compute_antigen_vdj_metrics",
 ) using (
     mem_gb   = 4,
+    volatile = strict,
+)
+
+stage COPY_CHEMISTRY_SPEC(
+    in  map[]       sample_defs,
+    in  string      chemistry_spec,
+    out map<string> chemistry_specs,
+    src comp        "cr_lib martian copy_chemistry_spec",
+) using (
     volatile = strict,
 )
 
@@ -461,25 +514,27 @@ stage DEMUX_PROBE_BC_MATRIX(
     in  string   sample_name,
     out csv      sample_per_probe_metrics,
     out h5       sample_raw_probe_bc_matrix,
+) using (
+    volatile = strict,
 )
 
 stage DETECT_CHEMISTRY(
-    in  map[]         sample_def,
-    in  path          reference_path,
-    in  csv           feature_reference,
-    in  string        chemistry_name_spec,
-    in  string[]      allowed_chems,
-    in  int           r1_length,
-    in  int           r2_length,
-    in  csv           multi_config,
-    in  bool          is_pd,
-    in  ChemistryDef  custom_chemistry_def,
-    in  FeatureConfig feature_config,
-    out ChemistryDef  chemistry_def,
-    out bool          is_antibody_only,
-    out csv           probe_barcode_overlap,
-    out json          detected_probe_barcode_pairing,
-    src comp          "cr_lib martian detect_chemistry",
+    in  map[]             sample_def,
+    in  path              reference_path,
+    in  csv               feature_reference,
+    in  map<string>       chemistry_specs,
+    in  string[]          allowed_chems,
+    in  int               r1_length,
+    in  int               r2_length,
+    in  csv               multi_config,
+    in  bool              is_pd,
+    in  ChemistryDef      custom_chemistry_def,
+    in  FeatureConfig     feature_config,
+    out map<ChemistryDef> chemistry_defs,
+    out bool              is_antibody_only,
+    out csv               probe_barcode_overlap,
+    out json              detected_probe_barcode_pairing,
+    src comp              "cr_lib martian detect_chemistry",
 ) using (
     mem_gb   = 20,
     volatile = strict,
@@ -503,6 +558,15 @@ stage DETECT_VDJ_RECEPTOR(
     volatile = strict,
 )
 
+stage EXTRACT_SINGLE_CHEMISTRY(
+    in  map<ChemistryDef> chemistry_defs,
+    in  string            library_to_extract,
+    out ChemistryDef      chemistry_def,
+    src comp              "cr_lib martian extract_single_chemistry",
+) using (
+    volatile = strict,
+)
+
 stage GET_CHEMISTRY_DEF(
     in  string       chemistry_name,
     in  ChemistryDef custom_chemistry_def,
@@ -520,7 +584,8 @@ stage GET_GDNA_METRICS(
     out json gdna_plot_sufficient_stats,
     src comp "cr_lib martian get_gdna_metrics",
 ) using (
-    mem_gb = 4,
+    mem_gb   = 4,
+    volatile = strict,
 )
 
 stage LOGIC_NOT(
@@ -532,49 +597,50 @@ stage LOGIC_NOT(
 )
 
 stage MAKE_CORRECTION_MAP(
-    in  ChemistryDef chemistry_def,
-    in  bsc.bincode  barcode_segment_counts,
-    out cmf.bincode  correction_map,
-    src comp         "cr_lib martian make_correction_map",
+    in  map<ChemistryDef> chemistry_defs,
+    in  bsc.bincode       barcode_segment_counts,
+    out cmf.bincode       correction_map,
+    src comp              "cr_lib martian make_correction_map",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage MAKE_SHARD(
-    in  ChemistryDef  chemistry_def,
-    in  int           gem_well,
-    in  map[]         read_chunks,
-    in  int           r1_length,
-    in  int           r2_length,
-    in  float         subsample_rate,
-    in  int           initial_read_pairs,
-    in  path          reference_path,
-    in  csv           feature_reference_path,
-    in  csv           target_features,
-    in  csv           target_set,
-    in  string        target_set_name,
-    in  string[]      libraries_to_translate,
-    in  FeatureConfig feature_config,
-    out shard[]       valid,
-    out shard[]       invalid,
-    out bcc.bincode   barcode_counts,
-    out bsc.bincode   barcode_segment_counts,
-    out fbc.bincode   feature_counts,
-    out json          summary,
-    out int           total_read_pairs,
-    out bool          paired_end,
-    out frf.bincode   feature_reference,
-    out bcm.bincode   bc_correct_summary,
-    out smf.json      sequencing_metrics,
-    src comp          "cr_lib martian make_shard",
+    in  map<ChemistryDef> chemistry_defs,
+    in  int               gem_well,
+    in  map[]             read_chunks,
+    in  int               r1_length,
+    in  int               r2_length,
+    in  float             subsample_rate,
+    in  int               initial_read_pairs,
+    in  path              reference_path,
+    in  csv               feature_reference_path,
+    in  csv               target_features,
+    in  csv               target_set,
+    in  string            target_set_name,
+    in  string[]          libraries_to_translate,
+    in  FeatureConfig     feature_config,
+    out shard[]           valid,
+    out shard[]           invalid,
+    out bcc.bincode       barcode_counts,
+    out bsc.bincode       barcode_segment_counts,
+    out fbc.bincode       feature_counts,
+    out json              summary,
+    out int               total_read_pairs,
+    out frf.bincode       feature_reference,
+    out bcm.bincode       bc_correct_summary,
+    out smf.json          sequencing_metrics,
+    src comp              "cr_lib martian make_shard",
 ) split (
-    in  int           chunk_id,
-    in  frf.bincode   feature_reference,
-    out shard         valid_shard,
-    out shard         invalid_shard,
-    out rpc           read_prefix_counts,
-    out umi           umi_counts,
-    out msm.bincode   chunk_summary,
-    out msh.bincode   chunk_hist,
+    in  int               chunk_id,
+    in  frf.bincode       feature_reference,
+    out shard             valid_shard,
+    out shard             invalid_shard,
+    out rpc               read_prefix_counts,
+    out umi               umi_counts,
+    out msm.bincode       chunk_summary,
+    out msh.bincode       chunk_hist,
 ) using (
     volatile = strict,
 )
@@ -604,14 +670,14 @@ stage MULTI_PREFLIGHT(
 )
 
 stage MULTI_SETUP_CHUNKS(
-    in  string       sample_id,
-    in  map[]        sample_def,
-    in  ChemistryDef chemistry_def,
-    in  string       default_library_type,
-    out map[]        chunks,
-    out string       barcode_whitelist,
-    out string       visium_hd_slide_name,
-    src comp         "cr_lib martian multi_setup_chunks",
+    in  string            sample_id,
+    in  map[]             sample_def,
+    in  map<ChemistryDef> chemistry_defs,
+    in  string            default_library_type,
+    out map[]             chunks,
+    out string            barcode_whitelist,
+    out string            visium_hd_slide_name,
+    src comp              "cr_lib martian multi_setup_chunks",
 )
 
 stage PARSE_MULTI_CONFIG(
@@ -648,48 +714,39 @@ stage PARSE_MULTI_CONFIG(
 )
 
 stage PICK_BEAM_ANALYZER(
-    in  BeamAnalyzerOutputs[] options,
-    out BeamAnalyzerOutputs   output,
-    src comp                  "cr_lib martian pick_beam_analyzer",
+    in  map<BeamAnalyzerOutputs> vdj_t,
+    in  map<BeamAnalyzerOutputs> vdj_t_gd,
+    in  map<BeamAnalyzerOutputs> vdj_b,
+    out map<BeamAnalyzerOutputs> output,
+    src comp                     "cr_lib martian pick_beam_analyzer",
 ) using (
     volatile = strict,
 )
 
 stage RUST_BRIDGE(
-    in  int           gem_well,
-    in  shard[]       valid_uncorrected,
-    in  shard[]       valid_corrected,
-    in  bcc.bincode   raw_barcode_counts,
-    in  bcc.bincode   corrected_barcode_counts,
-    in  bool          paired_end,
-    out bincode.lz4[] bc_sorted_rna_reads,
-    out int[]         gem_groups,
-    out json[]        barcodes,
-    out json          raw_barcode_counts_json,
-    out json          corrected_barcode_counts_json,
-    out json          summary,
-    out int           n50_n50_rpu,
-    out int           processed_read_pairs,
-    src comp          "cr_lib martian rust_bridge",
+    in  map<ChemistryDef> chemistry_defs,
+    in  int               gem_well,
+    in  shard[]           valid_uncorrected,
+    in  shard[]           valid_corrected,
+    in  bcc.bincode       raw_barcode_counts,
+    in  bcc.bincode       corrected_barcode_counts,
+    out bincode.lz4[]     bc_sorted_rna_reads,
+    out int[]             gem_groups,
+    out json[]            barcodes,
+    out json              raw_barcode_counts_json,
+    out json              corrected_barcode_counts_json,
+    out json              summary,
+    out int               n50_n50_rpu,
+    out int               processed_read_pairs,
+    src comp              "cr_lib martian rust_bridge",
 ) split (
-    in  map           range,
-    in  shard[]       valid_shards,
-    out bincode.lz4   chunk_bc_sorted_rna_reads,
-    out json          barcodes_shard,
-    out bincode       n50s_shard,
+    in  map               range,
+    in  shard[]           valid_shards,
+    out bincode.lz4       chunk_bc_sorted_rna_reads,
+    out json              barcodes_shard,
+    out bincode           n50s_shard,
 ) using (
     mem_gb = 4,
-)
-
-stage SET_ALIGNER_SUBSAMPLE_RATE(
-    in  json        barcodes_under_tissue,
-    in  bcc.bincode corrected_barcode_counts,
-    in  int         rps_limit,
-    out float       aligner_subsample_rate,
-    src comp        "cr_lib martian set_aligner_subsample_rate",
-) using (
-    mem_gb   = 8,
-    volatile = strict,
 )
 
 stage SET_TARGETED_UMI_FILTER(
@@ -701,6 +758,32 @@ stage SET_TARGETED_UMI_FILTER(
 ) using (
     mem_gb   = 8,
     volatile = strict,
+)
+
+stage SETUP_VDJ_ANALYSIS(
+    in  string             receptor,
+    in  VdjAnalysisConfig  vdj_config,
+    in  VdjDemuxSampleInfo demux_sample_info,
+    in  GexMatrices        lib_level_gex,
+    out string             receptor,
+    out bool               disable_cell_calling,
+    out bool               disable_clonotyping,
+    out bool               disable_beam,
+    out string             beam_mode,
+    out h5                 filtered_matrix_h5,
+    out h5                 raw_matrix_h5,
+    out csv                filtered_barcodes,
+    src comp               "cr_lib martian setup_vdj_analysis",
+)
+
+stage SETUP_VDJ_DEMUX(
+    in  SampleMatrices[]        multi_matrices,
+    in  json                    multi_graph,
+    out bool                    is_multi,
+    out bool                    is_not_multi,
+    out bool                    has_antigen,
+    out map<VdjDemuxSampleInfo> per_sample_info,
+    src comp                    "cr_lib martian setup_vdj_demux",
 )
 
 stage SUBSAMPLE_BARCODES(
@@ -718,7 +801,7 @@ stage WRITE_BARCODE_INDEX(
     out bi.bincode  barcode_index,
     src comp        "cr_lib martian write_barcode_index",
 ) using (
-    mem_gb   = 5,
+    mem_gb   = 6,
     volatile = strict,
 )
 
@@ -743,14 +826,14 @@ stage WRITE_GENE_INDEX(
 )
 
 stage WRITE_H5_MATRIX(
-    in  int          gem_well,
-    in  csf[]        counts,
-    in  frf.bincode  feature_reference,
-    in  ChemistryDef chemistry_def,
-    in  string       sample_id,
-    in  bi.bincode   barcode_index,
-    out h5           matrix,
-    src comp         "cr_lib martian write_h5_matrix",
+    in  int               gem_well,
+    in  csf[]             counts,
+    in  frf.bincode       feature_reference,
+    in  map<ChemistryDef> chemistry_defs,
+    in  string            sample_id,
+    in  bi.bincode        barcode_index,
+    out h5                matrix,
+    src comp              "cr_lib martian write_h5_matrix",
 ) using (
     mem_gb   = 7,
     volatile = strict,
@@ -768,6 +851,7 @@ stage WRITE_MATRIX_MARKET(
 )
 
 stage WRITE_MOLECULE_INFO(
+    in  map<ChemistryDef>    chemistry_defs,
     in  int                  gem_well,
     in  bui[]                counts_bc_order,
     in  path                 reference_path,
@@ -780,6 +864,8 @@ stage WRITE_MOLECULE_INFO(
     in  CellCallingParam     recovered_cells,
     in  CellCallingParam     force_cells,
     in  bool                 include_introns,
+    in  bool                 disable_ab_aggregate_detection,
+    in  bool                 disable_high_occupancy_gem_detection,
     in  bool                 filter_probes,
     in  string               multi_config_sha,
     in  json                 sample_barcodes,
@@ -795,42 +881,45 @@ stage WRITE_MOLECULE_INFO(
 )
 
 stage WRITE_MULTI_WEB_SUMMARY_JSON(
-    in  map<json>      per_sample_metrics,
-    in  json           library_metrics,
-    in  smf.json       sequencing_metrics,
-    in  csv            multi_config,
-    in  json           multi_graph,
-    in  svg            multi_graph_svg,
-    in  CommonInputs   common_inputs,
-    in  CountInputs    count_inputs,
-    in  json           tag_contaminant_info,
-    in  map<json>      sample_tsne_plots,
-    in  map<json>      sample_barcode_rank_plots,
-    in  map<json>      sample_treemap_plots,
-    in  json           barcode_rank_plots,
-    in  json           jibes_biplot_histogram,
-    in  json           antibody_histograms,
-    in  map<json>      sample_antibody_histograms,
-    in  json           antigen_histograms,
-    in  csv            targeted_per_feature_metrics,
-    in  json           cmo_tsne_plot,
-    in  vwc.json       vdj_t_contents,
-    in  vwc.json       vdj_t_gd_contents,
-    in  vwc.json       vdj_b_contents,
-    in  string         target_set_name,
-    in  ag.vdj.bincode antigen_vdj_metrics,
-    in  csv            antigen_specificity,
-    in  FeatureConfig  feature_config,
-    in  json           detected_probe_barcode_pairing,
-    in  bool           no_preflight,
-    out map<json>      web_summary_json,
-    out map<csv>       metrics_summary_csv,
-    src comp           "cr_lib martian write_multi_web_summary_json",
+    in  map<json>           per_sample_metrics,
+    in  json                library_metrics,
+    in  smf.json            sequencing_metrics,
+    in  csv                 multi_config,
+    in  json                multi_graph,
+    in  svg                 multi_graph_svg,
+    in  CommonInputs        common_inputs,
+    in  CountInputs         count_inputs,
+    in  json                tag_contaminant_info,
+    in  map<json>           sample_tsne_plots,
+    in  map<json>           sample_barcode_rank_plots,
+    in  map<json>           sample_treemap_plots,
+    in  json                barcode_rank_plots,
+    in  json                jibes_biplot_histogram,
+    in  json                antibody_histograms,
+    in  map<json>           sample_antibody_histograms,
+    in  json                antigen_histograms,
+    in  csv                 targeted_per_feature_metrics,
+    in  json                cmo_tsne_plot,
+    in  map<vwc.json>       vdj_t_contents,
+    in  map<vwc.json>       vdj_t_gd_contents,
+    in  map<vwc.json>       vdj_b_contents,
+    in  string              target_set_name,
+    in  map<ag.vdj.bincode> antigen_vdj_metrics,
+    in  map<csv>            antigen_specificity,
+    in  FeatureConfig       feature_config,
+    in  map<ChemistryDef>   chemistry_defs,
+    in  json                detected_probe_barcode_pairing,
+    in  bool                no_preflight,
+    out map<json>           web_summary_json,
+    out map<csv>            metrics_summary_csv,
+    out map<json>           metrics_summary_json,
+    src comp                "cr_lib martian write_multi_web_summary_json",
 ) using (
     mem_gb   = 5,
     volatile = strict,
 ) retain (
     web_summary_json,
+    metrics_summary_json,
 )
 
 stage WRITE_POS_BAM(

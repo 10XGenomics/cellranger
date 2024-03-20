@@ -14,7 +14,10 @@ pub type UmiSeq = SSeqGen<MAX_UMI_LENGTH>;
 pub type UmiQual = SQualityGen<MAX_UMI_LENGTH>;
 
 /// A container for a read UMI sequence. Can hold upto 16 bases
-#[derive(Serialize, Deserialize, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
+#[derive(
+    Clone, Copy, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize,
+)]
+#[serde(transparent)]
 pub struct Umi {
     sequence: UmiSeq,
 }
@@ -85,14 +88,6 @@ impl Display for Umi {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.sequence, f)
     }
-}
-
-/// A trait for objects that carry a UMI sequence.
-pub trait HasUmi {
-    /// Get a copy of the (possibly corrected) UMI on this read
-    fn umi(&self) -> Umi;
-    fn raw_umi(&self) -> Umi;
-    fn correct_umi(&mut self, corrected_umi: &[u8]);
 }
 
 /// Is a UMI consistent with splice junctions (Txomic) or not

@@ -104,6 +104,9 @@ ifchk "SGE JOB_NAME"        "echo \$JOB_NAME"
 check "LSF Submit"          "which bsub"
 ifchk "LSF LSB_JOBNAME"     "echo \$LSB_JOBNAME"
 
+check "HTCondor Submit"     "which condor_submit"
+check "Batch system"        "echo \$BATCH_SYSTEM"
+
 check "BCL2FASTQ 1"         "which configureBclToFastq.pl"
 ifchk "BCL2FASTQ 1 Version" "ls \$(dirname \$(which configureBclToFastq.pl))/../etc"
 ifchk "Perl"                "which perl"

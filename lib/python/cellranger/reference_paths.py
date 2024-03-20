@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -114,3 +115,7 @@ def chunk_reference(
             if piece_left_over > 0:
                 process.append((piece[0], piece[2] - piece_left_over, piece[2]))
     return [c for c in chunks if len(c)]
+
+
+def get_ref_name_from_genomes(genomes: Iterable[str]):
+    return "_and_".join(genomes)

@@ -21,7 +21,7 @@ use std::{cmp, f64};
 /// The underlying representation is a `Hashmap`. The items
 /// need to have a string representation (`ToString` trait)
 /// so that they are report friendly
-#[derive(Debug, Clone, Metric, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Metric)]
 #[serde(transparent, bound = "")]
 pub struct SimpleHistogram<K>
 where
@@ -40,7 +40,7 @@ where
     /// # Example
     /// ```rust
     /// use metric::{Metric, SimpleHistogram};
-    /// let mut hist = SimpleHistogram::new();
+    /// let mut hist = SimpleHistogram::default();
     /// assert!(hist.get(&10)==0);
     /// hist.observe_by(&10, 1);
     /// hist.observe_by(&10, 2);
@@ -108,7 +108,7 @@ where
 
     /// Create a `SimpleHistogram` from an iterator of owned items.
     pub fn from_iter_owned(iter: impl IntoIterator<Item = K>) -> SimpleHistogram<K> {
-        let mut histogram = SimpleHistogram::new();
+        let mut histogram = SimpleHistogram::default();
         histogram.extend_owned(iter);
         histogram
     }
@@ -125,7 +125,7 @@ where
     /// # Example
     /// ```rust
     /// use metric::{Metric, SimpleHistogram};
-    /// let mut hist = SimpleHistogram::new();
+    /// let mut hist = SimpleHistogram::default();
     /// assert!(hist.get(&10)==0);
     /// hist.observe(&10);
     /// hist.observe(&10);
@@ -139,10 +139,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.distribution
-            .get(key)
-            .map(|c| c.count())
-            .unwrap_or(0i64)
+        self.distribution.get(key).map_or(0i64, |c| c.count())
     }
 
     /// Drain the underlying hashmap
@@ -252,7 +249,7 @@ where
     /// # Example
     /// ```
     /// use metric::{Metric, SimpleHistogram};
-    /// let mut hist = SimpleHistogram::new();
+    /// let mut hist = SimpleHistogram::default();
     /// for i in 0..=100 {
     ///     hist.observe(&i)
     /// }
@@ -271,7 +268,7 @@ where
 
         // Compute the cumulative distribution. We will map both the key
         // and values to f64 for convenience
-        let cdf = self
+        let cdf: Vec<_> = self
             .distribution
             .iter()
             .sorted()
@@ -279,7 +276,7 @@ where
                 *acc += c.count() as f64;
                 Some((k.as_(), *acc))
             })
-            .collect_vec();
+            .collect();
 
         // The total number of observations. cdf is guaranteed to have >=1 element, the unwrap will not fail.
         let n = cdf.last().unwrap().1;
@@ -324,7 +321,7 @@ where
     /// # Example
     /// ```
     /// use metric::{Metric, SimpleHistogram};
-    /// let mut hist = SimpleHistogram::new();
+    /// let mut hist = SimpleHistogram::default();
     /// for i in 0..=100 {
     ///     hist.observe(&i)
     /// }
@@ -346,7 +343,7 @@ where
         F: FnMut(K) -> K2,
         K2: Clone + Eq + Hash + Serialize + for<'a> Deserialize<'a>,
     {
-        let mut result = SimpleHistogram::new();
+        let mut result = SimpleHistogram::default();
         for (k, v) in self.distribution.into_iter().map(|(k, v)| (f(k), v)) {
             result.observe_by(&k, v.count());
         }
@@ -368,7 +365,7 @@ where
     /// # Example
     /// ```
     /// use metric::{Metric, SimpleHistogram};
-    /// let mut hist = SimpleHistogram::new();
+    /// let mut hist = SimpleHistogram::default();
     /// for i in 20..100 {
     ///     hist.observe(&i);
     /// }
@@ -399,6 +396,17 @@ where
             k += step;
         }
         result
+    }
+}
+
+impl<K> Default for SimpleHistogram<K>
+where
+    K: Eq + Hash + Serialize + for<'a> Deserialize<'a>,
+{
+    fn default() -> Self {
+        Self {
+            distribution: TxHashMap::default(),
+        }
     }
 }
 
@@ -499,39 +507,40 @@ mod tests {
     use super::*;
     use anyhow::Error;
     use std::fs::File;
+    use std::iter::zip;
 
     #[test]
     fn test_observe_ref() {
-        let mut hist = SimpleHistogram::<i32>::new();
+        let mut hist = SimpleHistogram::<i32>::default();
         hist.observe(&0);
         assert_eq!(hist.distribution().len(), 1);
 
-        let mut hist = SimpleHistogram::<String>::new();
+        let mut hist = SimpleHistogram::<String>::default();
         hist.observe("");
         assert_eq!(hist.distribution().len(), 1);
     }
 
     #[test]
     fn test_observe_owned() {
-        let mut hist = SimpleHistogram::<i32>::new();
+        let mut hist = SimpleHistogram::<i32>::default();
         hist.observe_owned(0);
         assert_eq!(hist.distribution().len(), 1);
 
-        let mut hist = SimpleHistogram::<String>::new();
-        hist.observe_owned("".to_string());
+        let mut hist = SimpleHistogram::<String>::default();
+        hist.observe_owned(String::new());
         assert_eq!(hist.distribution().len(), 1);
     }
 
     #[test]
     fn test_extend_ref() {
-        let mut hist = SimpleHistogram::<i32>::new();
+        let mut hist = SimpleHistogram::<i32>::default();
         hist.extend(&[1, 2, 3]);
         assert_eq!(hist.distribution().len(), 3);
     }
 
     #[test]
     fn test_extend_owned() {
-        let mut hist = SimpleHistogram::<i32>::new();
+        let mut hist = SimpleHistogram::<i32>::default();
         hist.extend_owned(0..3);
         assert_eq!(hist.distribution().len(), 3);
     }
@@ -567,12 +576,12 @@ mod tests {
         let test_data: Vec<TestData> =
             serde_json::from_reader(File::open("test_data/percentile_test.json")?)?;
         for data in test_data {
-            let mut hist = SimpleHistogram::new();
+            let mut hist = SimpleHistogram::default();
             for s in data.samples {
                 hist.observe(&s);
             }
             let results = hist.percentiles(&data.percentile_queries).unwrap();
-            for (a, e) in results.into_iter().zip(data.percentile_results.into_iter()) {
+            for (a, e) in zip(results, data.percentile_results) {
                 assert!((a - e).abs() < 1e-6, "a = {a}, e = {e}");
             }
         }
@@ -583,7 +592,7 @@ mod tests {
     fn test_top_n() -> Result<(), Error> {
         let data = vec![0, 0, 0, 1, 1, 2, 2, 2, 2];
         let hist = {
-            let mut hist = SimpleHistogram::new();
+            let mut hist = SimpleHistogram::default();
             for s in &data {
                 hist.observe(s);
             }
@@ -591,7 +600,7 @@ mod tests {
         };
         let top_n = hist.top_n(2);
         let expected = {
-            let mut expected = SimpleHistogram::new();
+            let mut expected = SimpleHistogram::default();
             for s in data.iter().filter(|&&s| s != 1) {
                 expected.observe(s);
             }

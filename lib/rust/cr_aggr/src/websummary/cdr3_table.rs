@@ -62,8 +62,8 @@ impl From<VdjAggrSharedCdr3Row> for TableRow {
     fn from(src: VdjAggrSharedCdr3Row) -> TableRow {
         TableRow(vec![
             src.cdr3_aa,
-            PrettyMetric::integer(src.num_categories).0,
-            PrettyMetric::integer(src.num_cells).0,
+            PrettyMetric::integer(src.num_categories as i64).0,
+            PrettyMetric::integer(src.num_cells as i64).0,
         ])
     }
 }

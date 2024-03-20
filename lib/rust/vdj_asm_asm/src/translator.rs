@@ -3,15 +3,15 @@
 //! vector of rna reads. This is likely a patch until the more structured
 //! form of data makes its way deep into the assembler
 //!
-use barcode::HasBarcode;
 use bitflags::bitflags;
+use cr_types::chemistry::ChemistryDef;
 use cr_types::rna_read::RnaRead;
 use debruijn::dna_string::DnaString;
 use fastq_set::metric_utils::ILLUMINA_QUAL_OFFSET;
 use fastq_set::sseq::HammingIterOpt;
+use fastq_set::WhichEnd;
 use itertools::Itertools;
 use metric::SimpleHistogram;
-use umi::HasUmi;
 
 bitflags! {
     struct ReadFlags: u16 {
@@ -21,9 +21,9 @@ bitflags! {
         const FIRST_SEGMENT = 0b0100_0000;
         const LAST_SEGMENT  = 0b1000_0000;
         // Derived compond read flags
-        const SINGLE_END_READ_FLAG  = Self::REV_COMP.bits | Self::LAST_SEGMENT.bits; // This will be the illumina read 2
-        const PAIRED_END_READ1_FLAG = Self::MULTI_SEGMENT.bits | Self::REV_COMP_MATE.bits | Self::FIRST_SEGMENT.bits;
-        const PAIRED_END_READ2_FLAG = Self::MULTI_SEGMENT.bits | Self::REV_COMP.bits | Self::LAST_SEGMENT.bits;
+        const SINGLE_END_READ_FLAG  = Self::REV_COMP.bits() | Self::LAST_SEGMENT.bits(); // This will be the illumina read 2
+        const PAIRED_END_READ1_FLAG = Self::MULTI_SEGMENT.bits() | Self::REV_COMP_MATE.bits() | Self::FIRST_SEGMENT.bits();
+        const PAIRED_END_READ2_FLAG = Self::MULTI_SEGMENT.bits() | Self::REV_COMP.bits() | Self::LAST_SEGMENT.bits();
     }
 }
 
@@ -32,11 +32,36 @@ bitflags! {
 pub(crate) fn make_read_data(
     rna_reads: &[RnaRead],
     n_free_tail: usize,
-    r2_revcomp: bool,
+    chemistry_def: &ChemistryDef,
 ) -> Vec<(String, DnaString, Vec<u8>, String, u16)> {
     assert!(!rna_reads.is_empty());
     let mut reads = Vec::new();
+
     for rna_read in rna_reads {
+        // Determine if rna read X (not necessarily illumina read X) needs to
+        // be reversed and complemented based on endedness.
+        //
+        // RNA read X: rx       Illumina read X: Rx
+        //
+        //          RNA read 1      RNA read 2      RC RNA read 1?      RC RNA read 2?
+        // 5P-PE    R1              R2              N                   Y
+        // 5P-R2    R2                              Y
+        // 3P-PE    R1              R2              Y                   N
+        // 3P-R2    R2                              N
+
+        let (r1_revcomp, r2_revcomp) = {
+            if rna_read.r2_exists() {
+                if chemistry_def.endedness == Some(WhichEnd::FivePrime) {
+                    (false, Some(true))
+                } else {
+                    (true, Some(false))
+                }
+            } else if chemistry_def.endedness == Some(WhichEnd::FivePrime) {
+                (true, None)
+            } else {
+                (false, None)
+            }
+        };
         let (r1_seq, r1_qual) = {
             let r1_seq = rna_read.r1_seq();
             let r1_trimmed_len = get_seq_len_with_n_free_tail(r1_seq, n_free_tail);
@@ -49,7 +74,7 @@ pub(crate) fn make_read_data(
                 .collect();
             r1_qual.truncate(r1_trimmed_len);
 
-            if r2_revcomp {
+            if r1_revcomp {
                 (
                     byteseq::revcomp(r1_seq),
                     r1_qual.into_iter().rev().collect(),
@@ -75,7 +100,6 @@ pub(crate) fn make_read_data(
             let r2_trimmed_len = get_seq_len_with_n_free_tail(r2_seq, n_free_tail);
             let mut r2_seq = r2_seq.to_vec();
             r2_seq.truncate(r2_trimmed_len);
-            let r2_seq = byteseq::revcomp(r2_seq);
 
             let mut r2_qual: Vec<_> = rna_read
                 .r2_qual()
@@ -84,7 +108,18 @@ pub(crate) fn make_read_data(
                 .map(|q| q - ILLUMINA_QUAL_OFFSET)
                 .collect();
             r2_qual.truncate(r2_trimmed_len);
-            let r2_qual = r2_qual.into_iter().rev().collect();
+
+            let (r2_seq, r2_qual) = {
+                if r2_revcomp == Some(true) {
+                    (
+                        byteseq::revcomp(r2_seq),
+                        r2_qual.into_iter().rev().collect(),
+                    )
+                } else {
+                    (r2_seq, r2_qual)
+                }
+            };
+
             reads.push((
                 rna_read.umi().to_string(),
                 DnaString::from_acgt_bytes(&r2_seq),
@@ -93,8 +128,6 @@ pub(crate) fn make_read_data(
                 ReadFlags::PAIRED_END_READ2_FLAG.bits(),
             ));
         } else {
-            let r1_seq = byteseq::revcomp(r1_seq);
-            let r1_qual = r1_qual.into_iter().rev().collect();
             // Single end
             reads.push((
                 rna_read.umi().to_string(),
@@ -118,10 +151,13 @@ pub struct UmiSortedReads {
     pub flags: Vec<u16>,
 }
 
-pub fn correct_umis(rna_reads: &mut [RnaRead], r2_revcomp: bool) -> (i32, UmiSortedReads) {
+pub fn correct_umis(
+    rna_reads: &mut [RnaRead],
+    chemistry_def: &ChemistryDef,
+) -> (i32, UmiSortedReads) {
     let mut ncorrected = 0;
     let umi_counts = SimpleHistogram::from_iter_owned(rna_reads.iter().map(RnaRead::umi));
-    for read in rna_reads.iter_mut() {
+    for read in &mut *rna_reads {
         let umi = read.umi();
         let self_count = umi_counts.get(&umi);
         if let Some(other) = umi
@@ -133,7 +169,7 @@ pub fn correct_umis(rna_reads: &mut [RnaRead], r2_revcomp: bool) -> (i32, UmiSor
         }
     }
     rna_reads.sort_by(|r1, r2| (r1.umi(), r1.header()).cmp(&(r2.umi(), r2.header())));
-    let read_data = make_read_data(rna_reads, 8, r2_revcomp);
+    let read_data = make_read_data(rna_reads, 8, chemistry_def);
 
     let mut umi_sorted_reads = UmiSortedReads::default();
     for (i, (umi, group_reads)) in read_data

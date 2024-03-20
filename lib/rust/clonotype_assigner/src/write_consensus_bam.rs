@@ -6,6 +6,7 @@ use crate::assigner::{
 };
 use anyhow::Result;
 use bio::alignment::pairwise::Aligner;
+use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -22,6 +23,7 @@ use vdj_asm_utils::bam_utils::add_ref_to_bam_header;
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteConsensusBamStageInputs {
+    pub sample_number: Option<usize>,
     pub enclone_output: ProtoBinFile,
     pub all_contig_annotations_json: JsonFile<Vec<ContigAnnotation>>,
 }
@@ -73,8 +75,15 @@ impl MartianMain for WriteConsensusBam {
         for (i, x) in enclone_outs.clonotypes.iter().enumerate() {
             for j in 0..x.chains.len() {
                 let seq = &x.chains[j].nt_sequence;
-                let id = format!("clonotype{}_consensus_{}", i + 1, j + 1);
-                add_ref_to_bam_header(&mut header, &id, seq.len());
+                add_ref_to_bam_header(
+                    &mut header,
+                    &ClonotypeId {
+                        id: i + 1,
+                        sample_number: args.sample_number,
+                    }
+                    .consensus_name(j + 1),
+                    seq.len(),
+                );
             }
         }
         let score = |a: u8, b: u8| if a == b { 1i32 } else { -1i32 };

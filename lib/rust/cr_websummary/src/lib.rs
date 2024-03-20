@@ -7,7 +7,7 @@ extern crate self as cr_websummary;
 use alert::{Alert, AlertContext, AlertLevel, AlertSpec};
 use anyhow::Result;
 use metric::{PercentMetric, TxHashMap};
-use multi::websummary::ToCsvRows;
+use multi::websummary::{JsonMetricSummary, ToCsvRows, ToJsonSummary};
 use plotly::common::{Anchor, Title};
 use plotly::layout::{Axis, AxisType, HoverMode, Legend};
 use plotly::Layout;
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::default::Default;
 use std::fmt::{Display, Formatter};
-use std::iter::{zip, FromIterator};
+use std::iter::zip;
 use std::str::FromStr;
 use thousands::Separable;
 
@@ -33,13 +33,35 @@ const TABLE_HEADER_METRIC_KEYS: [&str; 7] = [
 pub enum WsCommand {
     #[serde(rename = "Cell Ranger")]
     Cellranger,
+    #[serde(rename = "Space Ranger")]
+    Spaceranger,
+}
+
+impl Display for WsCommand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WsCommand::Cellranger => write!(f, "Cell Ranger"),
+            WsCommand::Spaceranger => write!(f, "Space Ranger"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum WsSubCommand {
+    Count,
     Aggr,
     Multi,
+}
+
+impl Display for WsSubCommand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WsSubCommand::Count => write!(f, "count"),
+            WsSubCommand::Aggr => write!(f, "aggr"),
+            WsSubCommand::Multi => write!(f, "multi"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -70,12 +92,12 @@ impl WsSample {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Tab<C: Alert + ToCsvRows> {
+pub struct Tab<C: Alert + ToCsvRows + ToJsonSummary> {
     pub content: C,
     alerts: Vec<AlertSpec>,
 }
 
-impl<C: Alert + ToCsvRows> Tab<C> {
+impl<C: Alert + ToCsvRows + ToJsonSummary> Tab<C> {
     pub fn new(content: C, context: &AlertContext) -> Self {
         let mut alerts = content.alerts(context);
         // All tabs should have an alert if preflight was skipped.
@@ -85,15 +107,21 @@ impl<C: Alert + ToCsvRows> Tab<C> {
                 title: "Analysis preflight checks were skipped".to_string(),
                 formatted_value: String::default(),
                 message: "Your analysis was run without preflight checks and may have used non-standard settings. Please carefully review your results.".to_string(),
-            })
+            });
         }
         Tab { content, alerts }
     }
 }
 
-impl<C: Alert + ToCsvRows> ToCsvRows for Tab<C> {
+impl<C: Alert + ToCsvRows + ToJsonSummary> ToCsvRows for Tab<C> {
     fn to_csv_rows(self) -> Vec<Vec<String>> {
         self.content.to_csv_rows()
+    }
+}
+
+impl<C: Alert + ToCsvRows + ToJsonSummary> ToJsonSummary for Tab<C> {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        self.content.to_json_summary()
     }
 }
 
@@ -148,7 +176,7 @@ impl Display for PrettyMetric {
     }
 }
 impl PrettyMetric {
-    pub fn integer(src: impl Display) -> Self {
+    pub fn integer(src: i64) -> Self {
         PrettyMetric(src.separate_with_commas())
     }
     pub fn percent(m: f64) -> Self {
@@ -304,19 +332,25 @@ pub struct CardWithMetric {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(transparent)]
-pub struct MetricCard<C: Into<CardWithMetric>> {
+pub struct MetricCard<C: Into<CardWithMetric> + ToJsonSummary> {
     card: CardWithMetric,
     #[serde(skip)]
     raw: C,
 }
 
-impl<C: Into<CardWithMetric>> ToCsvRows for MetricCard<C> {
+impl<C: Into<CardWithMetric> + ToJsonSummary> ToCsvRows for MetricCard<C> {
     fn to_csv_rows(self) -> Vec<Vec<String>> {
         self.card.table.to_csv_rows()
     }
 }
 
-impl<C: Clone + Into<CardWithMetric>> From<C> for MetricCard<C> {
+impl<C: Into<CardWithMetric> + ToJsonSummary> ToJsonSummary for MetricCard<C> {
+    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+        self.raw.to_json_summary()
+    }
+}
+
+impl<C: Clone + Into<CardWithMetric> + ToJsonSummary> From<C> for MetricCard<C> {
     fn from(src: C) -> Self {
         MetricCard {
             card: src.clone().into(),
@@ -325,7 +359,7 @@ impl<C: Clone + Into<CardWithMetric>> From<C> for MetricCard<C> {
     }
 }
 
-impl<C: Alert + Into<CardWithMetric>> Alert for MetricCard<C> {
+impl<C: Alert + Into<CardWithMetric> + ToJsonSummary> Alert for MetricCard<C> {
     fn alerts(&self, ctx: &AlertContext) -> Vec<AlertSpec> {
         self.raw.alerts(ctx)
     }
@@ -354,6 +388,7 @@ pub struct ChartWithHelp {
 
 impl Alert for ChartWithHelp {}
 impl ToCsvRows for ChartWithHelp {}
+impl ToJsonSummary for ChartWithHelp {}
 
 // a titled plot where the plot can have
 // whatever data structure we want
@@ -366,6 +401,7 @@ pub struct RawChartWithHelp {
 
 impl Alert for RawChartWithHelp {}
 impl ToCsvRows for RawChartWithHelp {}
+impl ToJsonSummary for RawChartWithHelp {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PlotlyChart {
@@ -392,11 +428,7 @@ impl PlotlyChart {
         x_label: String,
         y_label: String,
     ) -> Self {
-        let data: TxHashMap<String, Vec<f64>> = TxHashMap::from_iter(
-            [("x".to_string(), x_data), ("y".to_string(), y_data)]
-                .iter()
-                .cloned(),
-        );
+        let data = TxHashMap::from_iter([("x".to_string(), x_data), ("y".to_string(), y_data)]);
         let layout = Layout::new()
             .show_legend(true)
             .margin(plotly::layout::Margin::new().right(40).left(60).top(0))
@@ -458,7 +490,7 @@ impl MakePretty for String {
 
 impl MakePretty for usize {
     fn make_pretty(&self) -> String {
-        PrettyMetric::integer(*self).0
+        PrettyMetric::integer(*self as i64).0
     }
     fn as_f64(&self) -> f64 {
         *self as f64

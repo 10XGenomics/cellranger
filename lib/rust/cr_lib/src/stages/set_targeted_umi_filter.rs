@@ -9,8 +9,7 @@ use json_report_derive::JsonReport;
 use martian::{MartianMain, MartianRover};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::FileTypeRead;
-use metric::{Metric, PercentMetric, SimpleHistogram};
-use metric_derive::Metric;
+use metric::{PercentMetric, SimpleHistogram};
 use serde::{Deserialize, Serialize};
 use shardio::ShardReader;
 
@@ -25,19 +24,19 @@ const NUM_ORDMAG: f64 = 2.0;
 /// sacrificing many true positive detections.
 pub struct SetTargetedUmiFilter;
 
-#[derive(Deserialize, Clone, MartianStruct)]
+#[derive(Clone, Deserialize, MartianStruct)]
 pub struct StageInputs {
     pub bc_umi_info: Vec<BcUmiInfoShardFile>,
     pub feature_reference: FeatureReferenceFormat,
 }
 
-#[derive(Serialize, Deserialize, Clone, MartianStruct)]
+#[derive(Serialize, Deserialize, MartianStruct)]
 pub struct StageOutputs {
     pub umi_read_count_threshold: u64,
     pub summary: MetricsFile,
 }
 
-#[derive(Metric, JsonReport, Serialize, Deserialize)]
+#[derive(JsonReport)]
 struct UmiFilteringMetric {
     filtered_target_umi_count_threshold: i64,
     initial_filtered_target_umis: PercentMetric,
@@ -61,7 +60,7 @@ impl MartianMain for SetTargetedUmiFilter {
         let reader = ShardReader::<BcUmiInfo, BcUmiInfo>::open_set(&args.bc_umi_info)?;
 
         // Track a histogram of reads per UMI over targeted features
-        let mut rpu_histogram = SimpleHistogram::new();
+        let mut rpu_histogram = SimpleHistogram::default();
         for bc_umi_info in reader.iter()? {
             let bc_umi_info = bc_umi_info?;
             for c in bc_umi_info.umi_counts {
@@ -84,8 +83,8 @@ impl MartianMain for SetTargetedUmiFilter {
         // Compute metrics
         // - The denominators here are the number of on-target reads (UMIs) counted
         //   if there were no targeted UMI filtering.
-        let mut frac_umis_filtered = PercentMetric::new();
-        let mut frac_reads_filtered = PercentMetric::new();
+        let mut frac_umis_filtered = PercentMetric::default();
+        let mut frac_reads_filtered = PercentMetric::default();
         for (&read_count, umis) in rpu_histogram.distribution() {
             let read_count = read_count as i64;
             let is_filtered = read_count < threshold as i64;

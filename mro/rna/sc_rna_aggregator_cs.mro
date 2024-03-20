@@ -28,6 +28,7 @@ struct VdjAggrOutputs(
     csv    filtered_contig_annotations_csv "Annotations of filtered contigs with library metadata (CSV)" "filtered_contig_annotations.csv",
     csv    consensus_annotations_csv       "Clonotype consensus annotations (CSV)"                       "consensus_annotations.csv",
     vloupe vloupe                          "Loupe VDJ Browser file",
+    fa     donor_regions                   "Inferred germline gene sequences",
 )
 
 stage BUILD_COMBINED_WEB_SUMMARY(
@@ -111,6 +112,7 @@ pipeline COUNT_AGGR(
         cells_per_protospacer        = SC_RNA_AGGREGATOR.cells_per_protospacer,
         spatial_enrichment           = null,
         spatial_deconvolution_path   = null,
+        disable_cloupe               = null,
     )
 
     return (
@@ -182,10 +184,7 @@ pipeline VDJ_AGGR(
     )
 
     call COPY_VDJ_REFERENCE(
-        vdj_reference_path    = MATCH_VDJ_AGGR_OUTS.vdj_reference_path,
-        vdj_t_donor_ref_fa    = MATCH_VDJ_AGGR_OUTS.vdj_t_results.donor_ref_fa,
-        vdj_t_gd_donor_ref_fa = MATCH_VDJ_AGGR_OUTS.vdj_t_gd_results.donor_ref_fa,
-        vdj_b_donor_ref_fa    = MATCH_VDJ_AGGR_OUTS.vdj_b_results.donor_ref_fa,
+        vdj_reference_path = MATCH_VDJ_AGGR_OUTS.vdj_reference_path,
     )
 
     return (

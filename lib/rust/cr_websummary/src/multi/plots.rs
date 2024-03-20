@@ -33,7 +33,7 @@ const CMO_TAGS_ON_TSNE_PLOT_HELP_TEXT: &str = "Shown here are the CMO tag assign
 const CMO_TAGS_ON_TSNE_PLOT_TITLE: &str = "t-SNE Projection of Cells by CMO";
 
 const BARCODE_RANK_PLOT_TITLE: &str = "Barcode Rank Plot";
-const BARCODE_RANK_PLOT_HELP_TEXT: &str = "The plot shows filtered UMI counts mapped to each GEM barcode. Barcode-cell associations can be determined by UMI count or expression profile, or removed by Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering steps. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. When present, Gene Expression data is used to identify these barcode populations. The color of the graph is based on the local density of barcodes that are cell-associated in these regions.";
+const BARCODE_RANK_PLOT_HELP_TEXT: &str = "The plot shows filtered UMI counts mapped to each GEM barcode. Barcode-cell associations can be determined by UMI count or expression profile, or removed by Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering steps. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. When present, Gene Expression data is used to identify these barcode populations. The color of the graph is based on the local density of barcodes that are cell-associated in these regions. Hovering over the plot displays the total number and percentage of barcodes in that region called as cells along with the number of UMI counts for those barcodes and barcode rank, ordered in descending order of UMI counts.";
 
 const SEQUENCING_SATURATION_PLOT_X_LABEL: &str = "Mean Reads per Cell";
 const SEQUENCING_SATURATION_PLOT_Y_LABEL: &str = "Sequencing Saturation";
@@ -302,7 +302,7 @@ fn median_genes_plot_from_metrics(
 
                 xy_data.entry(genome).or_default().push((
                     cap.get(2).unwrap().as_str().parse::<usize>().unwrap() as f64,
-                    metric_value.as_f64().unwrap(),
+                    metric_value.as_f64().unwrap_or(0_f64),
                 ));
             }
         }
@@ -491,7 +491,7 @@ pub fn targeted_enrichment_plot(
                 .fill_color(OFF_TARGET_COLOR)
                 .marker(Marker::new().color(TARGETED_ENRICHMENT_PLOT_SEPARATION_BOUNDARY_COLOR))
                 .line(Line::new().width(3.0)),
-        )
+        );
     }
 
     let layout = Layout::new()

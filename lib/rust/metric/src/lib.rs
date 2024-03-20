@@ -37,9 +37,10 @@ use anyhow::{Context, Error};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::hash_map;
+use std::borrow::Borrow;
+use std::collections::{hash_map, HashMap, HashSet};
 use std::fs::File;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 use std::io::{Read, Write};
 use std::iter::FromIterator;
 use std::path::Path;
@@ -66,28 +67,48 @@ impl Hasher for TxHasher {
     }
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        self.0.write(bytes)
+        self.0.write(bytes);
     }
 }
 
 impl Default for TxHasher {
     fn default() -> Self {
-        // just some random keys I came up with, need to be deterministic
-        TxHasher(AHasher::new_with_keys(
-            0x6c62_272e_07bb_0142,
-            0x517c_c1b7_2722_0a95,
-        ))
+        /// From the ahash crate source.
+        const PI: [u64; 4] = [
+            0x243f_6a88_85a3_08d3,
+            0x1319_8a2e_0370_7344,
+            0xa409_3822_299f_31d0,
+            0x082e_fa98_ec4e_6c89,
+        ];
+
+        /// From the ahash crate source.
+        const PI2: [u64; 4] = [
+            0x4528_21e6_38d0_1377,
+            0xbe54_66cf_34e9_0c6c,
+            0xc0ac_29b7_c97c_50dd,
+            0x3f84_d5b5_b547_0917,
+        ];
+
+        /// Arbitrary seed values.
+        const SEED: [u64; 4] = [
+            PI[0] ^ PI2[0] ^ 0x6c62_272e_07bb_0142,
+            PI[1] ^ PI2[1],
+            PI[2] ^ PI2[2] ^ 0x517c_c1b7_2722_0a95,
+            PI[3] ^ PI2[3],
+        ];
+
+        TxHasher(ahash::RandomState::with_seeds(SEED[0], SEED[1], SEED[2], SEED[3]).build_hasher())
     }
 }
 
 /// A default BuildHasher using some faster hashing scheme (faster than SipHash)
-pub type BuildHasher = std::hash::BuildHasherDefault<TxHasher>;
+type TxBuildHasher = BuildHasherDefault<TxHasher>;
 
 /// A default HashMap using some faster hashing scheme
-pub type TxHashMap<K, V> = std::collections::HashMap<K, V, BuildHasher>;
+pub type TxHashMap<K, V> = HashMap<K, V, TxBuildHasher>;
 
 /// A default HashSet using some faster hashing scheme
-pub type TxHashSet<K> = std::collections::HashSet<K, BuildHasher>;
+pub type TxHashSet<K> = HashSet<K, TxBuildHasher>;
 
 /// Create a TxHashSet with the given elements. Similar to a `vec![]`
 #[macro_export]
@@ -104,10 +125,58 @@ macro_rules! set {
 
 /// A default hash function for when you need a quick hash
 #[inline]
-pub fn hash64<T: Hash + ?Sized>(v: &T) -> u64 {
+pub fn hash64(data: impl Hash) -> u64 {
     let mut state = TxHasher::default();
-    v.hash(&mut state);
+    data.hash(&mut state);
     state.finish()
+}
+
+/// The string used in a metric name.
+pub trait AsMetricPrefix {
+    /// Return the metric prefix as a borrowed string, or None if it has none.
+    fn as_metric_prefix(&self) -> Option<&str>;
+}
+
+impl AsMetricPrefix for Option<&str> {
+    fn as_metric_prefix(&self) -> Option<&str> {
+        *self
+    }
+}
+
+impl AsMetricPrefix for String {
+    fn as_metric_prefix(&self) -> Option<&str> {
+        Some(self)
+    }
+}
+
+/// The string used in a metric name.
+pub trait ToMetricPrefix {
+    /// Return the metric prefix as an owned string, or None if it has none.
+    fn to_metric_prefix(&self) -> Option<String>;
+}
+
+impl<T: AsMetricPrefix> ToMetricPrefix for T {
+    fn to_metric_prefix(&self) -> Option<String> {
+        self.as_metric_prefix().map(String::from)
+    }
+}
+
+impl ToMetricPrefix for u16 {
+    fn to_metric_prefix(&self) -> Option<String> {
+        Some(self.to_string())
+    }
+}
+
+/// Join the metric prefix and the metric name.
+pub fn join_metric_name(prefix: impl AsMetricPrefix, name: &str) -> String {
+    let Some(prefix) = prefix.as_metric_prefix() else {
+        return name.to_string();
+    };
+    if name.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}_{name}")
+    }
 }
 
 /// This enum defines the format for serializing/deserializing a metric
@@ -126,9 +195,6 @@ pub enum SerdeFormat {
 /// will implement this trait. It may be auto derived using the macros in
 /// `metric_derive`
 pub trait Metric: Serialize + for<'de> Deserialize<'de> {
-    /// Returns a new Metric object
-    fn new() -> Self;
-
     /// Combined two Metric objects, modifying self in place,
     /// consuming the `other`
     fn merge(&mut self, other: Self);
@@ -238,7 +304,7 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
     ///
     /// let c2 = CountMetric::from_files(&files, SerdeFormat::Json);
     /// assert!(c2 == 16.into());
-    /// for file in files.iter() {
+    /// for file in files {
     ///     std::fs::remove_file(file);
     /// }
     /// ```
@@ -246,11 +312,12 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
     where
         I: IntoIterator<Item = P>,
         P: AsRef<Path>,
+        Self: Default,
     {
         filenames
             .into_iter()
             .map(|f| Metric::from_file(f, serde_format))
-            .fold(Metric::new(), |mut merged, this| {
+            .fold(Default::default(), |mut merged, this| {
                 merged.merge(this);
                 merged
             })
@@ -278,11 +345,14 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
     fn from_chunks<I>(chunks: I) -> Self
     where
         I: IntoIterator<Item = Self>,
+        Self: Default,
     {
-        chunks.into_iter().fold(Metric::new(), |mut merged, this| {
-            merged.merge(this);
-            merged
-        })
+        chunks
+            .into_iter()
+            .fold(Default::default(), |mut merged, this| {
+                merged.merge(this);
+                merged
+            })
     }
 }
 
@@ -351,24 +421,16 @@ where
     }
 }
 
-impl<K, V> Extend<(K, V)> for JsonReporter
-where
-    K: Eq + Hash + ToString,
-    V: Serialize,
-{
+impl<K: ToString, V: Serialize> Extend<(K, V)> for JsonReporter {
     fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
         self.hashmap.extend(
             iter.into_iter()
                 .map(|(k, v)| (k.to_string(), serde_json::to_value(v).unwrap())),
-        )
+        );
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for JsonReporter
-where
-    K: Eq + Hash + ToString,
-    V: Serialize,
-{
+impl<K: ToString, V: Serialize> FromIterator<(K, V)> for JsonReporter {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> JsonReporter {
         let mut reporter = JsonReporter::default();
         reporter.extend(iter);
@@ -407,11 +469,7 @@ impl JsonReporter {
     /// Insert a new (key, value) pair into the JsonReporter. The key could be
     /// any type which can be casted into a `String` and value can be any type
     /// which can be casted into `serde_json::Value`
-    pub fn insert<K, V>(&mut self, key: K, value: V)
-    where
-        K: ToString,
-        V: Into<Value>,
-    {
+    pub fn insert(&mut self, key: impl ToString, value: impl Into<Value>) {
         let key_str = key.to_string();
         assert!(!self.hashmap.contains_key(&key_str));
         self.hashmap.insert(key_str, value.into());
@@ -419,56 +477,47 @@ impl JsonReporter {
 
     /// Removes any (key, value) pair from the `JsonReporter`. The value is
     /// returned as an `Option<Value>` if the key existed in the `JsonReporter`.
-    pub fn remove<K>(&mut self, key: K) -> Option<Value>
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<Value>
     where
-        K: ToString,
+        String: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        let key_str = key.to_string();
-        self.hashmap.remove(&key_str)
+        self.hashmap.remove(key)
     }
 
-    /// Add `prefix` to all the keys in the `JsonReporter`
-    /// We replace each "key" with "prefix_key". The extra underscore is
-    /// added after `prefix`.
-    ///
-    /// ## NOTE
-    /// A `prefix` that starts with or ends with an underscore is ignored.
-    ///
-    pub fn add_prefix<T: ToString + ?Sized>(&mut self, prefix: &T) {
-        let prefix_string: String = prefix.to_string();
-        if prefix_string.starts_with('_') || prefix_string.ends_with('_') {
-            return;
-        }
-        let mut flatmap = Vec::new();
-        for (key, val) in self.drain() {
-            let new_key = if key.is_empty() {
-                prefix_string.clone()
-            } else {
-                prefix_string.clone() + "_" + &key
-            };
-            flatmap.push((new_key, val))
-        }
-        for (k, v) in flatmap {
-            self.insert(k, v);
-        }
+    /// Add `prefix` to the keys in the `JsonReporter`.
+    /// Replace each "key" with "prefix_key", separated by an underscore.
+    pub fn add_prefix(self, prefix: &str) -> Self {
+        self.into_iter()
+            .map(|(k, v)| {
+                (
+                    if k.is_empty() {
+                        prefix.to_string()
+                    } else {
+                        format!("{prefix}_{k}")
+                    },
+                    v,
+                )
+            })
+            .collect()
     }
 
     /// Get a reference to the value corresponding to the key from the reporter
-    pub fn get<K>(&self, key: K) -> Option<&Value>
+    pub fn get<Q>(&self, key: &Q) -> Option<&Value>
     where
-        K: ToString,
+        String: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        let key_str = key.to_string();
-        self.hashmap.get(&key_str)
+        self.hashmap.get(key)
     }
 
     /// Get a mutable reference to the value corresponding to the key from the reporter
-    pub fn get_mut<K>(&mut self, key: K) -> Option<&mut Value>
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut Value>
     where
-        K: ToString,
+        String: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
-        let key_str = key.to_string();
-        self.hashmap.get_mut(&key_str)
+        self.hashmap.get_mut(key)
     }
 
     /// Iterates over the `JsonReporter`, draining it along the way
@@ -485,19 +534,9 @@ impl JsonReporter {
     pub fn iter_mut(&mut self) -> hash_map::IterMut<'_, String, Value> {
         self.hashmap.iter_mut()
     }
-
-    /// Serialize to a serde_json::Value
-    pub fn block_value(&self) -> Value {
-        serde_json::to_value(self).unwrap()
-    }
 }
 
 impl Metric for JsonReporter {
-    /// Returns a new empty `JsonReporter`
-    fn new() -> Self {
-        JsonReporter::default()
-    }
-
     /// Merges two `JsonReporter` objects, consuming the `other` reporter.
     ///
     /// # Panics
@@ -590,7 +629,7 @@ impl ::std::ops::AddAssign for JsonReporter {
 /// * test_json_reporter_sum() - Merge a vector of JsonReporters
 impl ::std::iter::Sum for JsonReporter {
     fn sum<I: Iterator<Item = JsonReporter>>(iter: I) -> JsonReporter {
-        iter.fold(JsonReporter::new(), |a, b| a + b)
+        iter.fold(JsonReporter::default(), |a, b| a + b)
     }
 }
 
@@ -604,7 +643,18 @@ impl ::std::fmt::Display for JsonReporter {
 mod tests {
     use super::*;
 
-    #[derive(Serialize, Deserialize, Metric)]
+    #[test]
+    fn test_txhasher() {
+        assert_eq!(hash64(1234567890u64), 4951984608975211167);
+        assert_eq!(hash64(b"Hello, world!"), 14765448921690784915);
+        assert_eq!(hash64("Hello, world!"), 16441770738856054944);
+
+        let mut hasher = TxHasher::default();
+        hasher.write(b"Hello, world!");
+        assert_eq!(hasher.finish(), 16492252547799468407);
+    }
+
+    #[derive(Default, Serialize, Deserialize, Metric)]
     struct NamedMetric {
         named: CountMetric,
     }
@@ -623,8 +673,8 @@ mod tests {
 
     #[test]
     fn test_derive_named_struct() {
-        let mut m1 = NamedMetric::new();
-        let mut m2 = NamedMetric::new();
+        let mut m1 = NamedMetric::default();
+        let mut m2 = NamedMetric::default();
         assert_eq!(m1.count(), 0);
         assert_eq!(m2.count(), 0);
         m1.increment();
@@ -640,12 +690,12 @@ mod tests {
         assert_eq!(m1.count(), 33);
     }
 
-    #[derive(Serialize, Deserialize, Metric)]
+    #[derive(Default, Serialize, Deserialize, Metric)]
     struct TupleMetric(CountMetric);
 
     impl TupleMetric {
         pub fn increment(&mut self) {
-            self.0.increment()
+            self.0.increment();
         }
         pub fn increment_by(&mut self, v: i64) {
             self.0.increment_by(v);
@@ -657,8 +707,8 @@ mod tests {
 
     #[test]
     fn test_derive_tuple_struct() {
-        let mut m1 = TupleMetric::new();
-        let mut m2 = TupleMetric::new();
+        let mut m1 = TupleMetric::default();
+        let mut m2 = TupleMetric::default();
         assert_eq!(m1.count(), 0);
         assert_eq!(m2.count(), 0);
         m1.increment();
@@ -676,46 +726,42 @@ mod tests {
 
     #[test]
     fn test_add_prefix() {
-        let mut report = JsonReporter::new();
+        let mut report = JsonReporter::default();
         report.insert("Hello", 10);
         report.insert("World", "Foo");
-        report.add_prefix("Bar");
-        report.add_prefix("IGNORE_"); // ignored because it ends with `_`
-        report.add_prefix("_IGNORE"); // ignored because it starts with `_`
 
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Bar_Hello", 10);
         expected_report.insert("Bar_World", "Foo");
 
-        assert_eq!(report, expected_report);
+        assert_eq!(report.add_prefix("Bar"), expected_report);
     }
 
     #[test]
     fn test_add_prefix_blank_key() {
-        let mut report = JsonReporter::new();
+        let mut report = JsonReporter::default();
         report.insert("", 10);
         report.insert("World", "Foo");
-        report.add_prefix("Bar");
 
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Bar", 10); // No trailing `_`
         expected_report.insert("Bar_World", "Foo");
 
-        assert_eq!(report, expected_report);
+        assert_eq!(report.add_prefix("Bar"), expected_report);
     }
 
     #[test]
     fn test_combine_simple() {
-        let mut report1 = JsonReporter::new();
+        let mut report1 = JsonReporter::default();
         report1.insert("Hello", 10);
         report1.insert("World", "Foo");
 
-        let mut report2 = JsonReporter::new();
+        let mut report2 = JsonReporter::default();
         report2.insert("Bar", 20);
 
         report1.merge(report2);
 
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Hello", 10);
         expected_report.insert("World", "Foo");
         expected_report.insert("Bar", 20);
@@ -725,16 +771,16 @@ mod tests {
 
     #[test]
     fn test_add_simple() {
-        let mut report1 = JsonReporter::new();
+        let mut report1 = JsonReporter::default();
         report1.insert("Hello", 10);
         report1.insert("World", "Foo");
 
-        let mut report2 = JsonReporter::new();
+        let mut report2 = JsonReporter::default();
         report2.insert("Bar", 20);
 
         let report = report1 + report2;
 
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Hello", 10);
         expected_report.insert("World", "Foo");
         expected_report.insert("Bar", 20);
@@ -744,16 +790,16 @@ mod tests {
 
     #[test]
     fn test_addassign_simple() {
-        let mut report1 = JsonReporter::new();
+        let mut report1 = JsonReporter::default();
         report1.insert("Hello", 10);
         report1.insert("World", "Foo");
 
-        let mut report2 = JsonReporter::new();
+        let mut report2 = JsonReporter::default();
         report2.insert("Bar", 20);
 
         report1 += report2;
 
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Hello", 10);
         expected_report.insert("World", "Foo");
         expected_report.insert("Bar", 20);
@@ -764,17 +810,17 @@ mod tests {
     #[test]
     fn test_json_reporter_sum() {
         let report = {
-            let mut report1 = JsonReporter::new();
+            let mut report1 = JsonReporter::default();
             report1.insert("Hello", 10);
             report1.insert("World", "Foo");
 
-            let mut report2 = JsonReporter::new();
+            let mut report2 = JsonReporter::default();
             report2.insert("Bar", 20);
             vec![report1, report2]
         };
 
         let merged: JsonReporter = report.into_iter().sum();
-        let mut expected_report = JsonReporter::new();
+        let mut expected_report = JsonReporter::default();
         expected_report.insert("Hello", 10);
         expected_report.insert("World", "Foo");
         expected_report.insert("Bar", 20);
@@ -785,18 +831,18 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_combine_panic() {
-        let mut report1 = JsonReporter::new();
+        let mut report1 = JsonReporter::default();
         report1.insert("Hello", 10);
         report1.insert("World", "Foo");
 
-        let mut report2 = JsonReporter::new();
+        let mut report2 = JsonReporter::default();
         report2.insert("Hello", 20);
 
         report1.merge(report2);
     }
     #[test]
     fn test_json_report_serialize_order() {
-        let mut reporter = JsonReporter::new();
+        let mut reporter = JsonReporter::default();
         reporter.insert("umi_bases_with_q30_frac", 0.97);
         reporter.insert("bc_bases_with_q30_frac", 0.92);
         reporter.insert("A_homopolymer_frac", 0.01);

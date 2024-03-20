@@ -19,12 +19,11 @@ pub fn ensure_no_diff(actual: &Path, expected: &Path) {
 
 /// Copy from src to dest. Panic if dest exists.
 pub fn safe_copy(src: &Path, dest: &Path) -> Result<()> {
-    if dest.exists() {
-        panic!(
-            "Error in safe_copy: destination file exists: {}",
-            dest.display()
-        );
-    }
+    assert!(
+        !dest.exists(),
+        "Error in safe_copy: destination file exists: {}",
+        dest.display()
+    );
     std::fs::copy(src, dest).with_context(|| {
         format!(
             "Error: unable to copy {} to {}",

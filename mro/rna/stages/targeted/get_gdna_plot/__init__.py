@@ -12,8 +12,8 @@ import numpy as np
 
 import tenkit.safe_json as tk_safe_json
 from cellranger.targeted.targeted_constants import GDNA_PLOT_NAME
+from cellranger.websummary.numeric_converters import array_to_float32_base64
 from cellranger.websummary.plotly_tools import PLOT_CONFIG
-from cellranger.websummary.react_components import array_to_float32_base64
 
 __MRO__ = """
 stage GET_GDNA_PLOT(

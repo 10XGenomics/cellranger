@@ -44,16 +44,13 @@
 //!     bar1: CountMetric,
 //!     bar2: PercentMetric,
 //! }
+//!
 //! #[automatically_derived]
 //! impl JsonReport for Foo {
 //!     fn to_json_reporter(&self) -> JsonReporter {
-//!         let mut full_reporter = JsonReporter::new();
-//!         let mut reporter = bar1.to_json_reporter();
-//!         reporter.add_prefix("bar1");
-//!         full_reporter.merge(reporter);
-//!         let mut reporter = bar2.to_json_reporter();
-//!         reporter.add_prefix("bar2");
-//!         full_reporter.merge(reporter);
+//!         let mut full_reporter = JsonReporter::default();
+//!         full_reporter.merge(self.bar1.to_json_reporter().add_prefix("bar1"));
+//!         full_reporter.merge(self.bar2.to_json_reporter().add_prefix("bar2"));
 //!         full_reporter
 //!     }
 //! }
@@ -87,21 +84,28 @@ pub fn derive_json_report_trait(input: TokenStream) -> TokenStream {
 
     // Collect the struct fields
     let fieldinfo = collect_struct_fields(&input.data);
+
     let idents = fieldinfo
         .iter()
-        .filter(|f| !f.skip_report)
+        .filter(|f| !f.skip_report && !f.block_report)
         .map(|f| &f.ident);
-    let names = fieldinfo.iter().filter(|f| !f.skip_report).map(|f| &f.name);
-    let names_copy = names.clone();
+
+    let names = fieldinfo
+        .iter()
+        .filter(|f| !f.skip_report && !f.block_report)
+        .map(|f| &f.name);
+
     let inline = fieldinfo
         .iter()
-        .filter(|f| !f.skip_report)
+        .filter(|f| !f.skip_report && !f.block_report)
         .map(|f| &f.inline_report);
 
-    let block = fieldinfo
+    let block_idents = fieldinfo
         .iter()
-        .filter(|f| !f.skip_report)
-        .map(|f| &f.block_report);
+        .filter(|f| f.block_report)
+        .map(|f| &f.ident);
+
+    let block_names = fieldinfo.iter().filter(|f| f.block_report).map(|f| &f.name);
 
     let extend = extend_tokens(&input.attrs);
 
@@ -111,20 +115,26 @@ pub fn derive_json_report_trait(input: TokenStream) -> TokenStream {
         #[allow(unused_attributes)]
         impl #impl_generics ::metric::JsonReport for #name #ty_generics #where_clause {
             fn to_json_reporter(&self) -> ::metric::JsonReporter {
-                let mut full_reporter = ::metric::JsonReporter::new();
+                let mut full_reporter = ::metric::JsonReporter::default();
                 #(
-                    let mut reporter = self.#idents.to_json_reporter();
-                    if (#block) {
-                        let block_val = reporter.block_value();
-                        full_reporter.insert(#names_copy, block_val);
-                    } else {
-                        if !(#inline) {
-                            reporter.add_prefix(#names);
+                    let reporter = self.#idents.to_json_reporter();
+                    ::metric::Metric::merge(&mut full_reporter,
+                        if #inline {
+                            reporter
+                        } else {
+                            reporter.add_prefix(#names)
                         }
-                        ::metric::Metric::merge(&mut full_reporter, reporter)
-                    }
-
+                    );
                 )*
+
+                // For fields using #[json_report(block)]
+                #(
+                    let value = ::serde_json::to_value(&self.#block_idents).unwrap();
+                    if !value.is_null() {
+                        full_reporter.insert(#block_names, value);
+                    }
+                )*
+
                 // Call the custom function
                 #extend
 
@@ -168,15 +178,15 @@ fn collect_struct_fields(data: &Data) -> Vec<FieldInfo> {
                     .map(std::string::ToString::to_string)
                     .collect();
 
-                let inner_attrs: Vec<(bool, bool, bool)> = fields
+                let field_attrs: Vec<(bool, bool, bool)> = fields
                     .named
                     .iter()
-                    .map(|f| check_inner_attrs(&f.attrs))
+                    .map(|f| parse_field_attributes(&f.attrs))
                     .collect();
 
-                skip_reports = inner_attrs.iter().map(|x| x.0).collect();
-                inline_reports = inner_attrs.iter().map(|x| x.1).collect();
-                block_reports = inner_attrs.iter().map(|x| x.2).collect();
+                skip_reports = field_attrs.iter().map(|x| x.0).collect();
+                inline_reports = field_attrs.iter().map(|x| x.1).collect();
+                block_reports = field_attrs.iter().map(|x| x.2).collect();
             }
             Fields::Unnamed(_) | Fields::Unit => {
                 panic!("You can only derive JsonReport for normal structs!");
@@ -201,105 +211,68 @@ fn collect_struct_fields(data: &Data) -> Vec<FieldInfo> {
     result
 }
 
-fn check_inner_attrs(inner_attrs: &[Attribute]) -> (bool, bool, bool) {
-    let mut skip = false;
-    let mut inline = false;
-    let mut found = false;
-    let mut block = false;
-
-    for attr in inner_attrs {
-        // Cast the attribute as syn::Meta
-        // match attr.interpret_meta().unwrap() {
-        // Things like #[json_report(extend="function_name")] is parsed as a Meta::List
-        if let syn::Meta::List(list) = attr.parse_meta().unwrap() {
-            if !list.path.is_ident("json_report") {
-                continue;
-            }
-            // Iterate through stuff in the paranthesis
-            for nestedmeta in list.nested {
-                match nestedmeta {
-                    syn::NestedMeta::Meta(syn::Meta::Path(ref path)) => {
-                        // skip is parsed as a Path
-                        assert!(
-                            path.is_ident("skip") || path.is_ident("inline") || path.is_ident("block"),
-                            "Expecting only #[json_report(skip)] or #[json_report(inline)] or #[json_report(block)] as inner attribute"
-                        );
-                        if found {
-                            panic!("Found multiple #[json_report()] for one field")
-                        }
-                        if path.is_ident("skip") {
-                            skip = true;
-                        }
-                        if path.is_ident("inline") {
-                            inline = true;
-                        }
-                        if path.is_ident("block") {
-                            block = true;
-                        }
-                        found = true;
-                    }
-                    _ => panic!("Error parsing the inner #[json_report()] attribute"),
-                }
-            }
-        }
+fn parse_field_attributes(attrs: &[Attribute]) -> (bool, bool, bool) {
+    let mut ident = None;
+    for attr in attrs {
+        if !attr.path().is_ident("json_report") {
+            continue;
+        };
+        let syn::Meta::List(list) = &attr.meta else {
+            panic!("Expected #[json_report(...)]");
+        };
+        list.parse_nested_meta(|meta| {
+            assert!(ident.is_none(), "Expected at most one #[json_report(...)]");
+            ident = Some(meta.path.get_ident().unwrap().to_string());
+            Ok(())
+        })
+        .unwrap();
     }
-    assert!(
-        !(inline && block),
-        "You cannot #[json_report(inline)] and #[json_report(block)] on the same field"
-    );
-    (skip, inline, block)
+
+    match ident.as_deref() {
+        None => (false, false, false),
+        Some("skip") => (true, false, false),
+        Some("inline") => (false, true, false),
+        Some("block") => (false, false, true),
+        Some(s) => panic!("One of block, inline, or skip expected in #[json_report({s})]"),
+    }
 }
 
-// Parse function_name from the outer attribute
+// Parse the extend function name argument from the container attributes.
 // #[json_report(extend="function_name")]
-fn function_name_from_outer_attrs(outer_attrs: &[Attribute]) -> Option<String> {
-    let mut result = None;
-    let mut found = false;
-    // Iterate through attributes
+fn parse_extend_argument(outer_attrs: &[Attribute]) -> Option<String> {
+    let mut extend = None;
     for attr in outer_attrs {
-        // Cast the attribute as syn::Meta
-        // Things like #[json_report(extend="function_name")] is parsed as a Meta::List
-        if let syn::Meta::List(list) = attr.parse_meta().unwrap() {
-            if !list.path.is_ident("json_report") {
-                continue;
-            }
-            // Iterate through stuff in the paranthesis
-            for nestedmeta in list.nested {
-                match nestedmeta {
-                    syn::NestedMeta::Meta(syn::Meta::NameValue(ref name_value)) => {
-                        // extend="function_name" is parsed as a Name value pair
-                        assert!(
-                            name_value.path.is_ident("extend"),
-                            "Expecting only #[json_report(extend=\"name\")] as outer attribute"
-                        );
-                        match name_value.lit {
-                            // Phew! Finally we reached the function name
-                            syn::Lit::Str(ref s) => {
-                                if found {
-                                    panic!("Multiple #[json_report(extend = \"*\")] found");
-                                }
-                                result = Some(s.value());
-                                found = true;
-                            }
-                            _ => panic!("Error parsing the outer #[json_report] attribute"),
-                        };
-                    }
-                    _ => panic!("Error parsing the outer #[json_report] attribute"),
-                }
-            }
+        if !attr.path().is_ident("json_report") {
+            continue;
         }
+        let syn::Meta::List(list) = &attr.meta else {
+            panic!("Expected #[json_report(extend=\"...\")]");
+        };
+        list.parse_nested_meta(|meta| {
+            assert!(
+                meta.path.is_ident("extend"),
+                "Expected #[json_report(extend=\"...\")]",
+            );
+            assert!(
+                extend.is_none(),
+                "Expected at most one #[json_report(extend=\"...\")]"
+            );
+            let litstr: syn::LitStr = meta.value().unwrap().parse().unwrap();
+            extend = Some(litstr.value());
+            Ok(())
+        })
+        .unwrap();
     }
-    result
+    extend
 }
 
-fn extend_tokens(outer_attrs: &[Attribute]) -> proc_macro2::TokenStream {
-    if let Some(fname) = function_name_from_outer_attrs(outer_attrs) {
-        let fname_ident = Ident::new(&fname, proc_macro2::Span::call_site());
-        quote! {
-            let extend_reporter = self.#fname_ident();
-            full_reporter.merge(extend_reporter);
-        }
-    } else {
-        quote! {}
+fn extend_tokens(attrs: &[Attribute]) -> proc_macro2::TokenStream {
+    let Some(fname) = parse_extend_argument(attrs) else {
+        return quote! {};
+    };
+    let fname_ident = Ident::new(&fname, proc_macro2::Span::call_site());
+    quote! {
+        let extend_reporter = self.#fname_ident();
+        full_reporter.merge(extend_reporter);
     }
 }

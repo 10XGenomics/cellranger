@@ -15,7 +15,7 @@ from six import ensure_str
 
 from cellranger.feature.feature_assigner import MIN_COUNTS_PER_ANTIBODY
 from cellranger.rna.library import ANTIBODY_LIBRARY_TYPE
-from cellranger.webshim.jibes_web import make_color_map
+from cellranger.webshim.jibes_plotting import make_color_map
 from cellranger.websummary.isotypes import LINK_HELP_TEXT
 from cellranger.websummary.plotly_tools import MODE_BAR_BUTTONS, PLOT_CONFIG
 

@@ -1,4 +1,4 @@
-//! SetupVdjAggr stage code
+//! Martian stage SETUP_VDJ_AGGR
 
 use crate::parse_aggr_csv::VdjAggrCsvLibrary;
 use anyhow::Result;
@@ -370,7 +370,7 @@ mod tests {
         let mut settings = insta::Settings::clone_current();
         settings.set_sort_maps(true);
         settings.bind(|| {
-            insta::assert_json_snapshot!(&metadata);
+            insta::assert_yaml_snapshot!(&metadata);
         });
 
         Ok(())

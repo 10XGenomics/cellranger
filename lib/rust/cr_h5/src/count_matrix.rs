@@ -1,29 +1,24 @@
 //! A feature-barcode count matrix.
 
-use crate::CountShardFile;
-use anyhow::{bail, Context, Result};
-use barcode::MAX_BARCODE_AND_GEM_GROUP_LENGTH;
-use cr_h5::{
+use crate::{
     extend_dataset, feature_reference_io, make_column_ds, scalar_attribute, write_column_ds,
 };
+use anyhow::{bail, Context, Result};
+use barcode::MAX_BARCODE_AND_GEM_GROUP_LENGTH;
 use cr_types::barcode_index::BarcodeIndex;
-use cr_types::chemistry::ChemistryDef;
-use cr_types::reference::feature_reference::{FeatureDef, FeatureReference};
-use cr_types::types::{FeatureBarcodeCount, FeatureType, GemWell};
+use cr_types::reference::feature_reference::{FeatureDef, FeatureReference, FeatureType};
+use cr_types::{BarcodeThenFeatureOrder, CountShardFile, FeatureBarcodeCount, GemWell, H5File};
 use hdf5::types::{FixedAscii, VarLenAscii, VarLenUnicode};
 use hdf5::Group;
 use itertools::{process_results, Itertools};
 use martian_derive::martian_filetype;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use shardio::ShardReader;
 use std::cell::OnceCell;
 use std::fmt::Display;
-use std::hash::Hash;
 use std::iter::zip;
 use std::mem::size_of;
 use std::ops::Range;
-use std::path::Path;
 use std::str::FromStr;
 
 // Group keys.
@@ -72,7 +67,9 @@ impl CountMatrixFile {
     pub fn load_dimensions(&self) -> Result<MatrixDimensions> {
         let matrix_group = self.matrix_group()?;
         let shape: Vec<i32> = matrix_group.dataset(MATRIX_SHAPE_DATASET)?.read_raw()?;
-        let [num_features, num_barcodes] = shape.as_slice() else { unreachable!()};
+        let [num_features, num_barcodes] = shape.as_slice() else {
+            unreachable!()
+        };
         let nnz = matrix_group.dataset(DATASET_DATA)?.size();
         Ok(MatrixDimensions {
             num_features: *num_features as usize,
@@ -90,6 +87,14 @@ impl CountMatrixFile {
         // Augment any read error with the path to the file.
         self.read_inner()
             .with_context(|| self.display().to_string())
+    }
+
+    pub fn read_barcodes(&self) -> Result<Vec<BarcodeWithGemGroup>> {
+        let matrix = self.matrix_group()?;
+        matrix
+            .dataset(DATASET_BARCODES)?
+            .read_raw()
+            .context("Ran into trouble reading barcodes from feature bc matrix.")
     }
 
     fn read_inner(&self) -> Result<CountMatrix> {
@@ -173,6 +178,10 @@ impl CountMatrix {
         self.barcodes.len()
     }
 
+    pub fn num_features(&self) -> usize {
+        self.feature_reference.num_features()
+    }
+
     /// Return an iterator over all observed barcodes and their total counts
     /// for the specified feature type.
     /// Barcodes with zero counts for that feature type will still be included
@@ -242,6 +251,26 @@ impl CountMatrix {
     pub fn feature_reference(&self) -> &FeatureReference {
         &self.feature_reference
     }
+
+    pub fn raw_counts(&self) -> impl Iterator<Item = RawCount> + '_ {
+        self.barcode_count_offsets
+            .iter()
+            .tuple_windows()
+            .enumerate()
+            .flat_map(move |(barcode_idx, (&start, &end))| {
+                (start as usize..end as usize).map(move |index| RawCount {
+                    count: self.counts[index],
+                    barcode_idx,
+                    feature_idx: self.feature_indices[index] as usize,
+                })
+            })
+    }
+}
+
+pub struct RawCount {
+    pub count: Count,
+    pub barcode_idx: usize,
+    pub feature_idx: usize,
 }
 
 /// All data for a feature-barcode count.
@@ -277,23 +306,20 @@ where
 /// Write a feature-barcode matrix h5 file to disk
 /// Requires a loaded FeatureReference and list of barcodes to include.
 /// Needs a shardio of FeatureCount values in natural order.
-pub fn write_matrix_h5<B>(
-    path: &Path,
+pub fn write_matrix_h5(
+    path: &H5File,
     chunks: &[CountShardFile],
     feature_ref: &FeatureReference,
     sample_id: &str,
-    chemistry: &ChemistryDef,
+    chemistry_description: &str,
     gem_well: GemWell,
-    barcode_index: &BarcodeIndex<B>,
+    barcode_index: &BarcodeIndex,
     software_version: &str,
-) -> Result<()>
-where
-    B: Eq + Hash + Ord + Copy + DeserializeOwned + Display,
-{
-    let reader: ShardReader<FeatureBarcodeCount<B>, crate::BarcodeThenFeatureOrder<B>> =
+) -> Result<()> {
+    let reader: ShardReader<FeatureBarcodeCount, BarcodeThenFeatureOrder> =
         ShardReader::open_set(chunks)?;
 
-    let unique_gem_groups = vec![gem_well.inner() as usize];
+    let unique_gem_groups = [gem_well.inner() as usize];
 
     let f = hdf5::File::create(path)?;
     let mut group = f.create_group(MATRIX_GROUP)?;
@@ -320,7 +346,7 @@ where
     scalar_attribute(
         &f,
         H5_CHEMISTRY_DESC_KEY,
-        VarLenAscii::from_ascii(&chemistry.description)?,
+        VarLenAscii::from_ascii(chemistry_description)?,
     )?;
 
     let library_id_mapping = ndarray::Array1::from_elem(
@@ -353,15 +379,12 @@ where
 ///     /data (int32 count values)
 ///     /indices (int32 feature ids)
 ///     /indptr (int64 indexeinto data for each barcode)
-fn write_matrix_h5_helper<B>(
+fn write_matrix_h5_helper(
     group: &mut Group,
-    reader: &ShardReader<FeatureBarcodeCount<B>, crate::BarcodeThenFeatureOrder<B>>,
+    reader: &ShardReader<FeatureBarcodeCount, BarcodeThenFeatureOrder>,
     feature_ref: &FeatureReference,
-    barcode_index: &BarcodeIndex<B>,
-) -> Result<()>
-where
-    B: Eq + Hash + Ord + Copy + Display + DeserializeOwned,
-{
+    barcode_index: &BarcodeIndex,
+) -> Result<()> {
     // Avoid failure in writing a hdf5 dataset of length 0 with gzip chunk size 1
     if barcode_index.is_empty() {
         bail!(

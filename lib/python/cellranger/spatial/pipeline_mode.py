@@ -12,8 +12,8 @@ from typing import NamedTuple
 
 class Product(str, Enum):
     VISIUM = "Visium"
-    VISIUM_HD = "Visium-HD"
     CYT = "CytAssist"
+    VISIUM_HD_NOCYT_PD = "Visium-HD no CytAssist image"
 
 
 class SlideType(str, Enum):
@@ -52,3 +52,6 @@ class PipelineMode(NamedTuple):
 
     def is_cytassist(self) -> bool:
         return self.product == Product.CYT
+
+    def is_visium_hd(self) -> bool:
+        return self.slide == SlideType.VISIUM_HD

@@ -8,7 +8,7 @@ use std::boxed::Box;
 use std::iter::Iterator;
 use transcriptome::Gene;
 
-const PROBE_DATA_LEN: usize = 64;
+pub const PROBE_DATA_LEN: usize = 64;
 const PROBE_ID: &str = "probe_id";
 const PROBE_FEATURE_NAME: &str = "feature_name";
 const PROBE_FEATURE_ID: &str = "feature_id";
@@ -18,7 +18,7 @@ const INCLUDED_PROBES_NAME: &str = "included_probes";
 
 pub fn to_h5(probes: &[Probe], filtered_probes: &[bool], group: &mut Group) -> Result<()> {
     let item = probes
-        .get(0)
+        .first()
         .expect("Probes vector was empty")
         .region
         .as_ref();
@@ -58,13 +58,12 @@ pub fn from_h5(group: &Group) -> Result<Vec<Probe>> {
         Box::new(std::iter::repeat(None))
     };
     // Included is only optionally present.
-    let ds = group.dataset(INCLUDED_PROBES_NAME);
-    let includeds: Box<dyn Iterator<Item = bool>> = if ds.is_ok() {
-        let included_arr = ds.unwrap().read_1d::<bool>()?;
-        Box::new(included_arr.into_iter())
-    } else {
-        Box::new(std::iter::repeat(true))
-    };
+    let includeds: Box<dyn Iterator<Item = bool>> =
+        if let Ok(dataset) = group.dataset(INCLUDED_PROBES_NAME) {
+            Box::new(dataset.read_1d::<bool>()?.into_iter())
+        } else {
+            Box::new(std::iter::repeat(true))
+        };
     let ds = group.dataset(PROBE_ID)?;
     let ids = ds.read_1d::<FixedAscii<PROBE_DATA_LEN>>()?;
     let ids: Vec<String> = ids.into_iter().map(|x| x.to_string()).collect();

@@ -1,34 +1,34 @@
 //! Martian stage CALL_TAGS_OH
 //! Assign cells to samples using their overhang.
-use crate::count_matrix::CountMatrixFile;
 use crate::read_level_multiplexing::{
     get_barcodes_per_multiplexing_identifier, get_umi_per_multiplexing_identifier_for_feature_type,
 };
 use anyhow::Result;
 use barcode::whitelist::BarcodeId;
-use barcode::WhitelistSource;
-use cr_types::chemistry::ChemistryDef;
-use cr_types::{FeatureType, MetricsFile};
-use json_report_derive::JsonReport;
+use cr_h5::count_matrix::CountMatrixFile;
+use cr_types::chemistry::ChemistryDefs;
+use cr_types::reference::feature_reference::FeatureType;
+use itertools::Itertools;
 use martian::prelude::{MartianMain, MartianRover};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::FileTypeWrite;
-use metric::{Metric, TxHashMap};
+use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// The Martian stage inputs.
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct CallTagsOHStageInputs {
-    pub chemistry_def: ChemistryDef,
+    pub chemistry_defs: ChemistryDefs,
     pub raw_feature_bc_matrix: CountMatrixFile,
 }
 
 /// The Martian stage outputs.
-#[derive(Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Serialize, Deserialize, MartianStruct)]
 pub struct CallTagsOHStageOutputs {
     pub barcodes_per_tag: Option<JsonFile<TxHashMap<BarcodeId, Vec<String>>>>,
-    pub summary: Option<MetricsFile>,
+    pub summary: Option<JsonFile<CallTagsOHMetrics>>,
 }
 
 /// Martian stage CALL_TAGS_OH
@@ -36,14 +36,12 @@ pub struct CallTagsOHStageOutputs {
 pub struct CallTagsOH;
 
 /// Overhang metrics.
-#[derive(JsonReport)]
-struct CallTagsOHMetrics {
+#[derive(Serialize)]
+pub struct CallTagsOHMetrics {
     /// The number of UMI per overhang.
-    #[json_report(block)]
     umi_per_overhang: TxHashMap<BarcodeId, i64>,
 
     /// The number of valid barcodes per overhang
-    #[json_report(block)]
     valid_barcodes_per_overhang: TxHashMap<BarcodeId, i64>,
 }
 
@@ -72,19 +70,42 @@ impl MartianMain for CallTagsOH {
 
     /// Run the Martian stage CALL_TAGS_OH
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
-        if !args.chemistry_def.name.is_overhang_multiplexed() {
+        let overhang_barcodes: HashMap<_, _> = args
+            .chemistry_defs
+            .iter()
+            .filter_map(|(library_type, chemistry_def)| {
+                Some((library_type, chemistry_def.overhang_read_barcode()?))
+            })
+            .collect();
+
+        if overhang_barcodes.is_empty() {
             return Ok(Self::StageOutputs {
                 barcodes_per_tag: None,
                 summary: None,
             });
         }
-        let overhang_read_component = args.chemistry_def.overhang_read_barcode().unwrap();
-        let overhang_range = overhang_read_component.offset()
-            ..overhang_read_component.offset() + overhang_read_component.length();
 
-        let overhang_seq_to_id =
-            WhitelistSource::from_spec(overhang_read_component.whitelist(), true, None)?
-                .as_translation_seq_to_id()?;
+        let (overhang_offset, overhang_length) = overhang_barcodes
+            .values()
+            .map(|x| (x.offset(), x.length()))
+            .dedup()
+            .exactly_one()
+            .unwrap();
+
+        let overhang_range = overhang_offset..(overhang_offset + overhang_length);
+
+        let whitelist_sources: Vec<_> = overhang_barcodes
+            .into_values()
+            .map(|x| x.whitelist().as_source(true))
+            .try_collect()?;
+
+        // TODO(CELLRANGER-7847): Factor out duplicated seq_to_id code
+        let overhang_seq_to_id: TxHashMap<_, _> = whitelist_sources
+            .into_iter()
+            .dedup()
+            .exactly_one()
+            .unwrap()
+            .as_translation_seq_to_id()?;
 
         let matrix = args.raw_feature_bc_matrix.read()?;
         let barcodes_per_overhang = get_barcodes_per_multiplexing_identifier(
@@ -102,11 +123,15 @@ impl MartianMain for CallTagsOH {
             FeatureType::Gene,
         );
 
-        let metrics = CallTagsOHMetrics::new(umi_per_overhang, barcodes_per_overhang);
+        let summary: JsonFile<_> = rover.make_path("summary");
+        summary.write(&CallTagsOHMetrics::new(
+            umi_per_overhang,
+            barcodes_per_overhang,
+        ))?;
 
         Ok(Self::StageOutputs {
             barcodes_per_tag: Some(barcodes_per_tag_file),
-            summary: Some(MetricsFile::from_reporter(&rover, "summary", &metrics)?),
+            summary: Some(summary),
         })
     }
 }

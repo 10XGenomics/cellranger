@@ -1,6 +1,5 @@
 [dependencies]
-csv = '1.2'
-statrs = '>=0.12, <= 0.16'
+csv = '1'
 thousands = '0.2'
 
 [dependencies.anyhow]
@@ -27,7 +26,7 @@ workspace = true
 
 [dependencies.ordered-float]
 features = ['serde']
-version = '>=1.1.1, < 4'
+version = '3'
 
 [dependencies.plotly]
 workspace = true
@@ -41,6 +40,9 @@ version = '1'
 workspace = true
 
 [dependencies.serde_json]
+workspace = true
+
+[dependencies.statrs]
 workspace = true
 
 [dependencies.websummary_derive]

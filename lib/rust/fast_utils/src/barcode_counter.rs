@@ -4,8 +4,7 @@
 use cr_h5::molecule_info::{
     BarcodeIdxType, FullUmiCount, LibraryIdxType, MoleculeInfoIterator, MoleculeInfoReader,
 };
-use cr_types::reference::feature_reference::FeatureDef;
-use cr_types::types::FeatureType;
+use cr_types::reference::feature_reference::{FeatureDef, FeatureType};
 use ndarray::Axis;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -94,16 +93,18 @@ struct FeatureCountsPerBarcode {
 
 impl FeatureCountsPerBarcode {
     fn new(cur_path: &Path, features: Vec<FeatureDef>) -> Self {
-        if features.is_empty() {
-            panic!("No features of this type were found in the FeatureRef.");
-        }
+        assert!(
+            !features.is_empty(),
+            "No features of this type were found in the FeatureRef."
+        );
         // Assuming all tags are in
         let mut index = features[0].index;
         for feature in &features[1..] {
             index += 1;
-            if index != feature.index {
-                panic!("The feature entries in the FeatureRef were not in serial order");
-            }
+            assert!(
+                index == feature.index,
+                "The feature entries in the FeatureRef were not in serial order"
+            );
         }
         // Get valid cell-barcodes
         let num_barcodes = MoleculeInfoReader::read_barcodes(cur_path).unwrap().len();
@@ -160,8 +161,8 @@ pub(crate) fn counts_per_barcode(
         .feature_ref
         .feature_defs
         .iter()
+        .filter(|&x| x.feature_type == feature_type)
         .cloned()
-        .filter(|x| x.feature_type == feature_type)
         .collect();
 
     let mut counter = FeatureCountsPerBarcode::new(cur_path, features);

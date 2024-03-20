@@ -53,7 +53,6 @@ impl MartianMain for SecondaryTest {
             max_dims: None,
             min_dist: None,
             metric: None,
-            is_antibody_only: false,
             implementation: UmapImplementation::Parallel,
         };
 

@@ -5,7 +5,7 @@
 # The subset of CountInputs which are not overridden in the CS pipeline.
 struct CountInputsMinimal(
     map[]              sample_def,
-    string             chemistry,
+    map<string>        chemistry_specs,
     path               reference_path,
     CellCalling        cell_calling_config,
     int                r1_length,
@@ -26,7 +26,7 @@ struct CountInputsMinimal(
 pipeline FULL_VDJ_INPUTS(
     in  VdjInputsCS  cs_inputs,
     out map[]        sample_def,
-    out string       chemistry,
+    out string       chemistry_spec,
     out ChemistryDef custom_chemistry_def,
     out map[]        primers,
     out float        subsample_rate,
@@ -36,20 +36,16 @@ pipeline FULL_VDJ_INPUTS(
     out bool         denovo,
     out int          r1_length,
     out int          r2_length,
-    out path         ground_truth_clonotype_path,
     out path         inner_enrichment_primers,
     out string       chain_type,
     out string       physical_library_id,
-    out bool         r2_revcomp,
 )
 {
     return (
-        chemistry                   = "SCVDJ_auto",
-        custom_chemistry_def        = null,
-        ground_truth_clonotype_path = null,
-        initial_reads               = null,
-        primer_initial_reads        = null,
-        primers                     = [
+        custom_chemistry_def    = null,
+        initial_reads           = null,
+        primer_initial_reads    = null,
+        primers                 = [
             {
                 "name": "P5",
                 "seq": "AATGATACGGCGACCACCGAGATCT",
@@ -79,9 +75,9 @@ pipeline FULL_VDJ_INPUTS(
                 "seq": "TTTCTTATATGGG",
             },
         ],
-        special_genomic_regions     = null,
-        subsample_rate              = null,
-        *                           = self.cs_inputs,
+        special_genomic_regions = null,
+        subsample_rate          = null,
+        *                       = self.cs_inputs,
     )
 }
 
@@ -90,7 +86,7 @@ pipeline FULL_COUNT_INPUTS(
     in  CountInputsMinimal cs_inputs,
     in  string[]           allowed_chems,
     out map[]              sample_def,
-    out string             chemistry,
+    out map<string>        chemistry_specs,
     out ChemistryDef       custom_chemistry_def,
     out path               reference_path,
     out json               gene_index,
@@ -121,6 +117,7 @@ pipeline FULL_COUNT_INPUTS(
     out bool               tenx_cmos,
     out float              min_assignment_confidence,
     out csv[]              annotations,
+    out string             cas_model,
 )
 {
     call WRITE_GENE_INDEX(
@@ -168,6 +165,7 @@ pipeline FULL_COUNT_INPUTS(
         trim_tso_min_score      = 20,
         count_allowed_chems     = self.allowed_chems,
         include_exons           = true,
+        cas_model               = null,
         *                       = self.cs_inputs,
     )
 }
@@ -215,21 +213,26 @@ pipeline SC_MULTI_CS(
             "custom",
             "threeprime",
             "fiveprime",
-            "SC3P_auto",
-            "SC5P_auto",
             "SC3Pv1",
             "SC3Pv2",
             "SC3Pv3",
+            # no longer supported, but included to allow DETECT_CHEMISTRY to produce a nice error message
             "SC3Pv3LT",
             "SC3Pv3HT",
+            "SC3Pv4",
             "SC5P-PE",
-            "SC5P-R1",
             "SC5P-R2",
+            "SC5P-R2-v3",
+            "SC5P-R2-OH-v3",
             "SC5PHT",
             "SC-FB",
             "SFRP",
-            "MFRP",
-            "MFRP-R1",
+            "MFRP-RNA",
+            "MFRP-Ab",
+            "MFRP-CRISPR",
+            "MFRP-RNA-R1",
+            "MFRP-Ab-R1",
+            "MFRP-Ab-R2pos50",
             "MFRP-R1-48-uncollapsed",
             "ARC-v1",
         ],
@@ -251,16 +254,21 @@ pipeline SC_MULTI_CS(
         is_pd                 = false,
         count_allowed_chems   = FULL_COUNT_INPUTS.count_allowed_chems,
         count_pipestance_type = "SC_RNA_COUNTER_CS",
+        vdj_allowed_chems     = [
+            "SCVDJ_auto",
+            "custom",
+            "SCVDJ",
+            "SCVDJ-R2",
+            "SCVDJ-R2-v3",
+            "SCVDJ-R1",
+        ],
         is_multi              = true,
         feature_config        = PARSE_MULTI_CONFIG.feature_config,
         no_preflight          = self.no_preflight,
     )
 
-    call BUILD_VDJ_OUTPUTS_CS(
-        multi_core = SC_MULTI_CORE,
-    )
-
     call SANITIZE_MAP_CALLS(
+        multi_graph                  = SC_MULTI_CORE.multi_graph,
         in_crispr_analysis           = SC_MULTI_CORE.sample_analyzer.crispr_analyzer.crispr_analysis,
         in_rna_analysis              = SC_MULTI_CORE.sample_analyzer.common_analyzer.analysis_csv,
         in_cloupe_file               = SC_MULTI_CORE.sample_reporter.cloupe,
@@ -268,6 +276,31 @@ pipeline SC_MULTI_CS(
         in_sample_tsne_plots         = null,
         in_sample_barcode_rank_plots = null,
         in_sample_treemap_plots      = null,
+        in_vdj_t_analyzer            = SC_MULTI_CORE.multi_gw.vdj_t.per_sample,
+        in_vdj_t_gd_analyzer         = SC_MULTI_CORE.multi_gw.vdj_t_gd.per_sample,
+        in_vdj_b_analyzer            = SC_MULTI_CORE.multi_gw.vdj_b.per_sample,
+    )
+
+    map call BUILD_VDJ_OUTPUTS_CS as PER_SAMPLE_VDJ_OUTS_CS(
+        vdj_t_assembler    = null,
+        vdj_t_analyzer     = split SANITIZE_MAP_CALLS.vdj_t_analyzer,
+        vdj_t_gd_assembler = null,
+        vdj_t_gd_analyzer  = split SANITIZE_MAP_CALLS.vdj_t_gd_analyzer,
+        vdj_b_assembler    = null,
+        vdj_b_analyzer     = split SANITIZE_MAP_CALLS.vdj_b_analyzer,
+    ) using (
+        disabled = PARSE_MULTI_CONFIG.basic_config.disable_vdj,
+    )
+
+    call BUILD_VDJ_OUTPUTS_CS as LIB_VDJ_OUTS_CS(
+        vdj_t_assembler    = SC_MULTI_CORE.multi_gw.vdj_t.assembler_outs,
+        vdj_t_analyzer     = SC_MULTI_CORE.multi_gw.vdj_t.lib_level,
+        vdj_t_gd_assembler = SC_MULTI_CORE.multi_gw.vdj_t_gd.assembler_outs,
+        vdj_t_gd_analyzer  = SC_MULTI_CORE.multi_gw.vdj_t_gd.lib_level,
+        vdj_b_assembler    = SC_MULTI_CORE.multi_gw.vdj_b.assembler_outs,
+        vdj_b_analyzer     = SC_MULTI_CORE.multi_gw.vdj_b.lib_level,
+    ) using (
+        disabled = PARSE_MULTI_CONFIG.basic_config.disable_vdj,
     )
 
     map call BUILD_SAMPLE_OUTS(
@@ -277,11 +310,11 @@ pipeline SC_MULTI_CS(
         cloupe                       = split SANITIZE_MAP_CALLS.cloupe_file,
         web_summary                  = split SC_MULTI_CORE.multi_web_summaries,
         metrics_summary_csv          = split SC_MULTI_CORE.multi_metrics_csvs,
-        vdj_b_outs                   = BUILD_VDJ_OUTPUTS_CS.vdj_b_outs_cs,
-        vdj_t_outs                   = BUILD_VDJ_OUTPUTS_CS.vdj_t_outs_cs,
-        vdj_t_gd_outs                = BUILD_VDJ_OUTPUTS_CS.vdj_t_gd_outs_cs,
+        vdj_b_outs                   = split PER_SAMPLE_VDJ_OUTS_CS.vdj_b_outs_cs,
+        vdj_t_outs                   = split PER_SAMPLE_VDJ_OUTS_CS.vdj_t_outs_cs,
+        vdj_t_gd_outs                = split PER_SAMPLE_VDJ_OUTS_CS.vdj_t_gd_outs_cs,
         output_per_sample_raw_matrix = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.output_per_sample_raw_matrix,
-        beam_analyzer                = SC_MULTI_CORE.multi_reporter.beam_analyzer,
+        beam_analyzer                = split SC_MULTI_CORE.beam_analyzer,
     )
 
     return (
@@ -307,9 +340,9 @@ pipeline SC_MULTI_CS(
                 tag_calls_per_cell:          SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.tag_calls_per_cell,
                 tag_calls_summary:           SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.tag_calls_summary,
             },
-            vdj_b:    BUILD_VDJ_OUTPUTS_CS.vdj_b_outs_cs,
-            vdj_t:    BUILD_VDJ_OUTPUTS_CS.vdj_t_outs_cs,
-            vdj_t_gd: BUILD_VDJ_OUTPUTS_CS.vdj_t_gd_outs_cs,
+            vdj_b:    LIB_VDJ_OUTS_CS.vdj_b_outs_cs,
+            vdj_t:    LIB_VDJ_OUTS_CS.vdj_t_outs_cs,
+            vdj_t_gd: LIB_VDJ_OUTS_CS.vdj_t_gd_outs_cs,
         },
         per_sample_outs = BUILD_SAMPLE_OUTS.sample_outs,
     )

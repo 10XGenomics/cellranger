@@ -17,6 +17,7 @@ import cellranger.csv_io as cr_csv_io
 import cellranger.reference as cr_reference
 import cellranger.rna.library as rna_library
 import cellranger.sample_def as cr_sample_def
+from cellranger.reference_hash import compute_hash_of_file
 from cellranger.targeted import simple_utils, targeted_constants
 
 __MRO__ = """
@@ -28,7 +29,6 @@ stage PARSE_TARGET_FEATURES(
     in  bool     no_target_umi_filter,
     in  bool     no_bam,
     in  bool     is_pd,
-    in  int      rps_limit,
     out fa       bait_fasta,
     out csv      target_panel,
     out csv      probe_set,
@@ -37,7 +37,6 @@ stage PARSE_TARGET_FEATURES(
     out bool     disable_targeted,
     out bool     disable_target_umi_filter,
     out bool     no_bam,
-    out int      rps_limit,
     out string   target_set_name,
     out string   targeting_method,
     out tps.json target_panel_summary,
@@ -75,7 +74,6 @@ def main(args, outs):
 
         ## These will all be null if not targeted data.
         ## (Also, don't rely on deprecated martian behavior that initializes paths)
-        outs.rps_limit = None
         outs.target_set_name = None
         outs.targeting_method = None
         outs.target_panel = None
@@ -108,12 +106,14 @@ def main(args, outs):
                 (gene_index.gene_id_to_int(gene_id) for gene_id in target_gene_ids),
             )
         )
-        assert len(target_gene_indices) > 0
+        if len(target_gene_indices) == 0:
+            martian.exit(
+                "There are no gene IDs in common between the reference transcriptome and the probe set."
+            )
 
         # Set up outs
         outs.no_bam = args.no_bam
         outs.disable_targeted = False
-        outs.rps_limit = args.rps_limit
         outs.target_set_name = target_set_name
         outs.targeting_method = targeting_method
 
@@ -132,7 +132,7 @@ def main(args, outs):
             outs.target_panel_or_probe_set = outs.probe_set
             outs.disable_target_umi_filter = True
         else:
-            raise f"Unexpected targeting_method: {targeting_method}"
+            raise Exception(f"Unexpected targeting_method: {targeting_method}")
 
         ## pass through target panel file
         ## (FIXME: after moving target_set to top-level arg this isn't needed)
@@ -145,7 +145,7 @@ def main(args, outs):
         simple_utils.write_bait_fasta(outs.bait_fasta, bait_sequences)
 
         ## Pass along some details about the target panel file in summary file
-        target_panel_hash = cr_reference.compute_hash_of_file(target_set_fn)
+        target_panel_hash = compute_hash_of_file(target_set_fn)
         # TODO: This should be a type
         summary_dict = OrderedDict(
             [

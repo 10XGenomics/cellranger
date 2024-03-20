@@ -3,13 +3,16 @@ name = 'cellranger'
 test = false
 
 [dependencies]
-csv = '1.2'
+csv = '1'
 dirs = '5'
 hex = '0.4'
-libc = '0.2.147'
-sha2 = '0.10.7'
-tempfile = '3.6'
-terminal_size = '0.2'
+md5 = '0.7'
+sha2 = '0.10'
+shell-escape = '0.1.5'
+tempfile = '3'
+terminal_size = '0.3'
+thiserror = '1'
+tiff = '0.9.1'
 
 [dependencies.anyhow]
 workspace = true
@@ -26,12 +29,15 @@ workspace = true
 [dependencies.itertools]
 workspace = true
 
+[dependencies.libc]
+workspace = true
+
 [dependencies.metric]
 path = '../metric'
 
 [dependencies.ordered-float]
 features = ['serde']
-version = '>=1.1.1, < 4'
+version = '3'
 
 [dependencies.regex]
 default-features = false

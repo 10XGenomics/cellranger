@@ -400,7 +400,6 @@ pub fn uber_strong_paths(x: &mut Hyper, umi_id: &[i32], strong: &mut Vec<(i32, V
                     break;
                 }
                 z.push(e);
-                continue;
             }
             z.reverse();
             for v in &mut z {
@@ -670,7 +669,7 @@ pub fn comp_clean(x: &mut Hyper, umi_id: &[i32]) {
             for pass in 0..2 {
                 let mut f = e;
                 if pass == 1 {
-                    f = x.inv[e as usize]
+                    f = x.inv[e as usize];
                 }
                 for &id in &x.ids[f as usize] {
                     if !havex[id as usize] {
@@ -703,7 +702,7 @@ pub fn comp_clean(x: &mut Hyper, umi_id: &[i32]) {
         let s0 = supp[0].0;
         for s in supp.into_iter().skip(1) {
             if s0 >= MIN_RATIO * max(1, s.0) {
-                delu[s.1 as usize].push(u as i32)
+                delu[s.1 as usize].push(u as i32);
             }
         }
     }
@@ -772,12 +771,12 @@ pub fn tiny_comp_clean(x: &mut Hyper, cap: i32) {
             let xid = &x.ids[e as usize];
             let xidr = &x.ids[x.inv[e as usize] as usize];
             ids.reserve(xid.len() + xidr.len());
-            ids.extend(xid.iter());
-            ids.extend(xidr.iter());
+            ids.extend(xid);
+            ids.extend(xidr);
         }
         unique_sort(&mut ids);
         if n < cap as usize || ids.len() < 5_usize {
-            dels.extend(compj.into_iter());
+            dels.extend(compj);
         }
     }
     x.kill_edges(&dels);

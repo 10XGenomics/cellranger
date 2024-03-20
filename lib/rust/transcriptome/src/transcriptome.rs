@@ -200,25 +200,20 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
         let make_err =
             |msg: &str| anyhow!("Parsing GTF on line {line_num}: {msg}\nLine = '{line}'");
 
-        let rec =
-            match parse_gtf_line(line.as_bytes()) {
-                Ok((_, rec)) => rec,
-                Err(_) => {
-                    // Since parsing failed, validation should fail.
-                    // Parsing errors are unreadable, so run full (slow) validation.
-                    // If for some reason our human-readable validator doesn't fail,
-                    // return a generic error message.
-                    bail!(make_err(
-                        &match validate_gtf_line(line.as_bytes()) {
-                            Ok(()) => anyhow!(
-                                "please check this line of your GTF file for formatting errors"
-                            ),
-                            Err(err) => err,
-                        }
-                        .to_string()
-                    ));
+        let Ok((_, rec)) = parse_gtf_line(line.as_bytes()) else {
+            // Since parsing failed, validation should fail.
+            // Parsing errors are unreadable, so run full (slow) validation.
+            // If for some reason our human-readable validator doesn't fail,
+            // return a generic error message.
+            bail!(make_err(
+                &match validate_gtf_line(line.as_bytes()) {
+                    Ok(()) =>
+                        anyhow!("please check this line of your GTF file for formatting errors"),
+                    Err(err) => err,
                 }
-            };
+                .to_string()
+            ));
+        };
 
         // start is 1-based, convert to 0-based
         let start = rec.start - 1;
@@ -439,7 +434,7 @@ NC_000087.8	BestRefSeq	gene	90762409	90766319	.	-	.	gene_id \"G530011O06Rik\"; "
         let expected = "Duplicate Gene ID found in GTF: G530011O06Rik";
         assert!(txome.is_err());
         if let Err(e) = txome {
-            assert_eq!(format!("{e}"), expected)
+            assert_eq!(format!("{e}"), expected);
         }
         // This should succeed
         let alt_gtf = "\

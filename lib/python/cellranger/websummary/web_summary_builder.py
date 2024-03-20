@@ -14,10 +14,7 @@ import cellranger.rna.library as rna_library
 import cellranger.websummary.sample_properties as wsp
 import cellranger.websummary.violin_plots as violin_plots
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
-from cellranger.targeted.targeted_constants import (
-    TARGETING_METHOD_HC,
-    TARGETING_METHOD_TL,
-)
+from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC, TARGETING_METHOD_TL
 from cellranger.webshim.common import load_sample_data
 from cellranger.webshim.constants.shared import CELLRANGER_COMMAND_NAME, PIPELINE_AGGR
 from cellranger.websummary.analysis_tab_aux import (
@@ -31,20 +28,15 @@ from cellranger.websummary.analysis_tab_aux import (
     seq_saturation_plot,
     targeted_table,
 )
-from cellranger.websummary.analysis_tab_core import (
-    analysis_by_clustering,
-    umi_on_tsne_plot,
-)
+from cellranger.websummary.analysis_tab_core import analysis_by_clustering, umi_on_tsne_plot
 from cellranger.websummary.metrics import (
     LTMetricAnnotations,
     MetricAnnotations,
     TargetedMetricAnnotations,
 )
-from cellranger.websummary.react_components import WebSummaryData, write_html_file
-from cellranger.websummary.sample_properties import (
-    CountSampleProperties,
-    SampleDataPaths,
-)
+from cellranger.websummary.react_components import WebSummaryData
+from cellranger.websummary.react_summarize import write_html_file
+from cellranger.websummary.sample_properties import CountSampleProperties, SampleDataPaths
 from cellranger.websummary.summary_tab import (
     ANTIBODY_CELL_CALLING_METRIC_KEYS,
     CELL_CALLING_ALARM_KEYS,
@@ -177,7 +169,7 @@ def _build_summary_tab_common(
                     [
                         "",
                         [
-                            f"<span style='font-size: 18px;'><code>{sample_properties.cmdline!s}</code></span>"
+                            f"<span style='font-size: 18px;'><code><pre>{sample_properties.cmdline!s}</pre></code></span>"
                         ],
                     ]
                 ],
@@ -447,7 +439,11 @@ def build_web_summary_html_sc_and_aggr(
 
 
 def build_web_summary_html_sc(
-    filename, sample_properties, sample_data_paths, pipeline, sample_defs=None
+    filename: str,
+    sample_properties: CountSampleProperties,
+    sample_data_paths: SampleDataPaths,
+    pipeline: str,
+    sample_defs=None,
 ):
     if sample_properties.is_lt:
         metadata = LTMetricAnnotations(intron_mode_alerts=sample_properties.include_introns)

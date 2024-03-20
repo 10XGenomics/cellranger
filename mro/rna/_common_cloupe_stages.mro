@@ -35,6 +35,7 @@ stage CLOUPE_PREPROCESS(
     in  json     cells_per_protospacer,
     in  csv      spatial_enrichment,
     in  path     spatial_deconvolution_path,
+    in  bool     disable_cloupe,
     out cloupe   output_for_cloupe,
     out json     gem_group_index_json,
     src py       "stages/cloupe/cloupe_preprocess",

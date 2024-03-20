@@ -17,31 +17,36 @@ import pandas as pd
 from six import ensure_binary, ensure_str
 
 import cellranger.cell_calling_helpers as helpers
+import cellranger.chemistry as cr_chemistry
 import cellranger.constants as cr_constants
 import cellranger.feature.antibody.analysis as ab_utils
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
 import cellranger.rna.matrix as rna_matrix
-import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
-from cellranger.barcodes.utils import load_probe_barcode_map
 from cellranger.cell_barcodes import InvalidCellBarcode
 from cellranger.cell_calling_helpers import (
     FilterMethod,
     HighOccupancyGemSummary,
     MetricGroups,
     get_filter_method_from_string,
+    get_filter_method_name,
 )
 from cellranger.csv_utils import (
     combine_csv,
     write_filtered_barcodes,
     write_isotype_normalization_csv,
 )
-from cellranger.fast_utils import MultiGraph
+from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
+    MultiGraph,
+    load_filtered_bcs_groups,
+    save_filtered_bcs_groups,
+)
 from cellranger.feature.antibody.analysis import FRACTION_CORRECTED_READS, FRACTION_TOTAL_READS
 from cellranger.metrics import BarcodeFilterResults
+from cellranger.read_level_multiplexing import get_overhang_bc_defn, get_sample_tag_barcodes
 from cellranger.reference_paths import get_reference_genomes
-from cellranger.targeted.rtl_multiplexing import get_probe_bc_defn, get_probe_bc_whitelist
+from cellranger.targeted.rtl_multiplexing import get_probe_bc_defn
 from cellranger.targeted.simple_utils import determine_targeting_type_from_csv
 from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC
 
@@ -80,10 +85,12 @@ struct CellCallingParam(
     map<int> per_sample,
 )
 
+
 struct CellCalling(
     CellCallingParam recovered_cells,
     CellCallingParam force_cells,
     CellCallingParam emptydrops_minimum_umis,
+    CellCallingParam global_minimum_umis,
     json             cell_barcodes,
     string           override_mode,
     string[]         override_library_types,
@@ -92,30 +99,32 @@ struct CellCalling(
 )
 
 stage FILTER_BARCODES(
-    in  string       sample_id,
-    in  h5           matrices_h5,
-    in  csv          barcode_correction_csv,
-    in  bool         is_antibody_only,
-    in  path         reference_path,
-    in  int[]        gem_groups,
-    in  string       chemistry_description,
-    in  CellCalling  config,
-    in  csv          target_set,
-    in  ChemistryDef chemistry_def,
-    in  json         multi_graph,
-    in  csv          per_barcode_metrics,
-    in  bool         is_spatial,
-    out json         summary,
-    out csv          filtered_barcodes,
-    out csv          aggregate_barcodes,
-    out h5           filtered_matrices_h5,
-    out path         filtered_matrices_mex,
-    out csv          nonambient_calls,
-    src py           "stages/counter/filter_barcodes",
+    in  map<ChemistryDef> chemistry_defs,
+    in  string            sample_id,
+    in  h5                matrices_h5,
+    in  csv               barcode_correction_csv,
+    in  bool              is_antibody_only,
+    in  path              reference_path,
+    in  int[]             gem_groups,
+    in  CellCalling       config,
+    in  csv               target_set,
+    in  json              multi_graph,
+    in  csv               per_barcode_metrics,
+    in  bool              is_spatial,
+    out json              summary,
+    out csv               filtered_barcodes,
+    out csv               aggregate_barcodes,
+    out h5                filtered_matrices_h5,
+    out path              filtered_matrices_mex,
+    out csv               nonambient_calls,
+    out csv               mitochondrial_summary,
+    out csv               isotype_normalization_factors,
+    src py                "stages/counter/filter_barcodes",
 ) split (
-    in  ProbeBCDef   probe_bc_def,
-    out json         filtered_metrics_groups,
-    out json         filtered_bcs_groups,
+    in  ProbeBCDef        probe_bc_def,
+    out json              filtered_metrics_groups,
+    out bincode           filtered_bcs_groups,
+    out csv               co_mitochondrial_summary,
 ) using (
     mem_gb   = 8,
     volatile = strict,
@@ -124,8 +133,11 @@ stage FILTER_BARCODES(
 
 
 def split(args):
+    chemistry_def = cr_chemistry.get_primary_chemistry_def(args.chemistry_defs)
+    chemistry_barcode = chemistry_def["barcode"]
+
     # We need to store one full copy of the matrix.
-    mem_gb = 2.3 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
+    mem_gb = 2.3 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5) + 1
     mem_gb = max(mem_gb, FILTER_BARCODES_MIN_MEM_GB)
 
     if args.multi_graph is None:
@@ -139,16 +151,16 @@ def split(args):
         # Read in the multi graph
         multi_graph = MultiGraph.from_path(args.multi_graph)
         if multi_graph.is_rtl_multiplexed():
-            offset, length = get_probe_bc_defn(args.chemistry_def["barcode"])
+            offset, length = get_probe_bc_defn(chemistry_barcode)
         elif multi_graph.is_oh_multiplexed():
-            offset, length = get_overhang_bc_defn(args.chemistry_def["barcode"])
+            offset, length = get_overhang_bc_defn(chemistry_barcode)
         else:
             offset, length = None, None
 
         chunks = []
         # Perform cell-calling per sample when input is multiplexed
         if length is not None:
-            probe_bcs = get_sample_tag_barcodes(multi_graph, args.chemistry_def["barcode"])
+            probe_bcs = get_sample_tag_barcodes(multi_graph, chemistry_barcode)
             for sample_id, probe_bc_seqs in probe_bcs.items():
                 chunks.append(
                     {
@@ -176,6 +188,8 @@ def main(args, outs):
 
 
 def join(args, outs, chunk_defs, chunk_outs):
+    chemistry_def = cr_chemistry.get_primary_chemistry_def(args.chemistry_defs)
+
     filtered_metrics_groups = parse_chunked_metrics(chunk_outs)
     filtered_bcs, genome_filtered_bcs = parse_chunked_filtered_bcs(chunk_outs)
     summary = parse_chunked_summary(chunk_outs)
@@ -183,7 +197,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     # high occupancy GEM filtering to mitigate any GEMs that appear overloaded
     # in initial cell calls. Only applies if input has probe bcs and not disabled.
     config = helpers.CellCalling(args.config)
-    probe_bc_offset, _ = get_probe_bc_defn(args.chemistry_def["barcode"])
+    probe_bc_offset, _ = get_probe_bc_defn(chemistry_def["barcode"])
     if probe_bc_offset and not config.disable_high_occupancy_gem_detection:
         (
             filtered_bcs,
@@ -279,7 +293,7 @@ def join(args, outs, chunk_defs, chunk_outs):
             )
 
     matrix_attrs = cr_matrix.make_matrix_attrs_count(
-        args.sample_id, args.gem_groups, args.chemistry_description
+        args.sample_id, args.gem_groups, chemistry_def[cr_chemistry.CHEMISTRY_DESCRIPTION_FIELD]
     )
     filtered_matrix.save_h5_file(
         outs.filtered_matrices_h5,
@@ -325,9 +339,20 @@ def join(args, outs, chunk_defs, chunk_outs):
     ]
     combine_csv(chunk_nonambient_calls, outs.nonambient_calls)
 
+    chunk_mitochondrial_summary = [
+        x.co_mitochondrial_summary for x in chunk_outs if x.co_mitochondrial_summary is not None
+    ]
+    if chunk_mitochondrial_summary:
+        combine_csv(chunk_mitochondrial_summary, outs.mitochondrial_summary)
+    else:
+        outs.mitochondrial_summary = None
 
-def filter_barcodes(args, outs):
+
+def filter_barcodes(args, outs):  # pylint: disable=too-many-branches
     """Identify cell-associated partitions."""
+    chemistry_def = cr_chemistry.get_primary_chemistry_def(args.chemistry_defs)
+    chemistry_description = chemistry_def[cr_chemistry.CHEMISTRY_DESCRIPTION_FIELD]
+
     # Apply the cell calling config in args.config
     config = helpers.CellCalling(args.config)
     force_cells = helpers.get_force_cells(
@@ -480,7 +505,7 @@ def filter_barcodes(args, outs):
             config.cell_barcodes,
             force_cells,
             feature_types,
-            args.chemistry_description,
+            chemistry_description,
             target_features,
             has_cmo_data,
             num_probe_barcodes=num_probe_barcodes,
@@ -496,13 +521,17 @@ def filter_barcodes(args, outs):
 
     ### Do additional cell calling
     if method == FilterMethod.ORDMAG_NONAMBIENT:
-        filtered_bcs_groups, nonambient_summary = helpers.call_additional_cells(
+        (
+            filtered_bcs_groups,
+            nonambient_summary,
+            emptydrops_minimum_umis,
+        ) = helpers.call_additional_cells(
             matrix,
             unique_gem_groups,
             genomes,
             filtered_bcs_groups,
             feature_types,
-            args.chemistry_description,
+            chemistry_description,
             num_probe_barcodes=num_probe_barcodes,
             emptydrops_minimum_umis=helpers.get_emptydrops_minimum_umis(
                 config.emptydrops_minimum_umis, probe_barcode_sample_id
@@ -512,8 +541,40 @@ def filter_barcodes(args, outs):
             outs.nonambient_calls = None
         else:
             nonambient_summary.to_csv(outs.nonambient_calls)
+        for (genome, gg), value in emptydrops_minimum_umis.items():
+            summary[
+                f"{genome}_gem_group_{gg}_{get_filter_method_name(FilterMethod.ORDMAG_NONAMBIENT)}_threshold"
+            ] = value
     else:
         outs.nonambient_calls = None
+
+    ### Apply a minimum UMI threshold on cell calls
+    if method not in [FilterMethod.MANUAL, FilterMethod.TOP_N_BARCODES]:
+        filtered_bcs_groups = helpers.apply_global_minimum_umis_threshold(
+            matrix,
+            unique_gem_groups,
+            genomes,
+            filtered_bcs_groups,
+            feature_types,
+            global_minimum_umis=helpers.get_global_minimum_umis(
+                config.global_minimum_umis, probe_barcode_sample_id
+            ),
+        )
+
+        ### Apply a max mitochondrial read percentage threshold on cell calls
+        max_mito_percent = helpers.get_max_mito_percent(
+            config.max_mito_percent, probe_barcode_sample_id
+        )
+        filtered_bcs_groups, mitochondrial_summary = helpers.apply_mitochondrial_threshold(
+            matrix,
+            genomes,
+            unique_gem_groups,
+            filtered_bcs_groups,
+            max_mito_percent,
+        )
+        mitochondrial_summary.to_csv(outs.co_mitochondrial_summary)
+    else:
+        outs.co_mitochondrial_summary = None
 
     def remap_keys_metrics(groups):
         return [{"key": k, "value": v.__dict__} for k, v in groups.items()]
@@ -526,16 +587,7 @@ def filter_barcodes(args, outs):
             sort_keys=True,
         )
 
-    def remap_keys_bcs(groups):
-        return [{"key": k, "value": v} for k, v in groups.items()]
-
-    with open(outs.filtered_bcs_groups, "w") as f:
-        tk_safe_json.dump_numpy(
-            remap_keys_bcs(filtered_bcs_groups),
-            f,
-            indent=4,
-            sort_keys=True,
-        )
+    save_filtered_bcs_groups(filtered_bcs_groups, outs.filtered_bcs_groups)
 
     with open(outs.summary, "w") as f:
         tk_safe_json.dump_numpy(summary, f, indent=4, sort_keys=True)
@@ -560,38 +612,19 @@ def parse_chunked_metrics(chunk_outs):
             result.filtered_bcs_cv = groups["value"]["filtered_bcs_cv"]
             result.filtered_bcs_lb = groups["value"]["filtered_bcs_lb"]
             result.filtered_bcs_ub = groups["value"]["filtered_bcs_ub"]
+            result.filtered_bcs_cutoff = groups["value"]["filtered_bcs_cutoff"]
             filtered_metrics_groups[key_tuple] = result
     return filtered_metrics_groups
 
 
 def parse_chunked_filtered_bcs(chunk_outs):
-    filtered_bcs_groups_list = []
-    for chunk_out in chunk_outs:
-        if chunk_out.filtered_bcs_groups is not None:
-            with open(chunk_out.filtered_bcs_groups) as infile:
-                filtered_bcs_groups_list.append(json.load(infile))
+    filtered_bcs_groups_list = [
+        chunk_out.filtered_bcs_groups
+        for chunk_out in chunk_outs
+        if chunk_out.filtered_bcs_groups is not None
+    ]
 
-    # collapse out gem_group and (gem_group, genome)
-    genome_filtered_bcs = defaultdict(set)
-    filtered_bcs = set()
-    for filtered_bcs_groups in filtered_bcs_groups_list:
-        for groups in filtered_bcs_groups:
-            genome = groups["key"][1]
-            bcs = groups["value"]
-            bcs = [bc.encode() for bc in bcs]
-            genome_filtered_bcs[genome].update(bcs)
-            filtered_bcs.update(bcs)
-
-    # Deduplicate and sort filtered barcode sequences
-    # Sort by (gem_group, barcode_sequence)
-    def barcode_sort_key(x):
-        return cr_utils.split_barcode_seq(x)[::-1]
-
-    for genome, bcs in genome_filtered_bcs.items():
-        genome_filtered_bcs[genome] = sorted(list(set(bcs)), key=barcode_sort_key)
-    filtered_bcs = sorted(list(set(filtered_bcs)), key=barcode_sort_key)
-
-    return filtered_bcs, genome_filtered_bcs
+    return load_filtered_bcs_groups(filtered_bcs_groups_list)
 
 
 def parse_chunked_summary(chunk_outs):
@@ -611,26 +644,3 @@ def parse_filtered_bcs_method(filtered_metrics_groups, summary):
             summary.update({key_tuple.sample + "_filter_barcodes_method": key_tuple.method})
         else:
             summary.update({"filter_barcodes_method": key_tuple.method})
-
-
-def get_sample_tag_barcodes(multi_graph: MultiGraph, barcode_def):
-    """Return a mapping from sample ID to the tag barcodes associated with them."""
-    probe_bc_wl_spec = get_probe_bc_whitelist(barcode_def)
-    wl_map = load_probe_barcode_map(
-        name=probe_bc_wl_spec.get("name", None),
-        path=probe_bc_wl_spec.get("translation_whitelist_path", None),
-    )
-    assert wl_map is not None
-    return {
-        sample_id: [wl_map[tag_name] for tag_name in tag_names]
-        for sample_id, tag_names in multi_graph.sample_tag_ids().items()
-    }
-
-
-def get_overhang_bc_defn(barcode_def):
-    """Returns the offset and length for overhang multiplexing."""
-    offset, length = None, None
-    for barcode in barcode_def:
-        if barcode["kind"] == "overhang":
-            offset, length = (barcode["offset"], barcode["length"])
-    return offset, length

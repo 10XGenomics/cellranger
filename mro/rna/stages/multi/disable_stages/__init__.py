@@ -12,10 +12,12 @@ stage DISABLE_STAGES(
     in  bool  no_bam,
     in  bool  disable_multi,
     in  bool  is_pd,
+    in  bool  is_visium_hd,
     in  h5    raw_feature_bc_matrix,
     in  csf[] probe_barcode_counts,
     out bool  disable_legacy_bam,
     out bool  disable_sample_bams,
+    out bool  disable_subsampling,
     out bool  disable_assign_tags,
     out bool  no_probe_barcode_counts,
     out bool  no_probe_barcode_matrix_demux,
@@ -43,3 +45,6 @@ def main(args, outs):
     outs.no_probe_barcode_counts = args.probe_barcode_counts is None
     # Disable demux probe-bc matrix if we are not in multi or have no probe barcode matrix
     outs.no_probe_barcode_matrix_demux = outs.no_probe_barcode_counts or args.disable_multi
+
+    # disable subsampling iff this is a visium HD run
+    outs.disable_subsampling = bool(args.is_visium_hd)

@@ -1,7 +1,7 @@
 //! Martian filetype for representing metrics JSON files.
 //! Use this type for any metrics JSON file whose contents is not represented
 //! by a static type.
-use anyhow::Result;
+use anyhow::{Context, Result};
 use martian::MartianRover;
 use martian_derive::martian_filetype;
 use martian_filetypes::json_file::JsonFile;
@@ -10,13 +10,18 @@ use metric::{JsonReport, JsonReporter, TxHashMap};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufWriter;
 
 martian_filetype! { MetricsFile, "json" }
 
 impl MetricsFile {
-    /// Write the provided JSON report into this file.
-    pub fn write_report<R: JsonReport>(&self, reporter: &R) -> Result<()> {
-        reporter.report(self)
+    /// Write the provided serializable object into this JSON file.
+    pub fn write(&self, value: &impl Serialize) -> Result<()> {
+        Ok(serde_json::to_writer_pretty(
+            BufWriter::new(File::create(self).with_context(|| self.display().to_string())?),
+            value,
+        )?)
     }
 
     /// Create a metrics file and write the provided reporter directly into it.

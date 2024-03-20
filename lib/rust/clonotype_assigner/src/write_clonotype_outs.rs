@@ -3,6 +3,7 @@
 use crate::assigner::ProtoBinFile;
 use amino::aa_seq;
 use anyhow::Result;
+use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use enclone_proto::types::InvariantTCellAnnotation;
 use martian::prelude::*;
@@ -28,6 +29,7 @@ pub struct ClonotypesCsvRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteClonotypeOutsStageInputs {
+    pub sample_number: Option<usize>,
     pub receptor: VdjReceptor,
     pub enclone_output: ProtoBinFile,
 }
@@ -55,13 +57,13 @@ pub fn invariant_evidence_display(evidences: &[InvariantTCellAnnotation]) -> Str
     let alpha_gene = evidences.iter().any(|e| e.alpha_chain_gene_match);
     let alpha_junction = evidences.iter().any(|e| e.alpha_chain_junction_match);
     if let Some(e) = chain_evidence("TRA", alpha_gene, alpha_junction) {
-        result.push(e)
+        result.push(e);
     }
 
     let beta_gene = evidences.iter().any(|e| e.beta_chain_gene_match);
     let beta_junction = evidences.iter().any(|e| e.beta_chain_junction_match);
     if let Some(e) = chain_evidence("TRB", beta_gene, beta_junction) {
-        result.push(e)
+        result.push(e);
     }
 
     result.join(";")
@@ -120,7 +122,11 @@ impl MartianMain for WriteClonotypeOuts {
                 };
 
                 let row = ClonotypesCsvRow {
-                    clonotype_id: format!("clonotype{}", i + 1),
+                    clonotype_id: ClonotypeId {
+                        id: i + 1,
+                        sample_number: args.sample_number,
+                    }
+                    .to_string(),
                     frequency: clonotype.frequency as usize,
                     proportion: clonotype.frequency as f64 / ncells as f64,
                     cdr3s_aa: cdr3s_aa.join(";"),

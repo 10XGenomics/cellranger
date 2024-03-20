@@ -1,7 +1,8 @@
 [dependencies]
-libc = '0.2.147'
-
 [dependencies.anyhow]
+workspace = true
+
+[dependencies.libc]
 workspace = true
 
 [lib]

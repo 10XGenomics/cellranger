@@ -1,12 +1,8 @@
 [dependencies]
-bio-types = '*'
-rand_chacha = '>=0.3'
+rand_chacha = '0.3'
 
 [dependencies.anyhow]
 workspace = true
-
-[dependencies.barcode]
-path = '../barcode'
 
 [dependencies.cr_bam]
 path = '../cr_bam'
@@ -29,6 +25,9 @@ workspace = true
 [dependencies.martian-filetypes]
 workspace = true
 
+[dependencies.metric]
+path = '../metric'
+
 [dependencies.rand]
 workspace = true
 
@@ -36,6 +35,9 @@ workspace = true
 workspace = true
 
 [dependencies.serde]
+workspace = true
+
+[dependencies.strum_macros]
 workspace = true
 
 [dependencies.transcriptome]

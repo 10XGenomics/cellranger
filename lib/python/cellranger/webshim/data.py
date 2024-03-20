@@ -108,6 +108,12 @@ class SampleData:
 
         self.targeting_method = self.summary.get("targeting_method")
 
+        self.is_visium_hd = (
+            sample_properties.is_visium_hd
+            if isinstance(sample_properties, ExtendedCountSampleProperties)
+            else False
+        )
+
         self.filter_probes = (
             sample_properties.filter_probes
             if isinstance(sample_properties, ExtendedCountSampleProperties)

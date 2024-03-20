@@ -9,6 +9,7 @@ import collections
 import glob
 import os
 import re
+import shutil
 import subprocess
 import xml.etree.ElementTree as etree
 from collections.abc import Iterable
@@ -325,34 +326,35 @@ class RTAVersionInformation:
 
 
 def _get_bcl2fastq_v1(hostname: str) -> str | None:
-    try:
-        subprocess.check_call(["which", "configureBclToFastq.pl"])
-        try:
-            subprocess.check_call(["which", "perl"])
-        except subprocess.CalledProcessError:
+    if shutil.which("configureBclToFastq.pl"):
+        if not shutil.which("perl"):
             martian.log_info(
-                f"On machine: {hostname}, perl not found on PATH. (Required for configureBclToFastq.pl).  This could indicate a newer bcl2fastq is being used."
-                % hostname
+                f"On machine: {hostname}, perl not found on PATH. (Required for configureBclToFastq.pl).  "
+                "This could indicate a newer bcl2fastq is being used."
             )
             return None
         return "1.8.4"
-    except subprocess.CalledProcessError:
+    else:
         martian.log_info(
-            f"On machine: {hostname}, configureBclToFastq.pl not found on PATH.  This could indicate a newer bcl2fastq is being used."
+            f"On machine: {hostname}, configureBclToFastq.pl not found on PATH.  "
+            "This could indicate a newer bcl2fastq is being used."
         )
         return None
 
 
 def _get_bcl2fastq_v2(hostname: str) -> tuple[bytes, None] | tuple[None, str]:
-    try:
-        subprocess.check_call(["which", "bcl2fastq"])
+    if bcl2fastq := shutil.which("bcl2fastq"):
         # Restore the LD_LIBRARY_PATH set aside by sourceme.bash/shell10x.
         # Required for some installations of bcl2fastq.
         new_environ = dict(os.environ)
         new_environ["LD_LIBRARY_PATH"] = os.environ.get("_TENX_LD_LIBRARY_PATH", "")
-        output = subprocess.check_output(
-            ["bcl2fastq", "--version"], env=new_environ, stderr=subprocess.STDOUT
-        )
+        try:
+            output = subprocess.check_output(
+                [bcl2fastq, "--version"], env=new_environ, stderr=subprocess.STDOUT
+            )
+        except subprocess.CalledProcessError:
+            msg = "On machine: %s, bcl2fastq does not work." % hostname
+            return (None, msg)
         for l in output.split(b"\n"):
             match = re.match(b"bcl2fastq v([0-9.]+)", l)
             if match is not None:
@@ -362,7 +364,7 @@ def _get_bcl2fastq_v2(hostname: str) -> tuple[bytes, None] | tuple[None, str]:
             None,
             "bcl2fastq version not recognized -- please check the output of bcl2fastq --version",
         )
-    except subprocess.CalledProcessError:
+    else:
         msg = "On machine: %s, bcl2fastq not found on PATH." % hostname
         return (None, msg)
 

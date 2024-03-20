@@ -12,7 +12,7 @@
 pipeline _BASIC_SC_RNA_COUNTER(
     in  int                  gem_well,
     in  string               sample_id,
-    in  ChemistryDef         chemistry_def,
+    in  map<ChemistryDef>    chemistry_defs,
     in  bool                 is_antibody_only,
     in  bool                 is_pd,
     in  map[]                chunks,
@@ -38,11 +38,11 @@ pipeline _BASIC_SC_RNA_COUNTER(
     in  bool                 disable_target_umi_filter,
     in  string               multi_config_sha,
     in  bool                 no_bam,
-    in  int                  rps_limit,
     in  BarcodeAssignments   force_sample_barcodes,
     in  bool                 disable_multi,
     in  json                 multi_graph,
     in  bool                 is_spatial,
+    in  bool                 is_visium_hd,
     in  float                min_assignment_confidence,
     in  string               slide_serial_capture_area,
     in  FeatureConfig        feature_config,
@@ -73,7 +73,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
     out json                 gem_well_alignment_metrics,
     # sliced outputs for multi
     out AssignTagsOuts       assign_tags,
-    out string               gem_well_throughput,
     out SampleBamFile[]      multi_pos_sorted_bam,
     out SampleMoleculeInfo[] multi_molecule_info,
     out SampleMetrics[]      multi_metrics,
@@ -89,7 +88,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
     out map[]                read_chunks,
     out string               target_set_name,
     out frf.bincode          slfe_feature_reference,
-    out pickle               merged_subsampling_metrics,
     # Shard files of feature x barcode counts sorted by barcode
     out csf[]                counts_bc_order,
     out bool                 no_star_alignments,
@@ -99,7 +97,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     call _SLFE_MATRIX_COMPUTER as _MATRIX_COMPUTER(
         gem_well                  = self.gem_well,
         sample_id                 = self.sample_id,
-        chemistry_def             = self.chemistry_def,
+        chemistry_defs            = self.chemistry_defs,
         barcodes_under_tissue     = self.cell_calling_config.cell_barcodes,
         is_pd                     = self.is_pd,
         chunks                    = self.chunks,
@@ -121,22 +119,20 @@ pipeline _BASIC_SC_RNA_COUNTER(
         no_bam                    = self.no_bam,
         aligner                   = self.aligner,
         disable_target_umi_filter = self.disable_target_umi_filter,
-        rps_limit                 = self.rps_limit,
         feature_config            = self.feature_config,
         v1_filtered_fbm           = self.v1_filtered_fbm,
     )
 
     call FILTER_BARCODES(
+        chemistry_defs         = self.chemistry_defs,
         sample_id              = self.sample_id,
         matrices_h5            = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
         barcode_correction_csv = _MATRIX_COMPUTER.barcode_correction_csv,
         config                 = self.cell_calling_config,
         gem_groups             = [self.gem_well],
-        chemistry_description  = self.chemistry_def.description,
         is_antibody_only       = self.is_antibody_only,
         reference_path         = self.reference_path,
         target_set             = self.target_set,
-        chemistry_def          = self.chemistry_def,
         multi_graph            = self.multi_graph,
         per_barcode_metrics    = _MATRIX_COMPUTER.per_barcode_metrics,
         is_spatial             = self.is_spatial,
@@ -174,10 +170,13 @@ pipeline _BASIC_SC_RNA_COUNTER(
     )
 
     call _SLFE_CELLS_REPORTER as _CELLS_REPORTER(
+        chemistry_defs            = self.chemistry_defs,
         gem_well                  = self.gem_well,
         reference_path            = self.reference_path,
         recovered_cells           = self.cell_calling_config.recovered_cells,
         force_cells               = self.cell_calling_config.force_cells,
+        disable_ab_aggregate_detection = self.cell_calling_config.disable_ab_aggregate_detection,
+        disable_high_occupancy_gem_detection = self.cell_calling_config.disable_high_occupancy_gem_detection,
         slfe_feature_reference    = _MATRIX_COMPUTER.slfe_feature_reference,
         target_panel_summary      = self.target_panel_summary,
         matrices_h5               = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
@@ -192,22 +191,23 @@ pipeline _BASIC_SC_RNA_COUNTER(
         include_introns           = self.include_introns,
         filter_probes             = self.filter_probes,
         multi_config_sha          = self.multi_config_sha,
+        disable_subsampling       = DISABLE_STAGES.disable_subsampling,
         barcode_index             = _MATRIX_COMPUTER.barcode_index,
         slide_serial_capture_area = self.slide_serial_capture_area,
     )
 
     call INFER_GEM_WELL_THROUGHPUT(
-        throughput            = null,
-        chemistry_description = self.chemistry_def.description,
+        chemistry_defs     = self.chemistry_defs,
+        throughput         = null,
         filtered_feature_counts_matrix = FILTER_BARCODES.filtered_matrices_h5,
-        reference_path        = self.reference_path,
-        barcode_summary_h5    = _MATRIX_COMPUTER.barcode_summary,
+        reference_path     = self.reference_path,
+        barcode_summary_h5 = _MATRIX_COMPUTER.barcode_summary,
     ) using (
         disabled = self.is_spatial,
     )
 
     call _ASSIGN_TAGS(
-        chemistry_def             = self.chemistry_def,
+        chemistry_defs            = self.chemistry_defs,
         filtered_barcodes         = FILTER_BARCODES.filtered_barcodes,
         filtered_feature_counts_matrix = FILTER_BARCODES.filtered_matrices_h5,
         raw_feature_bc_matrix     = _MATRIX_COMPUTER.raw_gene_bc_matrices_h5,
@@ -276,6 +276,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     )
 
     call WRITE_MOLECULE_INFO as MULTI_WRITE_PER_SAMPLE_MOLECULE_INFO(
+        chemistry_defs            = self.chemistry_defs,
         gem_well                  = self.gem_well,
         counts_bc_order           = _MATRIX_COMPUTER.report_mol_inputs,
         reference_path            = self.reference_path,
@@ -289,6 +290,8 @@ pipeline _BASIC_SC_RNA_COUNTER(
         per_probe_metrics         = COLLATE_PROBE_METRICS.per_probe_metrics,
         include_introns           = self.include_introns,
         filter_probes             = self.filter_probes,
+        disable_ab_aggregate_detection = self.cell_calling_config.disable_ab_aggregate_detection,
+        disable_high_occupancy_gem_detection = self.cell_calling_config.disable_high_occupancy_gem_detection,
         multi_config_sha          = self.multi_config_sha,
         sample_barcodes           = _ASSIGN_TAGS.assign_tags_outs.sample_barcodes,
         per_sample_metrics        = MULTI_COLLATE_PER_SAMPLE_METRICS.multi_metrics,
@@ -331,7 +334,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         raw_probe_bc_matrix           = COLLATE_PROBE_METRICS.raw_probe_bc_matrix,
         # sliced outputs for multi
         assign_tags                   = _ASSIGN_TAGS.assign_tags_outs,
-        gem_well_throughput           = INFER_GEM_WELL_THROUGHPUT.throughput,
         multi_pos_sorted_bam          = MULTI_WRITE_PER_SAMPLE_BAM.multi_pos_sorted_bam,
         multi_molecule_info           = MULTI_WRITE_PER_SAMPLE_MOLECULE_INFO.multi_mol_info,
         multi_metrics                 = MULTI_COLLATE_PER_SAMPLE_METRICS.multi_metrics,
@@ -348,7 +350,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         target_set_name               = self.target_set_name,
         slfe_feature_reference        = _MATRIX_COMPUTER.slfe_feature_reference,
         gem_well_alignment_metrics    = _MATRIX_COMPUTER.gem_well_alignment_metrics,
-        merged_subsampling_metrics    = _CELLS_REPORTER.merged_subsampling_metrics,
         counts_bc_order               = _MATRIX_COMPUTER.counts_bc_order,
         no_star_alignments            = _MATRIX_COMPUTER.no_star_alignments,
         barcode_index                 = _MATRIX_COMPUTER.barcode_index,

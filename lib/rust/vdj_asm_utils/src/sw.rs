@@ -167,7 +167,7 @@ mod tests {
                 for i in 0..(seq.len() + 1).saturating_sub(k) {
                     kmers_hash
                         .entry(&seq[i..i + k])
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((ref_idx, i as u32));
                 }
             }
@@ -305,8 +305,8 @@ mod tests {
         assert_eq!(matches.unwrap().alignment.score, 16);
 
         align_helper.set_scoring(Scoring::from_scores(-4, -1, 2, -2).xclip(-5).yclip(0));
-        let cigars = vec!["6=2X", "", "8=", "3=1X3=1X", "6=2X", "2X6="];
-        let dists = vec![2, 0, 0, 2, 2, 2, 0];
+        let cigars = ["6=2X", "", "8=", "3=1X3=1X", "6=2X", "2X6="];
+        let dists = [2, 0, 0, 2, 2, 2, 0];
         for i in 0..reads.len() {
             let matches = align_helper.find_read_matches(&reads[i], 0);
             if i == 1 {
@@ -319,8 +319,8 @@ mod tests {
         }
 
         align_helper.set_scoring(Scoring::from_scores(-4, -2, 2, -2).xclip(-3).yclip(0));
-        let cigars = vec!["6=2S", "", "8=", "3=1X3=1X", "6=2S", "2S6=", "1="];
-        let dists = vec![0, 0, 0, 2, 0, 0, 0];
+        let cigars = ["6=2S", "", "8=", "3=1X3=1X", "6=2S", "2S6=", "1="];
+        let dists = [0, 0, 0, 2, 0, 0, 0];
         for i in 0..reads.len() {
             let matches = align_helper.find_read_matches(&reads[i], 0);
             if i == 1 {
@@ -391,8 +391,8 @@ mod tests {
         assert_eq!(matches.unwrap().alignment.cigar(true), "4=6D4=");
 
         align_helper.set_scoring(Scoring::from_scores(-2, -1, 2, -2).xclip(-3).yclip(0));
-        let cigars = vec!["6=1X1=", "8=", "3=1X3=1X", "4=6D4=", "4=2S"];
-        let scores = vec![12, 16, 8, 8, 5];
+        let cigars = ["6=1X1=", "8=", "3=1X3=1X", "4=6D4=", "4=2S"];
+        let scores = [12, 16, 8, 8, 5];
         for i in 0..5 {
             let matches = align_helper.find_read_matches(&reads[i], 0);
             let unwrapped = matches.unwrap();

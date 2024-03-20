@@ -2,8 +2,8 @@ use crate::utils::CliPath;
 use anyhow::{anyhow, bail, Result};
 use clap::builder::NonEmptyStringValueParser;
 use clap::{self, Parser};
-use cr_types::rna_read::LegacyLibraryType;
 use cr_types::sample_def::{FastqMode, SampleDef, COUNT_HELP};
+use cr_types::LibraryType;
 use fastq_set::filenames::fastq_dir::FastqChecker;
 use itertools::Itertools;
 use metric::TxHashSet;
@@ -16,7 +16,7 @@ macro_rules! impl_get_sample_defs {
             /// Convert the command-line FASTQ finding arguments into SampleDefs
             pub fn get_sample_defs(
                 &self,
-                library_type: LegacyLibraryType,
+                library_type: LibraryType,
                 target_panel: Option<&Path>,
             ) -> Result<Vec<SampleDef>> {
                 let mut sample_defs = Vec::new();

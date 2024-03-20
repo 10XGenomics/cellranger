@@ -5,19 +5,18 @@
 use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
 use anyhow::Result;
-use bio_types::strand::Strand;
 use cr_types::chemistry::ChemistryName;
-use cr_types::rna_read::{LegacyLibraryType, HIGH_CONF_MAPQ};
+use cr_types::rna_read::HIGH_CONF_MAPQ;
+use cr_types::ReqStrand;
 use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
-use metric::{set, Metric, TxHashSet};
-use metric_derive::Metric;
+use fastq_set::WhichEnd;
+use metric::{set, TxHashSet};
 use orbit::{StarAligner, StarReference, StarSettings};
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::Path;
 use tx_annotation::transcript::{AnnotationParams, TranscriptAnnotator};
 
-#[derive(Serialize, Deserialize, Metric, Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct MappingStats {
     pub(crate) total_reads: i64,
     pub(crate) sense_reads: i64,
@@ -95,7 +94,7 @@ impl<'a> ChemistryFilter<'a> for ReadMappingFilter<'a> {
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
     ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        if unit.library_type != LegacyLibraryType::GeneExpression {
+        if !unit.library_type.is_gex() {
             return Ok(self.input_chemistries());
         }
         let stats = self.map_reads(reads);
@@ -129,8 +128,8 @@ impl<'a> ReadMappingFilter<'a> {
         let annotator = TranscriptAnnotator::new(
             reference_path,
             AnnotationParams {
-                chemistry_strandedness: Strand::Forward,
-                chemistry_fiveprime: false,
+                chemistry_strandedness: ReqStrand::Forward,
+                chemistry_endedness: WhichEnd::ThreePrime,
                 intergenic_trim_bases: 0,
                 intronic_trim_bases: 0,
                 junction_trim_bases: 0,
@@ -149,7 +148,7 @@ impl<'a> ReadMappingFilter<'a> {
     }
 
     pub(crate) fn map_reads(&mut self, read_pairs: &[ReadPair]) -> MappingStats {
-        let mut mapping_stats = MappingStats::new();
+        let mut mapping_stats = MappingStats::default();
         for read_pair in read_pairs {
             // do not crash if R2 doesn't exist (SC5P-R1)
             if read_pair.get(WhichRead::R2, ReadPart::Header).is_none() {

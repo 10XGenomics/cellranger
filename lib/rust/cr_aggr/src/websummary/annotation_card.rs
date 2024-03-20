@@ -157,7 +157,7 @@ mod tests {
                     "title": "Annotation"
                 }
             }"#,
-        )
+        );
     }
 
     #[test]
@@ -218,6 +218,6 @@ mod tests {
                     "title": "Annotation"
                 }
             }"#,
-        )
+        );
     }
 }

@@ -16,7 +16,7 @@ import cellranger.cr_io as cr_io
 import cellranger.matrix as cr_matrix
 import cellranger.rna.matrix as rna_matrix
 import cellranger.utils as cr_utils
-from cellranger.multi.config import CrMultiGraph
+from cellranger.fast_utils import MultiGraph
 
 __MRO__ = """
 struct SampleMatrices(
@@ -27,6 +27,7 @@ struct SampleMatrices(
     h5     raw_probe_bc_matrix,
     path   raw_matrix_mex,
     csv    filtered_barcodes,
+    csv    aggregate_barcodes,
     csv    per_probe_metrics,
 )
 
@@ -53,25 +54,17 @@ stage MULTI_WRITE_PER_SAMPLE_MATRICES(
 
 
 def split(args):
-    mem_gb = 3 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.5)
-
-    with open(args.multi_graph) as in_file:
-        config = CrMultiGraph.from_json_val(json.load(in_file))
-
-    chunks = [
-        {
-            "sample": sample_def.sample_id,
-            "__mem_gb": mem_gb,
-            "__threads": 1,
-        }
-        for sample_def in config.samples
-    ]
-
+    mem_gib = 3 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.5)
     return {
-        "chunks": chunks,
+        "chunks": [
+            {
+                "sample": sample_id,
+                "__mem_gb": mem_gib,
+            }
+            for sample_id in MultiGraph.from_path(args.multi_graph).sample_ids()
+        ],
         "join": {
             "__mem_gb": 3,
-            "__threads": 1,
         },
     }
 
@@ -81,10 +74,8 @@ def main(args, outs):  # pylint: disable=too-many-locals
         with open(barcodes_file) as f:
             return json.load(f)[args.sample]
 
-    barcodes_strs = load_sample_barcodes(args.sample_barcodes)
-    cell_barcodes_strs = load_sample_barcodes(args.sample_cell_barcodes)
-
-    barcodes = {b.encode() for b in barcodes_strs}
+    barcodes = {x.encode() for x in load_sample_barcodes(args.sample_barcodes)}
+    cell_barcodes = {x.encode() for x in load_sample_barcodes(args.sample_cell_barcodes)}
 
     chemistry = cr_matrix.CountMatrix.load_chemistry_from_h5(args.matrix_h5)
     gem_groups = list({cr_utils.split_barcode_seq(bc)[1] for bc in barcodes})
@@ -125,7 +116,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
         args.matrix_h5,
         sample_filtered_matrix_h5,
         sample_filtered_matrix_mex,
-        {b.encode() for b in cell_barcodes_strs},
+        cell_barcodes,
         matrix_attrs,
     )
 
@@ -143,7 +134,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
     filter_csv(
         args.filtered_barcodes,
         sample_filtered_barcodes_csv,
-        cell_barcodes_strs,
+        cell_barcodes,
         barcode_col=1,
         has_header=False,
     )
@@ -155,7 +146,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
         filter_csv(
             args.aggregate_barcodes,
             sample_aggregate_barcodes_csv,
-            barcodes_strs,
+            barcodes,
             barcode_col=0,
             has_header=True,
         )
@@ -200,21 +191,19 @@ def filter_matrix(h5_in, h5_out, mex_out, barcodes: set[bytes], matrix_attrs):
 
 
 def filter_csv(
-    in_path: str, out_path: str, barcodes: list[str], barcode_col: int, has_header: bool
+    in_path: str, out_path: str, barcodes: set[bytes], barcode_col: int, has_header: bool
 ):
     """Filter the provided CSV by the provided barcode set.
 
     Write out the new CSV to out_path.
     """
-    barcode_set = set(barcodes)
     with open(in_path, newline="") as csvfile, open(out_path, "w", newline="") as outfile:
         reader = csv.reader(csvfile)
         writer = csv.writer(outfile)
         if has_header:
             writer.writerow(next(reader))
         for row in reader:
-            barcode = row[barcode_col]
-            if barcode in barcode_set:
+            if row[barcode_col].encode() in barcodes:
                 writer.writerow(row)
 
 

@@ -1,8 +1,9 @@
+use cr_types::websummary::{AlertConditions, MetricConfig};
 use heck::ToUpperCamelCase;
 use itertools::Itertools;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::zip;
 use std::path::PathBuf;
@@ -25,7 +26,7 @@ impl CardWithTableToml {
                 "Information for {} does not exist in table '{}'",
                 e,
                 self.title
-            )
+            );
         }
         assert!(
             self.entries.len() == self.entry_info.len(),
@@ -35,61 +36,16 @@ impl CardWithTableToml {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
-#[serde(rename_all = "snake_case")]
-enum AlertIfMetricIs {
-    GreaterThanOrEqual,
-    LessThanOrEqual,
-}
-
-impl AlertIfMetricIs {
-    fn symbol(self) -> proc_macro2::TokenStream {
-        match self {
-            AlertIfMetricIs::GreaterThanOrEqual => quote![>=],
-            AlertIfMetricIs::LessThanOrEqual => quote![<=],
-        }
-    }
-}
-
-// Should be synced with the context in cr_websummary
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-struct AlertContext {
-    is_hybrid_capture: Option<bool>,
-    is_rtl: Option<bool>,
-    is_lt_chemistry: Option<bool>,
-    is_arc_chemistry: Option<bool>,
-    include_introns: Option<bool>,
-}
-
-impl AlertContext {
-    fn vec(&self) -> Vec<Option<bool>> {
-        let AlertContext {
-            is_hybrid_capture,
-            is_lt_chemistry,
-            is_arc_chemistry,
-            include_introns,
-            is_rtl,
-        } = self;
-        vec![
-            *is_hybrid_capture,
-            *is_lt_chemistry,
-            *is_arc_chemistry,
-            *include_introns,
-            *is_rtl,
-        ]
-    }
-}
-
-fn check_exclusive_contexts(contexts: &[&AlertContext]) -> bool {
-    if contexts.len() < 2 {
+fn check_exclusive_conditions(conditions: &[&AlertConditions]) -> bool {
+    if conditions.len() < 2 {
         return true;
     }
-    let first = contexts[0].vec();
-    let mut seen_ids = HashSet::with_capacity(contexts.len());
-    for ctx in contexts {
-        let ctx_vec = ctx.vec();
+    let first = conditions[0].vec();
+    let mut seen_ids = HashSet::with_capacity(conditions.len());
+    for cond in conditions {
+        let cond_vec = cond.vec();
         let mut this_id = Vec::new();
-        for (left, right) in zip(&first, ctx_vec) {
+        for (left, right) in zip(&first, cond_vec) {
             // Both should be None or Some
             match (left, right) {
                 (Some(_), Some(r)) => this_id.push(r),
@@ -105,99 +61,6 @@ fn check_exclusive_contexts(contexts: &[&AlertContext]) -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct AlertConfig {
-    #[serde(default)]
-    rank: u8,
-    error_threshold: Option<f64>,
-    warn_threshold: Option<f64>,
-    if_metric_is: Option<AlertIfMetricIs>,
-    warn_title: Option<String>,
-    // Use warn_title if missing
-    error_title: Option<String>,
-    detail: String,
-    #[serde(default)]
-    context: AlertContext,
-}
-
-impl AlertConfig {
-    fn symbol(&self, name: &str) -> proc_macro2::TokenStream {
-        match (self.error_threshold, self.warn_threshold) {
-            (Some(e), Some(w)) => {
-                assert!(
-                    self.if_metric_is.is_none(),
-                    "Do not specify `if_metric_is` in the alert for {name}. When both error and warn \
-                    thresholds are specified, it is automatically inferred."
-                );
-                if e < w {
-                    quote![<=]
-                } else if e > w {
-                    quote![>=]
-                } else {
-                    panic!(
-                        "ERROR: Error threshold ({e}) and warning threshold({w}) do not have \
-                        strict < or > relation for {name}"
-                    );
-                }
-            }
-            (Some(_), None) => {
-                assert!(
-                    self.if_metric_is.is_some(),
-                    "Please specify `if_metric_is` in the alert for {name} as one of \
-                    \"greater_than_or_equal\" or \"less_than_or_equal\". With only an error threshold \
-                    specified, it cannot be automatically inferred."
-                );
-                self.if_metric_is.unwrap().symbol()
-            }
-            (None, Some(_)) => {
-                assert!(
-                    self.if_metric_is.is_some(),
-                    "Please specify `if_metric_is` in the alert for {name} as one of \
-                    \"greater_than_or_equal\" or \"less_than_or_equal\". With only a warn threshold \
-                    specified, it cannot be automatically inferred."
-                );
-                self.if_metric_is.unwrap().symbol()
-            }
-            (None, None) => panic!(
-                "At least one of error_threshold or warn_threshold needs to be specified \
-                in the alert for {name}"
-            ),
-        }
-    }
-    fn warn_title(&self, name: &str) -> &String {
-        if let Some(ref w) = self.warn_title {
-            return w;
-        }
-        if let Some(ref e) = self.error_title {
-            return e;
-        }
-        panic!("At least one of warn_title or error_title is required for the alerts under {name}")
-    }
-    fn error_title(&self, name: &str) -> &String {
-        if let Some(ref e) = self.error_title {
-            return e;
-        }
-        if let Some(ref w) = self.warn_title {
-            return w;
-        }
-        panic!("At least one of warn_title or error_title is required for the alerts under {name}")
-    }
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(deny_unknown_fields)]
-struct MetricConfig {
-    header: String,
-    json_key: Option<String>,
-    #[serde(rename = "type")]
-    ty: String,
-    #[serde(default)] // false
-    optional: bool,
-    help: Option<String>,
-    #[serde(default)] // Empty vec
-    alerts: Vec<AlertConfig>,
-}
-
 #[proc_macro]
 pub fn make_tables(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as LitStr);
@@ -205,14 +68,13 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
     let cwd = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
 
     let file_path = cwd.join(input.value());
-    if !file_path.exists() {
-        panic!(
-            "File {} does not exist. Relative path: {}, cwd: {}.",
-            file_path.display(),
-            input.value(),
-            cwd.display(),
-        )
-    }
+    assert!(
+        file_path.exists(),
+        "File {} does not exist. Relative path: {}, cwd: {}.",
+        file_path.display(),
+        input.value(),
+        cwd.display(),
+    );
     let file_content = std::fs::read_to_string(&file_path).unwrap();
 
     let parsed: BTreeMap<String, CardWithTableToml> = toml::from_str(&file_content).unwrap();
@@ -241,6 +103,7 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
             ];
         }
         let mut row_struct_field_from_metrics = quote![];
+        let mut row_struct_to_json_summary_items = quote![];
         for e in &v.entries {
             let name = format_ident!("{}", e);
             let info = &v.entry_info[e];
@@ -256,6 +119,16 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
                 #name: match val.get(#json_key) {
                     Some(v) => #ty::try_from_value(v)?,
                     None => None,
+                },
+            ];
+            row_struct_to_json_summary_items = quote![
+                #row_struct_to_json_summary_items
+                ::cr_websummary::multi::websummary::JsonMetricSummary {
+                    key: stringify!(#name).to_string(),
+                    value: serde_json::json!(&self.#name),
+                    category: String::new(),
+                    library_type: String::new(),
+                    config: #info,
                 },
             ];
             table_rows = if info.optional {
@@ -302,18 +175,20 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
             }
         }
 
-        let mut metric_alerts = Vec::new();
-        for e in &v.entries {
-            let optional = v.entry_info[e].optional;
-            for (_, group) in &v.entry_info[e]
-                .alerts
-                .iter()
-                .sorted_by_key(|a| a.rank)
-                .group_by(|a| a.rank)
-            {
-                metric_alerts.push((e, optional, group.collect_vec()))
-            }
-        }
+        let metric_alerts: Vec<(_, _, Vec<_>)> = v
+            .entries
+            .iter()
+            .flat_map(|e| -> Vec<_> {
+                v.entry_info[e]
+                    .alerts
+                    .iter()
+                    .sorted_by_key(|a| a.rank)
+                    .group_by(|a| a.rank)
+                    .into_iter()
+                    .map(|(_rank, group)| (e, v.entry_info[e].optional, group.collect()))
+                    .collect()
+            })
+            .collect();
 
         let mut alert_quote = quote![
             use ::cr_websummary::MakePretty;
@@ -322,15 +197,15 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
         for (name, _, alerts) in metric_alerts {
             let name_ident = format_ident!("{}", name);
 
-            let contexts: Vec<_> = alerts.iter().map(|a| &a.context).collect();
+            let conditions: Vec<_> = alerts.iter().map(|a| &a.conditions).collect();
             assert!(
-                check_exclusive_contexts(&contexts),
-                "The contexts for alerts with rank {} for the metric {} are not exclusive:\n {:#?}.\
+                check_exclusive_conditions(&conditions),
+                "The conditions for alerts with rank {} for the metric {} are not exclusive:\n {:#?}.\
                 \n If these alerts are independent, specify a different rank for the alerts. \
-                Otherwise specify mutually exclusive contexts for each alert.",
+                Otherwise specify mutually exclusive conditions for each alert.",
                 alerts[0].rank,
                 name,
-                contexts
+                conditions
             );
 
             let alert_val = quote![
@@ -372,52 +247,52 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
                         }
                     ];
                 }
-                let AlertContext {
+                let AlertConditions {
                     is_hybrid_capture,
                     is_lt_chemistry,
                     is_arc_chemistry,
                     include_introns,
                     is_rtl,
-                } = alert.context;
-                let mut context_quote = quote![
-                    let mut right_context = true;
+                } = alert.conditions;
+                let mut conditions_quote = quote![
+                    let mut conditions_are_met = true;
                 ];
                 if let Some(is_hybrid_capture) = is_hybrid_capture {
-                    context_quote = quote![
-                        #context_quote
-                        right_context = right_context && ctx.is_hybrid_capture == #is_hybrid_capture;
+                    conditions_quote = quote![
+                        #conditions_quote
+                        conditions_are_met = conditions_are_met && ctx.is_hybrid_capture == #is_hybrid_capture;
                     ];
                 }
                 if let Some(include_introns) = include_introns {
-                    context_quote = quote![
-                        #context_quote
-                        right_context = right_context && ctx.include_introns == #include_introns;
+                    conditions_quote = quote![
+                        #conditions_quote
+                        conditions_are_met = conditions_are_met && ctx.include_introns == #include_introns;
                     ];
                 }
                 if let Some(lt_chemistry) = is_lt_chemistry {
-                    context_quote = quote![
-                        #context_quote
-                        right_context = right_context && ctx.is_lt_chemistry == #lt_chemistry;
+                    conditions_quote = quote![
+                        #conditions_quote
+                        conditions_are_met = conditions_are_met && ctx.is_lt_chemistry == #lt_chemistry;
                     ];
                 }
                 if let Some(arc_chemistry) = is_arc_chemistry {
-                    context_quote = quote![
-                        #context_quote
-                        right_context = right_context && ctx.is_arc_chemistry == #arc_chemistry;
+                    conditions_quote = quote![
+                        #conditions_quote
+                        conditions_are_met = conditions_are_met && ctx.is_arc_chemistry == #arc_chemistry;
                     ];
                 }
                 if let Some(rtl) = is_rtl {
-                    context_quote = quote![
-                        #context_quote
-                        right_context = right_context && ctx.is_rtl == #rtl;
+                    conditions_quote = quote![
+                        #conditions_quote
+                        conditions_are_met = conditions_are_met && ctx.is_rtl == #rtl;
                     ];
                 }
                 alert_quote = quote![
                     #alert_quote
                     #alert_val
                     if let Some((val, formatted_value)) = #name_ident {
-                        #context_quote
-                        if right_context {
+                        #conditions_quote
+                        if conditions_are_met {
                             #alert_specs
                         }
                     }
@@ -454,6 +329,13 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
             }
 
             #[automatically_derived]
+            impl ::cr_websummary::multi::websummary::ToJsonSummary for #table_struct_name {
+                fn to_json_summary(&self) -> Vec<::cr_websummary::multi::websummary::JsonMetricSummary> {
+                    self.0.iter().map(::cr_websummary::multi::websummary::ToJsonSummary::to_json_summary).flatten().collect()
+                }
+            }
+
+            #[automatically_derived]
             impl From<#table_struct_name> for ::cr_websummary::CardWithMetric {
                 fn from(src: #table_struct_name) -> ::cr_websummary::CardWithMetric {
                     #metric_headers_and_help
@@ -485,6 +367,15 @@ pub fn make_tables(item: TokenStream) -> TokenStream {
                     Ok(#row_struct_name {
                         #row_struct_field_from_metrics
                     })
+                }
+            }
+
+            #[automatically_derived]
+            impl ::cr_websummary::multi::websummary::ToJsonSummary for #row_struct_name {
+                fn to_json_summary(&self) -> Vec<::cr_websummary::multi::websummary::JsonMetricSummary> {
+                    vec![
+                        #row_struct_to_json_summary_items
+                    ]
                 }
             }
 
@@ -527,14 +418,11 @@ pub fn websummary_alert(item: proc_macro::TokenStream) -> proc_macro::TokenStrea
     // Make sure that #[derive(Alert)] is used on struct
     // The way we achieve it is to try parsing the input TokenStrean as `ItemStruct`
     // and checking the parse result
-    let item_struct = match syn::parse::<ItemStruct>(item.clone()) {
-        Ok(item_struct) => item_struct,
-        Err(_) => {
-            let span = proc_macro2::TokenStream::from(item);
-            return syn::Error::new_spanned(span, ALERT_NOT_ON_NAMED_STRUCT_ERROR)
-                .to_compile_error()
-                .into();
-        }
+    let Ok(item_struct) = syn::parse::<ItemStruct>(item.clone()) else {
+        let span = proc_macro2::TokenStream::from(item);
+        return syn::Error::new_spanned(span, ALERT_NOT_ON_NAMED_STRUCT_ERROR)
+            .to_compile_error()
+            .into();
     };
 
     // ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
@@ -592,7 +480,7 @@ pub fn websummary_alert(item: proc_macro::TokenStream) -> proc_macro::TokenStrea
 /// And rather are implemented in the LibraryWebSummary and SampleWebSummary structs
 /// and those columns are filled out there for each websummary tab.
 #[proc_macro_derive(ToCsvRows)]
-pub fn derive(item: TokenStream) -> TokenStream {
+pub fn derive_to_csv_rows(item: TokenStream) -> TokenStream {
     let item_struct = parse_macro_input!(item as ItemStruct);
     let ident = item_struct.ident;
 
@@ -611,10 +499,44 @@ pub fn derive(item: TokenStream) -> TokenStream {
         ];
     }
     quote! [
+        #[automatically_derived]
         impl ToCsvRows for #ident {
             fn to_csv_rows(self) -> Vec<Vec<String>> {
                 #append_rows;
                 csv_rows
+            }
+        }
+    ]
+    .into()
+}
+
+/// Derive an implementation of ToJsonSummary by reflecting all struct fields.
+/// Every struct member must implement ToJsonSummary.
+#[proc_macro_derive(ToJsonSummary)]
+pub fn derive_to_json_summary(item: TokenStream) -> TokenStream {
+    let item_struct = parse_macro_input!(item as ItemStruct);
+    let ident = item_struct.ident;
+
+    let mut append_rows = quote![let mut vals: Vec<JsonMetricSummary> = vec![];];
+
+    for field_name in item_struct
+        .fields
+        .iter()
+        .map(|f| f.ident.as_ref().expect("No identifier for struct field."))
+    {
+        append_rows = quote![
+            #append_rows
+            vals.append(&mut self
+                .#field_name
+                .to_json_summary());
+        ];
+    }
+    quote! [
+        #[automatically_derived]
+        impl ToJsonSummary for #ident {
+            fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
+                #append_rows;
+                vals
             }
         }
     ]
@@ -626,15 +548,15 @@ mod tests {
     use super::*;
     #[test]
     fn test_check_exclusive_contexts() {
-        assert!(check_exclusive_contexts(&[]));
-        assert!(check_exclusive_contexts(&[&AlertContext {
+        assert!(check_exclusive_conditions(&[]));
+        assert!(check_exclusive_conditions(&[&AlertConditions {
             is_hybrid_capture: None,
             is_lt_chemistry: None,
             is_arc_chemistry: None,
             is_rtl: None,
             include_introns: None
         }]));
-        assert!(check_exclusive_contexts(&[&AlertContext {
+        assert!(check_exclusive_conditions(&[&AlertConditions {
             is_hybrid_capture: Some(true),
             is_lt_chemistry: None,
             is_arc_chemistry: None,
@@ -642,15 +564,15 @@ mod tests {
             include_introns: None
         }]));
 
-        assert!(!check_exclusive_contexts(&[
-            &AlertContext {
+        assert!(!check_exclusive_conditions(&[
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: None,
                 is_arc_chemistry: None,
                 is_rtl: None,
                 include_introns: None
             },
-            &AlertContext {
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: None,
                 is_arc_chemistry: None,
@@ -659,15 +581,15 @@ mod tests {
             }
         ]));
 
-        assert!(check_exclusive_contexts(&[
-            &AlertContext {
+        assert!(check_exclusive_conditions(&[
+            &AlertConditions {
                 is_hybrid_capture: Some(true),
                 is_lt_chemistry: None,
                 is_arc_chemistry: None,
                 is_rtl: None,
                 include_introns: None
             },
-            &AlertContext {
+            &AlertConditions {
                 is_hybrid_capture: Some(false),
                 is_lt_chemistry: None,
                 is_arc_chemistry: None,
@@ -676,15 +598,15 @@ mod tests {
             }
         ]));
 
-        assert!(!check_exclusive_contexts(&[
-            &AlertContext {
+        assert!(!check_exclusive_conditions(&[
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: None,
                 is_arc_chemistry: None,
                 is_rtl: None,
                 include_introns: None
             },
-            &AlertContext {
+            &AlertConditions {
                 is_hybrid_capture: Some(false),
                 is_lt_chemistry: None,
                 is_arc_chemistry: None,
@@ -693,15 +615,15 @@ mod tests {
             }
         ]));
 
-        assert!(check_exclusive_contexts(&[
-            &AlertContext {
+        assert!(check_exclusive_conditions(&[
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: Some(true),
                 is_arc_chemistry: None,
                 is_rtl: None,
                 include_introns: None
             },
-            &AlertContext {
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: Some(false),
                 is_arc_chemistry: None,
@@ -710,15 +632,15 @@ mod tests {
             }
         ]));
 
-        assert!(!check_exclusive_contexts(&[
-            &AlertContext {
+        assert!(!check_exclusive_conditions(&[
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: Some(true),
                 is_arc_chemistry: None,
                 is_rtl: None,
                 include_introns: None
             },
-            &AlertContext {
+            &AlertConditions {
                 is_hybrid_capture: None,
                 is_lt_chemistry: Some(true),
                 is_arc_chemistry: None,

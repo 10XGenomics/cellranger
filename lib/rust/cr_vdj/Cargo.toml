@@ -3,8 +3,7 @@ name = 'cr_vdj'
 test = false
 
 [dependencies]
-docopt = '1.1'
-statrs = '>=0.12, <= 0.16'
+docopt = '1'
 
 [dependencies.anyhow]
 workspace = true
@@ -21,9 +20,6 @@ workspace = true
 [dependencies.itertools]
 workspace = true
 
-[dependencies.json_report_derive]
-path = '../json_report_derive'
-
 [dependencies.martian]
 workspace = true
 
@@ -35,9 +31,6 @@ workspace = true
 
 [dependencies.metric]
 path = '../metric'
-
-[dependencies.metric_derive]
-path = '../metric_derive'
 
 [dependencies.plotly]
 workspace = true
@@ -52,6 +45,12 @@ workspace = true
 workspace = true
 
 [dependencies.serde_json]
+workspace = true
+
+[dependencies.statrs]
+workspace = true
+
+[dependencies.strum_macros]
 workspace = true
 
 [dependencies.tenx-websummary]

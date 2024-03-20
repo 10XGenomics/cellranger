@@ -1,9 +1,9 @@
+use super::feature_reference::FeatureType;
 use crate::constants::ILLUMINA_QUAL_OFFSET;
 use crate::reference::feature_reference::{
     FeatureDef, FeatureReference, LIBRARY_TYPES_WITHOUT_FEATURES,
 };
 use crate::rna_read::RnaRead;
-use crate::types::FeatureType;
 use anyhow::{anyhow, bail, Result};
 use fastq_set::read_pair::{ReadPart, WhichRead};
 use itertools::Itertools;
@@ -69,7 +69,7 @@ pub fn correct_feature_barcode<'a>(
             }
             Entry::Vacant(entry) => {
                 entry.insert((likelihood, seq, qual));
-                likelihood_sum += likelihood
+                likelihood_sum += likelihood;
             }
         }
     };
@@ -192,7 +192,7 @@ impl FeatureExtractor {
         let mut bare_patterns = HashMap::new();
         for fd in &feature_ref.feature_defs {
             if fd.feature_type == FeatureType::Gene
-                || use_feature_types.map_or(false, |m| !m.contains(&fd.feature_type))
+                || use_feature_types.is_some_and(|m| !m.contains(&fd.feature_type))
             {
                 continue;
             }
@@ -241,9 +241,9 @@ impl FeatureExtractor {
 
         let patterns = patterns
             .into_iter()
-            .fold(HashMap::new(), |mut acc, (_, pat)| {
+            .fold(HashMap::new(), |mut acc: HashMap<_, Vec<_>>, (_, pat)| {
                 acc.entry((pat.feature_type, pat.read))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(pat);
                 acc
             })
@@ -368,7 +368,7 @@ impl FeatureExtractor {
         let mut barcode_captures = vec![];
 
         for (&(feature_type, which_read), (regset, patterns)) in &self.patterns {
-            if !read.library_feats().has_feature(feature_type) {
+            if read.library_type != feature_type.into() {
                 continue;
             }
 
@@ -482,7 +482,7 @@ mod tests {
     use super::*;
     use crate::reference::feature_checker::compute_feature_dist;
     use crate::reference::reference_info::ReferenceInfo;
-    use crate::types::LibraryFeatures;
+    use crate::types::{FeatureBarcodeType, GenomeName, LibraryType};
     use arrayvec::ArrayVec;
     use barcode::BarcodeConstruct::GelBeadOnly;
     use barcode::BarcodeSegmentState::NotChecked;
@@ -528,7 +528,7 @@ mod tests {
             umi_parts: ArrayVec::new(),
             r1_range: RpRange::new(WhichRead::R1, 0, Some(seq.len())),
             r2_range: Some(RpRange::new(WhichRead::R2, 0, Some(seq.len()))),
-            library_feats: LibraryFeatures::from(ftype),
+            library_type: LibraryType::from(ftype),
             chunk_id: 0,
         };
         fext.match_read(&read).and_then(|x| x.corrected_barcode)
@@ -548,9 +548,12 @@ mod tests {
             None,
         )
         .unwrap();
-        let _fextr =
-            FeatureExtractor::new(Arc::new(fref), Some(&[FeatureType::Antibody].into()), None)
-                .unwrap();
+        let _fextr = FeatureExtractor::new(
+            Arc::new(fref),
+            Some(&[FeatureType::Barcode(FeatureBarcodeType::Antibody)].into()),
+            None,
+        )
+        .unwrap();
         Ok(())
     }
 
@@ -567,8 +570,11 @@ mod tests {
             None,
             None,
         )?;
-        let fextr =
-            FeatureExtractor::new(Arc::new(fref), Some(&[FeatureType::CRISPR].into()), None);
+        let fextr = FeatureExtractor::new(
+            Arc::new(fref),
+            Some(&[FeatureType::Barcode(FeatureBarcodeType::Crispr)].into()),
+            None,
+        );
         match fextr {
             Err(e) => assert_eq!(e.to_string(), REGEX_TOO_BIG_ERR),
             Ok(_) => panic!("Expected Error not observed"),
@@ -582,11 +588,11 @@ mod tests {
             index: 0,
             id: "ID1".to_string(),
             name: "Name1".to_string(),
-            genome: String::default(),
+            genome: GenomeName::default(),
             sequence: "ACGT".to_string(),
             pattern: "(BC)".to_string(),
             read: WhichRead::R1,
-            feature_type: FeatureType::Antibody,
+            feature_type: FeatureType::Barcode(FeatureBarcodeType::Antibody),
             tags: HashMap::new(),
         };
         let r = FeatureExtractor::compile_bare_patterns(&[&fd]).unwrap();
@@ -655,23 +661,47 @@ ID3,Name3,R1,(BC),TTTT,Antibody Capture
             |seq, qual, ftype| correct_feature_barcode(&fext, seq, qual, ftype);
 
         // matches two patterns, but cannot choose b/c of 97.5% threshold
-        let r = correct_feature_barcode(b"ACTT", b"IIII", FeatureType::Antibody);
+        let r = correct_feature_barcode(
+            b"ACTT",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         assert_eq!(r, None);
 
         // also _perfectly_ matches two patterns, but still no dice
-        let r = correct_feature_barcode(b"ACCTTTT", b"IIIIIII", FeatureType::Antibody);
+        let r = correct_feature_barcode(
+            b"ACCTTTT",
+            b"IIIIIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         assert_eq!(r, None);
 
-        let r = correct_feature_barcode(b"ACGT", b"IIII", FeatureType::Antibody);
+        let r = correct_feature_barcode(
+            b"ACGT",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         assert_eq!(r, Some(b"ACGT".to_vec()));
 
-        let r = correct_feature_barcode(b"ACCT", b"IIII", FeatureType::Antibody);
+        let r = correct_feature_barcode(
+            b"ACCT",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         assert_eq!(r, Some(b"ACCT".to_vec()));
 
-        let r = correct_feature_barcode(b"TTTT", b"IIII", FeatureType::Antibody);
+        let r = correct_feature_barcode(
+            b"TTTT",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         assert_eq!(r, Some(b"TTTT".to_vec()));
 
-        let r = correct_feature_barcode(b"TTTA", b"IIII", FeatureType::Antibody);
+        let r = correct_feature_barcode(
+            b"TTTA",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         assert_eq!(r, Some(b"TTTT".to_vec()));
     }
 
@@ -739,31 +769,59 @@ ID9,N,R1,^(BC),TAAA,Custom
         let correct_feature_barcode =
             |seq, qual, ftype| correct_feature_barcode(&fext, seq, qual, ftype);
 
-        let (seq, qual, ftype) = (b"AAAT", b"IIII", FeatureType::Antibody);
+        let (seq, qual, ftype) = (
+            b"AAAT",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, None);
 
-        let (seq, qual, ftype) = (b"CGCC", b"IIII", FeatureType::Antibody);
+        let (seq, qual, ftype) = (
+            b"CGCC",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, Some(b"CCCC".to_vec()));
 
-        let (seq, qual, ftype) = (b"TTTA", b"IIII", FeatureType::Antibody);
+        let (seq, qual, ftype) = (
+            b"TTTA",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, None);
 
-        let (seq, qual, ftype) = (b"TTTC", b"IIII", FeatureType::CRISPR);
+        let (seq, qual, ftype) = (
+            b"TTTC",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Crispr),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, None);
 
-        let (seq, qual, ftype) = (b"AAAA", b"III!", FeatureType::Custom);
+        let (seq, qual, ftype) = (
+            b"AAAA",
+            b"III!",
+            FeatureType::Barcode(FeatureBarcodeType::Custom),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, Some(b"AAAT".to_vec()));
 
-        let (seq, qual, ftype) = (b"AAAA", b"I!II", FeatureType::Custom);
+        let (seq, qual, ftype) = (
+            b"AAAA",
+            b"I!II",
+            FeatureType::Barcode(FeatureBarcodeType::Custom),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, Some(b"ATAA".to_vec()));
 
-        let (seq, qual, ftype) = (b"AAAA", b"IIII", FeatureType::Custom);
+        let (seq, qual, ftype) = (
+            b"AAAA",
+            b"IIII",
+            FeatureType::Barcode(FeatureBarcodeType::Custom),
+        );
         let r = correct_feature_barcode(seq, qual, ftype);
         assert_eq!(r, None);
     }

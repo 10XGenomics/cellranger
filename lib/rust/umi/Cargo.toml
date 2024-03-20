@@ -1,5 +1,5 @@
 [dependencies]
-triple_accel = '0.4.0'
+triple_accel = '0.4'
 
 [dependencies.arrayvec]
 workspace = true

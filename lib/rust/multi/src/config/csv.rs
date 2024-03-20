@@ -1,13 +1,15 @@
 use super::parse::ParseCtx;
-use super::scsv::{Section, Span};
+use super::scsv::{Section, Span, XtraData};
 use anyhow::{anyhow, bail, Context, Result};
 use itertools::Itertools;
+use nom_locate::LocatedSpan;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Display;
 use std::ops::Range;
 use std::str::FromStr;
 
+#[derive(Debug)]
 pub struct CsvParser<'a, T: Display> {
     section: Section<'a, T>,
     required_headers: HashMap<String, usize>,
@@ -46,6 +48,29 @@ impl<'a, T: Display> CsvParser<'a, T> {
             #[cold]
             || anyhow!("{ctx} is empty"),
         )?;
+        // Make sure that we don't have any empty cells in the header, besides
+        // possible trailing empty cells.
+        validate_no_intermediate_empty_cells(hdr).with_context(|| ctx.to_string())?;
+
+        // Ensure that the header and the rest of the rows are the same length.
+        // Take into account that the header and the rows might have some trailing empty cells.
+        let trimmed_header_len = trimmed_len(hdr.as_slice());
+        for (i, row) in rows.iter().enumerate().skip(1) {
+            let trimmed_row_len = trimmed_len(row.as_slice());
+            let too_short = row.len() < trimmed_header_len;
+            let too_long = trimmed_row_len > trimmed_header_len;
+            if too_short || too_long {
+                let disp_row_len = if too_short {
+                    row.len()
+                } else {
+                    trimmed_row_len
+                };
+                bail!(
+                    "{} has {disp_row_len} column(s) but the header has {trimmed_header_len}",
+                    ParseCtx::HdrRow(name, i + 1),
+                );
+            }
+        }
         // TODO: use a reduce here to detect duplicate header entries
         let mut hdr: HashMap<String, usize> = hdr
             .iter()
@@ -204,5 +229,89 @@ impl<'a, T: Display> CsvParser<'a, T> {
     pub fn rows(&self) -> Range<usize> {
         // skip over the hdr row
         1..self.section.rows.len()
+    }
+}
+
+/// Return the length of this row after omitting all trailing empty cells.
+fn trimmed_len(row: &[LocatedSpan<&str, XtraData>]) -> usize {
+    row.iter().rev().skip_while(|cell| cell.is_empty()).count()
+}
+
+/// Check that the provided row has no intermediate empty cells.
+/// Trailing empty cells are OK.
+fn validate_no_intermediate_empty_cells(row: &[LocatedSpan<&str, XtraData>]) -> Result<()> {
+    let mut first_empty_cell = None;
+    for (i, cell) in row.iter().enumerate() {
+        if cell.is_empty() && first_empty_cell.is_none() {
+            first_empty_cell = Some(i);
+            continue;
+        }
+        if let Some(empty_pos) = first_empty_cell {
+            if !cell.is_empty() {
+                bail!("intermediate empty cell at col {}", empty_pos + 1);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::config::scsv::section_csv;
+
+    #[test]
+    fn test_intermediate_empty_cell_check() {
+        let check = |row_str: &str| {
+            let row: Vec<_> = row_str
+                .split(',')
+                .map(|cell| LocatedSpan::new_extra(cell, XtraData::new("::test")))
+                .collect();
+            validate_no_intermediate_empty_cells(&row)
+        };
+        assert!(check("foo,bar").is_ok());
+        assert!(check("foo,bar,").is_ok());
+        assert!(check("foo,bar,,").is_ok());
+        assert!(check("foo,bar,,nope").is_err());
+        assert!(check("foo,bar,,nope,,").is_err());
+    }
+
+    fn check_header_row_len_match(
+        hdr: &str,
+        row: &str,
+        expected_header_len: usize,
+        expected_row_len: usize,
+    ) {
+        let contents = format!("[test]\n{hdr}\n{row}\n");
+        let span = Span::new_extra(&contents, XtraData::new("::test"));
+        let section = section_csv(span)
+            .unwrap()
+            .1
+            .into_iter()
+            .exactly_one()
+            .unwrap();
+        let res = CsvParser::new(section, &["foo"][..], &["bar"]);
+
+        if expected_row_len == expected_header_len {
+            assert!(res.is_ok());
+        } else {
+            assert_eq!(
+                format!("[test] row 2 has {expected_row_len} column(s) but the header has {expected_header_len}"),
+                res.unwrap_err().to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_row_len_match() {
+        check_header_row_len_match("foo", "baz", 1, 1);
+        // check that we handle trailing extra cells correctly
+        check_header_row_len_match("foo,,", "baz", 1, 1);
+        check_header_row_len_match("foo", "baz,,", 1, 1);
+        check_header_row_len_match("foo,bar", "baz", 2, 1);
+        check_header_row_len_match("foo,bar,,", "baz", 2, 1);
+        check_header_row_len_match("foo,bar,,", "baz,,bad", 2, 3);
+        // trailing empty cells in the data row should be fine
+        check_header_row_len_match("foo,bar,,", "baz,,,", 3, 3);
     }
 }

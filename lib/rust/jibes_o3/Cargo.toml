@@ -1,14 +1,15 @@
 [dependencies]
-ndarray-stats = '>=0.4.0'
-numpy = '>=0.13'
-statrs = '>=0.12, <= 0.16'
+ndarray-stats = '0.5'
+numpy = '0.19'
 
 [dependencies.ndarray]
 workspace = true
 
 [dependencies.pyo3]
-features = ['extension-module', 'abi3-py310']
-version = '>=0.18.2'
+workspace = true
+
+[dependencies.statrs]
+workspace = true
 
 [lib]
 crate-type = ['staticlib']

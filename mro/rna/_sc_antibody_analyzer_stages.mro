@@ -9,8 +9,8 @@ filetype json;
 
 stage CALL_ANTIBODIES(
     in  h5   filtered_feature_counts_matrix,
-    in  h5   molecule_info,
     in  bool is_antibody,
+    in  bool is_spatial,
     out json antibody_histograms_json,
     out json antibody_treemap_json,
     src py   "stages/feature/call_antibodies",
@@ -25,5 +25,6 @@ stage SUMMARIZE_ANTIBODY_ANALYSIS(
     out path antibody_analysis,
     src py   "stages/feature/summarize_antibody_analysis",
 ) using (
-    mem_gb = 4,
+    mem_gb   = 4,
+    volatile = strict,
 )

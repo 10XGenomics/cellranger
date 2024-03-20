@@ -1,5 +1,6 @@
 //! Wrapping the Rust handling of the multi config.
-use cr_types::{CellMultiplexingType, CrMultiGraph, Fingerprint, HasMultiplexing, LibraryFeatures};
+use cr_types::{CellMultiplexingType, CrMultiGraph, Fingerprint};
+use itertools::Itertools;
 use martian::MartianFileType;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::FileTypeRead;
@@ -24,6 +25,22 @@ impl MultiGraph {
         Ok(Self(JsonFile::from_path(Path::new(path)).read().map_err(
             |err| PyErr::new::<PyException, _>(format!("{err:#}")),
         )?))
+    }
+
+    /// Load the multi graph from the provided JSON-encoded string.
+    #[classmethod]
+    pub fn from_str(_cls: &PyType, contents: &str) -> PyResult<Self> {
+        Ok(Self(serde_json::from_str(contents).map_err(|err| {
+            PyErr::new::<PyException, _>(format!("{err:#}"))
+        })?))
+    }
+
+    pub fn sample_ids(&self) -> Vec<String> {
+        self.0
+            .samples
+            .iter()
+            .map(|sample| sample.sample_id.clone())
+            .collect()
     }
 
     pub fn sample_tag_ids(&self) -> HashMap<String, Vec<String>> {
@@ -51,19 +68,15 @@ impl MultiGraph {
         self.0
             .libraries
             .iter()
-            .filter_map(|lib| match lib.library_features {
-                LibraryFeatures::GeneExpression(_) | LibraryFeatures::Vdj(_) => None,
-                LibraryFeatures::FeatureBarcodes(features) => {
-                    Some(features.iter().map(|f| f.to_string()))
-                }
-            })
-            .flatten()
+            .filter_map(|lib| lib.library_type.feature_barcode_type())
+            .unique()
+            .map(|fbt| fbt.to_string())
             .collect()
     }
 
-    /// Return true if data is multiplexed.
+    /// Return true if data is multiplexed using any method.
     pub fn is_multiplexed(&self) -> bool {
-        self.0.has_multiplexing()
+        self.0.is_multiplexed()
     }
 
     /// Return true if this data is using CMO multiplexing.
@@ -79,5 +92,74 @@ impl MultiGraph {
     /// Return true if this data is using OH multiplexing.
     pub fn is_oh_multiplexed(&self) -> bool {
         self.0.cell_multiplexing_type() == Some(CellMultiplexingType::OH)
+    }
+
+    /// Return tuples of sample ID and finerprints.
+    /// THIS IS ONLY USED FOR CREATION OF GRAPHVIZ.
+    pub fn sample_info_for_graphviz(&self) -> Vec<(String, Vec<PyFingerprint>)> {
+        self.0
+            .samples
+            .iter()
+            .map(|sample| {
+                (
+                    sample.sample_id.clone(),
+                    sample
+                        .fingerprints
+                        .iter()
+                        .map(PyFingerprint::from_fingerprint)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect()
+    }
+
+    /// Return tuples of physical library ID, gem well, associated FASTQ IDs.
+    /// THIS IS ONLY USED FOR CREATION OF GRAPHVIZ.
+    pub fn library_info_for_graphviz(&self) -> Vec<(String, u16, Vec<String>)> {
+        self.0
+            .libraries
+            .iter()
+            .map(|lib| {
+                (
+                    lib.physical_library_id.clone(),
+                    lib.gem_well.0,
+                    lib.fastqs
+                        .iter()
+                        .map(|fastq| fastq.id().to_string())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect()
+    }
+}
+
+#[pyclass]
+pub struct PyFingerprint {
+    #[pyo3(get)]
+    gem_well: u16,
+    #[pyo3(get)]
+    tag_names: Vec<String>,
+}
+
+impl PyFingerprint {
+    fn from_fingerprint(fingerprint: &Fingerprint) -> Self {
+        match fingerprint {
+            Fingerprint::Tagged {
+                gem_well,
+                tag_name,
+                translated_tag_names,
+                ..
+            } => Self {
+                gem_well: gem_well.0,
+                tag_names: std::iter::once(tag_name)
+                    .chain(translated_tag_names)
+                    .cloned()
+                    .collect(),
+            },
+            Fingerprint::Untagged { gem_well } => Self {
+                gem_well: gem_well.0,
+                tag_names: Default::default(),
+            },
+        }
     }
 }

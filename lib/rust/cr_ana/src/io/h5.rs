@@ -1,10 +1,11 @@
 //! I/O HDF5 helper functions
 
 use crate::types::{
-    clustering_key, feature_prefixed, ClusteringKey, ClusteringResult, ClusteringType,
-    EmbeddingResult, EmbeddingType, FeatureType, H5File, PcaResult,
+    clustering_key, ClusteringKey, ClusteringResult, ClusteringType, EmbeddingResult,
+    EmbeddingType, H5File, PcaResult,
 };
 use anyhow::{Context, Result};
+use cr_types::reference::feature_reference::FeatureType;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use ndarray::{s, Array2};
@@ -26,8 +27,8 @@ pub(crate) fn make_fixed_ascii32(s: &str) -> Result<FA32> {
     Ok(FA32::from_ascii(s)?)
 }
 
-pub(crate) fn matrix_nnz(matrix: impl AsRef<Path>) -> Result<usize> {
-    Ok(hdf5::File::open(&matrix)?
+pub(crate) fn matrix_nnz(matrix: &Path) -> Result<usize> {
+    Ok(hdf5::File::open(matrix)?
         .group("matrix")?
         .dataset("data")?
         .size())
@@ -70,9 +71,9 @@ pub(crate) fn matrix_feature_types(
     Ok(feature_types)
 }
 
-pub(crate) fn est_mem_gb_from_nnz(matrix: impl AsRef<std::path::Path>) -> Result<f64> {
-    let nnz = matrix_nnz(matrix)? as f64;
-    Ok((nnz.max(75e6) - 25e6) / (75e6 - 25e6) + 2.0)
+/// Estimate the memory (GiB) required to load a matrix from the number of non-zero entries (NNZ).
+pub(crate) fn estimate_mem_gib_from_nnz(matrix: &Path) -> Result<f64> {
+    Ok(20e-9 * matrix_nnz(matrix)? as f64)
 }
 
 pub(crate) mod pca {
@@ -84,23 +85,11 @@ pub(crate) mod pca {
     pub(crate) const VARIANCE: &str = "variance_explained";
 }
 
-fn feature_group(
-    group: hdf5::Group,
-    feature_type: FeatureType,
-    is_feature_prefixed: bool,
-) -> Result<hdf5::Group> {
-    let member = if !is_feature_prefixed {
-        group
-            .member_names()?
-            .into_iter()
-            .find(|m| m[1..].parse::<usize>().is_ok())
-    } else {
-        let feature_key = feature_type.lc();
-        group
-            .member_names()?
-            .into_iter()
-            .find(|m| m.contains(feature_key))
-    };
+fn feature_group(group: hdf5::Group, feature_type: FeatureType) -> Result<hdf5::Group> {
+    let member = group
+        .member_names()?
+        .into_iter()
+        .find(|m| m.contains(feature_type.as_snake_case()));
     if member.is_none() {
         anyhow::bail!(
             "Could not find {:?} feature in group {:?}",
@@ -120,12 +109,10 @@ pub(crate) fn load_transformed_pca(
     pca_h5: impl AsRef<Path>,
     feature_type: FeatureType,
     input_pcs: Option<usize>,
-    is_antibody_only: bool,
 ) -> Result<(hdf5::Group, PcaMatrixShape)> {
     let file = hdf5::File::open(&pca_h5)?;
     let group = file.group(pca::GROUP)?;
-    let is_feature_prefixed = feature_prefixed(is_antibody_only, feature_type);
-    let n_components = feature_group(group, feature_type, is_feature_prefixed)?;
+    let n_components = feature_group(group, feature_type)?;
     let sh = n_components.dataset(pca::MATRIX)?.shape();
     let mut shape = PcaMatrixShape {
         num_bcs: sh[0],
@@ -143,10 +130,8 @@ pub(crate) fn load_transformed_pca_matrix(
     pca_h5: impl AsRef<Path>,
     feature_type: FeatureType,
     input_pcs: Option<usize>,
-    is_antibody_only: bool,
 ) -> Result<Array2<f64>> {
-    let (n_components, shape) =
-        load_transformed_pca(pca_h5, feature_type, input_pcs, is_antibody_only)?;
+    let (n_components, shape) = load_transformed_pca(pca_h5, feature_type, input_pcs)?;
     let proj = if input_pcs.is_some() {
         // Get the minimum of the number of available and requested components.
         n_components
@@ -184,18 +169,10 @@ pub(crate) fn save_pca(pca_h5: &H5File, result: &PcaResult<'_>) -> Result<()> {
         .shape(dispersion.dim())
         .create(pca::DISPERSION)?
         .write(dispersion)?;
-    let features_selected = features_selected
+    let features_selected: Vec<_> = features_selected
         .iter()
         .map(|f| make_fixed_ascii(f))
-        .collect::<Result<Vec<_>, _>>()?;
-    /*
-    let mut features_selected = Vec::with_capacity(selected_features.len());
-    // these are weirdly reversed b/c of how the python does it:
-    //   np.argsort(...)[-pca_features:]
-    for &i in selected_features.iter().rev() {
-        features_selected.push(make_fixed_ascii(&feature_ids[i])?);
-    }
-    */
+        .try_collect()?;
     group
         .new_dataset::<FA>()
         .shape((features_selected.len(),))
@@ -286,13 +263,11 @@ pub(crate) fn load_clustering(
     path: &H5File,
     clustering_type: ClusteringType,
     feature_type: FeatureType,
-    is_antibody_only: bool,
 ) -> Result<ClusteringResult> {
     let file = hdf5::File::open(path)?;
     let group = file.group(clustering::GROUP)?;
 
-    let is_feature_prefixed = feature_prefixed(is_antibody_only, feature_type);
-    let key = clustering_key(clustering_type, feature_type, is_feature_prefixed);
+    let key = clustering_key(clustering_type, feature_type);
     let query_key = format!("_{key}");
     let labels = group
         .group(&query_key)?
@@ -316,30 +291,30 @@ pub(crate) fn load_clusterings(
     let members = group.member_names()?;
     let mut result = Vec::with_capacity(members.len());
     for member in members {
-        if let Ok(ClusteringKey {
+        let ClusteringKey {
             clustering_type,
             feature_type,
-        }) = member.parse::<ClusteringKey>()
-        {
-            let feature_type = if is_antibody_only {
-                FeatureType::Antibody
-            } else {
-                feature_type
-            };
-            let is_feature_prefixed = feature_prefixed(is_antibody_only, feature_type);
-            let key = clustering_key(clustering_type, feature_type, is_feature_prefixed);
-            let labels = group
-                .group(&member)?
-                .dataset(clustering::CLUSTERS)?
-                .read_1d::<i64>()?
-                .to_vec();
-            result.push(ClusteringResult {
-                clustering_type,
-                feature_type,
-                labels,
-                key,
-            });
-        }
+        } = member
+            .parse::<ClusteringKey>()
+            .with_context(|| format!("failed to parse '{member}' as clustering key"))?;
+
+        let feature_type = if is_antibody_only {
+            FeatureType::Barcode(cr_types::FeatureBarcodeType::Antibody)
+        } else {
+            feature_type
+        };
+        let key = clustering_key(clustering_type, feature_type);
+        let labels = group
+            .group(&member)?
+            .dataset(clustering::CLUSTERS)?
+            .read_1d::<i64>()?
+            .to_vec();
+        result.push(ClusteringResult {
+            clustering_type,
+            feature_type,
+            labels,
+            key,
+        });
     }
     Ok(result)
 }
@@ -399,7 +374,7 @@ pub(crate) fn save_clustering(path: &H5File, result: &ClusteringResult) -> Resul
 
 pub(crate) fn combine_clusterings<'a>(
     path: &H5File,
-    parts: impl Iterator<Item = &'a H5File>,
+    parts: impl IntoIterator<Item = &'a H5File>,
 ) -> Result<()> {
     let output = hdf5::File::create(path)?;
     output
@@ -486,7 +461,7 @@ pub(crate) fn save_embedding(path: &H5File, result: &EmbeddingResult<'_>) -> Res
         .create(embedding::NAME)?
         .write_scalar(&make_fixed_ascii(&format!(
             "{}_{}-d",
-            feature_type.lc(),
+            feature_type.as_snake_case(),
             dims,
         ))?)?;
     Ok(())

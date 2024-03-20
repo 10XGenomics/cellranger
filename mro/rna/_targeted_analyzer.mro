@@ -46,13 +46,15 @@ pipeline _TARGETED_ANALYZER(
     in  json     basic_counter_summary,
     in  path     reference_path,
     in  csv      probe_set,
+    in  bool     is_visium_hd,
     in  tps.json target_panel_summary,
+    in  bool     is_spatial,
     out json     targeted_analysis_metrics,
     out csv      per_feature_metrics_csv,
 )
 {
-    call DISABLE_GDNA_STAGES(
-        probe_set = self.probe_set,
+    call DISABLE_TARGETED_STAGES(
+        * = self,
     )
 
     call _RUN_GDNA_ANALYSIS(
@@ -60,7 +62,7 @@ pipeline _TARGETED_ANALYZER(
         reference_path = self.reference_path,
         probe_set      = self.probe_set,
     ) using (
-        disabled = DISABLE_GDNA_STAGES.disable_targeted_gdna,
+        disabled = DISABLE_TARGETED_STAGES.disable_targeted_gdna,
     )
 
     call CALCULATE_TARGETED_METRICS(
@@ -68,18 +70,23 @@ pipeline _TARGETED_ANALYZER(
         filtered_gene_bc_matrices = self.filtered_gene_bc_matrices,
         basic_counter_summary     = self.basic_counter_summary,
         target_panel_summary      = self.target_panel_summary,
+        is_spatial                = self.is_spatial,
     )
 
     call SUBSAMPLE_READS as SUBSAMPLE_ON_TARGET_READS(
         molecule_info     = self.molecule_info,
         filtered_barcodes = self.filtered_barcodes,
         target_mode       = "ontarget",
+    ) using (
+        disabled = DISABLE_TARGETED_STAGES.disable_sampling_stages,
     )
 
     call SUBSAMPLE_READS as SUBSAMPLE_OFF_TARGET_READS(
         molecule_info     = self.molecule_info,
         filtered_barcodes = self.filtered_barcodes,
         target_mode       = "offtarget",
+    ) using (
+        disabled = DISABLE_TARGETED_STAGES.disable_sampling_stages,
     )
 
     call MERGE_METRICS(

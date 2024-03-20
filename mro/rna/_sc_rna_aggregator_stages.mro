@@ -115,11 +115,9 @@ stage WRITE_MATRICES(
 )
 
 stage CRISPR_AGGR_INPUT_PREP(
-    in  h5   merged_molecules,
-    out csv  filtered_barcodes,
-    out csv  feature_reference,
-    out json counter_metrics_json,
-    src py   "stages/aggregator/crispr_aggr_input_prep",
+    in  h5  merged_molecules,
+    out csv feature_reference,
+    src py  "stages/aggregator/crispr_aggr_input_prep",
 ) using (
     mem_gb   = 4,
     volatile = strict,

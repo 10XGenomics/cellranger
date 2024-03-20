@@ -9,6 +9,7 @@ WRITE_MULTI_WEB_SUMMARY_JSON stage and inserted into the sample web summary
 """
 
 import json
+from math import ceil
 
 import h5py
 
@@ -57,9 +58,14 @@ UMI_ON_TSNE_PLOT_NAMES = [
 
 def split(args):
     _features, _cells, nnz = cr_matrix.CountMatrix.load_dims_from_h5(args.matrices_h5)
+    mem_gib = ceil(
+        cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5)
+        + (3 + 31 * nnz / 1024**3)
+    )
+
     return {
         "chunks": [],
-        "join": {"__mem_gb": 3 + 31 * nnz / 1024**3},
+        "join": {"__mem_gb": mem_gib},
     }
 
 

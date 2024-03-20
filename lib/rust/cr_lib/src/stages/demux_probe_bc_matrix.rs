@@ -2,9 +2,8 @@
 
 use crate::gdna_utils::get_filtered_per_probe_metrics;
 use crate::probe_barcode_matrix::{read_bc_json, write_probe_bc_matrix, ProbeCounts};
-use crate::{CountShardFile, H5File};
 use barcode::Barcode;
-use cr_types::BarcodeIndex;
+use cr_types::{BarcodeIndex, CountShardFile, H5File};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
@@ -47,7 +46,7 @@ pub struct DemuxProbeBcMatrixChunkOutputs {
 // This is our stage struct
 pub struct DemuxProbeBcMatrix;
 
-#[make_mro]
+#[make_mro(volatile = strict)]
 impl MartianStage for DemuxProbeBcMatrix {
     type StageInputs = DemuxProbeBcMatrixStageInputs;
     type StageOutputs = DemuxProbeBcMatrixStageOutputs;

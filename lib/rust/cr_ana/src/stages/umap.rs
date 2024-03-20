@@ -1,9 +1,10 @@
-//! UMAP stage code
+//! Martian stage RUN_UMAP
 
 use crate::io::{csv, h5};
-use crate::types::{feature_prefixed, EmbeddingResult, EmbeddingType, FeatureType, H5File};
+use crate::types::{EmbeddingResult, EmbeddingType, H5File};
 use crate::EXCLUDED_FEATURE_TYPES;
 use anyhow::Result;
+use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::get_barcodes_between;
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{make_mro, MartianStruct, MartianType};
@@ -26,7 +27,6 @@ pub struct UmapStageInputs {
     pub max_dims: Option<usize>,
     pub min_dist: Option<f64>,
     pub metric: Option<String>,
-    pub is_antibody_only: bool,
     pub implementation: UmapImplementation,
 }
 
@@ -59,7 +59,7 @@ pub struct UmapChunkOutputs {
 
 pub struct UmapStage;
 
-#[make_mro(stage_name = RUN_UMAP, mem_gb = 1, threads = 1, volatile = strict)]
+#[make_mro(stage_name = RUN_UMAP, volatile = strict)]
 impl MartianStage for UmapStage {
     type StageInputs = UmapStageInputs;
     type StageOutputs = UmapStageOutputs;
@@ -76,7 +76,7 @@ impl MartianStage for UmapStage {
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
 
         let threads = match args.implementation {
-            Original => 2,
+            Original => 5,
             Parallel => 4,
         };
 
@@ -113,7 +113,6 @@ impl MartianStage for UmapStage {
                 &args.pca_h5,
                 chunk_args.feature_type,
                 args.input_pcs,
-                args.is_antibody_only,
             )?;
             let matrix = hdf5::File::open(&args.matrix_h5)?.group("matrix")?;
             let barcodes = get_barcodes_between(0, None, &matrix)?;
@@ -139,12 +138,13 @@ impl MartianStage for UmapStage {
 
         let embedding = match args.implementation {
             Parallel => {
-                let mut state = umap.initialize_fit_parallelized(&proj, args.random_seed);
+                let mut state =
+                    umap.initialize_fit_parallelized(&proj, args.random_seed, rover.get_threads());
                 state.optimize_multithreaded(rover.get_threads());
                 state.embedding
             }
             Original => {
-                let mut state = umap.initialize_fit(&proj, args.random_seed);
+                let mut state = umap.initialize_fit(&proj, args.random_seed, rover.get_threads());
                 state.optimize();
                 state.embedding
             }
@@ -155,7 +155,6 @@ impl MartianStage for UmapStage {
             embedding,
             EmbeddingType::Umap,
             chunk_args.feature_type,
-            feature_prefixed(args.is_antibody_only, chunk_args.feature_type),
         );
 
         let umap_h5 = rover.make_path("umap_h5");

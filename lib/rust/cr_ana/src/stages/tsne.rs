@@ -1,10 +1,12 @@
 //! t-SNE stage code
 
 use crate::io::{csv, h5};
-use crate::types::{feature_prefixed, EmbeddingResult, EmbeddingType, FeatureType, H5File};
+use crate::types::{EmbeddingResult, EmbeddingType, H5File};
 use crate::EXCLUDED_FEATURE_TYPES;
 use anyhow::Result;
 use bhtsne::BarnesHutTSNE;
+use cr_types::reference::feature_reference::FeatureType;
+use cr_types::FeatureBarcodeType;
 use hdf5_io::matrix::{get_barcodes_between, read_adaptive_csr_matrix};
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{make_mro, MartianStruct};
@@ -33,7 +35,6 @@ pub struct TsneStageInputs {
     stop_lying_iter: Option<usize>,
     mom_switch_iter: Option<usize>,
     theta: Option<f64>,
-    is_antibody_only: bool,
 }
 
 #[derive(Debug, Serialize, MartianStruct)]
@@ -56,7 +57,7 @@ pub struct TsneChunkOutputs {
 
 pub struct TsneStage;
 
-#[make_mro(stage_name = RUN_TSNE_NG, mem_gb = 1, threads = 1, volatile = strict)]
+#[make_mro(stage_name = RUN_TSNE_NG, volatile = strict)]
 impl MartianStage for TsneStage {
     type StageInputs = TsneStageInputs;
     type StageOutputs = TsneStageOutputs;
@@ -68,31 +69,39 @@ impl MartianStage for TsneStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let mut stage_def = StageDef::new();
         let (_, ncells) = h5::matrix_shape(&args.matrix_h5)?;
+        let ncells_mem_gib = (8e-6 * ncells as f64).ceil() as isize;
+
+        let matrix_mem_gib =
+            (0.5 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?).ceil() as isize;
+
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
-        for tsne_dims in N_COMPONENTS..=args.max_dims.unwrap_or(N_COMPONENTS) {
-            for (&feature_type, &count) in &feature_types {
-                // if we have only 1 feature, skip!
-                if count < 2 || EXCLUDED_FEATURE_TYPES.contains(&feature_type) {
-                    continue;
-                }
-                let chunk_inputs = Self::ChunkInputs {
-                    tsne_dims,
-                    feature_type,
-                };
-                let chunk_mem_gb = if matches!(feature_type, FeatureType::Multiplexing) {
-                    // For multiplexing the log2-transformed count matrix is used
-                    h5::est_mem_gb_from_nnz(&args.matrix_h5)?.ceil() as isize
-                } else {
-                    (ncells as f64 / 125_000.0).ceil() as isize
-                }
-                .max(4);
-                let chunk_resource = Resource::new().threads(1).mem_gb(chunk_mem_gb);
-                stage_def.add_chunk_with_resource(chunk_inputs, chunk_resource);
-            }
-        }
-        Ok(stage_def)
+        let components = N_COMPONENTS..=args.max_dims.unwrap_or(N_COMPONENTS);
+        let stage_def = components.flat_map(|tsne_dims| {
+            feature_types
+                .iter()
+                .filter(|(&feature_type, &count)| {
+                    count >= 2 && !EXCLUDED_FEATURE_TYPES.contains(&feature_type)
+                })
+                .map(move |(&feature_type, _count)| {
+                    let chunk_mem_gib = 4.max(
+                        if feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing) {
+                            // For multiplexing the log2-transformed count matrix is used
+                            matrix_mem_gib
+                        } else {
+                            ncells_mem_gib
+                        },
+                    );
+                    (
+                        Self::ChunkInputs {
+                            tsne_dims,
+                            feature_type,
+                        },
+                        Resource::with_mem_gb(chunk_mem_gib),
+                    )
+                })
+        });
+        Ok(stage_def.collect())
     }
 
     fn main(
@@ -113,41 +122,41 @@ impl MartianStage for TsneStage {
         tsne.stop_lying_iter = args.stop_lying_iter.or(Some(STOP_LYING_ITER));
         tsne.mom_switch_iter = args.mom_switch_iter.or(Some(MOM_SWITCH_ITER));
 
-        let (mut proj, barcodes) = if chunk_args.feature_type == FeatureType::Multiplexing {
-            // Use feature space for multiplexing due to much lower dimension than gene expression
-            // Possible optimization: subsample the full matrix, this ends up much
-            // more memory than the PCA case
-            let FBM {
-                barcodes, matrix, ..
-            } = read_adaptive_csr_matrix(
-                &args.matrix_h5,
-                Some(chunk_args.feature_type.as_str()),
-                None,
-            )?
-            .0;
+        let (mut proj, barcodes) =
+            if chunk_args.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing) {
+                // Use feature space for multiplexing due to much lower dimension than gene expression
+                // Possible optimization: subsample the full matrix, this ends up much
+                // more memory than the PCA case
+                let FBM {
+                    barcodes, matrix, ..
+                } = read_adaptive_csr_matrix(
+                    &args.matrix_h5,
+                    Some(chunk_args.feature_type.to_string().as_str()),
+                    None,
+                )?
+                .0;
 
-            let proj = matrix
-                .to_dense()
-                .map_mut(|i| (*i as f64 + 1.).log2())
-                .reversed_axes()
-                .as_standard_layout()
-                .to_owned();
+                let proj = matrix
+                    .to_dense()
+                    .map_mut(|i| (*i as f64 + 1.).log2())
+                    .reversed_axes()
+                    .as_standard_layout()
+                    .to_owned();
 
-            (proj, barcodes)
-        } else {
-            let matrix = hdf5::File::open(&args.matrix_h5)?.group("matrix")?;
-            let barcodes = get_barcodes_between(0, None, &matrix)?;
+                (proj, barcodes)
+            } else {
+                let matrix = hdf5::File::open(&args.matrix_h5)?.group("matrix")?;
+                let barcodes = get_barcodes_between(0, None, &matrix)?;
 
-            (
-                h5::load_transformed_pca_matrix(
-                    &args.pca_h5,
-                    chunk_args.feature_type,
-                    args.input_pcs,
-                    args.is_antibody_only,
-                )?,
-                barcodes,
-            )
-        };
+                (
+                    h5::load_transformed_pca_matrix(
+                        &args.pca_h5,
+                        chunk_args.feature_type,
+                        args.input_pcs,
+                    )?,
+                    barcodes,
+                )
+            };
 
         let (num_bcs, _) = proj.dim();
         tsne.perplexity = tsne
@@ -169,7 +178,6 @@ impl MartianStage for TsneStage {
             embedding,
             EmbeddingType::Tsne,
             chunk_args.feature_type,
-            feature_prefixed(args.is_antibody_only, chunk_args.feature_type),
         );
 
         let tsne_h5: H5File = rover.make_path("tsne_h5");

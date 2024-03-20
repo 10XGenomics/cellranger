@@ -1,11 +1,10 @@
 use anyhow::Result;
-use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, HasBarcode, Whitelist};
+use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, Whitelist};
 use cr_bam::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_ITEM_BUFFER_SZ, ALN_BC_SEND_BUFFER_SZ};
 use cr_types::rna_read::{RnaChunk, RnaProcessor, RnaRead};
 use fastq_set::read_pair::ReadPair;
 use fastq_set::{FastqProcessor, ProcessResult};
 use metric::{CountMetric, Metric};
-use serde::Serialize;
 use shardio::{ShardSender, ShardWriter, SortKey};
 use std;
 use std::borrow::Cow;
@@ -35,7 +34,7 @@ impl<T> ReadVisitor for DefaultVisitor<T> {
 }
 
 pub struct BarcodeSortWorkflow {
-    sorter: BarcodeAwareSorter<RnaRead, BarcodeOrder>,
+    sorter: BarcodeAwareSorter,
     processor: RnaProcessor,
 }
 
@@ -96,41 +95,28 @@ impl BarcodeSortWorkflow {
 }
 
 pub struct BarcodeOrder;
-impl<T> SortKey<T> for BarcodeOrder
-where
-    T: HasBarcode,
-{
+impl SortKey<RnaRead> for BarcodeOrder {
     type Key = Barcode;
-    fn sort_key(v: &T) -> Cow<'_, Barcode> {
+    fn sort_key(v: &RnaRead) -> Cow<'_, Barcode> {
         Cow::Owned(v.barcode())
     }
 }
 
-struct BarcodeAwareSorter<T, Order = BarcodeOrder>
-where
-    T: 'static + HasBarcode + Send + Serialize,
-    Order: SortKey<T>,
-    Order::Key: 'static + Send + Serialize,
-{
+struct BarcodeAwareSorter {
     // note: sender must appear before writers, because senders
     // must be dropped before writers.
-    valid_sender: ShardSender<T, Order>,
-    valid_writer: ShardWriter<T, Order>,
-    invalid_sender: ShardSender<T, Order>,
-    invalid_writer: ShardWriter<T, Order>,
+    valid_sender: ShardSender<RnaRead, BarcodeOrder>,
+    valid_writer: ShardWriter<RnaRead, BarcodeOrder>,
+    invalid_sender: ShardSender<RnaRead, BarcodeOrder>,
+    invalid_writer: ShardWriter<RnaRead, BarcodeOrder>,
     valid_items: i64,
     valid_items_in: BarcodeConstructMetric<CountMetric>,
     invalid_items: i64,
 }
 
-impl<T, Order> BarcodeAwareSorter<T, Order>
-where
-    T: 'static + HasBarcode + Send + Serialize,
-    Order: SortKey<T>,
-    <Order as SortKey<T>>::Key: 'static + Send + Ord + Serialize + Clone,
-{
+impl BarcodeAwareSorter {
     fn new(valid_path: &Path, invalid_path: &Path) -> Result<Self> {
-        let valid_writer: ShardWriter<T, Order> = ShardWriter::new(
+        let valid_writer: ShardWriter<RnaRead, BarcodeOrder> = ShardWriter::new(
             valid_path,
             ALN_BC_SEND_BUFFER_SZ,
             ALN_BC_DISK_CHUNK_SZ,
@@ -138,7 +124,7 @@ where
         )?;
         let valid_sender = valid_writer.get_sender();
 
-        let invalid_writer: ShardWriter<T, Order> = ShardWriter::new(
+        let invalid_writer: ShardWriter<RnaRead, BarcodeOrder> = ShardWriter::new(
             invalid_path,
             ALN_BC_SEND_BUFFER_SZ,
             ALN_BC_DISK_CHUNK_SZ,
@@ -152,12 +138,12 @@ where
             invalid_writer,
             invalid_sender,
             valid_items: 0,
-            valid_items_in: BarcodeConstructMetric::<CountMetric>::new(),
+            valid_items_in: BarcodeConstructMetric::default(),
             invalid_items: 0,
         })
     }
 
-    fn process(&mut self, read: T) -> Result<()> {
+    fn process(&mut self, read: RnaRead) -> Result<()> {
         self.valid_items_in.merge(
             read.segmented_barcode()
                 .segments_valid()

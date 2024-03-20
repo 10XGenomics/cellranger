@@ -13,7 +13,7 @@ impl CorrectionMapBuilder {
         unimplemented!();
     }
 
-    pub fn new(_: Vec<BcSegSeq>) -> Self {
+    pub fn new(_: &Whitelist) -> Self {
         unimplemented!();
     }
 }

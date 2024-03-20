@@ -10,10 +10,9 @@ use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use statrs::statistics::{Data, OrderStatistics};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, Write};
-use std::iter::FromIterator;
 use std::path::Path;
 use std::process::Command;
 
@@ -54,18 +53,15 @@ fn python_gene_index<R: Read + Seek>(
     txome: &Transcriptome,
     fasta_reader: &mut IndexedReader<R>,
 ) -> Result<(HashMap<String, Transcript>, Vec<Gene>)> {
+    let chroms: HashSet<_> = fasta_reader
+        .index
+        .sequences()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+
     let mut transcripts = HashMap::new();
     let mut genes = Vec::new();
-
-    use std::collections::HashSet;
-    let chroms: HashSet<String> = HashSet::from_iter(
-        fasta_reader
-            .index
-            .sequences()
-            .iter()
-            .map(|s| s.name.clone()),
-    );
-
     for (gene_idx, txs) in &txome.gene_to_transcripts {
         let txs: Vec<_> = txs
             .iter()

@@ -44,8 +44,6 @@
     unused_comparisons,
     while_true
 )]
-#![allow(unused_extern_crates)]
-extern crate intel_mkl_src; // Required for linking.
 
 use anyhow::Result;
 use clap::Parser;

@@ -1,8 +1,7 @@
 use crate::reference::reference_info::ReferenceInfo;
+use crate::types::GenomeName;
 use anyhow::Result;
 use std::path::Path;
-
-pub type GenomeName = String;
 
 /// Compute the genome for each chromosome. The output is a vector of genome names in the same
 /// order as the names of chromosomes in `star/chrName.txt`. If we have more than 1 genome in the
@@ -43,7 +42,7 @@ pub fn genome_of_chrom(reference_path: &Path) -> Result<Vec<GenomeName>> {
             genome_of_chrom.len(),
             genome_of_chrom
         );
-        result.push(genome_of_chrom[0].clone())
+        result.push(genome_of_chrom[0].clone());
     }
     Ok(result)
 }

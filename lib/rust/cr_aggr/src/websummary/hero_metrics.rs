@@ -18,17 +18,17 @@ impl VdjAggrHeroMetrics {
             total_num_cells: HeroMetric {
                 threshold: Threshold::Pass,
                 name: NUMBER_OF_CELLS.into(),
-                metric: PrettyMetric::integer(num_cells),
+                metric: PrettyMetric::integer(num_cells as i64),
             },
             total_num_clonotypes: HeroMetric {
                 threshold: Threshold::Pass,
                 name: NUMBER_OF_CLONOTYPES.into(),
-                metric: PrettyMetric::integer(num_clonotypes),
+                metric: PrettyMetric::integer(num_clonotypes as i64),
             },
             total_paired_cells: HeroMetric {
                 threshold: Threshold::Pass,
                 name: NUMBER_OF_PAIRED_CELLS.into(),
-                metric: PrettyMetric::integer(num_paired_cells),
+                metric: PrettyMetric::integer(num_paired_cells as i64),
             },
         }
     }

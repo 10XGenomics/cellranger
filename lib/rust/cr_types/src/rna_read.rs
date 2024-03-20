@@ -5,13 +5,13 @@ use crate::chemistry::{
 };
 use crate::sample_def::SampleDef;
 use crate::serde_helpers::NumberOrStr;
-use crate::types::LibraryFeatures;
-use anyhow::{bail, Result};
+use crate::types::LibraryType;
+use anyhow::Result;
 use arrayvec::ArrayVec;
-use barcode::whitelist::find_whitelist;
+use barcode::whitelist::find_slide_design;
 use barcode::{
-    Barcode, BarcodeConstruct, BarcodeSegment, BarcodeSegmentState, BcQual, BcSegQual, BcSegSeq,
-    BcSeq, HasBarcode, SegmentedBarcode, Segments, Whitelist,
+    Barcode, BarcodeConstruct, BarcodeSegment, BcQual, BcSegQual, BcSegSeq, BcSeq,
+    SegmentedBarcode, Segments, Whitelist,
 };
 use fastq_set::adapter_trimmer::{intersect_ranges, AdapterTrimmer, ReadAdapterCatalog};
 use fastq_set::metric_utils::ILLUMINA_QUAL_OFFSET;
@@ -19,138 +19,19 @@ use fastq_set::read_pair::{ReadPair, ReadPart, RpRange, WhichRead};
 use fastq_set::read_pair_iter::InputFastqs;
 use fastq_set::{FastqProcessor, ProcessResult};
 use fxhash::FxHashMap;
-use itertools::Itertools;
+use itertools::{zip_eq, Itertools};
 use martian_derive::MartianType;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::borrow::Cow;
 use std::cmp::{max, min};
-use std::fmt::{Display, Formatter};
 use std::ops::Range;
-use std::str::FromStr;
-use strum_macros::EnumIter;
 use umi::translation::SplintToUmiTranslator;
-use umi::{HasUmi, Umi, UmiQual, UmiSeq};
+use umi::{Umi, UmiQual, UmiSeq};
 
 /// The minimum MAPQ threshold for a confidently-mapped read.
 /// Ensure this value matches cr_constants.STAR_DEFAULT_HIGH_CONF_MAPQ.
 pub const HIGH_CONF_MAPQ: u8 = 255;
 
 const MAX_UMI_PARTS: usize = 4;
-
-/// Define legacy library types supported before Cellranger 4.0.
-#[derive(
-    Debug,
-    Copy,
-    Clone,
-    Default,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-    Hash,
-    MartianType,
-    EnumIter,
-)]
-pub enum LegacyLibraryType {
-    #[serde(rename = "Antibody Capture")]
-    AntibodyCapture,
-    #[serde(rename = "Antigen Capture")]
-    AntigenCapture,
-    #[serde(rename = "CRISPR Guide Capture")]
-    CrisprGuideCapture,
-    #[serde(rename = "Gene Expression")]
-    #[default]
-    GeneExpression,
-    #[serde(rename = "VDJ")]
-    Vdj,
-    Custom,
-    #[serde(alias = "FEATURETEST")]
-    #[serde(alias = "Multiplexing Tag Capture")]
-    #[serde(rename = "Multiplexing Capture")]
-    Multiplexing,
-    #[serde(rename = "Chromatin Accessibility")]
-    ATAC,
-}
-
-impl LegacyLibraryType {
-    /// Return whether this library type is a feature barcode library.
-    pub fn is_feature_barcode(&self) -> bool {
-        #[allow(clippy::enum_glob_use)]
-        use LegacyLibraryType::*;
-        match self {
-            AntibodyCapture | AntigenCapture | CrisprGuideCapture | Custom | Multiplexing => true,
-            ATAC | GeneExpression | Vdj => false,
-        }
-    }
-
-    /// Return the metric prefix for this feature type, and None for GEX.
-    pub fn metric_prefix(self) -> Option<&'static str> {
-        #[allow(clippy::enum_glob_use)]
-        use LegacyLibraryType::*;
-        match self {
-            GeneExpression => None,
-            AntibodyCapture => Some("ANTIBODY"),
-            AntigenCapture => Some("ANTIGEN"),
-            CrisprGuideCapture => Some("CRISPR"),
-            Vdj => Some("VDJ"),
-            Custom => Some("Custom"),
-            Multiplexing => Some("MULTIPLEXING"),
-            ATAC => Some("atac"),
-        }
-    }
-
-    /// Join the metric prefix and the metric name, separated by an underscore.
-    pub fn join<'a>(&self, metric_name: &'a str) -> Cow<'a, str> {
-        if let Some(prefix) = self.metric_prefix() {
-            Cow::Owned(format!("{prefix}_{metric_name}"))
-        } else {
-            Cow::Borrowed(metric_name)
-        }
-    }
-}
-
-impl Display for LegacyLibraryType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use LegacyLibraryType::{
-            AntibodyCapture, AntigenCapture, CrisprGuideCapture, Custom, GeneExpression,
-            Multiplexing, Vdj, ATAC,
-        };
-        f.write_str(match self {
-            GeneExpression => "Gene Expression",
-            AntibodyCapture => "Antibody Capture",
-            AntigenCapture => "Antigen Capture",
-            CrisprGuideCapture => "CRISPR Guide Capture",
-            Vdj => "VDJ",
-            Custom => "Custom",
-            Multiplexing => "Multiplexing Capture",
-            ATAC => "Chromatin Accessibility",
-        })
-    }
-}
-
-impl FromStr for LegacyLibraryType {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        use LegacyLibraryType::{
-            AntibodyCapture, AntigenCapture, CrisprGuideCapture, Custom, GeneExpression,
-            Multiplexing, Vdj, ATAC,
-        };
-        Ok(match s {
-            "Gene Expression" => GeneExpression,
-            "Antibody Capture" => AntibodyCapture,
-            "Antigen Capture" => AntigenCapture,
-            "CRISPR Guide Capture" => CrisprGuideCapture,
-            "VDJ" => Vdj,
-            "Custom" => Custom,
-            "Multiplexing Capture" => Multiplexing,
-            "Chromatin Accessibility" => ATAC,
-            _ => bail!("unparseable LegacyLibraryType: '{}'", s),
-        })
-    }
-}
 
 /// `RnaChunk` represents a chunk of reads from any of our RNA products.
 /// This is typically created by the `SETUP_CHUNKS` stage in our pipelines.
@@ -182,7 +63,7 @@ pub struct RnaChunk {
     pub fastqs: InputFastqs,
     pub read_group: String,
     pub subsample_rate: Option<f64>,
-    pub library_type: LegacyLibraryType,
+    pub library_type: LibraryType,
     pub read_lengths: FxHashMap<WhichRead, usize>,
     pub chunk_id: u16,
     pub library_id: u16,
@@ -204,8 +85,8 @@ impl UmiExtractor {
                 .map(|part| {
                     part.whitelist.as_ref().map(|wl| {
                         assert_eq!(wl.translation, UmiTranslation::SingleBase);
-                        let slide_path = find_whitelist(&wl.slide, false, None)
-                            .expect("Failed to find slide design file");
+                        let slide_path =
+                            find_slide_design(&wl.slide).expect("Failed to find slide design file");
                         SplintToUmiTranslator::new(
                             slide_design::load_oligos(&slide_path, wl.part)
                                 .unwrap()
@@ -226,7 +107,7 @@ impl UmiExtractor {
     ) -> Result<(ArrayVec<[UmiPart; MAX_UMI_PARTS]>, UmiSeq)> {
         let mut umi_parts = ArrayVec::new();
         let mut umi_seq = UmiSeq::new();
-        for (umi_part, translator) in umi_read_parts.iter().zip_eq(self.translators.iter()) {
+        for (umi_part, translator) in zip_eq(umi_read_parts, &self.translators) {
             let umi_length = max(
                 min(
                     read.len(umi_part.read_type)
@@ -249,7 +130,7 @@ impl UmiExtractor {
                 }
                 None => {
                     umi_seq.push_unchecked(seq);
-                    umi_parts.push(UmiPart::Untranslated { range })
+                    umi_parts.push(UmiPart::Untranslated { range });
                 }
             };
         }
@@ -262,7 +143,7 @@ impl RnaChunk {
     pub fn new(
         chemistry: &ChemistryDef,
         sample_def: &SampleDef,
-        default_library_type: LegacyLibraryType,
+        default_library_type: LibraryType,
         fastqs: InputFastqs,
         sample_id: &str,
         library_id: u16,
@@ -333,7 +214,7 @@ impl RnaChunk {
         self.gem_group
     }
 
-    pub fn library_type(&self) -> LegacyLibraryType {
+    pub fn library_type(&self) -> LibraryType {
         self.library_type
     }
 
@@ -355,7 +236,7 @@ impl RnaChunk {
 pub struct LibraryInfo {
     #[serde(deserialize_with = "deserialize_number_or_parse_string")]
     pub library_id: u16,
-    pub library_type: LegacyLibraryType,
+    pub library_type: LibraryType,
     pub gem_group: u16,
     #[serde(default)]
     pub target_set_name: Option<String>,
@@ -372,21 +253,17 @@ where
     }
 }
 
-pub fn make_library_info<'a>(
-    read_chunks: impl Iterator<Item = &'a RnaChunk>,
-    target_set_name: Option<String>,
+/// Return a LibraryInfo for each distinct library_id.
+pub fn make_library_info(
+    read_chunks: &[RnaChunk],
+    target_set_name: Option<&str>,
 ) -> Vec<LibraryInfo> {
-    // Get the library info for unique libraries
-    let mut library_info = FxHashMap::default();
-    for chunk in read_chunks {
-        let _ = library_info
-            .entry(chunk.library_id())
-            .or_insert_with(|| chunk.library_info(target_set_name.clone()));
-    }
-
-    let mut libs: Vec<_> = library_info.into_values().collect();
-    libs.sort();
-    libs
+    read_chunks
+        .iter()
+        .unique_by(|chunk| chunk.library_id())
+        .map(|chunk| chunk.library_info(target_set_name.map(String::from)))
+        .sorted()
+        .collect()
 }
 
 pub struct RnaProcessor {
@@ -464,9 +341,8 @@ fn extract_barcode(
                     // that true > false, so we don't need to map the booleans to integer to pick
                     // the correct maximum
                     whitelist.zip(*bc_range).map(|(wl, range)| {
-                        read.get_range(range, ReadPart::Seq).map_or(false, |seq| {
-                            wl.contains(&BcSegSeq::from_bytes_unchecked(seq))
-                        })
+                        read.get_range(range, ReadPart::Seq)
+                            .is_some_and(|seq| wl.contains(&BcSegSeq::from_bytes_unchecked(seq)))
                     })
                 })
                 .unwrap_or(default_range)
@@ -480,13 +356,11 @@ fn extract_barcode(
     let barcode = SegmentedBarcode::new(
         gem_group,
         bc_range.zip(whitelist).map(|(r, wl)| {
-            let mut segment = BarcodeSegment {
-                sequence: BcSegSeq::from_bytes_unchecked(read.get_range(r, ReadPart::Seq).unwrap()),
-                state: BarcodeSegmentState::NotChecked,
-            };
+            let mut segment =
+                BarcodeSegment::with_sequence_unchecked(read.get_range(r, ReadPart::Seq).unwrap());
             // The check() function changes the state of the barcode segment
             // to reflect whether it is valid before correction or not
-            wl.check(&mut segment);
+            wl.check_and_update(&mut segment);
             segment
         }),
     );
@@ -530,7 +404,7 @@ impl FastqProcessor for RnaProcessor {
             // TODO: this is no longer necessary, plumbed through FastqProcessor
             if let Some(&trim_length) = self.chunk.read_lengths.get(&rna.read_type) {
                 let trim_len = min(trim_length, read_length);
-                range.intersect(RpRange::new(rna.read_type, 0, Some(trim_len)))
+                range.intersect(RpRange::new(rna.read_type, 0, Some(trim_len)));
             }
 
             if let Err(e) = read.check_range(&range, "First RNA read") {
@@ -548,7 +422,7 @@ impl FastqProcessor for RnaProcessor {
                 // TODO: this is no longer necessary, plumbed through FastqProcessor
                 if let Some(len) = self.chunk.read_lengths.get(&rna2.read_type) {
                     let trim_len = min(*len, read.len(rna2.read_type).unwrap_or(0));
-                    range.intersect(RpRange::new(rna2.read_type, 0, Some(trim_len)))
+                    range.intersect(RpRange::new(rna2.read_type, 0, Some(trim_len)));
                 }
 
                 if let Err(e) = read.check_range(&range, "Second RNA read") {
@@ -587,7 +461,7 @@ impl FastqProcessor for RnaProcessor {
             umi_parts,
             r1_range,
             r2_range,
-            library_feats: LibraryFeatures::from(self.chunk.library_type),
+            library_type: self.chunk.library_type,
             chunk_id: self.chunk.chunk_id,
         })
     }
@@ -656,22 +530,22 @@ pub struct RnaRead {
     pub umi_parts: ArrayVec<[UmiPart; MAX_UMI_PARTS]>,
     pub r1_range: RpRange,
     pub r2_range: Option<RpRange>,
-    pub library_feats: LibraryFeatures,
+    pub library_type: LibraryType,
     pub chunk_id: u16,
 }
 
-impl HasBarcode for RnaRead {
-    fn barcode(&self) -> Barcode {
+impl RnaRead {
+    pub fn barcode(&self) -> Barcode {
         self.barcode.into()
     }
-    fn segmented_barcode(&self) -> SegmentedBarcode {
+    pub fn segmented_barcode(&self) -> SegmentedBarcode {
         self.barcode
     }
-    fn segmented_barcode_mut(&mut self) -> &mut SegmentedBarcode {
+    pub fn segmented_barcode_mut(&mut self) -> &mut SegmentedBarcode {
         &mut self.barcode
     }
 
-    fn raw_bc_seq(&self) -> BcSeq {
+    pub fn raw_bc_seq(&self) -> BcSeq {
         let mut seq = BcSeq::new();
         for s in self.raw_bc_construct_seq() {
             seq.push_unchecked(s.as_bytes());
@@ -679,44 +553,42 @@ impl HasBarcode for RnaRead {
         seq
     }
 
-    fn raw_bc_qual(&self) -> BcQual {
+    pub fn raw_bc_qual(&self) -> BcQual {
         let mut qual = BcQual::new();
         for q in self.raw_bc_construct_qual() {
             qual.push_unchecked(q.as_bytes());
         }
         qual
     }
-    fn raw_bc_construct_seq(&self) -> BarcodeConstruct<BcSegSeq> {
+    pub fn raw_bc_construct_seq(&self) -> BarcodeConstruct<BcSegSeq> {
         self.bc_range
             .map(|r| BcSegSeq::from_bytes_unchecked(self.read.get_range(r, ReadPart::Seq).unwrap()))
     }
-    fn raw_bc_construct_qual(&self) -> BarcodeConstruct<BcSegQual> {
+    pub fn raw_bc_construct_qual(&self) -> BarcodeConstruct<BcSegQual> {
         self.bc_range.map(|r| {
             BcSegQual::from_bytes_unchecked(self.read.get_range(r, ReadPart::Qual).unwrap())
         })
     }
 
     /// Return whether this segmented barcode has a probe barcode.
-    fn has_probe_barcode(&self) -> bool {
+    pub fn has_probe_barcode(&self) -> bool {
         matches!(self.bc_range, BarcodeConstruct::GelBeadAndProbe(_))
     }
-}
 
-impl HasUmi for RnaRead {
-    fn umi(&self) -> Umi {
+    pub fn umi(&self) -> Umi {
         self.umi
     }
-    fn raw_umi(&self) -> Umi {
+    pub fn raw_umi(&self) -> Umi {
         self.raw_umi_seq().into()
     }
-    fn correct_umi(&mut self, corrected: &[u8]) {
+    pub fn correct_umi(&mut self, corrected: &[u8]) {
         self.umi = Umi::new(corrected);
     }
-}
-
-impl RnaRead {
     pub fn bc_range(&self) -> BarcodeConstruct<RpRange> {
         self.bc_range
+    }
+    pub fn has_two_part_barcode(&self) -> bool {
+        matches!(self.bc_range, BarcodeConstruct::Segmented(s) if s.is_two_part())
     }
     pub fn umi_ranges(&self) -> impl Iterator<Item = RpRange> + '_ {
         self.umi_parts.iter().map(|part| part.range())
@@ -739,12 +611,9 @@ impl RnaRead {
     pub fn r2_exists(&self) -> bool {
         self.r2_range.is_some()
     }
-    pub fn library_feats(&self) -> LibraryFeatures {
-        self.library_feats
-    }
 
     pub fn is_gene_expression(&self) -> bool {
-        matches!(self.library_feats, LibraryFeatures::GeneExpression(..))
+        self.library_type == LibraryType::Gex
     }
 
     /// FASTQ read header
@@ -801,7 +670,7 @@ impl RnaRead {
                     umi.push_unchecked(&[*base]);
                 }
                 UmiPart::Untranslated { range } => {
-                    umi.push_unchecked(self.read.get_range(*range, ReadPart::Seq).unwrap())
+                    umi.push_unchecked(self.read.get_range(*range, ReadPart::Seq).unwrap());
                 }
             }
         }
@@ -822,10 +691,10 @@ impl RnaRead {
                         .iter()
                         .min()
                         .unwrap();
-                    qual.push_unchecked(&[*min_qual])
+                    qual.push_unchecked(&[*min_qual]);
                 }
                 UmiPart::Untranslated { range } => {
-                    qual.push_unchecked(self.read.get_range(*range, ReadPart::Qual).unwrap())
+                    qual.push_unchecked(self.read.get_range(*range, ReadPart::Qual).unwrap());
                 }
             }
         }
@@ -948,7 +817,7 @@ impl RnaRead {
                 let (shrink_range, adapter_pos) = self.trim_adapters_helper(range, ad_trimmers);
                 result.extend(adapter_pos);
                 if let Some(x) = self.r2_range.as_mut() {
-                    x.shrink(&shrink_range)
+                    x.shrink(&shrink_range);
                 }
             }
         }
@@ -960,20 +829,19 @@ impl RnaRead {
 mod tests {
     use super::*;
     use crate::chemistry::{BarcodeKind, ChemistryName, UmiWhitelistSpec};
-    use barcode::{Segments, WhitelistSpec};
+    use barcode::{BarcodeSegmentState, Segments, WhitelistSpec};
+    use itertools::assert_equal;
     use metric::{set, TxHashSet};
     use proptest::arbitrary::any;
     use proptest::proptest;
+    use serde_json;
     use std::borrow::Cow;
     use std::fs::File;
     use std::path::Path;
     use BarcodeConstruct::GelBeadOnly;
-    use LegacyLibraryType::{GeneExpression, Vdj};
-    use {serde_json, HasUmi};
 
     fn processor(chunk: RnaChunk) -> RnaProcessor {
-        let whitelist =
-            Whitelist::construct(chunk.chemistry.barcode_whitelist(), false, None).unwrap();
+        let whitelist = Whitelist::construct(chunk.chemistry.barcode_whitelist(), false).unwrap();
         RnaProcessor::new(chunk, whitelist)
     }
 
@@ -995,7 +863,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: GeneExpression,
+            library_type: LibraryType::Gex,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1006,7 +874,7 @@ mod tests {
         for r in processor(chunk).iter()? {
             let umi = match r? {
                 ProcessResult::Processed(rna) => rna.umi(),
-                _ => unreachable!(),
+                ProcessResult::Unprocessed { .. } => unreachable!(),
             };
             assert_eq!(umi.seq().len(), 10);
             n += 1;
@@ -1035,7 +903,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1063,7 +931,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1097,7 +965,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1113,9 +981,8 @@ mod tests {
         let expected_r2_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
         for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
-            let rna_read = match rna_read_result.unwrap() {
-                ProcessResult::Processed(r) => r,
-                _ => unreachable!(),
+            let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
+                unreachable!();
             };
 
             // Check that the barcode data is correct
@@ -1123,7 +990,7 @@ mod tests {
                 rna_read.bc_range,
                 GelBeadOnly(RpRange::new(WhichRead::R1, 0, Some(16)))
             );
-            assert_eq!(rna_read.barcode().seq(), &expected_bc[i]);
+            assert_eq!(rna_read.barcode().sequence_bytes(), &expected_bc[i]);
             assert_eq!(
                 rna_read.raw_bc_construct_seq(),
                 GelBeadOnly(BcSegSeq::from_bytes(&expected_bc[i]))
@@ -1142,9 +1009,9 @@ mod tests {
             );
 
             // Check that the UMI data is correct
-            assert_eq!(
-                rna_read.umi_ranges().collect_vec(),
-                [RpRange::new(WhichRead::R1, 16, Some(10))]
+            assert_equal(
+                rna_read.umi_ranges(),
+                [RpRange::new(WhichRead::R1, 16, Some(10))],
             );
             assert_eq!(rna_read.umi, Umi::new(&expected_umi[i]));
             assert_eq!(
@@ -1188,7 +1055,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1202,9 +1069,8 @@ mod tests {
         let expected_r1_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
         for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
-            let rna_read = match rna_read_result.unwrap() {
-                ProcessResult::Processed(r) => r,
-                _ => unreachable!(),
+            let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
+                unreachable!();
             };
 
             // Check that the barcode data is correct
@@ -1212,7 +1078,7 @@ mod tests {
                 rna_read.bc_range,
                 GelBeadOnly(RpRange::new(WhichRead::R1, 0, Some(16)))
             );
-            assert_eq!(rna_read.barcode().seq(), &expected_bc[i]);
+            assert_eq!(rna_read.barcode().sequence_bytes(), &expected_bc[i]);
             assert_eq!(
                 rna_read.raw_bc_construct_seq(),
                 GelBeadOnly(BcSegSeq::from_bytes(&expected_bc[i]))
@@ -1231,9 +1097,9 @@ mod tests {
             );
 
             // Check that the UMI data is correct
-            assert_eq!(
-                rna_read.umi_ranges().collect_vec(),
-                [RpRange::new(WhichRead::R1, 16, Some(10))]
+            assert_equal(
+                rna_read.umi_ranges(),
+                [RpRange::new(WhichRead::R1, 16, Some(10))],
             );
             assert_eq!(rna_read.umi, Umi::new(&expected_umi[i]));
             assert_eq!(
@@ -1274,7 +1140,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1290,9 +1156,8 @@ mod tests {
         let expected_r2_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
         for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
-            let rna_read = match rna_read_result.unwrap() {
-                ProcessResult::Processed(r) => r,
-                _ => unreachable!(),
+            let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
+                unreachable!();
             };
 
             // Check that the barcode data is correct
@@ -1300,7 +1165,7 @@ mod tests {
                 rna_read.bc_range,
                 GelBeadOnly(RpRange::new(WhichRead::R1, 0, Some(16)))
             );
-            assert_eq!(rna_read.barcode().seq(), &expected_bc[i]);
+            assert_eq!(rna_read.barcode().sequence_bytes(), &expected_bc[i]);
             assert_eq!(
                 rna_read.raw_bc_construct_seq(),
                 GelBeadOnly(BcSegSeq::from_bytes(&expected_bc[i]))
@@ -1319,9 +1184,9 @@ mod tests {
             );
 
             // Check that the UMI data is correct
-            assert_eq!(
-                rna_read.umi_ranges().collect_vec(),
-                [RpRange::new(WhichRead::R1, 16, Some(10))]
+            assert_equal(
+                rna_read.umi_ranges(),
+                [RpRange::new(WhichRead::R1, 16, Some(10))],
             );
             assert_eq!(rna_read.umi, Umi::new(&expected_umi[i]));
             assert_eq!(
@@ -1365,7 +1230,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: None,
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1379,9 +1244,8 @@ mod tests {
         let expected_r1_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
         for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
-            let rna_read = match rna_read_result.unwrap() {
-                ProcessResult::Processed(r) => r,
-                _ => unreachable!(),
+            let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
+                unreachable!();
             };
 
             // Check that the barcode data is correct
@@ -1389,7 +1253,7 @@ mod tests {
                 rna_read.bc_range,
                 GelBeadOnly(RpRange::new(WhichRead::R1, 0, Some(16)))
             );
-            assert_eq!(rna_read.barcode().seq(), &expected_bc[i]);
+            assert_eq!(rna_read.barcode().sequence_bytes(), &expected_bc[i]);
             assert_eq!(
                 rna_read.raw_bc_construct_seq(),
                 GelBeadOnly(BcSegSeq::from_bytes(&expected_bc[i]))
@@ -1408,9 +1272,9 @@ mod tests {
             );
 
             // Check that the UMI data is correct
-            assert_eq!(
-                rna_read.umi_ranges().collect_vec(),
-                [RpRange::new(WhichRead::R1, 16, Some(10))]
+            assert_equal(
+                rna_read.umi_ranges(),
+                [RpRange::new(WhichRead::R1, 16, Some(10))],
             );
             assert_eq!(rna_read.umi, Umi::new(&expected_umi[i]));
             assert_eq!(
@@ -1451,7 +1315,7 @@ mod tests {
             },
             read_group: "Blah".into(),
             subsample_rate: Some(0.2),
-            library_type: Vdj,
+            library_type: LibraryType::VdjAuto,
             read_lengths: FxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
@@ -1501,7 +1365,7 @@ mod tests {
                     },
                     read_group: "Blah".into(),
                     subsample_rate: None,
-                    library_type: Vdj,
+                    library_type: LibraryType::VdjAuto,
                     read_lengths: FxHashMap::default(),
                     chunk_id: 0,
                     library_id: 0, fastq_id: None,
@@ -1514,12 +1378,11 @@ mod tests {
                 }
 
                 for rna_read_result in processor(chunk).iter().unwrap().take(100) {
-                    let rna_read = match rna_read_result.unwrap() {
-                        ProcessResult::Processed(r) => r,
-                        _ => unreachable!(),
+                    let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
+                        unreachable!();
                     };
                     assert_eq!(rna_read.bc_range, GelBeadOnly(RpRange::new(WhichRead::R1, 0, Some(16))));
-                    assert_eq!(rna_read.umi_ranges().collect_vec(), [RpRange::new(WhichRead::R1, 16, Some(10))]);
+                    assert_equal(rna_read.umi_ranges(), [RpRange::new(WhichRead::R1, 16, Some(10))]);
                     assert_eq!(rna_read.r1_range, RpRange::new(WhichRead::R1, 41, expected_r1_length));
                     assert_eq!(rna_read.r2_range, Some(RpRange::new(WhichRead::R2, 0, expected_r2_length)));
                 }
@@ -1547,7 +1410,7 @@ mod tests {
                     },
                     read_group: "Blah".into(),
                     subsample_rate: None,
-                    library_type: Vdj,
+                    library_type: LibraryType::VdjAuto,
                     read_lengths: FxHashMap::default(),
                     chunk_id: 0,
                     library_id: 0, fastq_id: None,
@@ -1560,12 +1423,11 @@ mod tests {
                 }
 
                 for rna_read_result in processor(chunk).iter().unwrap().take(100) {
-                    let rna_read = match rna_read_result.unwrap() {
-                        ProcessResult::Processed(r) => r,
-                        _ => unreachable!(),
+                    let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
+                        unreachable!();
                     };
                     assert_eq!(rna_read.bc_range, GelBeadOnly(RpRange::new(WhichRead::R1, 0, Some(16))));
-                    assert_eq!(rna_read.umi_ranges().collect_vec(), [RpRange::new(WhichRead::R1, 16, Some(10))]);
+                    assert_equal(rna_read.umi_ranges(), [RpRange::new(WhichRead::R1, 16, Some(10))]);
                     assert_eq!(rna_read.r1_range, RpRange::new(WhichRead::R2, 0, expected_r1_length));
                     assert_eq!(rna_read.r2_range, None);
                 }
@@ -1617,7 +1479,7 @@ mod tests {
                 },
                 read_group: "Blah".into(),
                 subsample_rate: None,
-                library_type: Vdj,
+                library_type: LibraryType::VdjAuto,
                 read_lengths: FxHashMap::default(),
                 chunk_id: 0,
                 library_id: 0,
@@ -1627,9 +1489,8 @@ mod tests {
             let mut n_trimmed = 0;
             let mut adapter_counts: SimpleHistogram<String> = SimpleHistogram::default();
             for (rna_read_result, rp_result) in processor(chunk).iter().unwrap().zip(rp_iter) {
-                let mut rna_read = match rna_read_result.unwrap() {
-                    ProcessResult::Processed(r) => r,
-                    _ => unreachable!(),
+                let ProcessResult::Processed(mut rna_read) = rna_read_result.unwrap() else {
+                    unreachable!();
                 };
                 adapter_counts.extend_owned(rna_read.trim_adapters(&mut ad_catalog).into_keys());
                 let rp = rp_result.unwrap();
@@ -1681,7 +1542,7 @@ mod tests {
                 },
                 read_group: "Blah".into(),
                 subsample_rate: None,
-                library_type: Vdj,
+                library_type: LibraryType::VdjAuto,
                 read_lengths: FxHashMap::default(),
                 chunk_id: 0,
                 library_id: 0,
@@ -1689,9 +1550,8 @@ mod tests {
             };
 
             for (rna_read_result, rp_result) in processor(chunk).iter().unwrap().zip(rp_iter) {
-                let mut rna_read = match rna_read_result.unwrap() {
-                    ProcessResult::Processed(r) => r,
-                    _ => unreachable!(),
+                let ProcessResult::Processed(mut rna_read) = rna_read_result.unwrap() else {
+                    unreachable!();
                 };
                 rna_read.trim_adapters(&mut ad_catalog);
                 let rp = rp_result.unwrap();
@@ -1709,7 +1569,7 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&LibraryInfo {
                 library_id: 0,
-                library_type: LegacyLibraryType::AntibodyCapture,
+                library_type: LibraryType::Antibody,
                 gem_group: 1,
                 target_set_name: None
             })
@@ -1960,11 +1820,12 @@ mod tests {
         let input = [Some(read1), None, None, None];
         let read = ReadPair::new(input);
 
-        let whitelist = BarcodeConstruct::Segmented(Segments::from_iter(
-            [bc1.as_bytes(), bc2.as_bytes()]
+        let whitelist = BarcodeConstruct::Segmented(
+            [&bc1, &bc2]
                 .into_iter()
-                .map(|bc| Whitelist::Plain(set![BcSegSeq::from_bytes(bc)])),
-        ));
+                .map(|bc| Whitelist::Plain(set![BcSegSeq::from_bytes(bc.as_bytes())]))
+                .collect(),
+        );
 
         let components = BarcodeConstruct::Segmented(Segments {
             segment1: BarcodeReadComponent {
@@ -2008,11 +1869,11 @@ mod tests {
                 assert_eq!(
                     barcode.segments(),
                     BarcodeConstruct::Segmented(Segments::from_iter([
-                        BarcodeSegment::new(
+                        BarcodeSegment::with_sequence(
                             bc1.as_bytes(),
                             BarcodeSegmentState::ValidBeforeCorrection
                         ),
-                        BarcodeSegment::new(
+                        BarcodeSegment::with_sequence(
                             bc2.as_bytes(),
                             BarcodeSegmentState::ValidBeforeCorrection
                         )
@@ -2031,17 +1892,17 @@ mod tests {
                         segment3: None,
                         segment4: None
                     })
-                )
+                );
             }
             (false, false) => {
                 assert_eq!(bc_range, default_range);
                 assert_eq!(
                     barcode.segments(),
-                    default_range.map(|r| BarcodeSegment::new(
+                    default_range.map(|r| BarcodeSegment::with_sequence(
                         read.get_range(r, ReadPart::Seq).unwrap(),
                         BarcodeSegmentState::Invalid
                     ))
-                )
+                );
             }
             (true, false) => {
                 assert_eq!(
@@ -2050,7 +1911,10 @@ mod tests {
                 );
                 assert_eq!(
                     barcode.segments().segments().segment1,
-                    BarcodeSegment::new(bc1.as_bytes(), BarcodeSegmentState::ValidBeforeCorrection),
+                    BarcodeSegment::with_sequence(
+                        bc1.as_bytes(),
+                        BarcodeSegmentState::ValidBeforeCorrection
+                    ),
                 );
                 assert_eq!(
                     barcode.segments().segments().segment2.state,
@@ -2064,7 +1928,10 @@ mod tests {
                 );
                 assert_eq!(
                     barcode.segments().segments().segment2,
-                    BarcodeSegment::new(bc2.as_bytes(), BarcodeSegmentState::ValidBeforeCorrection),
+                    BarcodeSegment::with_sequence(
+                        bc2.as_bytes(),
+                        BarcodeSegmentState::ValidBeforeCorrection
+                    ),
                 );
                 assert_eq!(
                     barcode.segments().segments().segment1.state,
@@ -2089,7 +1956,7 @@ mod tests {
                 format!("{bc2}GGG"),
                 use_bc1,
                 use_bc2,
-            )
+            );
         }
     }
 }

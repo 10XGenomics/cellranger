@@ -796,7 +796,7 @@ pub fn metrics_json(
             (x.adj_chain_sample[i] + x.adj_chain_sample[i + 7]) as usize,
             adj_chain_total as usize,
             json,
-        )
+        );
     }
     write_json_metric_ratio(
         "multi_vdj_recombinome_mapped_reads_frac",

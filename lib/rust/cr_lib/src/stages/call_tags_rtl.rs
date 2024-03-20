@@ -4,41 +4,43 @@ use crate::barcode_overlap::{
     calculate_frp_gem_barcode_overlap, FRPGemBarcodeOverlapRow, GelBeadBarcodesPerProbeBarcode,
     ProbeBarcodeGelBeadGrouper,
 };
-use crate::count_matrix::{CountMatrix, CountMatrixFile, LazyCountMatrix};
 use crate::detect_chemistry::probe_bc_pairing::get_rtl_and_ab_barcode_from_row;
 use crate::read_level_multiplexing::{
     get_barcodes_per_multiplexing_identifier, get_umi_per_multiplexing_identifier,
 };
 use anyhow::Result;
 use barcode::whitelist::{categorize_multiplexing_barcode_id, BarcodeId, MultiplexingBarcodeType};
-use barcode::{BarcodeConstruct, BcSegSeq, GelBeadAndProbeConstruct, WhitelistSource};
-use cr_types::chemistry::ChemistryDef;
+use barcode::{BarcodeConstruct, BcSegSeq, GelBeadAndProbeConstruct};
+use cr_h5::count_matrix::{CountMatrix, CountMatrixFile, LazyCountMatrix};
+use cr_types::chemistry::ChemistryDefs;
+use cr_types::reference::feature_reference::FeatureType;
+use cr_types::types::FeatureBarcodeType;
 use cr_types::utils::calculate_median_of_sorted;
-use cr_types::{CrMultiGraph, FeatureType, Fingerprint, MetricsFile};
+use cr_types::{CrMultiGraph, Fingerprint, MetricsFile};
 use itertools::Itertools;
-use json_report_derive::JsonReport;
 use martian::prelude::{MartianRover, MartianStage};
 use martian::{MartianVoid, Resource, StageDef};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric::{JsonReporter, Metric, TxHashMap, TxHashSet};
+use metric::{join_metric_name, TxHashMap, TxHashSet};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::ops::{Range, RangeTo};
 
 /// The Martian stage inputs.
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct CallTagsRTLStageInputs {
-    pub chemistry_def: ChemistryDef,
+    pub chemistry_defs: ChemistryDefs,
     pub raw_feature_bc_matrix: CountMatrixFile,
     pub filtered_feature_bc_matrix: CountMatrixFile,
     pub multi_graph: JsonFile<CrMultiGraph>,
 }
 
 /// The Martian stage outputs.
-#[derive(Clone, Serialize, Deserialize, MartianStruct)]
+#[derive(Serialize, MartianStruct)]
 pub struct CallTagsRTLStageOutputs {
     pub barcodes_per_tag: Option<JsonFile<TxHashMap<BarcodeId, Vec<String>>>>,
     pub frp_gem_barcode_overlap: Option<CsvFile<FRPGemBarcodeOverlapRow>>,
@@ -50,30 +52,21 @@ pub struct CallTagsRTLStageOutputs {
 pub struct CallTagsRTL;
 
 /// Probe barcode metrics.
-#[derive(JsonReport)]
-#[json_report(extend = "extra_reports")]
-#[allow(non_snake_case)]
+#[derive(Serialize)]
 struct CallTagsRTLMetrics {
-    /// The number of UMI per probe barcode for each feature type.
-    #[json_report(skip)]
-    umi_per_probe_barcode: HashMap<FeatureType, TxHashMap<BarcodeId, i64>>,
-
     /// The number of distinct filtered gel bead barcodes.
     filtered_gel_bead_barcodes_count: i64,
 
     /// The number of filtered barcodes for each probe barcode.
-    #[json_report(block)]
     filtered_barcodes_per_probe_barcode: TxHashMap<BarcodeId, i64>,
 
     /// The overlap coefficients of the sets of gel bead barcodes for each pair of probe barcodes.
-    #[json_report(block)]
     probe_barcode_overlap_coefficients: TxHashMap<String, f64>,
 }
 
 impl CallTagsRTLMetrics {
     /// Calculate the probe barcode metrics.
     fn new(
-        umi_per_probe_barcode: HashMap<FeatureType, TxHashMap<BarcodeId, i64>>,
         gel_bead_barcodes_per_probe_barcode: GelBeadBarcodesPerProbeBarcode,
         frp_gem_barcode_overlap: &[FRPGemBarcodeOverlapRow],
     ) -> Self {
@@ -87,7 +80,7 @@ impl CallTagsRTLMetrics {
         let filtered_gel_bead_barcodes_count = gel_bead_barcodes_per_probe_barcode
             .into_values()
             .reduce(|mut acc, gel_bead_barcodes| {
-                acc.extend(gel_bead_barcodes.into_iter());
+                acc.extend(gel_bead_barcodes);
                 acc
             })
             .unwrap_or_default()
@@ -99,24 +92,19 @@ impl CallTagsRTLMetrics {
             .collect();
 
         Self {
-            umi_per_probe_barcode,
             filtered_gel_bead_barcodes_count,
             filtered_barcodes_per_probe_barcode,
             probe_barcode_overlap_coefficients,
         }
     }
 
-    /// Emit umi_per_probe_barcode with the feature type prefix.
-    fn extra_reports(&self) -> JsonReporter {
-        self.umi_per_probe_barcode
-            .iter()
-            .map(|(feature_type, umi_per_probe_barcode)| {
-                (
-                    feature_type.join("umi_per_probe_barcode").into_owned(),
-                    umi_per_probe_barcode,
-                )
-            })
-            .collect()
+    /// Convert the metrics to a JSON Map.
+    fn to_map(&self) -> Map<String, Value> {
+        if let Value::Object(map) = serde_json::to_value(self).unwrap() {
+            map
+        } else {
+            unreachable!();
+        }
     }
 }
 
@@ -159,24 +147,50 @@ impl MartianStage for CallTagsRTL {
         _chunk_outs: Vec<Self::ChunkOutputs>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
-        let bc_construct = if let BarcodeConstruct::GelBeadAndProbe(bcc) =
-            args.chemistry_def.barcode_construct()
-        {
-            bcc
-        } else {
+        let barcode_constructs: HashMap<_, _> = args
+            .chemistry_defs
+            .iter()
+            .filter_map(|(library_type, chemistry_def)| {
+                if let BarcodeConstruct::GelBeadAndProbe(bc_construct) =
+                    chemistry_def.barcode_construct()
+                {
+                    Some((library_type, bc_construct))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if barcode_constructs.is_empty() {
             return Ok(Self::StageOutputs {
                 barcodes_per_tag: None,
                 frp_gem_barcode_overlap: None,
                 summary: None,
             });
-        };
+        }
 
-        let probe_barcode_range = bc_construct.gel_bead.length()
-            ..(bc_construct.gel_bead.length() + bc_construct.probe.length());
-        let gel_bead_barcode_range = ..bc_construct.gel_bead.length();
-        let probe_barcode_seq_to_id =
-            WhitelistSource::from_spec(bc_construct.probe.whitelist(), true, None)?
-                .as_translation_seq_to_id()?;
+        let (gel_bead_barcode_length, probe_barcode_length) = barcode_constructs
+            .values()
+            .map(|x| (x.gel_bead.length(), x.probe.length()))
+            .dedup()
+            .exactly_one()
+            .unwrap();
+
+        let gel_bead_barcode_range = ..gel_bead_barcode_length;
+        let probe_barcode_range =
+            gel_bead_barcode_length..(gel_bead_barcode_length + probe_barcode_length);
+
+        // TODO(CELLRANGER-7847): Factor out duplicated seq_to_id code
+        let probe_barcode_seq_to_id: TxHashMap<_, _> = barcode_constructs
+            .into_values()
+            .map(|x| {
+                x.probe
+                    .whitelist()
+                    .as_source(true)?
+                    .as_translation_seq_to_id()
+            })
+            .flatten_ok()
+            .try_collect()?;
 
         let filtered_matrix = args.filtered_feature_bc_matrix.read()?;
 
@@ -198,15 +212,35 @@ impl MartianStage for CallTagsRTL {
         // Determine if we have barcode pairings; if so, run suspicious pairing
         // detection.
         let multi_graph = args.multi_graph.read()?;
-        let barcode_pairings: TxHashMap<_, _> = multi_graph
+        let ab_barcode_pairings: TxHashMap<_, _> = multi_graph
             .samples
             .iter()
             .flat_map(|sample| &sample.fingerprints)
             .filter_map(|fingerprint| {
-                let Fingerprint::Tagged {tag_name, translated_tag_names, ..} = fingerprint else {return None;};
-                assert!(translated_tag_names.len() < 2);
-                Some(translated_tag_names.iter().map(|translated_tag_name| (BarcodeId::pack(tag_name), BarcodeId::pack(translated_tag_name))))
-            }).flatten().collect();
+                let Fingerprint::Tagged {
+                    tag_name,
+                    translated_tag_names,
+                    ..
+                } = fingerprint
+                else {
+                    return None;
+                };
+
+                translated_tag_names
+                    .iter()
+                    .filter(|x| {
+                        categorize_multiplexing_barcode_id(x) == MultiplexingBarcodeType::Antibody
+                    })
+                    .at_most_one()
+                    .unwrap()
+                    .map(|translated_tag_name| {
+                        (
+                            BarcodeId::pack(tag_name),
+                            BarcodeId::pack(translated_tag_name),
+                        )
+                    })
+            })
+            .collect();
 
         let raw_matrix = LazyCountMatrix::new(args.raw_feature_bc_matrix.clone());
 
@@ -216,7 +250,7 @@ impl MartianStage for CallTagsRTL {
             gel_bead_barcode_range,
             probe_barcode_range.clone(),
             &probe_barcode_seq_to_id,
-            &barcode_pairings,
+            &ab_barcode_pairings,
             &gel_bead_barcodes_per_probe_barcode,
         )?;
 
@@ -238,19 +272,31 @@ impl MartianStage for CallTagsRTL {
             raw_matrix.loaded()?,
             &probe_barcode_seq_to_id,
             &probe_barcode_range,
-        );
+        )
+        .into_iter()
+        .map(|(feature_type, umi_per_probe_barcode)| {
+            (
+                join_metric_name(feature_type, "umi_per_probe_barcode"),
+                serde_json::to_value(umi_per_probe_barcode).unwrap(),
+            )
+        });
 
-        let metrics = CallTagsRTLMetrics::new(
-            umi_per_probe_barcode,
+        let metrics: Value = CallTagsRTLMetrics::new(
             gel_bead_barcodes_per_probe_barcode,
             &frp_gem_barcode_overlap,
-        );
-        let metrics_file = MetricsFile::from_reporter(&rover, "summary", &metrics)?;
+        )
+        .to_map()
+        .into_iter()
+        .chain(umi_per_probe_barcode)
+        .collect();
+
+        let summary: MetricsFile = rover.make_path("summary");
+        summary.write(&metrics)?;
 
         Ok(Self::StageOutputs {
             barcodes_per_tag: Some(barcodes_per_tag_file),
             frp_gem_barcode_overlap: Some(frp_gem_barcode_overlap_filename),
-            summary: Some(metrics_file),
+            summary: Some(summary),
         })
     }
 }
@@ -321,10 +367,8 @@ fn detect_suspicious_rtl_ab_pairings(
     let mut fb_barcode_groups = ProbeBarcodeGelBeadGrouper::new(&reverse_translation);
 
     for count in raw_matrix.counts() {
-        if count.feature.feature_type == FeatureType::Gene {
+        if count.feature.feature_type != FeatureType::Barcode(FeatureBarcodeType::Antibody) {
             continue;
-        } else {
-            assert_eq!(FeatureType::Antibody, count.feature.feature_type);
         }
         let construct = GelBeadAndProbeConstruct {
             gel_bead: BcSegSeq::from_bytes(&count.barcode.as_bytes()[gel_bead_barcode_range]),
@@ -338,14 +382,17 @@ fn detect_suspicious_rtl_ab_pairings(
     let median_umi_per_cell_per_probe_barcode: TxHashMap<_, _> =
         median_umi_per_cell_per_probe_barcode
             .iter()
-            .map(|((feature_type, probe_bc), median_umi)| {
-                let probe_bc_id = if *feature_type == FeatureType::Antibody {
-                    reverse_translation[probe_bc]
-                } else {
-                    assert_eq!(*feature_type, FeatureType::Gene);
-                    probe_barcode_seq_to_id[probe_bc]
+            .filter_map(|((feature_type, probe_bc), median_umi)| {
+                let probe_bc_id = match *feature_type {
+                    FeatureType::Gene => probe_barcode_seq_to_id[probe_bc],
+                    FeatureType::Barcode(FeatureBarcodeType::Antibody) => {
+                        reverse_translation[probe_bc]
+                    }
+                    // TODO(CELLRANGER-7915): Detect suspicious pairings for Flex CRISPR
+                    FeatureType::Barcode(FeatureBarcodeType::Crispr) => return None,
+                    FeatureType::Barcode(_) => unreachable!(),
                 };
-                ((*feature_type, probe_bc_id), median_umi)
+                Some(((*feature_type, probe_bc_id), median_umi))
             })
             .collect();
 
@@ -353,21 +400,31 @@ fn detect_suspicious_rtl_ab_pairings(
 
     // Filter the antibody data based on the median UMI in any called cell for this feature type.
     // Allow counts down to 10% of the median UMI count.
-    // Remove probe barcodes that were never seen in a cell, and also remove any
-    // stray GEX probe barcodes that we ended up with (presumably due to barcode
-    // correction artifacts - CELLRANGER-7501).
+    // Remove probe barcodes that were never seen in a cell.
     let mut keys_to_remove = Vec::new();
     for (probe_id, gel_bead_counts) in &mut ab_gel_bead_barcodes_per_probe_barcode {
-        // If this is not actually an antibody probe barcode, discard it.
-        if categorize_multiplexing_barcode_id(probe_id) != MultiplexingBarcodeType::Antibody {
+        // If we never saw this probe barcode in a cell, ignore it.
+        let Some(median_umi_per_cell) = median_umi_per_cell_per_probe_barcode.get(&(
+            FeatureType::Barcode(FeatureBarcodeType::Antibody),
+            *probe_id,
+        )) else {
             keys_to_remove.push(*probe_id);
             continue;
-        }
-        // If we never saw this probe barcode in a cell, ignore it.
-        let Some(median_umi_per_cell) = median_umi_per_cell_per_probe_barcode.get(&(FeatureType::Antibody, *probe_id)) else {
-                keys_to_remove.push(*probe_id);
-                continue;
-            };
+        };
+        // Should never have a non-antibody probe barcode here after CELLRANGER-7501.
+        // Note: this check was moved to come after the "seen in cells" check
+        // above, because we may be analyzing a sub-set of all the samples in a
+        // library. In this case, the probe barcodes associated with the samples
+        // that are not participating in the analysis (and thus which do not
+        // appear in the multi config graph) do not end up in the barcode
+        // pairings that make it into this function. However, since those
+        // probe barcodes are not associated with a sample, they should never
+        // end up being called as cells.
+        assert_eq!(
+            categorize_multiplexing_barcode_id(probe_id),
+            MultiplexingBarcodeType::Antibody,
+            "probe ID {probe_id} was expected to be an antibody probe barcode",
+        );
         // Remove all gel beads with counts below the threshold.
         let min_count = (0.1 * **median_umi_per_cell as f64).round() as usize;
         gel_bead_counts.retain(|_, count| *count >= min_count);
@@ -396,7 +453,9 @@ fn detect_suspicious_rtl_ab_pairings(
         .into_iter()
         .filter(|row| {
             // Remove pairings besides RTL+AB.
-            let Some(pairing) = get_rtl_and_ab_barcode_from_row(row) else { return false; };
+            let Some(pairing) = get_rtl_and_ab_barcode_from_row(row) else {
+                return false;
+            };
             !pairings_to_ignore.contains(&pairing)
         })
         .map(|mut row| {

@@ -3,9 +3,10 @@ use cr_h5::molecule_info::{
     BarcodeIdxType, FullUmiCount, GemGroupType, LibraryIdxType, MoleculeInfoIterator,
     MoleculeInfoReader,
 };
-use cr_types::reference::feature_reference::FeatureDef;
-use cr_types::rna_read::{LegacyLibraryType, LibraryInfo};
-use cr_types::types::FeatureType;
+use cr_types::reference::feature_reference::{FeatureDef, FeatureType};
+use cr_types::rna_read::LibraryInfo;
+use cr_types::types::FeatureBarcodeType;
+use cr_types::LibraryType;
 use itertools::Itertools;
 use itertools::__std_iter::Iterator;
 use pyo3::prelude::*;
@@ -43,16 +44,18 @@ impl TagReadCounts {
         multiplets: HashSet<(BarcodeIdxType, GemGroupType)>,
         cell_associated: HashSet<(BarcodeIdxType, GemGroupType)>,
     ) -> Self {
-        if features.is_empty() {
-            panic!("No multiplexing tags were found in the FeatureRef.");
-        }
+        assert!(
+            !features.is_empty(),
+            "No multiplexing tags were found in the FeatureRef."
+        );
         // Assuming all tags are in
         let mut index = features[0].index;
         for feature in &features[1..] {
             index += 1;
-            if index != feature.index {
-                panic!("The Multiplexing entries in the FeatureRef were not in serial order");
-            }
+            assert!(
+                index == feature.index,
+                "The Multiplexing entries in the FeatureRef were not in serial order"
+            );
         }
         let size = index - features[0].index + 1;
         TagReadCounts {
@@ -116,12 +119,12 @@ fn load_tag_json(
 
 fn make_barcode_to_index_map(mol_h5_fname: &Path) -> HashMap<BcSeq, usize> {
     // Gets a map translating a barcode sequence to a index value
-    let barcodes = MoleculeInfoReader::read_barcodes(mol_h5_fname).unwrap();
-    let mut bc_to_ind: HashMap<BcSeq, usize> = HashMap::with_capacity(barcodes.len());
-    barcodes.into_iter().enumerate().for_each(|z| {
-        bc_to_ind.insert(z.1, z.0);
-    });
-    bc_to_ind
+    MoleculeInfoReader::read_barcodes(mol_h5_fname)
+        .unwrap()
+        .into_iter()
+        .enumerate()
+        .map(|(index, barcode)| (*barcode.sequence(), index))
+        .collect()
 }
 
 // Method counts the total number of reads for each feature
@@ -162,7 +165,7 @@ pub(crate) fn tag_read_counts(
     let mut lib_to_gg: HashMap<LibraryIdxType, GemGroupType> = HashMap::new();
     library_info
         .into_iter()
-        .filter(|x| x.library_type == LegacyLibraryType::Multiplexing)
+        .filter(|x| x.library_type == LibraryType::Cellplex)
         .for_each(|z| {
             lib_to_gg.insert(z.library_id, z.gem_group);
         });
@@ -184,8 +187,8 @@ pub(crate) fn tag_read_counts(
         .feature_ref
         .feature_defs
         .iter()
+        .filter(|&x| x.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing))
         .cloned()
-        .filter(|x| x.feature_type == FeatureType::Multiplexing)
         .collect();
 
     // Get ready to tally

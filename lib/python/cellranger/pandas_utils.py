@@ -135,9 +135,9 @@ def sanitize_dataframe(df: pd.DataFrame, inplace=False):
             df[col] = df[col].apply(ensure_str)
         elif isinstance(df[col].dtype, pd.CategoricalDtype):
             if df[col].cat.categories.dtype == object:
-                df[col].cat.rename_categories(ensure_str, inplace=True)
+                df[col] = df[col].cat.rename_categories(ensure_str)
             elif df[col].cat.categories.dtype == bytes:
-                df[col].cat.rename_categories(_conv_bytes, inplace=True)
+                df[col] = df[col].cat.rename_categories(_conv_bytes)
 
     return df
 

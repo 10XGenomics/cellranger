@@ -4,106 +4,150 @@
 #
 """A helper stage to pipe through map called stages to sidestep martian issue."""
 
-
-import os
-
-import martian
-
 import cellranger.cr_io as cr_io
+from cellranger.fast_utils import MultiGraph
 
 __MRO__ = """
 stage SANITIZE_MAP_CALLS(
-    in  map<path>   in_crispr_analysis,
-    in  map<path>   in_rna_analysis,
-    in  map<cloupe> in_cloupe_file,
-    in  map<json>   in_metrics_summary,
-    in  map<json>   in_sample_tsne_plots,
-    in  map<json>   in_sample_barcode_rank_plots,
-    in  map<json>   in_sample_treemap_plots,
-    out map<path>   crispr_analysis,
-    out map<path>   rna_analysis,
-    out map<cloupe> cloupe_file,
-    out map<json>   metrics_summary,
-    out map<json>   sample_tsne_plots,
-    out map<json>   sample_barcode_rank_plots,
-    out map<json>   sample_treemap_plots,
-    src py          "stages/multi/sanitize_map_calls",
+    in  json              multi_graph,
+    in  map<path>         in_crispr_analysis,
+    in  map<path>         in_rna_analysis,
+    in  map<cloupe>       in_cloupe_file,
+    in  map<json>         in_metrics_summary,
+    in  map<json>         in_sample_tsne_plots,
+    in  map<json>         in_sample_barcode_rank_plots,
+    in  map<json>         in_sample_treemap_plots,
+    in  map<VDJ_ANALYZER> in_vdj_t_analyzer,
+    in  map<VDJ_ANALYZER> in_vdj_t_gd_analyzer,
+    in  map<VDJ_ANALYZER> in_vdj_b_analyzer,
+    out map<path>         crispr_analysis,
+    out map<path>         rna_analysis,
+    out map<cloupe>       cloupe_file,
+    out map<json>         metrics_summary,
+    out map<json>         sample_tsne_plots,
+    out map<json>         sample_barcode_rank_plots,
+    out map<json>         sample_treemap_plots,
+    out map<VDJ_ANALYZER> vdj_t_analyzer,
+    out map<VDJ_ANALYZER> vdj_t_gd_analyzer,
+    out map<VDJ_ANALYZER> vdj_b_analyzer,
+    src py                "stages/multi/sanitize_map_calls",
 ) using (
     volatile = strict,
 )
 """
 
 
-def recursive_hard_link_dict(in_files, prefixes=None):
-    """Hard link files into this stage directory.
+# pylint: disable=too-few-public-methods,too-many-instance-attributes
+class VdjAnalyzerClonotypeOuts:
+    """Python equivalent of martian BeamAnalyzerOutputs struct."""
 
-    For a dict with type [String,path_or_file_or_dict], where the keys represent sample IDs
-    or other levels of nesting, create a dict with the same keys where all the path_or_file
-    values are hardlinked into this stage directory from their old paths.
-    If path_or_file_or_dict is a directory, recursively hardlink the contents of the directory.
-    When nesting the key used to access each upper level will be used as a prefix
-    when constructing the final file name.
+    def __init__(self):
+        """Initiate an empty martian struct."""
+        self.airr_rearrangement = None
+        self.all_contig_annotations_csv = None
+        self.all_contig_annotations_json = None
+        self.clonotypes_csv = None
+        self.concat_ref_bam = None
+        self.concat_ref_bam_bai = None
+        self.concat_ref_fasta = None
+        self.concat_ref_fasta_fai = None
+        self.consensus_annotations_csv = None
+        self.consensus_bam = None
+        self.consensus_bam_bai = None
+        self.consensus_fasta = None
+        self.consensus_fasta_fai = None
+        self.donor_ref_fa = None
+        self.enclone_output = None
+        self.filtered_contig_annotations_csv = None
 
-    For example,
 
-      {
-        "sample1": {
-          "gene_expression": "/mydir/gex.txt",
-          "antibody": "/mydir/ab.txt"
-        },
-        "sample2": {
-          "gene_expression": "/mydir/gex.txt",
-          "antibody": "/mydir/ab.txt"
-        },
-      }
+# pylint: disable=too-few-public-methods
+class BeamAnalyzerOutputs:
+    """Python equivalent of martian BeamAnalyzerOutputs struct."""
 
-    would become
+    def __init__(self):
+        """Initiate an empty martian struct."""
+        self.antigen_specificity_scores = None
+        self.antigen_assignment = None
+        self.clonotype_concordance = None
+        self.exact_subclonotype_concordance = None
+        self.specificity_summary = None
+        self.antigen_vdj_metrics_json = None
+        self.antigen_vdj_metrics_bin = None
+        self.per_barcode = None
 
-      {
-        "sample1": {
-          "gene_expression": "sample1_gene_expression_gex.txt",
-          "antibody": "sample1_antibody.ab.txt"
-         },
-         "sample2": {
-           "gene_expression": "sample2_gene_expression_gex.txt",
-           "antibody": "sample2_antibody_ab.txt"
-         },
-      }
-    """
-    if in_files is None:
-        return None
 
-    if prefixes is None:
-        prefixes = []
+# pylint: disable=too-few-public-methods,too-many-instance-attributes
+class VdjReport:
+    """Python equivalent of martian VdjReport struct."""
 
-    out_files = {}
-    for k, path_or_dict in in_files.items():
-        if path_or_dict is None:
-            out_files[k] = None
-        else:
-            if isinstance(path_or_dict, dict):
-                out_files[k] = recursive_hard_link_dict(in_files[k], prefixes + [k])
-            elif isinstance(path_or_dict, (str)):
-                final_prefixes = prefixes + [k]
-                old_path = path_or_dict
-                new_path = martian.make_path(
-                    "_".join(final_prefixes) + "_" + os.path.basename(old_path)
-                ).decode("utf8")
-                cr_io.hardlink_with_fallback(old_path, new_path)
-                out_files[k] = new_path
-            else:
-                raise ValueError(
-                    "Input dictionary may not contain any elements other than dict and string: %s"
-                    % path_or_dict
-                )
-    return out_files
+    def __init__(self):
+        """Initiate an empty martian struct."""
+        self.vdj_contig_info = None
+        self.vloupe = None
+        self.metrics_summary_json = None
+        self.metrics_summary_csv = None
+        self.web_summary = None
+        self.web_summary_data = None
+        self.contig_fastq = None
+        self.filtered_contig_fastq = None
+        self.contig_fasta = None
+        self.contig_fasta_fai = None
+        self.filtered_contig_fasta = None
+        self.annotations_bed = None
+        self.cell_barcodes = None
+        self.cdr3_barcodes = None
+        self.all_contig_barcodes = None
+        self.productive_barcodes = None
+        self.productive_cell_barcodes = None
+        self.filter_summary = None
+        self.filter_metrics = None
+        self.contig_summary = None
+        self.umi_summary = None
+        self.barcode_brief = None
+
+
+# pylint: disable=invalid-name
+class VDJ_ANALYZER:
+    """Python equivalent of martian VDJ_ANALYZER struct."""
+
+    def __init__(self):
+        """Initiate an empty martian struct."""
+        self.clonotype = VdjAnalyzerClonotypeOuts().__dict__
+        self.beam_analyzer = BeamAnalyzerOutputs().__dict__
+        self.report = VdjReport().__dict__
 
 
 def main(args, outs):
-    outs.rna_analysis = recursive_hard_link_dict(args.in_rna_analysis)
-    outs.crispr_analysis = recursive_hard_link_dict(args.in_crispr_analysis)
-    outs.cloupe_file = recursive_hard_link_dict(args.in_cloupe_file)
-    outs.metrics_summary = recursive_hard_link_dict(args.in_metrics_summary)
-    outs.sample_tsne_plots = recursive_hard_link_dict(args.in_sample_tsne_plots)
-    outs.sample_barcode_rank_plots = recursive_hard_link_dict(args.in_sample_barcode_rank_plots)
-    outs.sample_treemap_plots = recursive_hard_link_dict(args.in_sample_treemap_plots)
+    outs.rna_analysis = cr_io.recursive_hard_link_dict(args.in_rna_analysis)
+    outs.crispr_analysis = cr_io.recursive_hard_link_dict(args.in_crispr_analysis)
+    outs.cloupe_file = cr_io.recursive_hard_link_dict(args.in_cloupe_file)
+    outs.metrics_summary = cr_io.recursive_hard_link_dict(args.in_metrics_summary)
+    outs.sample_tsne_plots = cr_io.recursive_hard_link_dict(args.in_sample_tsne_plots)
+    outs.sample_barcode_rank_plots = cr_io.recursive_hard_link_dict(
+        args.in_sample_barcode_rank_plots
+    )
+    outs.sample_treemap_plots = cr_io.recursive_hard_link_dict(args.in_sample_treemap_plots)
+
+    if args.multi_graph:
+        config = MultiGraph.from_path(args.multi_graph)
+        samples = config.sample_ids()
+
+        if args.in_vdj_t_analyzer is not None:
+            outs.vdj_t_analyzer = cr_io.recursive_hard_link_dict(
+                args.in_vdj_t_analyzer, prefixes=["vdj_t"]
+            )
+        else:
+            outs.vdj_t_analyzer = {k: VDJ_ANALYZER().__dict__ for k in samples}
+        if args.in_vdj_t_gd_analyzer is not None:
+            outs.vdj_t_gd_analyzer = cr_io.recursive_hard_link_dict(
+                args.in_vdj_t_gd_analyzer, prefixes=["vdj_t_gd"]
+            )
+        else:
+            outs.vdj_t_gd_analyzer = {k: VDJ_ANALYZER().__dict__ for k in samples}
+        if args.in_vdj_b_analyzer is not None:
+            outs.vdj_b_analyzer = cr_io.recursive_hard_link_dict(
+                args.in_vdj_b_analyzer, prefixes=["vdj_b"]
+            )
+        else:
+            outs.vdj_b_analyzer = {k: VDJ_ANALYZER().__dict__ for k in samples}

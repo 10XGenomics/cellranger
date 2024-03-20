@@ -16,11 +16,11 @@ import numpy as np
 
 import cellranger.matrix as cr_matrix
 import cellranger.pandas_utils as pdu
-import cellranger.targeted.utils as cr_tgt_utils
 import tenkit.safe_json as tk_safe_json
 from cellranger.molecule_counter import MoleculeCounter
 from cellranger.pandas_utils import FEATURE_DF_UMI_COL
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
+from cellranger.targeted.gmm import fit_enrichments
 from cellranger.targeted.targeted_spatial import SPATIAL_TARGET_DISALLOWED_PANEL_TYPES
 from cellranger.targeted.utils import BOTH_SPHERICAL, BOTH_TIED, OFFTARGETS_ONLY
 from cellranger.webshim.constants.gex import (
@@ -36,6 +36,7 @@ stage CALCULATE_TARGETED_METRICS(
     in  h5       filtered_gene_bc_matrices,
     in  json     basic_counter_summary,
     in  tps.json target_panel_summary,
+    in  bool     is_spatial,
     out json     summary,
     out csv      per_feature_metrics_csv,
     src py       "stages/targeted/calculate_targeted_metrics",
@@ -49,9 +50,9 @@ TARGETED_RPU_METRIC_KEY = "mean_reads_per_umi_per_gene_cells_on_target"
 
 
 def split(args):
-    # Use an empirical linear model to estimate required memory.
     fbm_bytes = os.stat(args.filtered_gene_bc_matrices).st_size
-    mem_gib = 3 + math.ceil(10.4246e-9 * fbm_bytes)
+    mem_gib = 3 + math.ceil(11.7 * fbm_bytes / 1024**3)
+    print(f"{fbm_bytes=},{mem_gib=}")
     return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
@@ -70,7 +71,7 @@ def get_enrichment_metrics(
     tgt_label = pfm[pfm[f"{FEATURE_DF_UMI_COL}_cells"] >= MIN_UMIS][TARGETING_COLNAME].to_numpy()
     values = pfm[pfm[f"{FEATURE_DF_UMI_COL}_cells"] >= MIN_UMIS][LOG_RPU_CELLS_COLNAME].to_numpy()
 
-    enrichment_params, class_stats = cr_tgt_utils.fit_enrichments(tgt_label, values, method=method)
+    enrichment_params, class_stats = fit_enrichments(tgt_label, values, method=method)
 
     log_rpu_threshold = enrichment_params.log_rpu_threshold
     enrichment_calc_metrics = {
@@ -320,7 +321,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         gex_library_indices = mc.get_library_indices_by_type()[GENE_EXPRESSION_LIBRARY_TYPE]
         raw_reads_per_lib = mc.get_raw_read_pairs_per_library()
         total_reads = np.sum([raw_reads_per_lib[idx] for idx in gex_library_indices])
-        is_spatial = mc.is_spatial_data()
     # This can be a NaN so need to convert before multiplying below
     multi_transcriptome_targeted_conf_mapped_reads_frac_float = float(
         basic_counter_metrics["multi_transcriptome_targeted_conf_mapped_reads_frac"]
@@ -345,7 +345,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     )
 
     # add a warning flag if we're processing an unsupported targeted panel for spatial
-    if is_spatial:
+    if args.is_spatial:
         with open(args.target_panel_summary) as in_f:
             target_panel_summary = json.load(in_f)
         targeted_metrics["targeted_unsupported_panel"] = (
@@ -368,14 +368,14 @@ def join(args, outs, chunk_defs, chunk_outs):
     targeted_metrics["multi_cdna_pcr_dupe_reads_frac_on_target"] = targeted_sequencing_saturation
 
     # get RPU metrics
-    targeted_metrics.update(get_mean_per_gene_rpu_metrics(is_spatial, feature_summary_df))
+    targeted_metrics.update(get_mean_per_gene_rpu_metrics(args.is_spatial, feature_summary_df))
     disable_rpu_enrichments = np.isnan(targeted_metrics[TARGETED_RPU_METRIC_KEY]) or (
         targeted_metrics[TARGETED_RPU_METRIC_KEY] < MIN_RPU_THRESHOLD
     )
 
     # get per gene enrichments
     feature_summary_df, enrichment_calc_metrics = get_enrichment_metrics(
-        is_spatial, feature_summary_df, disable_rpu_enrichments, method=BOTH_TIED
+        args.is_spatial, feature_summary_df, disable_rpu_enrichments, method=BOTH_TIED
     )
     targeted_metrics.update(enrichment_calc_metrics)
 

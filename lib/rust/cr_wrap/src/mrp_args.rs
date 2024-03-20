@@ -9,11 +9,10 @@ pub struct MrpArgs {
     /// the pipeline to use a compute cluster.
     #[clap(
         long,
-        default_value = "local",
         value_name = "MODE",
         value_parser = NonEmptyStringValueParser::new(),
     )]
-    jobmode: String,
+    jobmode: Option<String>,
 
     /// Set max cores the pipeline may request at one time. Only
     /// applies to local jobs.
@@ -90,17 +89,17 @@ impl MrpArgs {
     /// Convert this struct into a vector of command line arguments.
     pub(crate) fn get_args(&self) -> Vec<String> {
         [
-            Some(format!("--jobmode={}", self.jobmode)),
-            self.jobinterval.map(|x| format!("--jobinterval={x}")),
-            self.localcores.map(|x| format!("--localcores={x}")),
-            self.localmem.map(|x| format!("--localmem={x}")),
-            self.localvmem.map(|x| format!("--localvmem={x}")),
-            self.maxjobs.map(|x| format!("--maxjobs={x}")),
-            self.mempercore.map(|x| format!("--mempercore={x}")),
-            self.overrides.as_ref().map(|x| format!("--overrides={x}")),
-            self.uiport.map(|x| format!("--uiport={x}")),
-            self.vdrmode.as_ref().map(|x| format!("--vdrmode={x}")),
-            self.output_dir.as_ref().map(|x| format!("--psdir={x}")),
+            optional_arg(&self.jobmode, "jobmode"),
+            optional_arg(&self.jobinterval, "jobinterval"),
+            optional_arg(&self.localcores, "localcores"),
+            optional_arg(&self.localmem, "localmem"),
+            optional_arg(&self.localvmem, "localvmem"),
+            optional_arg(&self.maxjobs, "maxjobs"),
+            optional_arg(&self.mempercore, "mempercore"),
+            optional_arg(&self.overrides, "overrides"),
+            optional_arg(&self.uiport, "uiport"),
+            optional_arg(&self.vdrmode, "vdrmode"),
+            optional_arg(&self.output_dir, "psdir"),
             self.disable_ui.then_some("--disable-ui".to_string()),
             self.noexit.then_some("--noexit".to_string()),
             self.nopreflight.then_some("--nopreflight".to_string()),
@@ -109,4 +108,8 @@ impl MrpArgs {
         .flatten()
         .collect()
     }
+}
+
+fn optional_arg<T: std::fmt::Display>(arg: &Option<T>, param_name: &str) -> Option<String> {
+    arg.as_ref().map(|x| format!("--{param_name}={x}"))
 }

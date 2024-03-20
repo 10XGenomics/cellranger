@@ -46,9 +46,8 @@
     while_true
 )]
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use csv_parser::CsvParser;
-use rna_read::LegacyLibraryType;
 use std::path::{Path, PathBuf};
 
 pub mod aggr;
@@ -56,6 +55,7 @@ pub mod barcode_index;
 pub use barcode_index::*;
 mod bit_encode;
 pub mod chemistry;
+pub mod clonotype;
 pub mod constants;
 pub mod csv_parser;
 pub mod probe_set;
@@ -70,11 +70,13 @@ mod metrics_file;
 pub mod spill_vec;
 pub mod utils;
 pub use metrics_file::*;
+pub mod filtered_barcodes;
+pub mod websummary;
 
 #[derive(Debug)]
 pub struct LegacyLibrariesEntry {
     pub fastqs: PathBuf,
-    pub library_type: LegacyLibraryType,
+    pub library_type: LibraryType,
     pub sample: String,
     pub project: Option<String>,
 }
@@ -92,8 +94,14 @@ pub fn parse_legacy_libraries_csv(file: &Path) -> Result<Vec<LegacyLibrariesEntr
 
         let fastqs = parser.require_string("fastqs")?;
         let sample = parser.require_string("sample")?;
-        let library_type: LegacyLibraryType =
-            parser.parse_field("library_type", "valid library_type")?;
+        let library_type: LibraryType = parser.parse_field("library_type", "valid library_type")?;
+        // CELLRANGER-7889: this previously only parsed "auto VDJ", so maintain this invariant.
+        if let Some(chain_type) = library_type.vdj_chain_type() {
+            ensure!(
+                chain_type == VdjChainType::Auto,
+                "invalid library_type {library_type}"
+            );
+        }
 
         let project = parser.get_extra_data().get("project").cloned();
 

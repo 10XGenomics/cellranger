@@ -10,9 +10,7 @@ import pandas as pd
 import cellranger.altair_utils as alt_utils
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
 from cellranger.webshim.data import SampleData
-from cellranger.websummary.react_components import (
-    round_floats_in_list,
-)
+from cellranger.websummary.numeric_converters import round_floats_in_list
 
 alt.data_transformers.disable_max_rows()
 

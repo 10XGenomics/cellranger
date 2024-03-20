@@ -78,13 +78,14 @@ def _report_genome_agnostic_metrics(
     matrix,
     barcode_summary_h5,
     recovered_cells,
-    sample_bc_seqs,
-    cell_bc_seqs,
+    sample_bc_indices: list[int] | None,
+    cell_bcs_union: set[bytes],
+    matrix_cell_bc_indices: list[int],
+    bc_summary_cell_bc_indices: list[int],
     total_reads,
     gex_reads_per_barcode,
     total_conf_mapped_reads,
     library_prefix,
-    sample_bcs_only,
 ):
     """Report metrics that are computed across all barcodes and all genomes."""
     d = {}
@@ -99,10 +100,7 @@ def _report_genome_agnostic_metrics(
     for g in genomes:
         assert isinstance(g, str)
     # Get number of cell bcs across all genomes
-    cell_bcs_union = reduce(lambda a, x: a | set(x), cell_bc_seqs.values(), set())
     n_cell_bcs_union = len(cell_bcs_union)
-    cell_bc_indices = _get_barcode_summary_h5_indices(barcode_summary_h5, cell_bcs_union)
-    sample_bc_indices = _get_barcode_summary_h5_indices(barcode_summary_h5, sample_bc_seqs)
 
     for bc in cell_bcs_union:
         assert isinstance(bc, bytes)
@@ -145,7 +143,7 @@ def _report_genome_agnostic_metrics(
     # Total UMI counts across all matrices and all filtered barcodes
     total_umi_counts = 0
     for mat in genome_matrices.values():
-        total_umi_counts += mat.select_barcodes_by_seq(cell_bcs_union).sum()
+        total_umi_counts += mat.select_barcodes(matrix_cell_bc_indices).sum()
 
     # Deviation from cell load
     if recovered_cells is None:
@@ -186,7 +184,7 @@ def _report_genome_agnostic_metrics(
                     for g in genomes
                 ]
                 h5_keys = [x for x in h5_keys if x in barcode_summary_h5]
-                if sample_bcs_only:
+                if sample_bc_indices is not None:
                     n_reads = sum(
                         np.array(barcode_summary_h5[h5_key][:][sample_bc_indices]).sum()
                         for h5_key in h5_keys
@@ -207,8 +205,8 @@ def _report_genome_agnostic_metrics(
             cr_constants.CONF_MAPPED_BC_READ_TYPE,
         )
         cmb_reads = barcode_summary_h5[h5_key][:]
-        total_conf_mapped_reads_in_cells += cmb_reads[cell_bc_indices].sum()
-        if sample_bcs_only:
+        total_conf_mapped_reads_in_cells += cmb_reads[bc_summary_cell_bc_indices].sum()
+        if sample_bc_indices is not None:
             total_conf_mapped_barcoded_reads += cmb_reads[sample_bc_indices].sum()
         else:
             total_conf_mapped_barcoded_reads += cmb_reads.sum()
@@ -256,7 +254,7 @@ def _report_genome_agnostic_metrics(
     d["feature_reads_usable_per_cell"] = reads_usable_per_cell
 
     # Compute matrix density
-    filtered_mat = matrix.select_barcodes_by_seq(cell_bcs_union)
+    filtered_mat = matrix.select_barcodes(matrix_cell_bc_indices)
     total_nonzero_entries = filtered_mat.get_num_nonzero()
     filtered_shape = filtered_mat.get_shape()
     total_entries = filtered_shape[0] * filtered_shape[1]
@@ -272,19 +270,18 @@ def _report(
     matrix: cr_matrix.CountMatrixView,
     genome: str,
     barcode_summary_h5: h5.File,
-    cell_bc_seqs: list[bytes],
-    sample_bc_seqs: list[bytes],
+    matrix_cell_bc_indices: list[int],
+    bc_summary_cell_bc_indices: list[int],
+    sample_bc_indices: list[int] | None,
     library_prefix: str,
-    sample_bcs_only: bool,
 ):
     d = {}
     matrix = matrix.view()
 
-    filtered_mat = matrix.select_barcodes_by_seq(cell_bc_seqs)
+    filtered_mat = matrix.select_barcodes(matrix_cell_bc_indices)
     filtered_mat_shape = filtered_mat.get_shape()
-    cell_bc_indices = _get_barcode_summary_h5_indices(barcode_summary_h5, cell_bc_seqs)
-    sample_bc_indices = _get_barcode_summary_h5_indices(barcode_summary_h5, sample_bc_seqs)
-    n_cell_bcs = len(cell_bc_seqs)
+
+    n_cell_bcs = len(matrix_cell_bc_indices)
 
     # Don't compute metrics if no cells detected
     if n_cell_bcs == 0:
@@ -351,7 +348,7 @@ def _report(
         cr_constants.CONF_MAPPED_BC_READ_TYPE,
     )
     if dupe_candidate_h5_key in barcode_summary_h5:
-        n_reads = barcode_summary_h5[dupe_candidate_h5_key][:][cell_bc_indices].sum()
+        n_reads = barcode_summary_h5[dupe_candidate_h5_key][:][bc_summary_cell_bc_indices].sum()
         n_deduped_reads = filt_total_umis
     else:
         n_reads = 0
@@ -377,8 +374,8 @@ def _report(
             )
             if h5_key in barcode_summary_h5:
                 counts = barcode_summary_h5[h5_key][:]
-                n_reads = counts[cell_bc_indices].sum()
-                if sample_bcs_only:
+                n_reads = counts[bc_summary_cell_bc_indices].sum()
+                if sample_bc_indices is not None:
                     n_all_reads = counts[sample_bc_indices].sum()
                 else:
                     n_all_reads = counts.sum()
@@ -392,13 +389,13 @@ def _report(
 
 def load_per_barcode_metrics(per_barcode_metrics_path: AnyStr) -> dict[bytes, int] | None:
     """Return a dictionary of barcode to raw reads."""
-    try:
-        reader = csv_utils.load_csv_filter_comments(
-            per_barcode_metrics_path, "per barcode metrics", ["barcode", "raw_reads"]
-        )
-        return {ensure_binary(row["barcode"]): int(row["raw_reads"]) for row in reader}
-    except csv_utils.CSVEmptyException:
+    if not per_barcode_metrics_path:
         return None
+
+    reader = csv_utils.load_csv_filter_comments(
+        per_barcode_metrics_path, "per barcode metrics", ["barcode", "raw_reads"]
+    )
+    return {ensure_binary(row["barcode"]): int(row["raw_reads"]) for row in reader}
 
 
 def report_genomes(
@@ -409,11 +406,23 @@ def report_genomes(
     recovered_cells,
     sample_bc_seqs,
     cell_bc_seqs,
-    sample_bcs_only,
 ):
     """Report on all genomes in this matrix."""
     barcode_summary_h5 = h5.File(ensure_binary(barcode_summary_h5_path), "r")
     gex_reads_per_barcode = load_per_barcode_metrics(per_barcode_metrics_path)
+
+    sample_bc_indices = (
+        _get_barcode_summary_h5_indices(barcode_summary_h5, sample_bc_seqs)
+        if sample_bc_seqs is not None
+        else None
+    )
+    cell_bcs_union = reduce(lambda a, x: a | set(x), cell_bc_seqs.values(), set())
+    cell_bcs_union_indices = matrix.bcs_to_ints(list(cell_bcs_union))
+    bc_summary_cell_bc_union_indices = (
+        cell_bcs_union_indices
+        if sample_bc_seqs is None
+        else _get_barcode_summary_h5_indices(barcode_summary_h5, cell_bcs_union)
+    )
 
     metrics = {}
 
@@ -437,27 +446,34 @@ def report_genomes(
             submatrix,
             barcode_summary_h5,
             recovered_cells,
-            sample_bc_seqs,
-            cell_bc_seqs,
+            sample_bc_indices,
+            cell_bcs_union,
+            cell_bcs_union_indices,
+            bc_summary_cell_bc_union_indices,
             total_reads,
             gex_reads_per_barcode,
             conf_mapped_reads,
             prefix,
-            sample_bcs_only,
         )
 
         if rna_library.has_genomes(ftype):
             for genome in genomes:
                 # Compute genome-specific metrics
                 genome_matrix = matrix.view().select_features_by_genome(genome)
+                cell_bc_indices = matrix.bcs_to_ints(cell_bc_seqs[genome])
+                bc_summary_cell_bc_indices = (
+                    cell_bc_indices
+                    if sample_bc_seqs is None
+                    else _get_barcode_summary_h5_indices(barcode_summary_h5, cell_bc_seqs[genome])
+                )
                 genome_summary = _report(
                     genome_matrix,
                     genome,
                     barcode_summary_h5,
-                    cell_bc_seqs[genome],
-                    sample_bc_seqs,
+                    cell_bc_indices,
+                    bc_summary_cell_bc_indices,
+                    sample_bc_indices,
                     prefix,
-                    sample_bcs_only,
                 )
 
                 for key, value in genome_summary.items():
@@ -465,18 +481,14 @@ def report_genomes(
                     m[key] = value
         else:
             # This feature has no genomes
-            cell_bcs_union = set()
-            for bcs in cell_bc_seqs.values():
-                cell_bcs_union.update(bcs)
-            cell_bcs_union = list(cell_bcs_union)
             genome_summary = _report(
                 submatrix,
                 rna_library.MULTI_REFS_PREFIX,
                 barcode_summary_h5,
-                cell_bcs_union,
-                sample_bc_seqs,
+                cell_bcs_union_indices,
+                bc_summary_cell_bc_union_indices,
+                sample_bc_indices,
                 prefix,
-                sample_bcs_only,
             )
             for key, value in genome_summary.items():
                 key = "_".join([rna_library.MULTI_REFS_PREFIX, key])

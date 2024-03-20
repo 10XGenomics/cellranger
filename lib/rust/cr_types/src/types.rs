@@ -1,6 +1,4 @@
 use crate::barcode_index::BarcodeIndex;
-use crate::bit_encode::BitEncoded;
-use crate::rna_read::LegacyLibraryType;
 use anyhow::{bail, ensure, Context, Result};
 use barcode::{Barcode, BarcodeConstruct, BarcodeFromString, BcSegSeq};
 use fastq_set::filenames::bcl2fastq::SampleNameSpec;
@@ -11,9 +9,10 @@ use martian_derive::{martian_filetype, MartianStruct, MartianType};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::json_file::{JsonFile, JsonFormat};
 use martian_filetypes::FileTypeRead;
-use metric::{JsonReport, JsonReporter, SimpleHistogram, TxHashMap, TxHashSet};
+use metric::{AsMetricPrefix, SimpleHistogram, TxHashMap, TxHashSet};
 use serde::de::{IgnoredAny, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use shardio::SortKey;
 use std::borrow::Cow;
 use std::convert::TryFrom;
@@ -22,7 +21,6 @@ use std::fs::read_to_string;
 use std::hash::Hash;
 use std::path::PathBuf;
 use std::str::FromStr;
-use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumCount, EnumIter, EnumString};
 use umi::UmiType;
 
@@ -32,14 +30,19 @@ pub const PROBE_IDX_SENTINEL_VALUE: i32 = -1;
 
 // File Types
 
+martian_filetype!(H5File, "h5");
+
+// Shardio file containing FeatureBarcodeCount records
+martian_filetype!(CountShardFile, "csf");
+
 martian_filetype! { BcSegmentCountFile, "bsc" }
 pub type BcSegmentCountFormat = BinaryFormat<
     BcSegmentCountFile,
-    TxHashMap<LibraryFeatures, BarcodeConstruct<SimpleHistogram<BcSegSeq>>>,
+    TxHashMap<LibraryType, BarcodeConstruct<SimpleHistogram<BcSegSeq>>>,
 >;
 
 martian_filetype! { BcCountFile, "bcc" }
-pub type BcCountDataType = TxHashMap<LibraryFeatures, SimpleHistogram<Barcode>>;
+pub type BcCountDataType = TxHashMap<LibraryType, SimpleHistogram<Barcode>>;
 pub type BcCountFormat = BinaryFormat<BcCountFile, BcCountDataType>;
 
 martian_filetype! { TotalBcCountFile, "tbcc" }
@@ -53,9 +56,60 @@ martian_filetype!(BarcodeSetFile, "blf");
 pub type BarcodeSetFormat = JsonFormat<BarcodeSetFile, TxHashSet<Barcode>>;
 
 martian_filetype!(BarcodeIndexFile, "bi");
-pub type BarcodeIndexFormat<B> = BinaryFormat<BarcodeIndexFile, BarcodeIndex<B>>;
+pub type BarcodeIndexFormat = BinaryFormat<BarcodeIndexFile, BarcodeIndex>;
 
-// End File Tyes
+martian_filetype!(_FingerprintFile, "fprint");
+pub type FingerprintFile = JsonFormat<_FingerprintFile, Vec<Fingerprint>>;
+
+// End File Types
+
+/// A genome name.
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Hash,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    derive_more::Deref,
+    derive_more::Display,
+)]
+pub struct GenomeName(String);
+
+impl GenomeName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for GenomeName {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl From<&str> for GenomeName {
+    fn from(value: &str) -> Self {
+        GenomeName(value.to_string())
+    }
+}
+
+impl From<GenomeName> for String {
+    fn from(value: GenomeName) -> Self {
+        value.0
+    }
+}
+
+impl AsMetricPrefix for GenomeName {
+    fn as_metric_prefix(&self) -> Option<&str> {
+        Some(self.0.as_str())
+    }
+}
+
 /// A trait for reads that may have a sample index.
 pub trait HasSampleIndex {
     fn si_seq(&self) -> Option<&[u8]>;
@@ -65,10 +119,21 @@ pub trait HasSampleIndex {
 /// Count of the number of UMIs observed for one feature in one barcode.  Corresponds
 /// to a single entry in the feature x barcode matrix.
 #[derive(Serialize, Deserialize, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
-pub struct FeatureBarcodeCount<B> {
-    pub barcode: B,
+pub struct FeatureBarcodeCount {
+    pub barcode: Barcode,
     pub feature_idx: u32,
     pub umi_count: u32,
+}
+
+/// Sort by barcode and then by feature.
+pub struct BarcodeThenFeatureOrder;
+
+impl shardio::SortKey<FeatureBarcodeCount> for BarcodeThenFeatureOrder {
+    type Key = (Barcode, u32);
+
+    fn sort_key(fbc: &FeatureBarcodeCount) -> Cow<'_, Self::Key> {
+        Cow::Owned((fbc.barcode, fbc.feature_idx))
+    }
 }
 
 /// Count of the number of UMIs observed for one probe in one barcode.  Corresponds
@@ -112,7 +177,7 @@ impl SortKey<BcUmiInfo> for BcUmiInfo {
 impl BcUmiInfo {
     /// Convert a `BcUmiInfo`, which contains one entry per UMI, into a FeatureBarcodeCount
     /// which contains one entry per non-zero feature.
-    pub fn feature_counts(&self) -> impl Iterator<Item = FeatureBarcodeCount<Barcode>> + '_ {
+    pub fn feature_counts(&self) -> impl Iterator<Item = FeatureBarcodeCount> + '_ {
         SimpleHistogram::from_iter_owned(self.umi_counts.iter().map(|c| c.feature_idx))
             .into_iter()
             .map(|(feature_idx, umi_count)| FeatureBarcodeCount {
@@ -153,10 +218,6 @@ pub enum ReqStrand {
     Reverse,
 }
 
-pub trait HasMultiplexing {
-    fn has_multiplexing(&self) -> bool;
-}
-
 macro_rules! enum_maker {
     ($(#[$meta:meta])* $name:ident, $( ($field:ident, $lit: literal $(, $alias: literal)*) ),*) => {
         #[derive(EnumCount, EnumString, EnumIter, Display, Debug, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Serialize, Deserialize, MartianType)]
@@ -168,19 +229,6 @@ macro_rules! enum_maker {
                 #[strum(serialize = $alias)])*
                 $field,
             )*
-        }
-        impl From<u8> for $name {
-            fn from(val: u8) -> Self {
-                match $name::iter().skip(val as usize).next() {
-                    Some(v) => v,
-                    None => panic!("Cannot convert {} to {}", val, stringify!($name)),
-                }
-            }
-        }
-        impl From<$name> for u8 {
-            fn from(val: $name) -> u8 {
-                val as u8
-            }
         }
     };
 }
@@ -255,16 +303,6 @@ impl<'de> Deserialize<'de> for SampleAssignment {
         }
         deserializer.deserialize_any(SampleAssignmentVisitor)
     }
-}
-
-/// describes whether a molecule info is raw (uber), sample, or count
-/// stored in molecule info metrics and used to set aggr preflights and etc
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MoleculeInfoType {
-    Raw,
-    PerSample,
-    Count,
 }
 
 pub type SampleBarcodesFile = JsonFile<SampleBarcodes>;
@@ -418,17 +456,11 @@ enum_maker! {
 }
 
 enum_maker! {
-    /// We want the users to have the option to explicitly specify whether
-    /// a VDJ library was TCR or IG enriched. We would auto detect the enrichment by
-    /// default. However, in some rare cases when the quality of the library is
-    /// poor, the auto detection fails and the pipeline would be unable to proceed.
-    /// So we are allowing the users to optionally specify `T Cell` or `B Cell` as a
-    /// `feature_type` when the `library_type` is VDJ. If unspecified, the default value
-    /// of `Auto` will be used.
     VdjChainType,
-    (Tcr, "T Cell Receptor"),
-    (Ig, "B Cell Receptor"),
-    (Auto, "Auto")
+    (VdjT, "VDJ-T"),
+    (VdjB, "VDJ-B"),
+    (VdjTGD, "VDJ-T-GD"),
+    (Auto, "VDJ")
 }
 
 #[allow(clippy::derivable_impls)]
@@ -439,74 +471,73 @@ impl Default for VdjChainType {
 }
 
 enum_maker! {
-    /// The feature types supported in our matrix
-    FeatureType,
+    FeatureBarcodeType,
     (Antibody, "Antibody Capture"),
     (Antigen, "Antigen Capture"),
-    (CRISPR, "CRISPR Guide Capture"),
+    (Crispr, "CRISPR Guide Capture"),
     (Multiplexing, "Multiplexing Capture", "FEATURETEST", "Multiplexing Tag Capture"),
-    (Custom, "Custom"),
-    (Gene, "Gene Expression")
+    (Custom, "Custom")
 }
 
-impl FeatureType {
-    /// Return an iterator over all feature barcode library types.
-    pub fn feature_barcodes() -> impl Iterator<Item = FeatureType> {
-        FeatureType::iter().filter(|&f| f != FeatureType::Gene)
-    }
+impl FeatureBarcodeType {
+    const ANTIBODY_SNAKE_CASE: &'static str = "antibody_capture";
+    const ANTIGEN_SNAKE_CASE: &'static str = "antigen_capture";
+    const CRISPR_SNAKE_CASE: &'static str = "crispr_guide_capture";
+    const MUTLIPLEXING_SNAKE_CASE: &'static str = "multiplexing_capture";
+    const CUSTOM_SNAKE_CASE: &'static str = "custom";
 
-    /// Return the metric prefix for this feature type, and None for GEX.
-    pub fn metric_prefix(self) -> Option<&'static str> {
-        #[allow(clippy::enum_glob_use)]
-        use FeatureType::*;
+    /// Return a snake_case representation of this feature barcode type.
+    pub fn as_snake_case(&self) -> &'static str {
         match self {
-            Gene => None,
-            Antibody => Some("ANTIBODY"),
-            Antigen => Some("ANTIGEN"),
-            CRISPR => Some("CRISPR"),
-            Custom => Some("Custom"),
-            Multiplexing => Some("MULTIPLEXING"),
+            Self::Antibody => Self::ANTIBODY_SNAKE_CASE,
+            Self::Antigen => Self::ANTIGEN_SNAKE_CASE,
+            Self::Crispr => Self::CRISPR_SNAKE_CASE,
+            Self::Multiplexing => Self::MUTLIPLEXING_SNAKE_CASE,
+            Self::Custom => Self::CUSTOM_SNAKE_CASE,
         }
     }
 
-    /// Join the metric prefix and the metric name, separated by an underscore.
-    pub fn join<'a>(&self, metric_name: &'a str) -> Cow<'a, str> {
-        if let Some(prefix) = self.metric_prefix() {
-            Cow::Owned(format!("{prefix}_{metric_name}"))
-        } else {
-            Cow::Borrowed(metric_name)
+    /// Parse a snake-case representation of this feature barcode type.
+    pub fn from_snake_case(s: &str) -> Result<Self> {
+        Ok(match s {
+            Self::ANTIBODY_SNAKE_CASE => Self::Antibody,
+            Self::ANTIGEN_SNAKE_CASE => Self::Antigen,
+            Self::CRISPR_SNAKE_CASE => Self::Crispr,
+            Self::MUTLIPLEXING_SNAKE_CASE => Self::Multiplexing,
+            Self::CUSTOM_SNAKE_CASE => Self::Custom,
+            _ => {
+                bail!("unable to parse '{s}' as a feature barcode type");
+            }
+        })
+    }
+
+    // Return the metric prefix for this feature barcode type as a static str.
+    pub fn as_metric_prefix_static(&self) -> Option<&'static str> {
+        match self {
+            Self::Antibody => Some("ANTIBODY"),
+            Self::Antigen => Some("ANTIGEN"),
+            Self::Crispr => Some("CRISPR"),
+            Self::Custom => Some("Custom"),
+            Self::Multiplexing => Some("MULTIPLEXING"),
         }
     }
 }
 
-impl TryFrom<LegacyLibraryType> for FeatureType {
-    type Error = LegacyLibraryType;
-
-    fn try_from(legacy_library_type: LegacyLibraryType) -> Result<FeatureType, LegacyLibraryType> {
-        match legacy_library_type {
-            LegacyLibraryType::GeneExpression => Ok(FeatureType::Gene),
-            LegacyLibraryType::AntibodyCapture => Ok(FeatureType::Antibody),
-            LegacyLibraryType::AntigenCapture => Ok(FeatureType::Antigen),
-            LegacyLibraryType::CrisprGuideCapture => Ok(FeatureType::CRISPR),
-            LegacyLibraryType::Custom => Ok(FeatureType::Custom),
-            LegacyLibraryType::Multiplexing => Ok(FeatureType::Multiplexing),
-            LegacyLibraryType::ATAC | LegacyLibraryType::Vdj => Err(legacy_library_type),
-        }
-    }
-}
-
-impl HasMultiplexing for FeatureType {
-    fn has_multiplexing(&self) -> bool {
-        *self == FeatureType::Multiplexing
+impl AsMetricPrefix for FeatureBarcodeType {
+    /// Return the metric prefix for this feature barcode type.
+    fn as_metric_prefix(&self) -> Option<&str> {
+        self.as_metric_prefix_static()
     }
 }
 
 /// An enum which encapsulates both a library type and all the features
 /// associated with it. All the gem wells in a single multi run should have
-/// an identical set of `LibraryFeatures`
+/// an identical set of `LibraryType`
+// NOTE: we cannot use serde(untagged) due to incompatibility with bincode.
+// Thus the use of SerializeDisplay and DeserializeFromStr.
 #[derive(
     Debug,
-    Display,
+    Default,
     Copy,
     Clone,
     PartialOrd,
@@ -514,108 +545,131 @@ impl HasMultiplexing for FeatureType {
     PartialEq,
     Eq,
     Hash,
-    Serialize,
-    Deserialize,
-    MartianType,
+    SerializeDisplay,
+    DeserializeFromStr,
 )]
-pub enum LibraryFeatures {
-    /// The inner feature type should be `FeatureType::Gene`. It is natural to ask
-    /// why we even need to store a `FeatureType` within this enum variant. The reason is
-    /// doing so would ensure that all the variants in the enum would serialize into
-    /// a map. This makes `LibraryFeatures` a compatible type for martian stage args/outs
-    GeneExpression(FeatureType),
+pub enum LibraryType {
+    #[default]
+    GeneExpression,
     Vdj(VdjChainType),
-    FeatureBarcodes(BitEncoded<FeatureType>),
+    FeatureBarcodes(FeatureBarcodeType),
+    Atac,
 }
 
-impl From<FeatureType> for LibraryFeatures {
-    fn from(feature_type: FeatureType) -> LibraryFeatures {
-        use FeatureType::{Antibody, Antigen, Custom, Gene, Multiplexing, CRISPR};
-        match feature_type {
-            Gene => LibraryFeatures::GeneExpression(feature_type),
-            Antibody | Antigen | CRISPR | Multiplexing | Custom => {
-                LibraryFeatures::FeatureBarcodes(feature_type.into())
-            }
-        }
-    }
-}
-
-impl From<LegacyLibraryType> for LibraryFeatures {
-    fn from(legacy_library_type: LegacyLibraryType) -> LibraryFeatures {
-        match legacy_library_type {
-            LegacyLibraryType::GeneExpression => LibraryFeatures::GeneExpression(FeatureType::Gene),
-            LegacyLibraryType::AntibodyCapture => {
-                LibraryFeatures::FeatureBarcodes(FeatureType::Antibody.into())
-            }
-            LegacyLibraryType::AntigenCapture => {
-                LibraryFeatures::FeatureBarcodes(FeatureType::Antigen.into())
-            }
-            LegacyLibraryType::CrisprGuideCapture => {
-                LibraryFeatures::FeatureBarcodes(FeatureType::CRISPR.into())
-            }
-            LegacyLibraryType::Vdj => LibraryFeatures::Vdj(VdjChainType::Auto),
-            LegacyLibraryType::Custom => {
-                LibraryFeatures::FeatureBarcodes(FeatureType::Custom.into())
-            }
-            LegacyLibraryType::Multiplexing => {
-                LibraryFeatures::FeatureBarcodes(FeatureType::Multiplexing.into())
-            }
-            LegacyLibraryType::ATAC => panic!("Unexpected library type 'Chromatin Accessibility'"),
-        }
-    }
-}
-
-impl HasMultiplexing for LibraryFeatures {
-    fn has_multiplexing(&self) -> bool {
-        match *self {
-            LibraryFeatures::FeatureBarcodes(f) => f.iter().any(|f| f.has_multiplexing()),
-            _ => false,
-        }
-    }
-}
-
-impl LibraryFeatures {
-    pub fn gex() -> Self {
-        LibraryFeatures::GeneExpression(FeatureType::Gene)
-    }
-    pub fn has_feature(self, feature_type: FeatureType) -> bool {
+impl std::fmt::Display for LibraryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LibraryFeatures::GeneExpression(f) => f == feature_type,
-            LibraryFeatures::FeatureBarcodes(feats) => feats.iter().any(|f| f == feature_type),
-            _ => false,
-        }
-    }
-    pub fn library_type(self) -> LibraryType {
-        match self {
-            LibraryFeatures::GeneExpression(_) => LibraryType::GeneExpression,
-            LibraryFeatures::Vdj(_) => LibraryType::ImmuneProfiling,
-            LibraryFeatures::FeatureBarcodes(_) => LibraryType::FeatureBarcoding,
-        }
-    }
-    pub fn legacy_library_type(self) -> LegacyLibraryType {
-        match self {
-            LibraryFeatures::GeneExpression(_) => LegacyLibraryType::GeneExpression,
-            LibraryFeatures::Vdj(_) => LegacyLibraryType::Vdj,
-            LibraryFeatures::FeatureBarcodes(features) => {
-                match features.iter().exactly_one().unwrap() {
-                    FeatureType::Antibody => LegacyLibraryType::AntibodyCapture,
-                    FeatureType::Antigen => LegacyLibraryType::AntigenCapture,
-                    FeatureType::CRISPR => LegacyLibraryType::CrisprGuideCapture,
-                    FeatureType::Custom => LegacyLibraryType::Custom,
-                    FeatureType::Multiplexing => LegacyLibraryType::Multiplexing,
-                    _ => panic!(),
-                }
-            }
+            Self::GeneExpression => write!(f, "{}", Self::GENE_EXPRESSION_STR),
+            Self::FeatureBarcodes(fb) => write!(f, "{fb}"),
+            Self::Vdj(ct) => write!(f, "{ct}"),
+            Self::Atac => write!(f, "{}", Self::ATAC_STR),
         }
     }
 }
 
-enum_maker! {
-    /// TODO: Should targeting be a different library type?
-    LibraryType,
-    (GeneExpression, "Gene Expression"),
-    (ImmuneProfiling, "Immune Profiling"),
-    (FeatureBarcoding, "Feature Barcoding")
+impl FromStr for LibraryType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == Self::GENE_EXPRESSION_STR {
+            return Ok(Self::GeneExpression);
+        }
+        if let Ok(fb) = FeatureBarcodeType::from_str(s) {
+            return Ok(Self::FeatureBarcodes(fb));
+        }
+        if let Ok(ct) = VdjChainType::from_str(s) {
+            return Ok(Self::Vdj(ct));
+        }
+        if s == Self::ATAC_STR {
+            return Ok(Self::Atac);
+        }
+        bail!("unable to parse {s} as LibraryType");
+    }
+}
+
+impl AsMartianPrimaryType for LibraryType {
+    fn as_martian_primary_type() -> MartianPrimaryType {
+        MartianPrimaryType::Str
+    }
+}
+
+impl From<FeatureBarcodeType> for LibraryType {
+    fn from(feature_type: FeatureBarcodeType) -> LibraryType {
+        LibraryType::FeatureBarcodes(feature_type)
+    }
+}
+
+#[allow(non_upper_case_globals)]
+impl LibraryType {
+    /// Alias for GeneExpression.
+    pub const Gex: Self = Self::GeneExpression;
+    /// Alias for antibody capture.
+    pub const Antibody: Self = Self::FeatureBarcodes(FeatureBarcodeType::Antibody);
+    /// Alias for antigen capture.
+    pub const Antigen: Self = Self::FeatureBarcodes(FeatureBarcodeType::Antigen);
+    /// Alias for CRISPR guide capture.
+    pub const Crispr: Self = Self::FeatureBarcodes(FeatureBarcodeType::Crispr);
+    /// Alias for cell multiplexing.
+    pub const Cellplex: Self = Self::FeatureBarcodes(FeatureBarcodeType::Multiplexing);
+    /// Alias for custom feature barcoding.
+    pub const Custom: Self = Self::FeatureBarcodes(FeatureBarcodeType::Custom);
+    /// Alias for VDJ Auto chain.
+    pub const VdjAuto: Self = Self::Vdj(VdjChainType::Auto);
+
+    const GENE_EXPRESSION_STR: &'static str = "Gene Expression";
+    const ATAC_STR: &'static str = "Chromatin Accessibility";
+
+    /// Return true if this is a gene expression library.
+    pub fn is_gex(&self) -> bool {
+        *self == Self::GeneExpression
+    }
+
+    /// Return true if this is a VDJ library.
+    pub fn is_vdj(&self) -> bool {
+        matches!(self, Self::Vdj(_))
+    }
+
+    /// Return true if this is a feature barcoding library.
+    pub fn is_fb(&self) -> bool {
+        matches!(self, Self::FeatureBarcodes(_))
+    }
+
+    /// Return true if this library type is feature barcoding of the specified type.
+    pub fn is_fb_type(self, feature_barcode_type: FeatureBarcodeType) -> bool {
+        self.feature_barcode_type() == Some(feature_barcode_type)
+    }
+
+    /// Return the feature barcoding type, if this is a feature barcoding library.
+    pub fn feature_barcode_type(&self) -> Option<FeatureBarcodeType> {
+        match self {
+            Self::FeatureBarcodes(fb) => Some(*fb),
+            Self::GeneExpression | Self::Vdj(_) | Self::Atac => None,
+        }
+    }
+
+    /// Return the VDJ chain type, if this is a VDJ library.
+    pub fn vdj_chain_type(&self) -> Option<VdjChainType> {
+        match self {
+            Self::Vdj(ct) => Some(*ct),
+            Self::GeneExpression | Self::FeatureBarcodes(_) | Self::Atac => None,
+        }
+    }
+
+    /// Return the metrix prefix for this library type as a static str.
+    pub fn as_metric_prefix_static(&self) -> Option<&'static str> {
+        match self {
+            Self::GeneExpression => None,
+            Self::FeatureBarcodes(fbt) => fbt.as_metric_prefix_static(),
+            Self::Vdj(_) => Some("VDJ"),
+            Self::Atac => Some("atac"),
+        }
+    }
+}
+
+impl AsMetricPrefix for LibraryType {
+    fn as_metric_prefix(&self) -> Option<&str> {
+        self.as_metric_prefix_static()
+    }
 }
 
 /// A group of GEMs that were processed together, usually derived from a single
@@ -650,6 +704,12 @@ pub struct Fastq {
     def: FastqDef,
 }
 
+impl Fastq {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 /// Pointer to all the FASTQs from a unique (library, gem_group) tuple.
 /// Entries with the same `library_name` must be from the same physical sequencing
 /// library, and must have been configured with the same `gem_well`, `library_type`,
@@ -658,7 +718,7 @@ pub struct Fastq {
 pub struct LibraryDef {
     pub physical_library_id: String,
     pub gem_well: GemWell,
-    pub library_features: LibraryFeatures,
+    pub library_type: LibraryType,
     /// In CS mode, this will be `FastqDef::Bcl2Fastq(..)`. The `fastq_id` column corresponds to the
     /// `sample_name` in Bcl2Fastq
     pub fastqs: Vec<Fastq>, // Should be non empty
@@ -682,26 +742,6 @@ impl LibraryDef {
             def: fastq_def,
         });
     }
-    pub fn legacy_library_type(&self) -> LegacyLibraryType {
-        self.library_features.legacy_library_type()
-    }
-}
-
-impl HasMultiplexing for LibraryDef {
-    /// Return true if this is a FeatureBarcoding library
-    /// with `Multiplexing` feature type
-    fn has_multiplexing(&self) -> bool {
-        self.library_features.has_multiplexing()
-    }
-}
-
-impl LibraryDef {
-    pub fn library_type(&self) -> LibraryType {
-        self.library_features.library_type()
-    }
-    // pub fn feature_types(&self) -> Option<impl Iterator<Item = FeatureType>> {
-    //     self.library_features.feature_types()
-    // }
 }
 
 /// A fingerprint refers to either:
@@ -725,16 +765,6 @@ pub enum Fingerprint {
     },
 }
 
-impl HasMultiplexing for Fingerprint {
-    /// Return true if this fingerprint is CMO or RTL tagged
-    fn has_multiplexing(&self) -> bool {
-        match *self {
-            Fingerprint::Untagged { .. } => false,
-            Fingerprint::Tagged { .. } => true,
-        }
-    }
-}
-
 impl Fingerprint {
     pub fn untagged(gem_well: GemWell) -> Self {
         Self::Untagged { gem_well }
@@ -751,6 +781,14 @@ impl Fingerprint {
             tag_name,
             translated_tag_names,
             cell_multiplexing_type,
+        }
+    }
+
+    /// Return true if this fingerprint is tagged.
+    fn is_tagged(&self) -> bool {
+        match *self {
+            Fingerprint::Untagged { .. } => false,
+            Fingerprint::Tagged { .. } => true,
         }
     }
 
@@ -789,6 +827,10 @@ impl Fingerprint {
     pub fn is_rtl_multiplexed(&self) -> bool {
         self.cell_multiplexing_type() == Some(CellMultiplexingType::RTL)
     }
+
+    pub fn is_overhang_multiplexed(&self) -> bool {
+        self.cell_multiplexing_type() == Some(CellMultiplexingType::OH)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -800,20 +842,6 @@ pub struct Sample {
     /// In 4.0, either all the fingerprints are untagged or all are cmo tagged
     /// No two samples can share the same fingerprint
     pub fingerprints: Vec<Fingerprint>, // Should not be empty
-}
-
-impl HasMultiplexing for Sample {
-    /// Returns `true` if all the `Fingerprint`s are CMO tagged
-    /// Returns `false` if all the `Fingerprint`s are untagged
-    /// Panics otherwise
-    fn has_multiplexing(&self) -> bool {
-        self.fingerprints
-            .iter()
-            .map(HasMultiplexing::has_multiplexing)
-            .dedup()
-            .exactly_one()
-            .unwrap()
-    }
 }
 
 impl Sample {
@@ -840,7 +868,7 @@ pub struct CrMultiGraphBuilder {
     libraries: TxHashMap<String, LibraryDef>,
     // Set of library features of each gem well
     // In 4.0, all gem wells need to have identical set of library features
-    gem_well_feat: TxHashMap<GemWell, TxHashSet<LibraryFeatures>>,
+    gem_well_feat: TxHashMap<GemWell, TxHashSet<LibraryType>>,
     samples: TxHashMap<String, Sample>,
     fingerprints: TxHashSet<Fingerprint>,
     multiplexed_gem_wells: TxHashSet<GemWell>,
@@ -860,10 +888,10 @@ impl CrMultiGraphBuilder {
         &mut self,
         physical_library_id: String,
         fastq: FastqDef,
-        library_features: LibraryFeatures,
+        library_type: LibraryType,
         gem_well: GemWell,
     ) -> Result<()> {
-        if library_features.has_multiplexing() {
+        if library_type.is_fb_type(FeatureBarcodeType::Multiplexing) {
             self.multiplexed_gem_wells.insert(gem_well);
         }
 
@@ -872,7 +900,7 @@ impl CrMultiGraphBuilder {
                 let mut lib_def = LibraryDef {
                     physical_library_id,
                     gem_well,
-                    library_features,
+                    library_type,
                     fastqs: vec![],
                 };
                 lib_def.push_fastq(fastq, None);
@@ -891,7 +919,7 @@ impl CrMultiGraphBuilder {
                     );
                 }
 
-                if entry.library_features != library_features {
+                if entry.library_type != library_type {
                     bail!(
                         "You supplied two different 'feature_type' values for physical_library_id = {}.\nEach physical_library_id must be associated with a single 'feature_type'.",
                         physical_library_id
@@ -912,8 +940,8 @@ impl CrMultiGraphBuilder {
         }
         self.gem_well_feat
             .entry(gem_well)
-            .or_insert_with(TxHashSet::default)
-            .insert(library_features);
+            .or_default()
+            .insert(library_type);
 
         Ok(())
     }
@@ -932,13 +960,10 @@ impl CrMultiGraphBuilder {
             sample_id,
             fingerprint,
         );
-        if fingerprint.has_multiplexing() {
+        if fingerprint.is_tagged() {
             // TODO: Good error message
             // Check that all the fingerprints are cmo tagged
-            assert!(self
-                .fingerprints
-                .iter()
-                .all(HasMultiplexing::has_multiplexing));
+            assert!(self.fingerprints.iter().all(Fingerprint::is_tagged));
 
             // make sure the GemWell containing this sample is multiplexed
             if fingerprint.is_cmo_multiplexed()
@@ -952,7 +977,7 @@ impl CrMultiGraphBuilder {
             }
         } else {
             // Check that either all the fingerprints are untagged
-            assert!(self.fingerprints.iter().all(|fp| !fp.has_multiplexing()));
+            assert!(self.fingerprints.iter().all(|fp| !fp.is_tagged()));
         }
         self.fingerprints.insert(fingerprint.clone());
 
@@ -1018,52 +1043,16 @@ pub struct CrMultiGraph {
 }
 
 impl CrMultiGraph {
-    pub fn get_multiplexing_method(&self) -> Option<CellMultiplexingType> {
-        match self.has_multiplexing() {
-            false => None,
-            true => Some(
-                self.samples
-                    .iter()
-                    .flat_map(|sample| {
-                        sample
-                            .fingerprints
-                            .iter()
-                            .map(|fingerprint| fingerprint.cell_multiplexing_type().unwrap())
-                            .collect::<Vec<CellMultiplexingType>>()
-                    })
-                    .dedup()
-                    .exactly_one()
-                    .unwrap(),
-            ),
-        }
+    /// Return true if this analysis is using any form of multiplexing.
+    pub fn is_multiplexed(&self) -> bool {
+        self.cell_multiplexing_type().is_some()
     }
 
     /// Return true if one or more libraries is of the specified type.
-    pub fn has_legacy_library_type(&self, t: LegacyLibraryType) -> bool {
-        self.libraries
-            .iter()
-            .any(|lib| lib.legacy_library_type() == t)
+    pub fn has_library_type(&self, t: LibraryType) -> bool {
+        self.libraries.iter().any(|lib| lib.library_type == t)
     }
-}
 
-impl HasMultiplexing for CrMultiGraph {
-    fn has_multiplexing(&self) -> bool {
-        let lib_mult = self.libraries.iter().any(HasMultiplexing::has_multiplexing);
-        let samp_mult = self
-            .samples
-            .iter()
-            .map(HasMultiplexing::has_multiplexing)
-            .dedup()
-            .exactly_one()
-            .unwrap();
-        if lib_mult {
-            assert!(samp_mult);
-        }
-        samp_mult
-    }
-}
-
-impl CrMultiGraph {
     /// Return the cell multiplexing type in use, if there is one.
     pub fn cell_multiplexing_type(&self) -> Option<CellMultiplexingType> {
         self.samples
@@ -1073,17 +1062,6 @@ impl CrMultiGraph {
             .exactly_one()
             .unwrap()
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CrMultiParams {
-    // TODO: Reference, Target sets, force cells etc
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrMultiConfig {
-    graph: CrMultiGraph,
-    params: CrMultiParams,
 }
 
 #[derive(
@@ -1134,7 +1112,7 @@ impl TryFrom<LibraryInfo> for crate::rna_read::LibraryInfo {
     fn try_from(value: LibraryInfo) -> Result<Self> {
         match value {
             LibraryInfo::Count(v) => Ok(v),
-            _ => todo!(),
+            LibraryInfo::Aggr(_) => todo!(),
         }
     }
 }
@@ -1145,7 +1123,7 @@ impl TryFrom<LibraryInfo> for crate::aggr::LibraryInfo {
     fn try_from(value: LibraryInfo) -> Result<Self> {
         match value {
             LibraryInfo::Aggr(v) => Ok(v),
-            _ => todo!(),
+            LibraryInfo::Count(_) => todo!(),
         }
     }
 }
@@ -1190,52 +1168,21 @@ impl SampleReference {
 */
 
 /// The aligner used to align the reads to the reference.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, MartianType, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, MartianType, EnumString, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum AlignerParam {
-    /// The 10x probe aligner used for RTL chemistries.
-    #[serde(rename = "hurtle")]
+    /// 10x probe aligner used for RTL chemistries
     Hurtle,
     /// STAR (Spliced Transcripts Alignment to a Reference)
-    #[serde(rename = "star")]
     Star,
-}
-
-impl FromStr for AlignerParam {
-    type Err = anyhow::Error;
-
-    fn from_str(aligner: &str) -> Result<Self> {
-        match aligner.to_ascii_lowercase().as_str() {
-            "hurtle" => Ok(AlignerParam::Hurtle),
-            "star" => Ok(AlignerParam::Star),
-            _ => bail!("Invalid aligner: {aligner}"),
-        }
-    }
-}
-
-impl fmt::Display for AlignerParam {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let aligner = match self {
-            Self::Hurtle => "hurtle",
-            Self::Star => "star",
-        };
-        write!(f, "{aligner}",)
-    }
-}
-
-impl JsonReport for AlignerParam {
-    fn to_json_reporter(&self) -> JsonReporter {
-        std::iter::once(("", self)).collect()
-    }
 }
 
 #[cfg(test)]
 mod py_api_tests {
     use super::*;
-    use fastq_set::filenames::bcl_processor::SampleIndexSpec;
     use fastq_set::filenames::LaneSpec;
     use insta::assert_json_snapshot;
-    use std::collections::BTreeMap;
-    use strum::EnumCount;
 
     fn untagged_single_gw_graph() -> Result<CrMultiGraph> {
         // 1 sample, 1 gem well, GEX + VDJ + Ab, 1 sequencing per library
@@ -1247,7 +1194,7 @@ mod py_api_tests {
                 "my_gex_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::gex(),
+            LibraryType::Gex,
             GemWell(1),
         )?;
 
@@ -1258,7 +1205,7 @@ mod py_api_tests {
                 "my_vdj_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::Vdj(VdjChainType::Auto),
+            LibraryType::VdjAuto,
             GemWell(1),
         )?;
 
@@ -1269,7 +1216,7 @@ mod py_api_tests {
                 "my_ab_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::FeatureBarcodes(FeatureType::Antibody.into()),
+            LibraryType::Antibody,
             GemWell(1),
         )?;
 
@@ -1292,7 +1239,7 @@ mod py_api_tests {
                 "my_gex_1_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::gex(),
+            LibraryType::Gex,
             GemWell(1),
         )?;
         builder.push_library(
@@ -1302,7 +1249,7 @@ mod py_api_tests {
                 "my_gex_2_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::gex(),
+            LibraryType::Gex,
             GemWell(2),
         )?;
         builder.push_library(
@@ -1312,7 +1259,7 @@ mod py_api_tests {
                 "my_cmo_1_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::FeatureBarcodes(FeatureType::Multiplexing.into()),
+            LibraryType::Cellplex,
             GemWell(1),
         )?;
         builder.push_library(
@@ -1322,7 +1269,7 @@ mod py_api_tests {
                 "my_cmo_2_data".into(),
                 LaneSpec::Any,
             ),
-            LibraryFeatures::FeatureBarcodes(FeatureType::Multiplexing.into()),
+            LibraryType::Cellplex,
             GemWell(2),
         )?;
 
@@ -1375,144 +1322,9 @@ mod py_api_tests {
 
     #[test]
     fn test_py_api_graph_snapshots() {
-        let lib_def_base = LibraryDef {
-            physical_library_id: "GEX_1".to_string(),
-            gem_well: GemWell(2),
-            library_features: LibraryFeatures::gex(),
-            fastqs: vec![],
-        };
-
-        let mut lib_def_1 = lib_def_base.clone();
-        lib_def_1.push_fastq(
-            FastqDef::bcl2fastq(
-                "/path/to/fastq".into(),
-                "my_gex_sample".into(),
-                LaneSpec::Any,
-            ),
-            None,
-        );
-
-        let mut lib_def_2 = lib_def_base;
-        lib_def_2.push_fastq(
-            FastqDef::bcl_processor("/path/to/fastq".into(), SampleIndexSpec::Any, LaneSpec::Any),
-            None,
-        );
-
-        let feat_type_map: BTreeMap<_, _> = (0..FeatureType::COUNT)
-            .map(|i| (FeatureType::from(i as u8).to_string(), i as u8))
-            .collect();
-
-        let cell_multiplexing_type_map: BTreeMap<_, _> = (0..CellMultiplexingType::COUNT)
-            .map(|i| (CellMultiplexingType::from(i as u8).to_string(), i as u8))
-            .collect();
-
         insta::with_settings!({snapshot_path => "snapshots/py_api"}, {
-            assert_json_snapshot!("feat_type_map", feat_type_map);
-            assert_json_snapshot!("cell_multiplexing_type_map", cell_multiplexing_type_map);
-            assert_json_snapshot!("lib_feat_genes", LibraryFeatures::gex());
-            assert_json_snapshot!(
-                "lib_feat_vdj_auto",
-                LibraryFeatures::Vdj(VdjChainType::Auto)
-            );
-            assert_json_snapshot!("lib_feat_vdj_tcr", LibraryFeatures::Vdj(VdjChainType::Tcr));
-            assert_json_snapshot!("lib_feat_vdj_bcr", LibraryFeatures::Vdj(VdjChainType::Ig));
-            assert_json_snapshot!(
-                "lib_feat_fb_ab",
-                LibraryFeatures::FeatureBarcodes(FeatureType::Antibody.into())
-            );
-            assert_json_snapshot!(
-                "lib_feat_fb_all",
-                LibraryFeatures::FeatureBarcodes(FeatureType::feature_barcodes().collect_vec().into())
-            );
-
-            assert_json_snapshot!("lib_def_1", lib_def_1);
-            assert_json_snapshot!("lib_def_2", lib_def_2);
-
-            assert_json_snapshot!("fingerprint_untagged", Fingerprint::untagged(GemWell(1)));
-            assert_json_snapshot!("fingerprint_tagged", Fingerprint::tagged(GemWell(2), "CMO500".into(), Vec::default(), CellMultiplexingType::CMO));
-            assert_json_snapshot!("fingerprint_rtl_tagged", Fingerprint::tagged(GemWell(2), "CMO500".into(), Vec::default(), CellMultiplexingType::RTL));
-
-            assert_json_snapshot!("sample_untagged", Sample {
-                sample_id: "100".into(),
-                description: "My sample".into(),
-                fingerprints: vec![Fingerprint::untagged(GemWell(1))]
-            });
-            assert_json_snapshot!("sample_tagged", Sample {
-                sample_id: "101".into(),
-                description: "My tagged sample".into(),
-                fingerprints: vec![
-                    Fingerprint::tagged(GemWell(1), "CMO500".into(), Vec::default(), CellMultiplexingType::CMO),
-                    Fingerprint::tagged(GemWell(1), "CMO501".into(), Vec::default(), CellMultiplexingType::CMO),
-                    Fingerprint::tagged(GemWell(2), "CMO500".into(), Vec::default(), CellMultiplexingType::CMO)
-                ]
-            });
             assert_json_snapshot!("multi_graph_untagged", untagged_single_gw_graph().unwrap());
             assert_json_snapshot!("multi_graph_tagged", tagged_multi_gw_graph().unwrap());
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use strum::EnumCount;
-
-    #[test]
-    fn test_legacy_conversion() {
-        for legacy_type in LegacyLibraryType::iter() {
-            if legacy_type == LegacyLibraryType::ATAC {
-                continue;
-            }
-            let lib_feat = LibraryFeatures::from(legacy_type);
-            assert_eq!(legacy_type, lib_feat.legacy_library_type());
-        }
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_invalid_legacy_conversion() {
-        let lib_feat = LibraryFeatures::FeatureBarcodes(
-            vec![FeatureType::Antibody, FeatureType::Antigen].into(),
-        );
-        let _ = lib_feat.legacy_library_type();
-    }
-
-    #[test]
-    fn test_iter_order() {
-        for (i, feat) in FeatureType::iter().enumerate() {
-            assert_eq!(i as u8, feat as u8);
-        }
-    }
-
-    #[test]
-    fn test_u8_roundtrip() {
-        for i in 0..FeatureType::COUNT {
-            let f = FeatureType::from(i as u8);
-            let j: u8 = f.into();
-            assert_eq!(i as u8, j);
-        }
-    }
-
-    #[test]
-    fn test_bit_encoded() {
-        let mut encoded = BitEncoded::new();
-        encoded.push(FeatureType::Antibody);
-        assert_eq!(encoded.inspect_bits(), 1u8);
-        encoded.push(FeatureType::Multiplexing);
-        assert_eq!(encoded.inspect_bits(), 9u8);
-        assert_eq!(
-            encoded.iter().collect_vec(),
-            vec![FeatureType::Antibody, FeatureType::Multiplexing]
-        );
-    }
-
-    #[test]
-    fn test_multiplexing_aliases() {
-        let feat: FeatureType = serde_json::from_str(r#""FEATURETEST""#).unwrap();
-        assert_eq!(feat, FeatureType::Multiplexing);
-        let feat: FeatureType = serde_json::from_str(r#""Multiplexing Capture""#).unwrap();
-        assert_eq!(feat, FeatureType::Multiplexing);
-        let feat: FeatureType = serde_json::from_str(r#""Multiplexing Tag Capture""#).unwrap();
-        assert_eq!(feat, FeatureType::Multiplexing);
     }
 }

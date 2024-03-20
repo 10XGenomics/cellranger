@@ -11,6 +11,7 @@ use crate::websummary::hero_metrics::VdjAggrHeroMetrics;
 use crate::websummary::{VdjAggrPipelineInfo, VdjAggrWsContent, VdjAggrWsSummaryTab};
 use crate::write_contig_proto::ProtoFile;
 use anyhow::Result;
+use cr_types::clonotype::ClonotypeId;
 use cr_websummary::{Percent, WsSample};
 use enclone_proto::proto_io::ClonotypeIter;
 use itertools::Itertools;
@@ -19,7 +20,7 @@ use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric::{Metric, SimpleHistogram};
+use metric::SimpleHistogram;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
@@ -94,7 +95,7 @@ fn top_shared_cdr3(
 ) -> Vec<VdjAggrSharedCdr3Row> {
     let mut rows = BinaryHeap::with_capacity(TOP_N + 1);
     for (cdr3_aa, hist) in per_cdr3_gw_hist {
-        let mut per_cat_hist = SimpleHistogram::new();
+        let mut per_cat_hist = SimpleHistogram::default();
         for (gw, n) in hist.distribution() {
             per_cat_hist.observe_by(&f(*gw), n.count());
         }
@@ -153,7 +154,7 @@ impl MartianMain for WriteWsJson {
                     for cdr3_aa in &cdr3_aas {
                         per_cdr3_gw_hist
                             .entry(cdr3_aa.clone())
-                            .or_insert_with(SimpleHistogram::new)
+                            .or_insert_with(SimpleHistogram::default)
                             .observe(&gem_well);
                     }
                 }
@@ -170,7 +171,7 @@ impl MartianMain for WriteWsJson {
             .into_iter()
             .take(TOP_N)
             .map(|r| VdjAggrClonotypeRow {
-                id: r.clonotype_id.replace("clonotype", "").parse().unwrap(),
+                id: r.clonotype_id.parse::<ClonotypeId>().unwrap().id,
                 cdr3_aas: r.cdr3s_aa.split(';').map(Into::into).collect(),
                 num_cells: r.frequency,
                 proportion: Percent::Float(r.proportion),
@@ -225,7 +226,7 @@ impl MartianMain for WriteWsJson {
                     info.donor.clone(),
                     info.origin.clone(),
                 ))
-                .or_insert_with(SimpleHistogram::new)
+                .or_insert_with(SimpleHistogram::default)
                 .observe_owned(summary.clonotype_id);
         }
 

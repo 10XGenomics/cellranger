@@ -4,8 +4,6 @@
 #
 """A helper stage to put all of the per sample outputs together into a struct."""
 
-
-import json
 import os
 from shutil import copyfile
 from typing import Any
@@ -13,7 +11,7 @@ from typing import Any
 import martian
 
 import cellranger.cr_io as cr_io
-from cellranger.multi.config import CrMultiGraph
+from cellranger.fast_utils import MultiGraph
 
 __MRO__ = """
 struct SampleBamFile(
@@ -129,10 +127,7 @@ def main(args, outs):
     if args.multi_graph is None:
         return
 
-    with open(args.multi_graph) as f:
-        data = json.load(f)
-
-    multi_graph = CrMultiGraph.from_json_val(data)
+    multi_graph = MultiGraph.from_path(args.multi_graph)
 
     # running into problems with Martian when disabling this stage so
     # instead we soft-disable it based on the input.
@@ -142,8 +137,8 @@ def main(args, outs):
         or args.sample_matrices is None
     ):
         outs.sample_outs = {}
-        for sample in multi_graph.samples:
-            outs.sample_outs[sample.sample_id] = None
+        for sample_id in multi_graph.sample_ids():
+            outs.sample_outs[sample_id] = None
         outs.unassigned_alignments = None
         outs.unassigned_alignments_bai_index = None
         outs.unassigned_alignments_csi_index = None
@@ -253,9 +248,12 @@ def link_sample_files(
         sample_metrics["summary"],
         relative_path=sample + "_" + os.path.basename(sample_metrics["summary"]),
     )
-    sample_files["per_barcode_metrics"] = hard_link(
-        sample_metrics["per_barcode_metrics"],
-        relative_path=sample + "_" + os.path.basename(sample_metrics["per_barcode_metrics"]),
-    )
+    if sample_metrics["per_barcode_metrics"] is not None:
+        sample_files["per_barcode_metrics"] = hard_link(
+            sample_metrics["per_barcode_metrics"],
+            relative_path=sample + "_" + os.path.basename(sample_metrics["per_barcode_metrics"]),
+        )
+    else:
+        sample_files["per_barcode_metrics"] = None
 
     return sample_files

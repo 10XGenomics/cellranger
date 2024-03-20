@@ -31,10 +31,12 @@ from cellranger.targeted.targeted_constants import (
     TARGETING_METHOD_TL,
 )
 from cellranger.targeted.utils import OFFTARGET_WS_LABEL, TARGETED_WS_LABEL
-from cellranger.webshim.jibes_web import make_color_map
-from cellranger.websummary.analysis_tab_core import TSNE_LAYOUT_CONFIG, get_tsne_key
+from cellranger.webshim.jibes_plotting import make_color_map
+from cellranger.websummary.analysis_tab_core import TSNE_LAYOUT_CONFIG
+from cellranger.websummary.helpers import get_tsne_key
 from cellranger.websummary.metrics import SpatialAggrMetricAnnotations
-from cellranger.websummary.react_components import BarnyardPanel, round_floats_in_list
+from cellranger.websummary.numeric_converters import round_floats_in_list
+from cellranger.websummary.react_components import BarnyardPanel
 
 if TYPE_CHECKING:
     from cellranger.feature.feature_assignments import CellsPerFeature
@@ -58,6 +60,10 @@ READS_PER_UMI_LAYOUT_CONFIG = {
     },
     "hovermode": "closest",
 }
+
+HELP_TEXT_KEY = "helpText"
+TITLE_KEY = "title"
+CANONICAL_VISIUM_HD_BIN_NAME = "square_008um"
 
 SEQ_SATURATION_PLOT_HELP = {
     "helpText": "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per cell), up to the observed sequencing depth. "
@@ -108,11 +114,11 @@ SPATIAL_SEQ_SATURATION_PLOT_HELP = {
 }
 
 RTL_SEQ_SATURATION_PLOT_HELP = {
-    "helpText": "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per spot), up to the observed sequencing depth. "
+    HELP_TEXT_KEY: "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per spot), up to the observed sequencing depth. "
     "Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted probe ligation products have been sequenced. "
     "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. "
     "The dotted line is drawn at a value reasonably approximating the saturation point.",
-    "title": "Sequencing Saturation",
+    TITLE_KEY: "Sequencing Saturation",
 }
 
 MEDIAN_GENE_PLOT_HELP = {
@@ -122,10 +128,18 @@ MEDIAN_GENE_PLOT_HELP = {
 }
 
 SPATIAL_MEDIAN_GENE_PLOT_HELP = {
-    "helpText": "This plot shows the Median Genes per Spot as a function of downsampled sequencing depth in mean reads per spot, up to the observed sequencing depth. "
+    HELP_TEXT_KEY: "This plot shows the Median Genes per Spot as a function of downsampled sequencing depth in mean reads per spot, up to the observed sequencing depth. "
     "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point.",
-    "title": "Median Genes per Spot",
+    TITLE_KEY: "Median Genes per Spot",
 }
+
+SPATIAL_HD_MEAN_GENE_PLOT_HELP_JSON_STRING = (
+    f'"{HELP_TEXT_KEY}": "This plot shows the Mean Genes '
+    "per {bin_size} µm bin as a function of downsampled sequencing depth in mean reads per {bin_size} µm bin, up to the observed sequencing depth. "
+    'The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point.",'
+    f'"{TITLE_KEY}": '
+    '"Median Genes per {bin_size} µm bin"'
+)
 
 BARNYARD_PLOT_HELP = [
     [
@@ -392,12 +406,16 @@ def seq_saturation_plot(sample_data, sample_properties):
         return {
             "seq_saturation_plot": {
                 "plot": plot,
-                "help": SEQ_SATURATION_PLOT_HELP
-                if sample_properties.is_spatial is False
-                else RTL_SEQ_SATURATION_PLOT_HELP
-                if sample_properties.is_spatial
-                and sample_data.targeting_method == TARGETING_METHOD_TL
-                else SPATIAL_SEQ_SATURATION_PLOT_HELP,
+                "help": (
+                    SEQ_SATURATION_PLOT_HELP
+                    if sample_properties.is_spatial is False
+                    else (
+                        RTL_SEQ_SATURATION_PLOT_HELP
+                        if sample_properties.is_spatial
+                        and sample_data.targeting_method == TARGETING_METHOD_TL
+                        else SPATIAL_SEQ_SATURATION_PLOT_HELP
+                    )
+                ),
             }
         }
     else:
@@ -520,9 +538,11 @@ def median_gene_plot(sample_data, sample_properties, species_list):
         return {
             "median_gene_plot": {
                 "plot": plot,
-                "help": MEDIAN_GENE_PLOT_HELP
-                if sample_properties.is_spatial is False
-                else SPATIAL_MEDIAN_GENE_PLOT_HELP,
+                "help": (
+                    MEDIAN_GENE_PLOT_HELP
+                    if sample_properties.is_spatial is False
+                    else SPATIAL_MEDIAN_GENE_PLOT_HELP
+                ),
             }
         }
     else:

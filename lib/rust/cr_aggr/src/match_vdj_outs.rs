@@ -17,7 +17,7 @@ martian_filetype!(VdjLoupeFile, "vloupe");
 pub struct VdjAggrResults {
     airr_rearrangement: TsvFile<()>,
     clonotypes: CsvFile<()>,
-    donor_ref_fa: FaFile,
+    donor_regions: FaFile,
     consensus_fasta: FastaFile,
     filtered_contig_annotations_csv: CsvFile<()>,
     consensus_annotations_csv: CsvFile<()>,
@@ -55,7 +55,7 @@ impl MatchVdjOutsStageInputs {
         idx.map(|i| VdjAggrResults {
             airr_rearrangement: self.airr_rearrangements[i].clone(),
             clonotypes: self.clonotypes[i].clone(),
-            donor_ref_fa: self.donor_ref_fas[i].clone(),
+            donor_regions: self.donor_ref_fas[i].clone(),
             consensus_fasta: self.consensus_fastas[i].clone(),
             filtered_contig_annotations_csv: self.filtered_contig_annotations_csvs[i].clone(),
             consensus_annotations_csv: self.consensus_annotations_csvs[i].clone(),
