@@ -35,6 +35,7 @@ pipeline SC_RNA_AGGREGATOR(
     in  float       tsne_theta,
     in  string      product_type,
     in  bool        is_pd,
+    in  int         min_crispr_umi_threshold,
     out h5          raw_gene_bc_matrices_h5,
     out h5          filtered_gene_bc_matrices_h5,
     out path        filtered_gene_bc_matrices_mex,
@@ -110,7 +111,8 @@ pipeline SC_RNA_AGGREGATOR(
 
     call _CRISPR_ANALYZER(
         filtered_feature_counts_matrix = WRITE_MATRICES.filtered_matrix_h5,
-        feature_reference = CRISPR_AGGR_INPUT_PREP.feature_reference,
+        feature_reference        = CRISPR_AGGR_INPUT_PREP.feature_reference,
+        min_crispr_umi_threshold = self.min_crispr_umi_threshold,
     ) using (
         disabled = SETUP_SAMPLES.disable_crispr_aggr,
     )

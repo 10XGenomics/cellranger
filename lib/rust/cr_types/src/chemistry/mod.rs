@@ -60,7 +60,7 @@ pub enum AutoChemistryName {
     Vdj,
 }
 
-const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 8] = [
+const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 7] = [
     ChemistryName::ThreePrimeV1,
     ChemistryName::ThreePrimeV2,
     ChemistryName::ThreePrimeV3,
@@ -69,7 +69,6 @@ const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 8] = [
     ChemistryName::ThreePrimeV3LT,
     ChemistryName::ThreePrimeV3HT,
     ChemistryName::ThreePrimeV4,
-    ChemistryName::ThreePrimeV4HT,
     // ARC is not supported by count, but is included to improve debugging
     // of reagent mix-ups.
     ChemistryName::ArcV1,
@@ -273,9 +272,6 @@ pub enum ChemistryName {
     #[serde(rename = "SC5P-R2-OH-v3")]
     #[strum(serialize = "SC5P-R2-OH-v3")]
     FivePrimeR2OHV3,
-    #[serde(rename = "SC5PHT-v3")]
-    #[strum(serialize = "SC5PHT-v3")]
-    FivePrimeHTV3,
     #[serde(rename = "SC5P-PE-v3")]
     #[strum(serialize = "SC5P-PE-v3")]
     FivePrimePEV3,
@@ -304,9 +300,6 @@ pub enum ChemistryName {
     #[serde(rename = "SC3Pv4-OH")]
     #[strum(serialize = "SC3Pv4-OH")]
     ThreePrimeV4OH,
-    #[serde(rename = "SC3Pv4HT")]
-    #[strum(serialize = "SC3Pv4HT")]
-    ThreePrimeV4HT,
 
     #[serde(rename = "SPATIAL3Pv1")]
     #[strum(serialize = "SPATIAL3Pv1")]
@@ -367,11 +360,9 @@ impl ChemistryName {
             // These are explicitly listed for future exhaustiveness checks.
             FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3 | VdjR1
             | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimePE
-            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimeHTV3 | FivePrimePEV3
-            | ThreePrimeV1 | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT
-            | ThreePrimeV3HT | ThreePrimeV4 | ThreePrimeV4OH | ThreePrimeV4HT | ArcV1 | AtacV1 => {
-                Some(false)
-            }
+            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimePEV3 | ThreePrimeV1
+            | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
+            | ThreePrimeV4 | ThreePrimeV4OH | ArcV1 | AtacV1 => Some(false),
         }
     }
 
@@ -396,11 +387,11 @@ impl ChemistryName {
             | MFRP_CRISPR => true,
             Custom | SFRP | FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3
             | VdjR1 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimePE
-            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimeHTV3 | FivePrimePEV3
-            | ThreePrimeV1 | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT
-            | ThreePrimeV3HT | ThreePrimeV4 | ThreePrimeV4OH | ThreePrimeV4HT
-            | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
-            | SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1 | ArcV1 | AtacV1 => false,
+            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimePEV3 | ThreePrimeV1
+            | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
+            | ThreePrimeV4 | ThreePrimeV4OH | SpatialThreePrimeV1 | SpatialThreePrimeV2
+            | SpatialThreePrimeV3 | SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1
+            | ArcV1 | AtacV1 => false,
         }
     }
 
@@ -609,10 +600,10 @@ impl ChemistryName {
         match self {
             // standard 'modern' chemistries
             ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
-            | ThreePrimeV4 | ThreePrimeV4HT | ThreePrimeV4OH | SpatialThreePrimeV1
-            | SpatialThreePrimeV2 | SpatialThreePrimeV3 | SpatialThreePrimeV4
-            | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimeR2V3
-            | FivePrimeR2OHV3 | FivePrimeHTV3 | FeatureBarcodingOnly | SFRP | ArcV1 => &[
+            | ThreePrimeV4 | ThreePrimeV4OH | SpatialThreePrimeV1 | SpatialThreePrimeV2
+            | SpatialThreePrimeV3 | SpatialThreePrimeV4 | SpatialThreePrimeV5 | FivePrimeR2
+            | FivePrimeR2OH | FivePrimeHT | FivePrimeR2V3 | FivePrimeR2OHV3
+            | FeatureBarcodingOnly | SFRP | ArcV1 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],

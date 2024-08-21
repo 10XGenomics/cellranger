@@ -354,7 +354,7 @@ class _VersionCmd(NamedTuple):
 _PACKAGE_VERSION_CMDS = [
     _VersionCmd(name="mro", cmd=["mro", "--version"]),
     _VersionCmd(name="mrp", cmd=["mrp", "--version"]),
-    _VersionCmd(name="Anaconda", cmd=["python", "--version"]),
+    _VersionCmd(name="python", cmd=["python", "--version"]),
     _VersionCmd(name="numpy", cmd=["python", "-c", "import numpy; print(numpy.__version__)"]),
     _VersionCmd(name="scipy", cmd=["python", "-c", "import scipy; print(scipy.__version__)"]),
     _VersionCmd(name="pysam", cmd=["python", "-c", "import pysam; print(pysam.__version__)"]),

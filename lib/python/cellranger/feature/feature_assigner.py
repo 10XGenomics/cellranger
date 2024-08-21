@@ -44,7 +44,6 @@ FEATURE_SEPARATOR = b"|"
 UMI_NUM_TRIES = 10  # Number of initial points to try for GMM-fitting
 UMI_MIX_INIT_SD = 0.25  # Initial standard deviation for GMM components
 MIN_COUNTS_PER_ANTIBODY = 1000  # Filter out background antibodies
-# TODO: revise after background correction is implemented
 
 # Filtering feature assignments based on UMI thresholds and correlation with other tags
 COUNTS_DYNAMIC_RANGE = 50.0
@@ -210,10 +209,10 @@ def _calculate_n_let_diversity_probs(n_let: int, n_tags: int) -> np.ndarray:
     return probs
 
 
-def call_presence_with_gmm_ab(umi_counts: np.ndarray, *, umi_threshold: int = 1) -> np.ndarray:
+def call_presence_with_gmm_ab(umi_counts: np.ndarray, *, min_umi_threshold: int = 1) -> np.ndarray:
     """Given the UMI counts for a specific antibody, separate signal from background.
 
-    A cell must have at least `umi_threshold` UMIs for this feature to be considered positive.
+    A cell must have at least `min_umi_threshold` UMIs for this feature to be considered positive.
     """
     if np.max(umi_counts) == 0 or max(umi_counts.shape) < 2:
         # there are no UMIs, or only one UMI, each barcode has 0 count
@@ -227,7 +226,7 @@ def call_presence_with_gmm_ab(umi_counts: np.ndarray, *, umi_threshold: int = 1)
     positive_component = np.argmax(gmm.means_)
 
     # Classify each cell
-    return (umi_counts >= umi_threshold) & (gmm.predict(log_umi_counts) == positive_component)
+    return (umi_counts >= min_umi_threshold) & (gmm.predict(log_umi_counts) == positive_component)
 
 
 # This cannot use a namedtuple because those are immutable.
@@ -675,7 +674,13 @@ class FeatureAssigner:
 class GuideAssigner(FeatureAssigner):
     """Sub-class of FeatureAssigner specific to CRISPR Library features."""
 
-    def __init__(self, matrix: cr_matrix.CountMatrix, feature_type: str):
+    def __init__(
+        self,
+        matrix: cr_matrix.CountMatrix,
+        *,
+        feature_type: str = rna_library.CRISPR_LIBRARY_TYPE,
+        min_crispr_umi_threshold: int,
+    ):
         super().__init__(
             matrix,
             feature_type,
@@ -687,6 +692,7 @@ class GuideAssigner(FeatureAssigner):
 
         self.feature_mol_name = "guide"
         self.feature_bc_name = "protospacer"
+        self.min_crispr_umi_threshold = min_crispr_umi_threshold
 
         self.method = "GMM"
         assert self.method in SUPPORTED_METHODS, f"Method {self.method} not supported"
@@ -711,22 +717,29 @@ class GuideAssigner(FeatureAssigner):
                 log_transform=False, list_feature_ids=[feature_id]
             )
 
-            in_high_umi_component = GuideAssigner._call_presence(umi_counts, self.method)
+            in_high_umi_component = GuideAssigner._call_presence(
+                umi_counts, self.method, min_crispr_umi_threshold=self.min_crispr_umi_threshold
+            )
             assignments[feature_id] = FeatureAssignments(
                 np.flatnonzero(np.array(in_high_umi_component)), sum(umi_counts), False, None
             )
         return assignments
 
     @staticmethod
-    def _call_presence(counts: np.ndarray, method: str = "GMM") -> np.ndarray:
+    def _call_presence(
+        counts: np.ndarray,
+        method: str = "GMM",
+        *,
+        min_crispr_umi_threshold: int,
+    ) -> np.ndarray:
         """Classify each cell as positive/negative for a CRISPR feature using a GMM.
 
-        A cell must have at least 3 UMIs for this CRISPR feature to be considered positive.
-        This threshold is used to exclude CRISPR features with only background signal and
-        no foreground signal. Without this filter, a CRISPR feature with 0 or 1 UMIs in each cell
-        would call all the cells with one UMI as positive, which renders meaningless the metric
-        `Cells with one or more protospacers detected`. The threshold value was chosen by being
-        the smallest sufficient value on experimental data.
+        A cell must have at least `min_crispr_umi_threshold` UMIs for this CRISPR feature to be
+        considered positive. This threshold is used to exclude CRISPR features with only background
+        signal and no foreground signal. Without this filter, a CRISPR feature with 0 or 1 UMIs
+        in each cell would call all the cells with one UMI as positive, which renders meaningless
+        the metric `Cells with one or more protospacers detected`. The threshold value was chosen
+        by being the smallest sufficient value on experimental data.
 
         Args:
             counts: feature counts
@@ -736,7 +749,7 @@ class GuideAssigner(FeatureAssigner):
             Booleans indicating whether feature is present above background
         """
         if method == "GMM":
-            return call_presence_with_gmm_ab(counts, umi_threshold=3)
+            return call_presence_with_gmm_ab(counts, min_umi_threshold=min_crispr_umi_threshold)
         raise ValueError(f"Method {method} is not supported")
 
     def create_guide_assignments_matrix(self) -> FeatureAssignmentsMatrix:

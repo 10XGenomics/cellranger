@@ -7,7 +7,7 @@ use bio::io::fasta::IndexedReader;
 use bio_types::strand::ReqStrand;
 use itertools::Itertools;
 use ordered_float::NotNan;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json;
 use statrs::statistics::{Data, OrderStatistics};
 use std::collections::{HashMap, HashSet};
@@ -16,7 +16,7 @@ use std::io::{BufWriter, Read, Seek, Write};
 use std::path::Path;
 use std::process::Command;
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize, Clone)]
 struct Interval {
     chrom: String,
     start: u64,
@@ -25,7 +25,7 @@ struct Interval {
     strand: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize)]
 struct Transcript {
     gene: Gene,
     length: u64,
@@ -33,12 +33,12 @@ struct Transcript {
     intervals: Vec<Interval>,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Clone)]
 struct Gene {
     id: String,
     name: String,
-    length: NotNan<f64>,
-    gc_content: NotNan<f64>,
+    length: f64,
+    gc_content: f64,
     intervals: Vec<Interval>,
 }
 
@@ -69,10 +69,6 @@ fn python_gene_index<R: Read + Seek>(
             // only include transcripts on an chromosome actually in the ref
             .filter(|t| chroms.contains(&t.chrom))
             .collect();
-        if txs.is_empty() {
-            // Genes must have at least one transcript.
-            continue;
-        }
 
         let mut all_intervals = Vec::new();
         for tx in &txs {
@@ -119,14 +115,13 @@ fn python_gene_index<R: Read + Seek>(
                 tx_gcs.push(gc);
             }
         }
-
         let gc_content = Data::new(tx_gcs.clone()).median();
 
         let new_gene = Gene {
             id: gene.id.clone(),
             name: gene.name.clone(),
-            length: length.try_into()?,
-            gc_content: gc_content.try_into()?,
+            length,
+            gc_content,
             intervals: gene_intervals,
         };
         genes.push(new_gene.clone());
@@ -154,6 +149,7 @@ fn python_gene_index<R: Read + Seek>(
             transcripts.insert(tx.id.clone(), new_tx);
         }
     }
+    assert_eq!(txome.genes.len(), genes.len());
 
     Ok((transcripts, genes))
 }

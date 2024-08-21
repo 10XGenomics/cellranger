@@ -9,6 +9,7 @@ filetype json;
 
 stage CALL_PROTOSPACERS(
     in  h5   filtered_feature_counts_matrix,
+    in  int  min_crispr_umi_threshold,
     out csv  protospacer_calls_summary,
     out csv  protospacer_calls_per_cell,
     out json protospacer_call_metrics_json,

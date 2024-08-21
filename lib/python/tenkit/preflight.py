@@ -564,7 +564,7 @@ def _grep(
 _PACKAGE_VERSION_CMDS: list[_VersionCmd] = [
     _VersionCmd(name="mro", cmd=_call(["mro", "--version"])),
     _VersionCmd(name="mrp", cmd=_call(["mrp", "--version"])),
-    _VersionCmd(name="Anaconda", cmd=_call(["python", "--version"])),
+    _VersionCmd(name="python", cmd=_call(["python", "--version"])),
     _VersionCmd(
         name="numpy", cmd=_call(["python", "-c", "import numpy; print(numpy.__version__)"])
     ),

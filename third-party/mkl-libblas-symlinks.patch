@@ -1,16 +1,8 @@
-diff --git a/info/files b/info/files
-index 431997e..f8a511d 100644
---- a/info/files
-+++ b/info/files
-@@ -1,1 +1,3 @@
-+lib/libblas.so
-+lib/libblas.so.3
- lib/libmkl_avx.so.1
 diff --git a/info/paths.json b/info/paths.json
 index 0b5bca8..577fbc4 100644
 --- a/info/paths.json
 +++ b/info/paths.json
-@@ -1,5 +1,13 @@
+@@ -1,5 +1,29 @@
  {
    "paths": [
 +    {
@@ -21,9 +13,25 @@ index 0b5bca8..577fbc4 100644
 +      "_path": "lib/libblas.so.3",
 +      "path_type": "softlink"
 +    },
++    {
++      "_path": "lib/libcblas.so",
++      "path_type": "softlink"
++    },
++    {
++      "_path": "lib/libcblas.so.3",
++      "path_type": "softlink"
++    },
++    {
++      "_path": "lib/liblapack.so",
++      "path_type": "softlink"
++    },
++    {
++      "_path": "lib/liblapack.so.3",
++      "path_type": "softlink"
++    },
      {
-       "_path": "lib/libmkl_avx.so.1",
+       "_path": "lib/libmkl_avx.so.2",
        "path_type": "hardlink",
--- 
+--
 2.26.1
 

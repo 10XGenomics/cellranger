@@ -234,37 +234,6 @@
             }
         ]
     },
-    "SC3Pv4HT": {
-        "barcode": [
-            {
-                "kind": "gel_bead",
-                "length": 16,
-                "offset": 0,
-                "read_type": "R1",
-                "whitelist": {
-                    "name": "3M-3pgex-may-2023"
-                }
-            }
-        ],
-        "description": "Single Cell 3' v4 HT",
-        "endedness": "three_prime",
-        "name": "SC3Pv4HT",
-        "rna": {
-            "length": null,
-            "offset": 0,
-            "read_type": "R2"
-        },
-        "rna2": null,
-        "strandedness": "+",
-        "umi": [
-            {
-                "length": 12,
-                "min_length": 10,
-                "offset": 16,
-                "read_type": "R1"
-            }
-        ]
-    },
     "SC3Pv3LT": {
         "barcode": [
             {
@@ -352,7 +321,7 @@
         "umi": [
             {
                 "length": 12,
-                "min_length": null,
+                "min_length": 10,
                 "offset": 16,
                 "read_type": "R1"
             }
@@ -414,7 +383,7 @@
         "umi": [
             {
                 "length": 12,
-                "min_length": null,
+                "min_length": 10,
                 "offset": 16,
                 "read_type": "R1"
             }
@@ -494,7 +463,7 @@
         "umi": [
             {
                 "length": 12,
-                "min_length": null,
+                "min_length": 10,
                 "offset": 16,
                 "read_type": "R1"
             }
@@ -525,37 +494,6 @@
         "umi": [
             {
                 "length": 10,
-                "min_length": null,
-                "offset": 16,
-                "read_type": "R1"
-            }
-        ]
-    },
-    "SC5PHT-v3": {
-        "barcode": [
-            {
-                "kind": "gel_bead",
-                "length": 16,
-                "offset": 0,
-                "read_type": "R1",
-                "whitelist": {
-                    "name": "3M-5pgex-jan-2023"
-                }
-            }
-        ],
-        "description": "Single Cell 5' HT v3",
-        "endedness": "five_prime",
-        "name": "SC5PHT-v3",
-        "rna": {
-            "length": null,
-            "offset": 0,
-            "read_type": "R2"
-        },
-        "rna2": null,
-        "strandedness": "-",
-        "umi": [
-            {
-                "length": 12,
                 "min_length": null,
                 "offset": 16,
                 "read_type": "R1"
@@ -626,7 +564,7 @@
         "umi": [
             {
                 "length": 12,
-                "min_length": null,
+                "min_length": 10,
                 "offset": 16,
                 "read_type": "R1"
             }
@@ -696,7 +634,7 @@
         "umi": [
             {
                 "length": 12,
-                "min_length": null,
+                "min_length": 10,
                 "offset": 16,
                 "read_type": "R1"
             }
@@ -758,7 +696,7 @@
         "umi": [
             {
                 "length": 12,
-                "min_length": null,
+                "min_length": 10,
                 "offset": 16,
                 "read_type": "R1"
             }

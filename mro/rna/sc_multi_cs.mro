@@ -21,6 +21,7 @@ struct CountInputsMinimal(
     BarcodeAssignments force_sample_barcodes,
     bool               tenx_cmos,
     float              min_assignment_confidence,
+    int                min_crispr_umi_threshold,
 )
 
 pipeline FULL_VDJ_INPUTS(
@@ -118,6 +119,7 @@ pipeline FULL_COUNT_INPUTS(
     out float              min_assignment_confidence,
     out csv[]              annotations,
     out string             cas_model,
+    out int                min_crispr_umi_threshold,
 )
 {
     call WRITE_GENE_INDEX(
@@ -221,9 +223,9 @@ pipeline SC_MULTI_CS(
             "SC3Pv3HT",
             "SC3Pv4",
             "SC5P-PE",
+            "SC5P-PE-v3",
             "SC5P-R2",
             "SC5P-R2-v3",
-            "SC5P-R2-OH-v3",
             "SC5PHT",
             "SC-FB",
             "SFRP",

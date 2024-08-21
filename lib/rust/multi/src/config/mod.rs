@@ -21,6 +21,7 @@ use barcode::WhitelistSource;
 use cr_types::chemistry::{
     AutoChemistryName, AutoOrRefinedChemistry, ChemistryName, ChemistrySpecs,
 };
+use cr_types::constants::DEFAULT_MIN_CRISPR_UMI_THRESHOLD;
 use cr_types::reference::feature_reference::{
     BeamMode, FeatureConfig, SpecificityControls, MHC_ALLELE, NO_ALLELE,
 };
@@ -349,6 +350,7 @@ impl FromStr for ParseAutoOrRefinedChemistry {
             "sc3pv3lt" => Refined(ThreePrimeV3LT),
             "sc3pv3ht" => Refined(ThreePrimeV3HT),
             "sc5p-pe" | "sc5ppe" => Refined(FivePrimePE),
+            "sc5p-pe-v3" | "sc5ppev3" => Refined(FivePrimePEV3),
             "sc5p-r2" | "sc5pr2" => Refined(FivePrimeR2),
             "sc5p-r2-v3" | "sc5pr2v3" => Refined(FivePrimeR2V3),
             "sc5p-r2-oh-v3" | "sc5pr2ohv3" => Refined(FivePrimeR2OHV3),
@@ -697,6 +699,7 @@ pub struct FeatureParams {
     pub r1_length: Option<usize>,
     pub r2_length: Option<usize>,
     pub filter_aggregates: bool,
+    pub min_crispr_umi: usize,
 }
 
 impl<'a> TryFrom<&Section<'a>> for FeatureParams {
@@ -708,6 +711,8 @@ impl<'a> TryFrom<&Section<'a>> for FeatureParams {
         let mut r1_length: Option<usize> = None;
         let mut r2_length: Option<usize> = None;
         let mut filter_aggregates = true;
+        let mut min_crispr_umi = DEFAULT_MIN_CRISPR_UMI_THRESHOLD;
+
         for row in &sec.rows {
             if row.is_empty() {
                 continue;
@@ -735,6 +740,11 @@ impl<'a> TryFrom<&Section<'a>> for FeatureParams {
                         filter_aggregates = val.parse::<Bool>(ctx)?.into();
                     }
                 }
+                "min-crispr-umi" => {
+                    if let Some(val) = row.get(1).and_then(empty_is_none) {
+                        min_crispr_umi = val.parse::<AtLeastOne>(ctx)?.0;
+                    }
+                }
                 _ => {
                     bail!(
                         "{ctx} unknown parameter '{}' provided at line: {}, col: {}",
@@ -750,6 +760,7 @@ impl<'a> TryFrom<&Section<'a>> for FeatureParams {
             r1_length,
             r2_length,
             filter_aggregates,
+            min_crispr_umi,
         })
     }
 }
@@ -3933,6 +3944,11 @@ vdj_ig,fastqs/cellranger/multi/vdj_ig_tiny,any,,vdj,
     #[test]
     fn test_multiple_vdjt_libraries() {
         insta::assert_debug_snapshot!(MultiConfigCsv::from_csv("test/multiple_vdj_t.csv"));
+    }
+
+    #[test]
+    fn test_crispr_with_umi_thresh() {
+        insta::assert_debug_snapshot!(MultiConfigCsv::from_csv("test/crispr_with_umi_thresh.csv"));
     }
 
     #[test]

@@ -20,7 +20,7 @@ import cellranger.h5_constants as h5_constants
 import cellranger.hdf5 as cr_h5
 from cellranger.feature.antigen.specificity import MHC_ALLELE, TARGETING_ANTIGEN
 from cellranger.rna.library import ANTIGEN_LIBRARY_TYPE
-from cellranger.targeted.targeted_constants import PROBE_ID_IGNORE_PREFIXES
+from cellranger.targeted.targeted_constants import EXCLUDED_PROBE_ID_PREFIXES
 
 FEATURE_TYPE = "feature_type"
 # Required HDF5 datasets
@@ -228,18 +228,18 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
 
     def get_feature_ids_excluding_deprecated_probes(self) -> list[bytes]:
         """Return the list of feature IDs excluding deprecated probes."""
-        return [f.id for f in self.feature_defs if not f.id.startswith(PROBE_ID_IGNORE_PREFIXES)]
+        return [f.id for f in self.feature_defs if not f.id.startswith(EXCLUDED_PROBE_ID_PREFIXES)]
 
     def has_deprecated_probes(self) -> bool:
         """Return true if there are deprecated probes in features."""
-        return any(f.id.startswith(PROBE_ID_IGNORE_PREFIXES) for f in self.feature_defs)
+        return any(f.id.startswith(EXCLUDED_PROBE_ID_PREFIXES) for f in self.feature_defs)
 
     def get_feature_types_excluding_deprecated_probes(self) -> list[str]:
         """Return the list of feature types excluding deprecated probes."""
         return [
             f.feature_type
             for f in self.feature_defs
-            if not f.id.startswith(PROBE_ID_IGNORE_PREFIXES)
+            if not f.id.startswith(EXCLUDED_PROBE_ID_PREFIXES)
         ]
 
     def get_antigen_control(self) -> tuple | None:

@@ -18,12 +18,9 @@ const ALLOWED_COUNT_CHEM_INPUTS: [(AutoOrRefinedChemistry, Option<&str>); 17] = 
     (Refined(ThreePrimeV3HT), Some("Single Cell 3'v3 HT")),
     (Refined(ThreePrimeV4), Some("Single Cell 3'v4")),
     (Refined(FivePrimePE), Some("Single Cell 5' paired end")),
+    (Refined(FivePrimePEV3), Some("Single Cell 5' paired end v3")),
     (Refined(FivePrimeR2), Some("Single Cell 5' R2-only")),
     (Refined(FivePrimeR2V3), Some("Single Cell 5' R2-only v3")),
-    (
-        Refined(FivePrimeR2OHV3),
-        Some("Single Cell 5' R2-only OH v3"),
-    ),
     (Refined(FivePrimeHT), None),
     (Refined(FivePrimeR2), None),
     (

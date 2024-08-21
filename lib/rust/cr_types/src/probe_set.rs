@@ -60,19 +60,10 @@ where
     })
 }
 
-// TODO: Handle constants better to make sure both python and
-// rust code has access to them.
-/// List of probe id prefixes to be ignored
-const EXCLUDED_PROBE_ID_PREFIXES: [&str; 8] = [
-    "DEPRECATED",
-    "Hum-",
-    "IGNORE",
-    "INTERGENIC",
-    "IR",
-    "NC",
-    "VAR",
-    "VDJ",
-];
+/// List of gene/probe ID prefixes that are excluded from the filtered_feature_bc_matrix.
+/// Ensure that the corresponding Python and Rust constants are identical.
+const EXCLUDED_PROBE_ID_PREFIXES: [&str; 6] =
+    ["DEPRECATED", "Hum-", "IGNORE", "NC-", "VAR_", "VDJ_"];
 
 /// Return true if this probe ID is excluded based on its probe ID.
 pub fn is_deprecated_probe(probe_id: &str) -> bool {

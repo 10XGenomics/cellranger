@@ -206,6 +206,7 @@ struct CountInputs(
     BarcodeAssignments force_sample_barcodes,
     bool               tenx_cmos,
     float              min_assignment_confidence,
+    int                min_crispr_umi_threshold,
     csv[]              annotations,
     string             cas_model,
 )

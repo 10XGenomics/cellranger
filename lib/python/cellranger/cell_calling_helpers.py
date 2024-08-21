@@ -960,7 +960,7 @@ def filter_cellular_barcodes_fixed_cutoff(bc_counts, cutoff: int):
     top_n = min(cutoff, nonzero_bcs)
     top_bc_idx = np.sort(np.argsort(bc_counts, kind=NP_SORT_KIND)[::-1][0:top_n])
     metrics = BarcodeFilterResults.init_with_constant_call(top_n)
-    metrics.filtered_bcs_cutoff = np.sort(bc_counts)[::-1][top_n]
+    metrics.filtered_bcs_cutoff = np.sort(bc_counts)[::-1][top_n - 1]
     return top_bc_idx, metrics, None
 
 

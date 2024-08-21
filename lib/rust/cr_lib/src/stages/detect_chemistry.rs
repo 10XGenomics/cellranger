@@ -451,7 +451,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![ThreePrimeV4, ThreePrimeV4HT] {
+    } else if wl_matching_chemistries == set![ThreePrimeV4] {
         Some(validate_chemistry(
             ThreePrimeV4,
             metadata.allowed_chems,
@@ -467,7 +467,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![FivePrimeR2V3, FivePrimeHTV3] {
+    } else if wl_matching_chemistries == set![FivePrimeR2V3] {
         Some(validate_chemistry(
             FivePrimeR2V3,
             metadata.allowed_chems,
@@ -649,7 +649,7 @@ fn validate_multiplexing(chemistry_type: ChemistryName, sample_defs: &[SampleDef
             *threeprime_lt_multiplexing()?,
             "Multiplexing Capture libraries are not supported with Single Cell 3' v3 LT chemistry"
         ),
-        FivePrimeR1 | FivePrimeR2 | FivePrimePE => ensure!(
+        FivePrimeR1 | FivePrimeR2 | FivePrimePE | FivePrimePEV3 => ensure!(
             *fiveprime_multiplexing()?,
             "Multiplexing Capture libraries are not supported with Single Cell 5' chemistries"
         ),

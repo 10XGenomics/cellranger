@@ -375,15 +375,18 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
         }
     }
 
-    let mut gene_to_transcripts = BTreeMap::new();
+    // Include genes with no transcripts.
+    let mut gene_to_transcripts: BTreeMap<_, _> =
+        genes.iter().map(|gene| (gene.idx, Vec::new())).collect();
+
     for tx in &mut transcripts {
         // Sort the exons so they're in coordinate order on the genome
         tx.exons.sort();
 
         // Tabulate the set of transcripts for each gene
         gene_to_transcripts
-            .entry(tx.gene_idx)
-            .or_insert_with(Vec::new)
+            .get_mut(&tx.gene_idx)
+            .with_context(|| format!("transcript {} is missing", tx.id))?
             .push(tx.idx);
     }
 
@@ -426,7 +429,7 @@ mod test {
 
     // test duplicates can't be parsed.
     #[test]
-    fn test_no_dups() -> Result<()> {
+    fn test_no_dups() {
         let gtf = "\
 NC_000086.8	BestRefSeq	gene	168758039	168761913	.	-	.	gene_id \"G530011O06Rik\"
 NC_000087.8	BestRefSeq	gene	90762409	90766319	.	-	.	gene_id \"G530011O06Rik\"; ";
@@ -436,13 +439,18 @@ NC_000087.8	BestRefSeq	gene	90762409	90766319	.	-	.	gene_id \"G530011O06Rik\"; "
         if let Err(e) = txome {
             assert_eq!(format!("{e}"), expected);
         }
-        // This should succeed
-        let alt_gtf = "\
+    }
+
+    #[test]
+    fn test_missing_transcript() {
+        let gtf = b"\
 NC_000087.8	BestRefSeq	exon	90765690	90766319	.	-	.	gene_id \"G530011O06Rik\"; transcript_id \"NR_137283.1\";
 NC_000086.8	BestRefSeq	gene	168758039	168761913	.	-	.	gene_id \"G530011O06Rik\";";
-        let txome2 = Transcriptome::from_reader(BufReader::new(alt_gtf.as_bytes()));
-        assert!(txome2.is_ok());
-        Ok(())
+        let txome = Transcriptome::from_reader(BufReader::new(gtf.as_slice()));
+        assert!(txome.is_err());
+        if let Err(err) = txome {
+            assert_eq!(err.to_string(), "transcript NR_137283.1 is missing");
+        }
     }
 
     #[test]

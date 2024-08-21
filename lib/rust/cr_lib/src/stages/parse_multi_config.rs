@@ -151,6 +151,7 @@ pub struct CountInputs {
     pub force_sample_barcodes: BarcodeAssignments,
     pub tenx_cmos: Option<bool>,
     pub min_assignment_confidence: Option<f64>,
+    pub min_crispr_umi_threshold: Option<usize>,
     pub annotations: Option<Vec<CsvFile<()>>>,
     pub cas_model: Option<String>,
 }
@@ -503,6 +504,7 @@ impl MartianMain for ParseMultiConfig {
                     },
                     tenx_cmos,
                     min_assignment_confidence: gex.min_assignment_confidence,
+                    min_crispr_umi_threshold: cfg.feature.as_ref().map(|x| x.min_crispr_umi),
                     annotations: None,
                     cas_model: gex.cas_model.clone(),
                 });

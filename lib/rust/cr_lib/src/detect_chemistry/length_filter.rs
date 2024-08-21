@@ -79,9 +79,12 @@ impl<'a> ChemistryFilter<'a> for LengthFilter<'a> {
         &self,
         mut result: TxHashSet<ChemistryName>,
     ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        use ChemistryName::{FivePrimePE, FivePrimeR2, VdjPE, VdjR2};
+        use ChemistryName::{FivePrimePE, FivePrimePEV3, FivePrimeR2, FivePrimeR2V3, VdjPE, VdjR2};
         if result.contains(&FivePrimePE) {
             result.remove(&FivePrimeR2);
+        }
+        if result.contains(&FivePrimePEV3) {
+            result.remove(&FivePrimeR2V3);
         }
         if result.contains(&VdjPE) {
             result.remove(&VdjR2);

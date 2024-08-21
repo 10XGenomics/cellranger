@@ -82,6 +82,7 @@ struct CountInputsCS(
     int                emptydrops_minimum_umis,
     int                global_minimum_umis,
     int                max_mito_percent,
+    int                min_crispr_umi_threshold,
 )
 
 struct GemWellInputs(
@@ -310,6 +311,7 @@ struct CounterInputs(
     bool               no_bam,
     BarcodeAssignments force_sample_barcodes,
     float              min_assignment_confidence,
+    int                min_crispr_umi_threshold,
 )
 
 # In VDJ, the contig assembler is run for each gem well
@@ -1225,6 +1227,7 @@ pipeline FORCE_SAMPLE_DEF_GEM_WELL(
             include_introns:             self.count_inputs.include_introns,
             initial_reads:               self.count_inputs.initial_reads,
             min_assignment_confidence:   self.count_inputs.min_assignment_confidence,
+            min_crispr_umi_threshold:    self.count_inputs.min_crispr_umi_threshold,
             no_bam:                      self.count_inputs.no_bam,
             no_target_umi_filter:        self.count_inputs.no_target_umi_filter,
             primers:                     self.count_inputs.primers,
@@ -1462,7 +1465,8 @@ pipeline COUNT_ANALYZER(
 
     call _CRISPR_ANALYZER(
         filtered_feature_counts_matrix = self.filtered_matrices_h5,
-        feature_reference = self.feature_reference,
+        feature_reference        = self.feature_reference,
+        min_crispr_umi_threshold = self.count_inputs.min_crispr_umi_threshold,
     ) using (
         disabled = self.disable_crispr,
     )
@@ -1878,34 +1882,35 @@ pipeline MERGE_GEM_WELLS_AND_SLICE_CELLS(
 
     call SC_RNA_AGGREGATOR(
         # self.count_input.sample_id,
-        sample_id             = "sample",
+        sample_id                = "sample",
         # self.count_input.sample_id,
-        sample_desc           = "sample",
-        sample_defs           = MAKE_MULTI_GEM_RNA_AGGR_SAMPLE_DEFS.sample_defs,
-        normalization_mode    = "mapped",
-        no_secondary_analysis = self.count_input.no_secondary_analysis,
-        num_analysis_bcs      = null,
-        num_pca_bcs           = null,
-        num_pca_genes         = null,
-        num_principal_comps   = null,
-        cbc_knn               = null,
-        cbc_alpha             = null,
-        cbc_sigma             = null,
-        cbc_realign_panorama  = null,
-        max_clusters          = null,
-        graphclust_neighbors  = null,
-        neighbor_a            = null,
-        neighbor_b            = null,
-        tsne_perplexity       = null,
-        tsne_input_pcs        = null,
-        tsne_theta            = null,
-        random_seed           = null,
-        tsne_max_dims         = null,
-        tsne_max_iter         = null,
-        tsne_stop_lying_iter  = null,
-        tsne_mom_switch_iter  = null,
-        product_type          = "sc",
-        is_pd                 = self.is_pd,
+        sample_desc              = "sample",
+        sample_defs              = MAKE_MULTI_GEM_RNA_AGGR_SAMPLE_DEFS.sample_defs,
+        normalization_mode       = "mapped",
+        no_secondary_analysis    = self.count_input.no_secondary_analysis,
+        min_crispr_umi_threshold = null,
+        num_analysis_bcs         = null,
+        num_pca_bcs              = null,
+        num_pca_genes            = null,
+        num_principal_comps      = null,
+        cbc_knn                  = null,
+        cbc_alpha                = null,
+        cbc_sigma                = null,
+        cbc_realign_panorama     = null,
+        max_clusters             = null,
+        graphclust_neighbors     = null,
+        neighbor_a               = null,
+        neighbor_b               = null,
+        tsne_perplexity          = null,
+        tsne_input_pcs           = null,
+        tsne_theta               = null,
+        random_seed              = null,
+        tsne_max_dims            = null,
+        tsne_max_iter            = null,
+        tsne_stop_lying_iter     = null,
+        tsne_mom_switch_iter     = null,
+        product_type             = "sc",
+        is_pd                    = self.is_pd,
     )
 
     call DEPEND_ON_MOLECULE_INFO_H5S(

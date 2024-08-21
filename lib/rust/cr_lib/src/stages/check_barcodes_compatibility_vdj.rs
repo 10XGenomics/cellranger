@@ -65,6 +65,7 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
 
         let allowed_gex_chem = [
             ChemistryName::FivePrimePE,
+            ChemistryName::FivePrimePEV3,
             ChemistryName::FivePrimeR1,
             ChemistryName::FivePrimeR2,
             ChemistryName::FivePrimeHT,
@@ -76,7 +77,7 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
 
         ensure!(
             allowed_gex_chem.contains(&gex_chemistry_def.name),
-            "Ony 5' gene expression library types are supported with VDJ. Got {:?}",
+            "Only 5' gene expression library types are supported with VDJ. Got {:?}",
             gex_chemistry_def.name
         );
 

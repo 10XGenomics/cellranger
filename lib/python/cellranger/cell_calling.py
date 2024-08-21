@@ -18,6 +18,7 @@ from cellranger.analysis.diffexp import adjust_pvalue_bh
 from cellranger.chemistry import (
     CHEMISTRY_DESCRIPTION_FIELD,
     CHEMISTRY_SC3P_LT,
+    HT_CHEMISTRIES,
     SC3P_V4_CHEMISTRIES,
     SC5P_V3_CHEMISTRIES,
 )
@@ -132,8 +133,12 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
     # The chips used with V4 have roughly double the GEMs as the older V3 chips
     v4_chemistries = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
     v4_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in v4_chemistries]
+    ht_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in HT_CHEMISTRIES]
+
     if chemistry_description == CHEMISTRY_SC3P_LT[CHEMISTRY_DESCRIPTION_FIELD]:
         N_PARTITIONS = 9000
+    elif chemistry_description in ht_chem_names:
+        N_PARTITIONS = 160000
     elif chemistry_description in v4_chem_names:
         N_PARTITIONS = 80000 * num_probe_bcs if num_probe_bcs and num_probe_bcs > 1 else 160000
     else:

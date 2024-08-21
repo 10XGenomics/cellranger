@@ -21,7 +21,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
-
 const CMD: &str = "cellranger";
 
 #[derive(Debug, Serialize, Clone, Copy)]
@@ -199,11 +198,10 @@ struct Count {
     /// 'SC3Pv2' or 'SC3Pv3' or 'SC3Pv4' for Single Cell 3' v1/v2/v3/v4,
     /// 'SC3Pv3LT' for Single Cell 3' v3 LT,
     /// 'SC3Pv3HT' for Single Cell 3' v3 HT,
-    /// 'SC5P-PE' or 'SC5P-R2' or 'SC5P-R2-v3', 'SC5P-R2-OH-v3' for Single Cell 5',
+    /// 'SC5P-PE' or 'SC5P-PE-v3' or 'SC5P-R2' or 'SC5P-R2-v3', for Single Cell 5',
     /// paired-end/R2-only, 'SC-FB' for Single Cell
     /// Antibody-only 3' v2 or 5'. To analyze the GEX portion
-    /// of multiome data, chemistry must be set to 'ARC-v1';
-    /// 'ARC-v1' chemistry cannot be autodetected.
+    /// of multiome data, chemistry must be set to 'ARC-v1'.
     #[clap(long, value_name = "CHEM", default_value = "auto", value_parser=validate_chemistry)]
     chemistry: AutoOrRefinedChemistry,
 
@@ -220,6 +218,15 @@ struct Count {
     /// Enable or disable antibody and antigen aggregate filtering during cell calling.
     #[clap(long, value_name = "true|false", default_value = "true", hide = true)]
     filter_aggregates: Option<bool>,
+
+    /// Minimum CRISPR UMI threshold
+    #[clap(
+        long = "min-crispr-umi",
+        default_value = "3",
+        value_name = "NUM",
+        value_parser=clap::value_parser!(usize)
+    )]
+    min_crispr_umi_threshold: usize,
 
     /// Do not execute the pipeline.
     /// Generate a pipeline invocation (.mro) file and stop.
@@ -281,6 +288,7 @@ impl Count {
             include_introns: c.include_introns.unwrap(),
             check_library_compatibility: c.check_library_compatibility.unwrap_or(true),
             disable_ab_aggregate_detection: !c.filter_aggregates.unwrap_or(true),
+            min_crispr_umi_threshold: c.min_crispr_umi_threshold,
         })
     }
 }
@@ -306,6 +314,7 @@ struct CountCsMro {
     include_introns: bool,
     check_library_compatibility: bool,
     disable_ab_aggregate_detection: bool,
+    min_crispr_umi_threshold: usize,
 }
 
 /// A subcommand for controlling testing
@@ -424,6 +433,15 @@ struct Aggr {
     #[serde(skip)]
     #[clap(long)]
     dry: bool,
+
+    /// Minimum CRISPR UMI threshold
+    #[clap(
+        long = "min-crispr-umi",
+        default_value = "3",
+        value_name = "NUM",
+        value_parser=clap::value_parser!(usize)
+    )]
+    min_crispr_umi_threshold: usize,
 
     // not a cmd-line arg -- should be filled in with the working dir
     #[clap(hide = true, default_value = ".")]
@@ -635,6 +653,7 @@ impl Testrun {
             include_introns: false,
             check_library_compatibility: true,
             disable_ab_aggregate_detection: false,
+            min_crispr_umi_threshold: 3,
         })
     }
 }

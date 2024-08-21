@@ -12,6 +12,7 @@ filetype json;
 pipeline _CRISPR_ANALYZER(
     in  h5   filtered_feature_counts_matrix,
     in  csv  feature_reference,
+    in  int  min_crispr_umi_threshold,
     out json cells_per_protospacer,
     out json crispr_analysis_metrics,
     out path crispr_analysis,
@@ -19,6 +20,7 @@ pipeline _CRISPR_ANALYZER(
 {
     call CALL_PROTOSPACERS(
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        min_crispr_umi_threshold = self.min_crispr_umi_threshold,
     )
 
     call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_FEATURE(

@@ -24,6 +24,7 @@ from cellranger.matrix import CountMatrix
 __MRO__ = """
 stage CALL_PROTOSPACERS(
     in  h5   filtered_feature_counts_matrix,
+    in  int  min_crispr_umi_threshold,
     out csv  protospacer_calls_summary,
     out csv  protospacer_calls_per_cell,
     out json protospacer_call_metrics_json,
@@ -76,10 +77,12 @@ def main(args, outs):
         .select_features_by_type(rna_library.CRISPR_LIBRARY_TYPE)
         .select_features(range(args.chunk_start, args.chunk_end))
     )
+
     guide_assigner = GuideAssigner(
         matrix=filtered_feature_counts_matrix,
-        feature_type=rna_library.CRISPR_LIBRARY_TYPE,
+        min_crispr_umi_threshold=args.min_crispr_umi_threshold,
     )
+
     guide_assigner.assignments = guide_assigner.get_feature_assignments()
     write_json_from_dict(guide_assigner.get_cells_per_feature(), outs.chunk_cells_per_protospacer)
     write_json_from_dict(

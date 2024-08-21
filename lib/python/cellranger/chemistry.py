@@ -20,6 +20,9 @@ CHEMISTRY_DEFS: dict[str, ChemistryDef] = json.load(
     open(os.path.join(os.path.dirname(__file__), "chemistry_defs.json"))
 )
 
+# HT chemistries
+HT_CHEMISTRIES = [CHEMISTRY_DEFS["SC3Pv3HT"], CHEMISTRY_DEFS["SC5PHT"]]
+
 # LT v3 Chemistry
 CHEMISTRY_SC3P_LT = CHEMISTRY_DEFS["SC3Pv3LT"]
 

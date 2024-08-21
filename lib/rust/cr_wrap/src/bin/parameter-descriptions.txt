@@ -30,8 +30,7 @@ Section: [gene-expression]
         v1/v2/v3/v4, 'SC5P-PE' or 'SC5P-R2' or 'SC5P-R2-v3' for Single Cell 5',
         paired-end/R2-only, 'SC-FB' for Single Cell Antibody-only 3' v2 or 5',
         'SFRP' for singleplex FRP and 'MFRP' for multiplex FRP. To analyse GEX
-        portion of multiome data, chemistry must be set to 'ARC-v1'; 'ARC-v1'
-        chemistry cannot be autodetected. Default: auto.
+        portion of multiome data, chemistry must be set to 'ARC-v1'. Default: auto.
     expect-cells <int>
         Optional. Expected number of recovered cells.
     force-cells <int>
@@ -76,7 +75,9 @@ Section: [feature]
     r2-length <int>
         Optional. Hard trim the input Read 2 of Feature Barcode libraries to
         this length before analysis. Default: do not trim Read 2.
-
+    min-crispr-umi <int>
+        Optional. Minimum CRISPR UMI threshold. Default: 3.
+        
 Section: [vdj]
 
     reference <path>

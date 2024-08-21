@@ -40,8 +40,8 @@ const MIN_MARGIN: i64 = 2;
 impl MappingStats {
     pub(crate) fn compatible_chemistries(&self) -> TxHashSet<ChemistryName> {
         use ChemistryName::{
-            FivePrimeHT, FivePrimePE, FivePrimeR2, ThreePrimeV2, ThreePrimeV3, ThreePrimeV3HT,
-            ThreePrimeV3LT,
+            FivePrimeHT, FivePrimePE, FivePrimePEV3, FivePrimeR2, ThreePrimeV2, ThreePrimeV3,
+            ThreePrimeV3HT, ThreePrimeV3LT,
         };
         if (self.conf_mapped_reads < MIN_CONF_MAPPED_READS as i64)
             || ((self.conf_mapped_reads as f64)
@@ -51,7 +51,7 @@ impl MappingStats {
         } else if self.sense_reads > MIN_MARGIN * self.antisense_reads {
             set![ThreePrimeV2, ThreePrimeV3, ThreePrimeV3LT, ThreePrimeV3HT]
         } else if self.antisense_reads > MIN_MARGIN * self.sense_reads {
-            set![FivePrimeR2, FivePrimePE, FivePrimeHT]
+            set![FivePrimeR2, FivePrimePE, FivePrimePEV3, FivePrimeHT]
         } else {
             set![]
         }
