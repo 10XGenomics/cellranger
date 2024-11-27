@@ -143,11 +143,11 @@ pub fn add_ref_to_bam_header(header: &mut bam::header::Header, seq_name: &str, s
 /// Convert an internal `Read` object into a BAM record.
 /// From the SAM spec:
 /// 1. For a unmapped paired-end or mate-pair read whose mate is mapped, the unmapped read should
-/// have RNAME and POS identical to its mate.
+///    have RNAME and POS identical to its mate.
 /// 2. If all segments in a template are unmapped, their RNAME should be set as ‘*’ and POS as 0.
-/// ...
+///    ...
 /// 4. Unmapped reads should be stored in the orientation in which they came off the sequencing machine
-/// and have their reverse flag bit (0x10) correspondingly unset.
+///    and have their reverse flag bit (0x10) correspondingly unset.
 pub fn read_to_bam_record_opts(
     read: &graph_read::Read,
     alignment: &Option<sw::AlignmentPacket>,

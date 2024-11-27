@@ -23,8 +23,8 @@
 #
 # Shared by GEX, AB etc.
 [library_cell_metrics]
-title = "Cell Statistics"
-help = "Summary statistics about cell-associated barcodes."
+title = "Cell Calling Quality"
+tier = "library"
 entries = [
     "physical_library_id",
     "cell_associated_partitions",
@@ -34,6 +34,7 @@ entries = [
     "partitions_called_multiplets",
     "fraction_cells_passing_high_occupancy_filtering",
 ]
+group_by_key = "physical_library_id"
 
     [library_cell_metrics.physical_library_id]
     header = "Physical library ID"
@@ -41,25 +42,16 @@ entries = [
     help = "Unique identifier for each library."
 
     [library_cell_metrics.cell_associated_partitions]
-    header = "Estimated number of cells"
+    header = "Cells"
     type = "usize"
     help = "The number of barcodes identified by the cell-calling algorithm as containing a cell. Barcodes removed by Protein Aggregate Detection and Filtering or High Occupancy GEM Filtering are not counted."
 
         [[library_cell_metrics.cell_associated_partitions.alerts]]
-        rank = 0
         error_threshold = 0
         warn_threshold = 100
         error_title = "No Cells Detected"
         warn_title = "Low Number of Cells Detected"
         detail = "Estimated number of cells is expected to be > 100. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
-
-        [[library_cell_metrics.cell_associated_partitions.alerts]]
-        rank = 1
-        conditions = { is_lt_chemistry = true }
-        error_threshold = 10000
-        warn_threshold = 1000
-        warn_title = "High Number of Cells Detected for LT Chemistry"
-        detail = "Estimated number of cells is expected to be < 1000 for LT chemistry. LT chemistry does not support cell loads higher than 1000 (multiplet rate might be high). If cell calling looks off, inspect the data to determine the appropriate cell count and use --force-cells."
 
     [library_cell_metrics.mean_reads_per_cell_associated_partition]
     type = "FloatAsInt"
@@ -106,39 +98,55 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 # V(D)J Cell Statistics
 # --------------------------------------------------------------------------------------------------
-[vdj_library_cell_metrics]
-title = "Cell Statistics"
-help = "Summary statistics about cells."
+[vdj_library_metrics_per_ocm_barcode]
+title = "Metrics per OCM Barcode ID"
+tier = "library"
 entries = [
-    "physical_library_id",
-    "vdj_filtered_bcs",
-    "vdj_total_raw_read_pairs_per_filtered_bc",
+    "ocm_barcode_id",
+    "sample_id",
+    "vdj_cells_per_tag",
 ]
+group_by_key = "ocm_barcode_id"
 
-    [vdj_library_cell_metrics.physical_library_id]
-    header = "Physical library ID"
+    [vdj_library_metrics_per_ocm_barcode.ocm_barcode_id]
+    header = "OCM Barcode ID"
     type = "String"
-    help = "Unique identifier for each library."
+    help = "The identifier of this OCM barcode."
 
-    [vdj_library_cell_metrics.vdj_filtered_bcs]
-    header = "Estimated number of cells"
-    type = "usize"
-    help = "The number of barcodes estimated to be associated with cells that express targeted V(D)J transcripts."
+    [vdj_library_metrics_per_ocm_barcode.sample_id]
+    header = "Sample ID"
+    type = "String"
+    help = "The identifier of the sample associated with this OCM barcode."
 
-        [[vdj_library_cell_metrics.vdj_filtered_bcs.alerts]]
-        error_threshold = 0
-        warn_threshold = 10
-        error_title = "No Cells Detected"
-        warn_title = "Low Number of Cells Detected"
-        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+    [vdj_library_metrics_per_ocm_barcode.vdj_cells_per_tag]
+    header = "VDJ cells"
+    type = "CountAndPercent"
+    help = "Number and fraction of VDJ cells per OCM Barcode ID amongst all VDJ cells detected in this GEM well"
 
-    [vdj_library_cell_metrics.vdj_total_raw_read_pairs_per_filtered_bc]
-    header = "Mean reads per cell"
-    type = "FloatAsInt"
-    help = "Number of input read pairs divided by the estimated number of cells."
+[vdj_library_metrics_per_hashtag_id]
+title = "Metrics per Hashtag ID"
+tier = "library"
+entries = [
+    "hashtag_id",
+    "sample_id",
+    "vdj_cells_per_tag",
+]
+group_by_key = "hashtag_id"
 
+    [vdj_library_metrics_per_hashtag_id.hashtag_id]
+    header = "Hashtag ID"
+    type = "String"
+    help = "The identifier of this Hashtag."
 
+    [vdj_library_metrics_per_hashtag_id.sample_id]
+    header = "Sample ID"
+    type = "String"
+    help = "The identifier of the sample associated with this Hashtag."
 
+    [vdj_library_metrics_per_hashtag_id.vdj_cells_per_tag]
+    header = "VDJ cells"
+    type = "CountAndPercent"
+    help = "Number and fraction of VDJ cells per Hashtag ID amongst all VDJ cells detected in this GEM well."
 # --------------------------------------------------------------------------------------------------
 # Sequencing Metrics per fastq id
 # --------------------------------------------------------------------------------------------------
@@ -146,7 +154,7 @@ entries = [
 # Shared by GEX, VDJ, AB etc.
 [sequencing_metrics]
 title = "Sequencing Metrics"
-help = "Metrics per sequencing run."
+tier = "library"
 entries = [
     "fastq_id",
     "number_of_reads",
@@ -158,6 +166,7 @@ entries = [
     "q30_read1", # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
     "q30_read2", # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
 ]
+group_by_key = "fastq_id"
 
     [sequencing_metrics.fastq_id]
     header = "Fastq ID"
@@ -175,18 +184,18 @@ entries = [
     help = "Total number of read pairs that were ignored by the pipeline because they do not satisfy the minimum length requirements (for example Read-1 less that 26 bases for 3' v2/v3/v4 or 5')."
 
     [sequencing_metrics.q30_barcode]
-    type = "PercentF1"
+    type = "Percent"
     header = "Q30 barcodes"
-    help = "Fraction of cell barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. If the data is from multi-sample Fixed RNA Profiling, the cell barcode is the combination of the GEM barcode and probe barcode."
+    help = "Fraction of cell barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. If the data is from multi-sample Flex, the cell barcode is the combination of the GEM barcode and probe barcode."
 
         [[sequencing_metrics.q30_barcode.alerts]]
         error_threshold = 0.45
         warn_threshold = 0.55
         warn_title = "Fraction of cell barcode bases with Q-score >= 30 is low"
-        detail = "Ideal > 55%. Fraction of cell barcode bases (R1 for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Fixed RNA Profiling) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+        detail = "Ideal > 55%. Fraction of cell barcode bases (R1 for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Flex) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
     [sequencing_metrics.q30_gem_barcode]
-    type = "PercentF1"
+    type = "Percent"
     optional = true
     header = "Q30 GEM barcodes"
     help = "Fraction of GEM barcode bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
@@ -195,22 +204,22 @@ entries = [
         error_threshold = 0.45
         warn_threshold = 0.55
         warn_title = "Fraction of GEM barcode bases with Q-score >= 30 is low"
-        detail = "Ideal > 55%. Fraction of GEM barcode bases (R1 for Fixed RNA Profiling) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+        detail = "Ideal > 55%. Fraction of GEM barcode bases (R1 for Flex) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
     [sequencing_metrics.q30_probe_barcode]
-    type = "PercentF1"
+    type = "Percent"
     optional = true
     header = "Q30 probe barcodes"
-    help = "Fraction of probe barcode bases (or antibody multiplexing barcode bases for Fixed RNA Profiling with Antibody Feature Barcode) with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
+    help = "Fraction of probe barcode bases (or antibody multiplexing barcode bases for Flex with Antibody Feature Barcode) with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
 
         [[sequencing_metrics.q30_probe_barcode.alerts]]
         error_threshold = 0.45
         warn_threshold = 0.8
         warn_title = "Fraction of probe barcode bases with Q-score >= 30 is low"
-        detail = "Ideal > 80%. Fraction of probe barcode bases in the R2 read for Fixed RNA Profiling with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality. This issue can be caused by a lack of sequence diversity in the flowcell, and it may be remedied by increasing diversity by adding PhiX or other library types during sequencing."
+        detail = "Ideal > 80%. Fraction of probe barcode bases in the R2 read for Flex with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality. This issue can be caused by a lack of sequence diversity in the flowcell, and it may be remedied by increasing diversity by adding PhiX or other library types during sequencing."
 
     [sequencing_metrics.q30_umi]
-    type = "PercentF1"
+    type = "Percent"
     header = "Q30 UMI"
     help = "Fraction of UMI bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
 
@@ -221,9 +230,9 @@ entries = [
         detail = "Ideal > 75%. Fraction of UMI bases in the R1 read with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
     [sequencing_metrics.q30_read1]
-    type = "PercentF1"
+    type = "Percent"
     header = "Q30 RNA read" # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
-    help = "Fraction of RNA Read bases (or RNA probe read bases for Fixed RNA Profiling) with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
+    help = "Fraction of RNA Read bases (or RNA probe read bases for Flex) with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
 
         [[sequencing_metrics.q30_read1.alerts]]
         error_threshold = 0.55
@@ -232,7 +241,7 @@ entries = [
         detail = "Ideal > 65%. Fraction of RNA Read bases with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
     [sequencing_metrics.q30_read2]
-    type = "PercentF1"
+    type = "Percent"
     optional = true
     header = "Q30 RNA read 2" # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
     help = "Fraction of RNA Read 2 bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator."
@@ -248,6 +257,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [gex_library_mapping_metrics]
 title = "Mapping Metrics (Amongst All Reads in Library)"
+tier = "library"
 entries = [
     "physical_library_id",
     "reads_in_library",
@@ -260,6 +270,11 @@ entries = [
     "confidently_mapped_to_intergenic_regions",
     "confidently_mapped_antisense",
 ]
+group_by_key = "physical_library_id"
+
+    [gex_library_mapping_metrics.conditions]
+    library_types = ["Gene Expression"]
+    is_rtl = false
 
     [gex_library_mapping_metrics.physical_library_id]
     header = "Physical library ID"
@@ -270,21 +285,25 @@ entries = [
     type = "usize"
     header = "Number of reads in the library"
     help = "The total number of reads in the library."
+    json_key = "total_read_pairs"
 
     [gex_library_mapping_metrics.mapped_to_genome]
     type = "Percent"
     header = "Mapped to genome"
     help = "Fraction of reads that mapped to the genome."
+    json_key = "multi_genome_mapped_reads_frac"
 
     [gex_library_mapping_metrics.confidently_mapped_to_genome]
     type = "Percent"
     header = "Confidently mapped to genome"
     help = "Fraction of reads that mapped uniquely to the genome. If a gene mapped to exonic loci from a single gene and also to non-exonic loci, it is considered uniquely mapped to one of the exonic loci."
+    json_key = "multi_genome_conf_mapped_reads_frac"
 
     [gex_library_mapping_metrics.confidently_mapped_to_transcriptome]
     type = "Percent"
     header = "Confidently mapped to transcriptome"
     help = "Fraction of reads that mapped to a unique gene in the transcriptome. The read must be consistent with annotated splice junctions. These reads are considered for UMI counting."
+    json_key = "multi_transcriptome_conf_mapped_reads_frac"
 
         [[gex_library_mapping_metrics.confidently_mapped_to_transcriptome.alerts]]
         error_threshold = 0.2
@@ -297,62 +316,52 @@ entries = [
     optional = true
     header = "Confidently mapped to targeted transcriptome"
     help = "Fraction of reads that mapped to a unique gene from the target panel. The read must be consistent with annotated splice junctions. These reads are considered for UMI counting."
-
+    json_key = "multi_transcriptome_targeted_conf_mapped_reads_frac"
 
     [gex_library_mapping_metrics.confidently_mapped_to_intronic_regions]
     type = "Percent"
     header = "Confidently mapped to intronic regions"
     help = "Fraction of reads that mapped uniquely to an intronic region of the genome."
+    json_key = "multi_intronic_conf_mapped_reads_frac"
 
     [gex_library_mapping_metrics.confidently_mapped_to_exonic_regions]
     type = "Percent"
     header = "Confidently mapped to exonic regions"
     help = "Fraction of reads that mapped uniquely to an exonic region of the genome."
+    json_key = "multi_exonic_conf_mapped_reads_frac"
 
     [gex_library_mapping_metrics.confidently_mapped_to_intergenic_regions]
     type = "Percent"
     header = "Confidently mapped to intergenic regions"
     help = "Fraction of reads that mapped uniquely to an intergenic region of the genome."
+    json_key = "multi_intergenic_conf_mapped_reads_frac"
 
     [gex_library_mapping_metrics.confidently_mapped_antisense]
     type = "Percent"
     header = "Confidently mapped antisense"
     help = "Fraction of reads confidently mapped to the transcriptome, but on the opposite strand of their annotated gene. A read is counted as antisense if it has any alignments that are consistent with an exon of a transcript but antisense to it, and has no sense alignments."
+    json_key = "multi_antisense_reads_frac"
 
         [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = false, is_hybrid_capture = false }
+        conditions = { include_introns = false }
         error_threshold = 0.3
         warn_threshold = 0.1
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 10% for single cell samples. High antisense mapping rate can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = true, is_hybrid_capture = false }
+        conditions = { include_introns = true }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 20%. Rates of up to 40% are common for single nuclei samples. Higher fraction of antisense reads may indicate use of an incorrect chemistry type, or an issue with the reference transcriptome."
-
-        [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = false, is_hybrid_capture = true }
-        error_threshold = 0.4
-        warn_threshold = 0.2
-        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
-        detail = "Ideal < 20%. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
-
-        [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = true, is_hybrid_capture = true }
-        error_threshold = 0.4
-        warn_threshold = 0.2
-        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
-        detail = "Ideal < 20%. Rates of up to 40% are common for single nuclei samples. Higher fraction of antisense reads may indicate use of an incorrect chemistry type, or an issue with the reference transcriptome."
-
 
 # --------------------------------------------------------------------------------------------------
 #  GEX (RTL) -> Mapping metrics
 # --------------------------------------------------------------------------------------------------
 [rtl_library_mapping_metrics]
 title = "Mapping Metrics (Amongst All Reads in Library)"
+tier = "library"
 entries = [
     "physical_library_id",
     "reads_in_library",
@@ -362,6 +371,11 @@ entries = [
     "reads_confidently_mapped_to_probe_set",
     "reads_confidently_mapped_to_filtered_probe_set",
 ]
+group_by_key = "physical_library_id"
+
+    [rtl_library_mapping_metrics.conditions]
+    library_types = ["Gene Expression"]
+    is_rtl = true
 
     [rtl_library_mapping_metrics.physical_library_id]
     header = "Physical library ID"
@@ -372,11 +386,13 @@ entries = [
     type = "usize"
     header = "Number of reads in the library"
     help = "The total number of reads in the library."
+    json_key = "total_read_pairs"
 
     [rtl_library_mapping_metrics.reads_half_mapped_to_probe_set]
     type = "Percent"
     header = "Reads half-mapped to probe set"
     help = "Fraction of reads that mapped to unpaired ligation products."
+    json_key = "multi_transcriptome_half_mapped_reads_frac"
 
         [[rtl_library_mapping_metrics.reads_half_mapped_to_probe_set.alerts]]
         warn_threshold = 0.2
@@ -388,6 +404,7 @@ entries = [
     type = "Percent"
     header = "Reads split-mapped to probe set"
     help = "Fraction of reads that mapped to mispaired ligation products."
+    json_key = "multi_transcriptome_split_mapped_reads_frac"
 
         [[rtl_library_mapping_metrics.reads_split_mapped_to_probe_set.alerts]]
         warn_threshold = 0.2
@@ -399,41 +416,50 @@ entries = [
     type = "Percent"
     header = "Reads mapped to probe set"
     help = "Fraction of reads that mapped to the probe set."
+    json_key = "multi_transcriptome_mapped_reads_frac"
 
     [rtl_library_mapping_metrics.reads_confidently_mapped_to_probe_set]
     type = "Percent"
     header = "Reads confidently mapped to probe set"
     help = "Fraction of reads that mapped uniquely to a probe in the probe set."
+    json_key = "multi_transcriptome_conf_mapped_reads_frac"
 
         [[rtl_library_mapping_metrics.reads_confidently_mapped_to_probe_set.alerts]]
         error_threshold = 0.2
         warn_threshold = 0.5
         warn_title = "Low Fraction Reads Confidently Mapped to Probe Set"
-        detail = "Ideal > 50%. This can indicate low total expression, use of the wrong probe set, suboptimal sample preparation, or the use of input FASTQs from products other than Fixed RNA Profiling."
+        detail = "Ideal > 50%. This can indicate low total expression, use of the wrong probe set, suboptimal sample preparation, or the use of input FASTQs from products other than Flex."
 
 
     [rtl_library_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set]
     type = "Percent"
     header = "Reads confidently mapped to filtered probe set"
     help = "Fraction of reads from probes that map to a unique gene. These reads are considered for UMI counting. For more information on probe filtering please visit https://www.10xgenomics.com/support"
+    json_key = "multi_transcriptome_targeted_conf_mapped_reads_frac"
 
         [[rtl_library_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set.alerts]]
         error_threshold = 0.2
         warn_threshold = 0.5
         warn_title = "Low Fraction Reads Confidently Mapped to Filtered Probe Set"
-        detail = "Ideal > 50%. This can indicate low total expression, use of the wrong probe set, suboptimal sample preparation, high expression genes removed by filtering, or the use of input FASTQs from products other than Fixed RNA Profiling."
+        detail = "Ideal > 50%. This can indicate low total expression, use of the wrong probe set, suboptimal sample preparation, high expression genes removed by filtering, or the use of input FASTQs from products other than Flex."
 
 # --------------------------------------------------------------------------------------------------
 # GEX (RTL) -> Metrics per probe barcode
 # --------------------------------------------------------------------------------------------------
 [rtl_probe_barcode_metrics]
 title = "Metrics per probe barcode"
+tier = "library"
 entries = [
     "probe_barcode_id",
     "sample_id",
     "umi_per_probe_barcode",
     "cells_per_probe_barcode",
 ]
+group_by_key = "probe_barcode_id"
+
+    [rtl_probe_barcode_metrics.conditions]
+    library_types = ["Gene Expression"]
+    is_rtl = true
 
     [rtl_probe_barcode_metrics.probe_barcode_id]
     type = "String"
@@ -457,26 +483,35 @@ entries = [
 
 [gdna_metrics]
 title = "UMIs from Genomic DNA"
+tier = "library"
 entries = [
     "estimated_gdna_content",
     "estimated_gdna_unspliced_threshold",
 ]
+
+    [gdna_metrics.conditions]
+    library_types = ["Gene Expression"]
+    has_gdna = true
+
+
     [gdna_metrics.estimated_gdna_content]
     type = "Percent"
     header = "Estimated UMIs from genomic DNA"
     help = "The estimated fraction of filtered UMIs derived from genomic DNA based on the discordance between probes targeting exon-junction-spanning regions and non-exon-junction-spanning regions."
+    json_key = "estimated_gdna_content"
 
     [gdna_metrics.estimated_gdna_unspliced_threshold]
     type = "FloatAsInt"
     header = "Estimated UMIs from genomic DNA per unspliced probe"
-    help = "The estimated number of UMIs derived from genomic DNA for each probe targeting non-exon-junction-spanning regions. A probe not spanning an exon junction with a total UMI count below this value has a high likelihood of its UMIs being derived primarily from hybridization to genomic DNA rather than the mRNA. For details, please visit https://www.10xgenomics.com/support/fixed-rna-profiling/documentation/steps/software"
+    help = "The estimated number of UMIs derived from genomic DNA for each probe targeting non-exon-junction-spanning regions. A probe not spanning an exon junction with a total UMI count below this value has a high likelihood of its UMIs being derived primarily from hybridization to genomic DNA rather than the mRNA. For details, please visit http://10xgen.com/gdna-estimation"
+    json_key = "estimated_gdna_unspliced_threshold"
 
 # --------------------------------------------------------------------------------------------------
 # GEX -> Metrics Per Physical Library
 # --------------------------------------------------------------------------------------------------
 [gex_physical_library_metrics]
 title = "Metrics Per Physical Library"
-help = "Metrics calculated for each library."
+tier = "library"
 entries = [
     "physical_library_id",
     "number_of_reads",
@@ -485,11 +520,13 @@ entries = [
     "valid_probe_barcodes",
     "valid_umis",
     "sequencing_saturation",
-    "targeted_sequencing_saturation",
     "reads_in_cell_associated_partitions",
     "mean_reads_per_cell_associated_partition",
-    "mean_targeted_reads_per_cell_associated_partition",
 ]
+group_by_key = "physical_library_id"
+
+    [gex_physical_library_metrics.conditions]
+    library_types = ["Gene Expression"]
 
     [gex_physical_library_metrics.physical_library_id]
     header = "Physical library ID"
@@ -500,17 +537,19 @@ entries = [
     type = "usize"
     header = "Number of reads"
     help = "Number of read pairs from this library."
+    json_key = "total_read_pairs"
 
     [gex_physical_library_metrics.valid_barcodes]
     type = "Percent"
     header = "Valid barcodes"
-    help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction. If the data is from multi-sample Fixed RNA Profiling, the cell barcode is the combination of the GEM barcode and probe barcode and both parts must be valid following correction."
+    help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction. If the data is from multi-sample Flex, the cell barcode is the combination of the GEM barcode and probe barcode and both parts must be valid following correction."
+    json_key = "good_bc_frac"
 
         [[gex_physical_library_metrics.valid_barcodes.alerts]]
         error_threshold = 0.5
         warn_threshold = 0.75
         warn_title = "Low Fraction Valid Barcodes"
-        detail = "Ideal > 75%. This may indicate a quality issue with the R1 read for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Fixed RNA Profiling. Application performance may be affected."
+        detail = "Ideal > 75%. This may indicate a quality issue with the R1 read for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Flex. Application performance may be affected."
 
     [gex_physical_library_metrics.valid_gem_barcodes]
     type = "Percent"
@@ -540,6 +579,7 @@ entries = [
     type = "Percent"
     header = "Valid UMIs"
     help = "Fraction of reads with valid UMIs; i.e. UMI sequences that do not contain Ns and that are not homopolymers."
+    json_key = "good_umi_frac"
 
         [[gex_physical_library_metrics.valid_umis.alerts]]
         # TODO: This seems way too low?
@@ -552,17 +592,13 @@ entries = [
     type = "Percent"
     header = "Sequencing saturation"
     help = "The fraction of reads originating from an already-observed UMI. This is a function of library complexity and sequencing depth. More specifically, this is the fraction of confidently mapped, valid cell-barcode, valid UMI reads that had a non-unique (cell-barcode, UMI, gene). This metric was called 'cDNA PCR Duplication' in versions of Cell Ranger prior to 1.2."
-
-    [gex_physical_library_metrics.targeted_sequencing_saturation]
-    type = "Percent"
-    optional = true
-    header = "Targeted sequencing saturation"
-    help = "The fraction of targeted reads originating from an already-observed targeted UMI. This is a function of library complexity and sequencing depth. More specifically, this is the fraction of confidently mapped, valid cell-barcode, valid targeted UMI reads that had a non-unique (cell-barcode, UMI, gene)."
+    json_key = "multi_cdna_pcr_dupe_reads_frac"
 
     [gex_physical_library_metrics.reads_in_cell_associated_partitions]
     type = "Percent"
     header = "Confidently mapped reads in cells"
     help = "The fraction of valid-barcode, valid-UMI, confidently-mapped-to-transcriptome reads with cell-associated barcodes."
+    json_key = "multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac"
 
         [[gex_physical_library_metrics.reads_in_cell_associated_partitions.alerts]]
         error_threshold = 0.5
@@ -574,118 +610,24 @@ entries = [
     type = "FloatAsInt"
     header = "Mean reads per cell"
     help = "The total number of sequenced read pairs divided by the number of cell-associated barcodes."
-
-    [gex_physical_library_metrics.mean_targeted_reads_per_cell_associated_partition]
-    type = "FloatAsInt"
-    optional = true
-    header = "Mean targeted reads per cell"
-    help = "The total number of targeted reads divided by the number of cell-assocaited barcodes."
-
-# --------------------------------------------------------------------------------------------------
-# GEX -> Targeted enrichment metrics
-# --------------------------------------------------------------------------------------------------
-[gex_library_targeted_enrichment_metrics]
-title = "Targeted Enrichment"
-help = "Metrics related to targeted enrichment, provided for Targeted reads (reads mapped to genes from the target panel) and Non-Targeted reads (reads mapped to other genes not on the target panel)."
-
-entries = [
-    "targeting_status",
-    "multi_frac_conf_transcriptomic_reads",
-    "num_genes",
-    "num_genes_quantifiable",
-    "num_rpu_enriched_genes",
-    "mean_reads_per_umi_per_gene_cells",
-    "filtered_target_umi_count_threshold",
-    "filtered_target_umi_reads_frac",
-]
-
-    [gex_library_targeted_enrichment_metrics.targeting_status]
-    header = "Targeting Status"
-    type = "String"
-    help = "Whether metrics are for Targeted (mapped to genes from the target panel) or Non-targeted (mapped to other genes) reads"
-
-    [gex_library_targeted_enrichment_metrics.multi_frac_conf_transcriptomic_reads]
-    header = "Reads Confidently Mapped to the Transcriptome"
-    type = "Percent"
-    help = "Fraction of reads that mapped to a unique targeted gene in the transcriptome. The read must be consistent with annotated splice junctions when include-introns=false. These reads are considered for UMI counting."
-
-    [gex_library_targeted_enrichment_metrics.num_genes]
-    header = "Number of Genes"
-    type = "usize"
-    help = "Number of genes per group. The number of targeted genes is specified via the target panel file. The number of non-targeted genes is the difference between the total number of genes in the reference and the number of targeted genes."
-
-    [gex_library_targeted_enrichment_metrics.num_genes_quantifiable]
-    header = "Number of Genes >= 10 UMIs"
-    type = "usize"
-    help = "Number of genes with at least 10 filtered UMIs from cell-associated barcodes. These genes are used to calculate per-gene enrichments."
-
-    [gex_library_targeted_enrichment_metrics.num_rpu_enriched_genes]
-    header = "Number of Enriched Genes"
-    type = "usize"
-    help = "Number of enriched genes per group. Genes are classified with a two-class Gaussian mixture model into two groups based on the mean reads per UMI value for each gene. Enriched genes have higher mean reads per UMI values, indicating their over-representation in the targeted library."
-
-    [gex_library_targeted_enrichment_metrics.mean_reads_per_umi_per_gene_cells]
-    header = "Mean Reads per UMI per Gene"
-    type = "f64"
-    help = "Mean number of reads per UMI for each gene, averaged across genes. Only genes with >= 10 filtered UMIs from cell-associated barcodes are considered."
-
-    [gex_library_targeted_enrichment_metrics.filtered_target_umi_count_threshold]
-    header = "Reads per UMI threshold for UMI filtering"
-    type = "f64"
-    help = "Minimum number of reads per UMI required to pass UMI filtering. UMIs in targeted genes with read support (strictly) lower than this threshold are filtered out. UMI filtering is not applied to non-targeted genes."
-
-    [gex_library_targeted_enrichment_metrics.filtered_target_umi_reads_frac]
-    header = "Fraction of Reads Removed by UMI Filtering"
-    type = "Percent"
-    help = "Fraction of all reads confidently mapped to the targeted transcriptome and subsequently removed by targeted UMI filtering."
-
-# --------------------------------------------------------------------------------------------------
-# GEX -> Targeted enrichment alerts
-# --------------------------------------------------------------------------------------------------
-# NOTE: this table isn't used/displayed in the websummary, but we populate it in the websummary data to propogate up its alerts if they are triggered.
-[gex_library_targeted_enrichment_alerts]
-title = "Targeted Enrichment Alerts"
-help = "Targeted metrics only used for setting alerts"
-entries = [
-    "frac_on_target_genes_enriched",
-    "frac_off_target_genes_enriched",
-]
-
-    [gex_library_targeted_enrichment_alerts.frac_on_target_genes_enriched]
-    header = "Fraction on target genes enriched"
-    type = "Percent"
-    optional = true
-    help = "Fraction on target genes enriched"
-
-        [[gex_library_targeted_enrichment_alerts.frac_on_target_genes_enriched.alerts]]
-        error_threshold = 0.5
-        warn_threshold = 0.7
-        warn_title = "Low Fraction of Targeted Genes Enriched"
-        detail = "Ideal > 70%. If sequencing saturation is sufficiently high to detect enrichment, this can indicate use of the wrong target panel, or inefficient targeting. Targeted performance may be affected."
-
-    [gex_library_targeted_enrichment_alerts.frac_off_target_genes_enriched]
-    header = "Fraction off target genes enriched"
-    type = "Percent"
-    optional = true
-    help = "Fraction off target genes enriched"
-
-        [[gex_library_targeted_enrichment_alerts.frac_off_target_genes_enriched.alerts]]
-        error_threshold = 0.5
-        warn_threshold = 0.3
-        warn_title = "High Fraction of Non-Targeted Genes Enriched"
-        detail = "Ideal < 30%. This can indicate use of the wrong target panel, or inefficient targeting. Targeted performance may be affected."
+    json_key = "multi_transcriptome_total_raw_reads_per_filtered_bc"
 
 # --------------------------------------------------------------------------------------------------
 # VDJ-T -> Enrichment
 # --------------------------------------------------------------------------------------------------
 [vdj_t_enrichment_metrics]
 title = "Enrichment"
+tier = "library"
 entries = [
     "physical_library_id",
     "multi_vdj_recombinome_mapped_reads_frac",
     "TRA_vdj_recombinome_mapped_reads_frac",
     "TRB_vdj_recombinome_mapped_reads_frac",
 ]
+group_by_key = "physical_library_id"
+
+    [vdj_t_enrichment_metrics.conditions]
+    library_types = ["VDJ-T"]
 
     [vdj_t_enrichment_metrics.physical_library_id]
     header = "Physical library ID"
@@ -718,12 +660,17 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_tgd_enrichment_metrics]
 title = "Enrichment"
+tier = "library"
 entries = [
     "physical_library_id",
     "multi_vdj_recombinome_mapped_reads_frac",
     "TRG_vdj_recombinome_mapped_reads_frac",
     "TRD_vdj_recombinome_mapped_reads_frac",
 ]
+group_by_key = "physical_library_id"
+
+    [vdj_tgd_enrichment_metrics.conditions]
+    library_types = ["VDJ-T-GD"]
 
     [vdj_tgd_enrichment_metrics.physical_library_id]
     header = "Physical library ID"
@@ -750,12 +697,13 @@ entries = [
     type = "Percent"
     header = "Reads mapped to TRD"
     help = "Fraction of reads with valid barcodes that map partially or wholly to a germline TRD gene segment."
-
+    
 # --------------------------------------------------------------------------------------------------
 # VDJ-B -> Enrichment
 # --------------------------------------------------------------------------------------------------
 [vdj_b_enrichment_metrics]
 title = "Enrichment"
+tier = "library"
 entries = [
     "physical_library_id",
     "multi_vdj_recombinome_mapped_reads_frac",
@@ -763,6 +711,10 @@ entries = [
     "IGK_vdj_recombinome_mapped_reads_frac",
     "IGL_vdj_recombinome_mapped_reads_frac",
 ]
+group_by_key = "physical_library_id"
+
+    [vdj_b_enrichment_metrics.conditions]
+    library_types = ["VDJ-B"]
 
     [vdj_b_enrichment_metrics.physical_library_id]
     header = "Physical library ID"
@@ -795,12 +747,218 @@ entries = [
     header = "Reads mapped to IGL"
     help = "Fraction of reads with valid barcodes that map partially or wholly to a germline IGL gene segment."
 
+# --------------------------------------------------------------------------------------------------
+# VDJ-T -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_t_library_cell_metrics]
+title = "Cell Calling Quality"
+tier = "library"
+entries = [
+    "physical_library_id",
+    "vdj_filtered_bcs",
+    "multi_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "TRA_vdj_assembly_prod_cdr_bc_frac",
+    "TRB_vdj_assembly_prod_cdr_bc_frac",
+]
+group_by_key = "physical_library_id"
+
+    [vdj_t_library_cell_metrics.conditions]
+    library_types = ["VDJ-T"]
+
+    [vdj_t_library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+    help = "Unique identifier for each library."
+
+    [vdj_t_library_cell_metrics.vdj_filtered_bcs]
+    header = "VDJ Cells"
+    type = "usize"
+    help = "The number of barcodes estimated to be associated with cells that express targeted V(D)J transcripts."
+
+        [[vdj_t_library_cell_metrics.vdj_filtered_bcs.alerts]]
+        error_threshold = 0
+        warn_threshold = 10
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [vdj_t_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the receptor pair. A productive contig satisfies the following conditions: the contig annotations span the 5' end of the V region to the 3' end of the J region of the chain, a start codon was found in the expected part of the V sequence, an in-frame CDR3 amino acid motif was found, and no stop codons were found in the aligned V-J region."
+
+        [[vdj_t_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Cells with productive V-J spanning pair"
+        detail = "Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected"
+
+    [vdj_t_library_cell_metrics.TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning (TRA, TRB) pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the (TRA, TRB) receptor pair."
+
+    [vdj_t_library_cell_metrics.TRA_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive TRA contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for TRA, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
+
+    [vdj_t_library_cell_metrics.TRB_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive TRB contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for TRB, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-T G/D -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_tgd_library_cell_metrics]
+title = "Cell Calling Quality"
+tier = "library"
+entries = [
+    "physical_library_id",
+    "vdj_filtered_bcs",
+    "multi_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "TRG_vdj_assembly_prod_cdr_bc_frac",
+    "TRD_vdj_assembly_prod_cdr_bc_frac",
+]
+group_by_key = "physical_library_id"
+
+    [vdj_tgd_library_cell_metrics.conditions]
+    library_types = ["VDJ-T-GD"]
+
+    [vdj_tgd_library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+    help = "Unique identifier for each library."
+
+    [vdj_tgd_library_cell_metrics.vdj_filtered_bcs]
+    header = "VDJ Cells"
+    type = "usize"
+    help = "The number of barcodes estimated to be associated with cells that express targeted V(D)J transcripts."
+
+        [[vdj_tgd_library_cell_metrics.vdj_filtered_bcs.alerts]]
+        error_threshold = 0
+        warn_threshold = 10
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [vdj_tgd_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the receptor pair. A productive contig satisfies the following conditions: the contig annotations span the 5' end of the V region to the 3' end of the J region of the chain, a start codon was found in the expected part of the V sequence, an in-frame CDR3 amino acid motif was found, and no stop codons were found in the aligned V-J region."
+
+    [vdj_tgd_library_cell_metrics.TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning (TRG, TRD) pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the (TRG, TRD) receptor pair."
+
+    [vdj_tgd_library_cell_metrics.TRG_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive TRG contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for TRG, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
+
+    [vdj_tgd_library_cell_metrics.TRD_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive TRD contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for TRD, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-B -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_b_library_cell_metrics]
+title = "Cell Calling Quality"
+tier = "library"
+entries = [
+    "physical_library_id",
+    "vdj_filtered_bcs",
+    "multi_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "IGL_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac",
+    "IGH_vdj_assembly_prod_cdr_bc_frac",
+    "IGK_vdj_assembly_prod_cdr_bc_frac",
+    "IGL_vdj_assembly_prod_cdr_bc_frac",
+]
+group_by_key = "physical_library_id"
+
+    [vdj_b_library_cell_metrics.conditions]
+    library_types = ["VDJ-B"]
+
+    [vdj_b_library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+    help = "Unique identifier for each library."
+
+    [vdj_b_library_cell_metrics.vdj_filtered_bcs]
+    header = "VDJ Cells"
+    type = "usize"
+    help = "The number of barcodes estimated to be associated with cells that express targeted V(D)J transcripts."
+
+        [[vdj_b_library_cell_metrics.vdj_filtered_bcs.alerts]]
+        error_threshold = 0
+        warn_threshold = 10
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [vdj_b_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the receptor pair. A productive contig satisfies the following conditions: the contig annotations span the 5' end of the V region to the 3' end of the J region of the chain, a start codon was found in the expected part of the V sequence, an in-frame CDR3 amino acid motif was found, and no stop codons were found in the aligned V-J region."
+
+        [[vdj_b_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Cells with Productive V-J Spanning Pair"
+        detail = "Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected"
+
+    [vdj_b_library_cell_metrics.IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning (IGK, IGH) pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the (IGK, IGH) receptor pair."
+
+    [vdj_b_library_cell_metrics.IGL_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive V-J spanning (IGL, IGH) pair"
+    help = "Fraction of cell-associated barcodes with at least one productive contig for each chain of the (IGL, IGH) receptor pair."
+
+    [vdj_b_library_cell_metrics.IGH_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive IGH contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for IGH, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
+
+    [vdj_b_library_cell_metrics.IGK_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive IGK contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for IGK, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
+
+    [vdj_b_library_cell_metrics.IGL_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    optional = true
+    header = "Cells with productive IGL contig"
+    help = "Fraction of cell-associated barcodes with at least one contig that spans the 5' end of the V region to the 3' end of the J region for IGL, has a start codon in the expected part of the V sequence, has an in-frame CDR3, and has no stop codons in the aligned V-J region."
 
 # --------------------------------------------------------------------------------------------------
 # VDJ -> Metrics Per Physical Library
 # --------------------------------------------------------------------------------------------------
 [vdj_physical_library_metrics]
 title = "Metrics Per Physical Library"
+tier = "library"
 entries = [
     "physical_library_id",
     "VDJ_total_read_pairs",
@@ -809,6 +967,14 @@ entries = [
     "vdj_assemblable_read_pairs_per_filtered_bc",
     "vdj_filtered_bcs_cum_frac",
 ]
+group_by_key = "physical_library_id"
+
+    [vdj_physical_library_metrics.conditions]
+    library_types = [
+        "VDJ-T",
+        "VDJ-B",
+        "VDJ-T-GD",
+    ]
 
     [vdj_physical_library_metrics.physical_library_id]
     type = "String"
@@ -851,6 +1017,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [antibody_library_mapping_metrics]
 title = "Mapping Metrics (Amongst All Reads in Library)"
+tier = "library"
 entries = [
     "physical_library_id",
     "reads_in_library",
@@ -858,6 +1025,10 @@ entries = [
     "fraction_antibody_reads_usable",
     "fraction_reads_in_aggregate_barcodes",
 ]
+group_by_key = "physical_library_id"
+
+    [antibody_library_mapping_metrics.conditions]
+    library_types = ["Antibody Capture"]
 
     [antibody_library_mapping_metrics.physical_library_id]
     header = "Physical library ID"
@@ -892,6 +1063,7 @@ entries = [
     [antibody_library_mapping_metrics.fraction_reads_in_aggregate_barcodes]
     type = "Percent"
     json_key = "ANTIBODY_reads_lost_to_aggregate_GEMs"
+    optional = true
     header = "Fraction antibody reads in aggregate barcodes"
     help = "Fraction of read pairs with valid barcodes that were removed because they are aggregates."
 
@@ -917,7 +1089,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [antibody_physical_library_metrics]
 title = "Metrics Per Physical Library"
-help = "Metrics calculated for each library."
+tier = "library"
 entries =[
     "physical_library_id",
     "number_of_reads",
@@ -929,6 +1101,10 @@ entries =[
     "reads_in_cell_associated_partitions",
     "mean_reads_per_cell_associated_partition",
 ]
+group_by_key = "physical_library_id"
+
+    [antibody_physical_library_metrics.conditions]
+    library_types = ["Antibody Capture"]
 
     [antibody_physical_library_metrics.physical_library_id]
     type = "String"
@@ -1008,7 +1184,7 @@ entries =[
 # --------------------------------------------------------------------------------------------------
 [antigen_physical_library_metrics]
 title = "Metrics Per Physical Library"
-help = "Metrics calculated for each library."
+tier = "library"
 entries =[
     "physical_library_id",
     "number_of_reads",
@@ -1022,6 +1198,10 @@ entries =[
     "fraction_unknown_antigen",
     "fraction_reads_in_aggregate_barcodes",
 ]
+group_by_key = "physical_library_id"
+
+    [antigen_physical_library_metrics.conditions]
+    library_types = ["Antigen Capture"]
 
     [antigen_physical_library_metrics.physical_library_id]
     type = "String"
@@ -1106,6 +1286,7 @@ entries =[
     [antigen_physical_library_metrics.fraction_reads_in_aggregate_barcodes]
     type = "Percent"
     json_key = "ANTIGEN_reads_lost_to_aggregate_GEMs"
+    optional = true
     header = "Fraction antigen reads in aggregate barcodes"
     help = "Fraction of read pairs with valid barcodes that were removed because they are aggregates."
 
@@ -1121,6 +1302,7 @@ entries =[
 # --------------------------------------------------------------------------------------------------
 [crispr_library_mapping_metrics]
 title = "Mapping Metrics (Amongst All Reads in Library)"
+tier = "library"
 entries = [
     "physical_library_id",
     "number_of_reads",
@@ -1129,6 +1311,10 @@ entries = [
     "fraction_guide_reads_usable",
     "fraction_protospacer_not_recognized",
 ]
+group_by_key = "physical_library_id"
+
+    [crispr_library_mapping_metrics.conditions]
+    library_types = ["CRISPR Guide Capture"]
 
     [crispr_library_mapping_metrics.physical_library_id]
     type = "String"
@@ -1184,7 +1370,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [crispr_physical_library_metrics]
 title = "Metrics Per Physical Library"
-help = "Metrics calculated for each library."
+tier = "library"
 entries = [
     "physical_library_id",
     "number_of_reads",
@@ -1196,6 +1382,10 @@ entries = [
     "reads_in_cell_associated_partitions",
     "mean_reads_per_cell_associated_partition",
 ]
+group_by_key = "physical_library_id"
+
+    [crispr_physical_library_metrics.conditions]
+    library_types = ["CRISPR Guide Capture"]
 
     [crispr_physical_library_metrics.physical_library_id]
     type = "String"
@@ -1275,7 +1465,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [custom_feature_physical_library_metrics]
 title = "Metrics Per Physical Library"
-help = "Metrics calculated for each library."
+tier = "library"
 entries = [
     "physical_library_id",
     "number_of_reads",
@@ -1288,6 +1478,10 @@ entries = [
     "fraction_feature_reads_usable",
     "fraction_unknown_feature",
 ]
+group_by_key = "physical_library_id"
+
+    [custom_feature_physical_library_metrics.conditions]
+    library_types = ["Custom"]
 
     [custom_feature_physical_library_metrics.physical_library_id]
     type = "String"
@@ -1298,11 +1492,13 @@ entries = [
     type = "usize"
     header = "Number of reads"
     help = "Total number of read pairs that were assigned to this library."
+    json_key = "Custom_total_read_pairs"
 
     [custom_feature_physical_library_metrics.valid_barcodes]
     type = "Percent"
     header = "Valid barcodes"
     help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction."
+    json_key = "Custom_good_bc_frac"
 
         [[custom_feature_physical_library_metrics.valid_barcodes.alerts]]
         error_threshold = 0.5
@@ -1314,168 +1510,202 @@ entries = [
     type = "Percent"
     header = "Valid UMIs"
     help = "Fraction of reads with valid UMIs; i.e. UMI sequences that do not contain Ns and that are not homopolymers."
+    json_key = "Custom_good_umi_frac"
 
     [custom_feature_physical_library_metrics.sequencing_saturation]
     type = "Percent"
     header = "Sequencing saturation"
     help = "The fraction of reads originating from an already-observed UMI. This is a function of library complexity and sequencing depth. More specifically, this is a ratio where: the denominator is the number of reads with a recognized Feature Barcode, valid cell-barcode, and valid UMI, and the numerator is the subset of those reads that had a non-unique combination of (cell-barcode, UMI, Feature Barcode)."
+    json_key = "Custom_multi_cdna_pcr_dupe_reads_frac"
 
     [custom_feature_physical_library_metrics.reads_in_cell_associated_partitions]
     type = "Percent"
     header = "Fraction reads in cells"
     help = "The fraction of valid-barcode, valid-UMI, recognized feature-barcode reads with cell-associated barcodes."
+    json_key = "Custom_feature_reads_in_cells"
 
     [custom_feature_physical_library_metrics.mean_reads_per_cell_associated_partition]
     type = "FloatAsInt"
     header = "Mean reads per cell"
     help = "The total number of sequenced read pairs divided by the number of cell-associated barcodes."
+    json_key = "Custom_reads_per_cell"
 
     [custom_feature_physical_library_metrics.fraction_feature_reads]
     type = "Percent"
     header = "Fraction feature reads"
     help = "Fraction of reads that contain a recognized feature-barcode sequence."
+    json_key = "Custom_recognized_feature_bc_frac"
 
     [custom_feature_physical_library_metrics.fraction_feature_reads_usable]
     type = "Percent"
     header = "Fraction feature reads usable"
     help = "Fraction of read pairs that contain a recognized feature-barcode, a valid UMI, and a cell-associated barcode"
+    json_key = "Custom_frac_feature_reads_usable"
 
     [custom_feature_physical_library_metrics.fraction_unknown_feature]
     type = "Percent"
     header = "Fraction unrecognized feature"
     help = "Fraction of read pairs with an unrecognized feature-barcode sequence"
+    json_key = "Custom_unrecognized_feature_bc_frac"
 
 # --------------------------------------------------------------------------------------------------
-# Multiplexing -> Multiplexing metrics
+# Multiplexing -> Multiplexing Quality
 # --------------------------------------------------------------------------------------------------
-[multiplexing_library_cell_metrics]
-title = "Multiplexing metrics"
+[cmo_multiplexing_quality]
+title = "Multiplexing Quality"
+tier = "library"
 entries = [
     "cell_associated_partitions",
     "samples_assigned_at_least_one_singlet",
-    "singlets_assigned_to_sample",
+    "singlets_assigned_to_a_sample",
     "singlet_capture_ratio",
-    "cell_associated_partitions_identified_as_multiplet",
     "median_cmo_umis_per_singlet",
+    "cell_associated_partitions_identified_as_multiplets",
+    "cell_associated_partitions_not_assigned_any_tags",
 ]
+    [cmo_multiplexing_quality.conditions]
+    library_types = ["Multiplexing Capture"]
 
-    [multiplexing_library_cell_metrics.cell_associated_partitions]
+    [cmo_multiplexing_quality.cell_associated_partitions]
     header = "Estimated number of cell-associated barcodes"
     type = "usize"
-    help = "Number of cell-associated barcodes called as containing one or more cells. For a more detailed explanation, please see Technical Note CG000475 on https://www.10xgenomics.com/support"
+    help = "Cell-associated barcodes include cell barcodes that are either (1) assigned to a sample, (2) identified as multiplets, or (3) not assigned any Hashtags or CMOs. For a more detailed explanation, please see Technical Note CG000475 on https://www.10xgenomics.com/support"
+    json_key = "multi_filtered_bcs"
 
-    [multiplexing_library_cell_metrics.samples_assigned_at_least_one_singlet]
+    [cmo_multiplexing_quality.samples_assigned_at_least_one_singlet]
     type = "usize"
     header = "Number of samples assigned at least one cell"
     help = "Number of samples to which at least one cell was assigned. Only cell-associated barcodes assigned exactly one CMO were assigned to a sample."
+    json_key = "samples_with_any_singlets"
 
-        [[multiplexing_library_cell_metrics.samples_assigned_at_least_one_singlet.alerts]]
+        [[cmo_multiplexing_quality.samples_assigned_at_least_one_singlet.alerts]]
         if_metric_is = "less_than_or_equal"
         error_threshold = 0
         error_title = "No samples assigned a cell"
-        detail = "No samples have been assigned a cell. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in CMO or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one CMO can be assigned to a sample."
+        detail = "No samples have been assigned a cell. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in staining or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one CMO (or Hashtag) can be assigned to a sample."
 
-    [multiplexing_library_cell_metrics.singlets_assigned_to_sample]
+    [cmo_multiplexing_quality.singlets_assigned_to_a_sample]
     type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
     header = "Cells assigned to a sample"
     help = "Number and fraction of cells assigned to a sample amongst all cells detected in this GEM well. Only cell-associated barcodes assigned exactly one CMO were assigned to a sample."
 
-        [[multiplexing_library_cell_metrics.singlets_assigned_to_sample.alerts]]
+        [[cmo_multiplexing_quality.singlets_assigned_to_a_sample.alerts]]
         if_metric_is = "less_than_or_equal"
         error_threshold = 0
         error_title = "No cells have been assigned to a sample"
-        detail = "No cells have been assigned to a sample. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in CMO or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one CMO can be assigned to a sample."
+        detail = "No cells have been assigned to a sample. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in staining or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one CMO (or Hashtag) can be assigned to a sample."
 
-    [multiplexing_library_cell_metrics.singlet_capture_ratio]
+    [cmo_multiplexing_quality.singlet_capture_ratio]
     type = "f64"
     header = "Singlet capture ratio"
-    help = "Ratio between the number of singlets (i.e. cell-associated barcodes assigned exactly one CMO) obtained and the number of singlets expected in this experiment according to Poisson statistics."
+    help = "Ratio between the number of singlets (i.e. cell-associated barcodes assigned exactly one CMO) obtained and the number of singlets expected in this experiment."
+    json_key = "MULTIPLEXING_sc_rec_efficiency_jibes"
 
-        [[multiplexing_library_cell_metrics.singlet_capture_ratio.alerts]]
+        [[cmo_multiplexing_quality.singlet_capture_ratio.alerts]]
         error_threshold = 0.5
         warn_threshold = 0.75
         warn_title = "Fewer than expected number of singlets recovered"
-        detail = "Ideal >= 0.85. The ratio of observed and expected (according to Poisson statistics) number of singlets (i.e. cell-associated barcodes assigned exactly one CMO) is less than ideal - fewer than expected number of singlets have been recovered. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in CMO or sample definitions specified in the Config CSV."
+        detail = "Ideal >= 0.85. The ratio of observed and expected number of singlets (i.e. cell-associated barcodes assigned exactly one CMO) is less than ideal - fewer than expected number of singlets have been recovered. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in CMO or sample definitions specified in the Config CSV."
 
-    [multiplexing_library_cell_metrics.cell_associated_partitions_identified_as_multiplet]
+    [cmo_multiplexing_quality.median_cmo_umis_per_singlet]
+    type = "FloatAsInt"
+    header = "Median CMO UMI Counts per cell assigned to a sample"
+    help = "Median number of CMO UMIs captured per cell-associated barcode assigned exactly one CMO."
+    json_key = "MULTIPLEXING_median_cmo_umis_per_singlet"
+
+    [cmo_multiplexing_quality.cell_associated_partitions_identified_as_multiplets]
     type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
     header = "Cell-associated barcodes identified as multiplets"
-    help = "Fraction of cell-associated barcodes that were assigned more than one CMO and hence identified as multiplets."
+    help = "Cell-associated barcodes that were assigned more than one CMO and hence determined to be multiplets."
 
-    [multiplexing_library_cell_metrics.median_cmo_umis_per_singlet]
-    type = "FloatAsInt"
-    header = "Median CMO UMIs per cell"
-    help = "Median number of CMO UMIs captured per cell-associated barcode assigned exactly one CMO."
+    [cmo_multiplexing_quality.cell_associated_partitions_not_assigned_any_tags]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    header = "Cell-associated barcodes not assigned any CMOs"
+    help = "Cell-associated barcodes that either (i) did not have enough CMO molecules above background or (ii) could not be confidently assigned to a singlet or multiplet state."
 
 # --------------------------------------------------------------------------------------------------
-# Multiplexing -> Multiplexing sample assignments
+# Hashtag -> Multiplexing Quality
 # --------------------------------------------------------------------------------------------------
-[multiplexing_sample_assignments]
-title = "Multiplexing sample assignments"
+[hashtag_multiplexing_quality]
+title = "Multiplexing Quality"
+tier = "library"
 entries =[
-    "physical_library_id",
     "cell_associated_partitions",
-    "mean_reads_per_cell",
     "samples_assigned_at_least_one_singlet",
     "singlets_assigned_to_a_sample",
+    "median_hashtag_umis_per_singlet",
+    "hashtag_singlet_capture_ratio",
     "cell_associated_partitions_identified_as_multiplets",
-    "cell_associated_partitions_not_assigned_any_cmos",
-    "median_cmo_umis_per_cell_associated_partition",
+    "cell_associated_partitions_not_assigned_any_tags",
 ]
+    [hashtag_multiplexing_quality.conditions]
+    library_types = ["Antibody Capture"]
 
-    [multiplexing_sample_assignments.physical_library_id]
-    type = "String"
-    header = "Physical library ID"
-    help = "Unique identifier for each library."
-
-    [multiplexing_sample_assignments.cell_associated_partitions]
+    [hashtag_multiplexing_quality.cell_associated_partitions]
     type = "usize"
-    header = "Estimated number of cell-associated barcodes"
+    header = "Cell-associated barcodes"
     help = "Number of cell-associated barcodes called as containing one or more cells."
+    json_key = "multi_filtered_bcs"
 
-        [[multiplexing_sample_assignments.cell_associated_partitions.alerts]]
+        [[hashtag_multiplexing_quality.cell_associated_partitions.alerts]]
         error_threshold = 0
         warn_threshold = 100
         error_title = "No Cells Detected"
         warn_title = "Low Number of Cells Detected"
         detail = "Estimated number of cell-associated barcodes is expected to be > 100. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
 
-    [multiplexing_sample_assignments.mean_reads_per_cell]
-    type = "FloatAsInt"
-    header = "Mean reads per cell-associated barcode"
-    help = "The total number of sequenced read pairs divided by the number of cell-associated barcodes."
-
-    [multiplexing_sample_assignments.samples_assigned_at_least_one_singlet]
+    [hashtag_multiplexing_quality.samples_assigned_at_least_one_singlet]
     type = "usize"
-    header = "Samples assigned at least one cell"
-    help = "Number of samples to which at least one cell was assigned. Only cell-associated barcodes assigned exactly one CMO were assigned to a sample."
+    header = "Number of samples assigned at least one cell"
+    help = "Number of samples to which at least one cell was assigned. Only cell-associated barcodes assigned exactly one Hashtag were assigned to a sample."
+    json_key = "samples_with_any_singlets"
 
-    [multiplexing_sample_assignments.singlets_assigned_to_a_sample]
+    [hashtag_multiplexing_quality.singlets_assigned_to_a_sample]
     type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
-    header = "Cells assigned to a sample"
-    help = "Number and fraction of cells assigned to a sample amongst all cells detected in this GEM well. Only cell-associated barcodes assigned exactly one CMO were assigned to a sample."
+    header = "Cell-associated barcodes assigned to a sample"
+    help = "Number and fraction of cells assigned to a sample amongst all cells detected in this GEM well. Only cell-associated barcodes assigned exactly one Hashtag were assigned to a sample."
 
-    [multiplexing_sample_assignments.cell_associated_partitions_identified_as_multiplets]
+        [[hashtag_multiplexing_quality.singlets_assigned_to_a_sample.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "No cells have been assigned to a sample"
+        detail = "No cells have been assigned to a sample. This may indicate experimental issues (Hashtag staining quality, cell-handling, etc.) or mistakes in staining or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one Hashtag can be assigned to a sample."
+
+    [hashtag_multiplexing_quality.median_hashtag_umis_per_singlet]
+    type = "FloatAsInt"
+    header = "Median Hashtag UMI Counts per cell"
+    help = "Median number of Hashtag UMIs captured per cell-associated barcode assigned exactly one Hashtag."
+    json_key = "ANTIBODY_median_cmo_umis_per_singlet"
+
+    [hashtag_multiplexing_quality.cell_associated_partitions_identified_as_multiplets]
     type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
     header = "Cell-associated barcodes identified as multiplets"
-    help = "Cell-associated barcodes that were assigned more than one CMO and hence determined to be multiplets."
+    help = "Cell-associated barcodes that were assigned more than one Hashtag and hence determined to be multiplets."
 
-    [multiplexing_sample_assignments.cell_associated_partitions_not_assigned_any_cmos]
+    [hashtag_multiplexing_quality.cell_associated_partitions_not_assigned_any_tags]
     type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
-    header = "Cell-associated barcodes not assigned any CMOs"
-    help = "Cell-associated barcodes that either (i) did not have enough CMO molecules above background or (ii) could not be confidently assigned to a singlet or multiplet state."
+    header = "Cell-associated barcodes not assigned any Hashtags"
+    help = "Cell-associated barcodes that either (i) did not have enough Hashtag molecules above background or (ii) could not be confidently assigned to a singlet or multiplet state."
 
-    [multiplexing_sample_assignments.median_cmo_umis_per_cell_associated_partition]
-    type = "FloatAsInt"
-    header = "Median CMO UMIs per cell-associated barcode"
-    help = "Median number of CMO UMIs captured per cell-associated barcode."
+    [hashtag_multiplexing_quality.hashtag_singlet_capture_ratio]
+    type = "f64"
+    header = "Singlet capture ratio"
+    help = "Ratio between the number of singlets (i.e. cell-associated barcodes assigned exactly one Hashtag) obtained and the number of singlets expected in this experiment according to Poisson statistics."
+    json_key = "ANTIBODY_sc_rec_efficiency_jibes"
+    optional = true
 
+        [[hashtag_multiplexing_quality.hashtag_singlet_capture_ratio.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Fewer than expected number of singlets recovered"
+        detail = "Ideal >= 0.85. The ratio of observed and expected (according to Poisson statistics) number of singlets (i.e. cell-associated barcodes assigned exactly one Hashtag) is less than ideal - fewer than expected number of singlets have been recovered. This may indicate experimental issues (Hashtag staining quality, cell-handling, etc.) or mistakes in Hashtag or sample definitions specified in the Config CSV."
 
 # --------------------------------------------------------------------------------------------------
 # Multiplexing -> Metrics Per Physical Library
 # --------------------------------------------------------------------------------------------------
 [multiplexing_physical_library_metrics]
 title = "Metrics Per Physical Library"
+tier = "library"
 entries = [
     "physical_library_id",
     "number_of_reads",
@@ -1489,6 +1719,10 @@ entries = [
     "fraction_unknown_cmo",
     "fraction_reads_from_multiplets",
 ]
+group_by_key = "physical_library_id"
+
+    [multiplexing_physical_library_metrics.conditions]
+    library_types = ["Multiplexing Capture"]
 
     [multiplexing_physical_library_metrics.physical_library_id]
     type = "String"
@@ -1499,11 +1733,13 @@ entries = [
     type = "usize"
     header = "Number of reads"
     help = "Total number of read pairs that were assigned to this library."
+    json_key = "MULTIPLEXING_total_read_pairs"
 
     [multiplexing_physical_library_metrics.valid_barcodes]
     type = "Percent"
     header = "Valid barcodes"
     help = "Fraction of reads with barcodes that are present in the whitelist after barcode correction."
+    json_key = "MULTIPLEXING_good_bc_frac"
 
         [[multiplexing_physical_library_metrics.valid_barcodes.alerts]]
         error_threshold = 0.5
@@ -1515,16 +1751,19 @@ entries = [
     type = "Percent"
     header = "Valid UMIs"
     help = "Fraction of reads with valid UMIs; i.e. UMI sequences that do not contain Ns and that are not homopolymers."
+    json_key = "MULTIPLEXING_good_umi_frac"
 
     [multiplexing_physical_library_metrics.sequencing_saturation]
     type = "Percent"
     header = "Sequencing saturation"
     help = "The fraction of reads originating from an already-observed UMI. This is a function of library complexity and sequencing depth. More specifically, this is a ratio where: the denominator is the number of reads with a recognized CMO barcode, valid cell-barcode, and valid UMI, and the numerator is the subset of those reads that had a non-unique combination of (cell-barcode, UMI, CMO barcode)."
+    json_key = "MULTIPLEXING_multi_cdna_pcr_dupe_reads_frac"
 
     [multiplexing_physical_library_metrics.reads_in_cell_associated_partitions]
     type = "Percent"
     header = "Fraction reads in cell-associated barcodes"
     help = "The fraction of valid-barcode, valid-UMI, recognized multiplexing-barcode reads with cell-associated barcodes."
+    json_key = "MULTIPLEXING_feature_reads_in_cells"
 
         [[multiplexing_physical_library_metrics.reads_in_cell_associated_partitions.alerts]]
         error_threshold = 0.20
@@ -1536,21 +1775,25 @@ entries = [
     type = "FloatAsInt"
     header = "Mean reads per cell-associated barcode"
     help = "The total number of sequenced read pairs divided by the number of cell-associated barcodes."
+    json_key = "MULTIPLEXING_multi_total_raw_reads_per_filtered_bc"
 
     [multiplexing_physical_library_metrics.fraction_cmo_reads]
     type = "Percent"
     header = "Fraction CMO reads"
     help = "Fraction of reads that contain a recognized CMO sequence."
+    json_key = "MULTIPLEXING_recognized_feature_bc_frac"
 
     [multiplexing_physical_library_metrics.fraction_cmo_reads_usable]
     type = "Percent"
     header = "Fraction CMO reads usable"
     help = "Fraction of read pairs that contain a recognized CMO sequence, a valid UMI, and a cell-associated barcode"
+    json_key = "MULTIPLEXING_frac_feature_reads_usable"
 
     [multiplexing_physical_library_metrics.fraction_unknown_cmo]
     type = "Percent"
     header = "Fraction unrecognized CMO"
     help = "Fraction of read pairs with an unrecognized CMO sequence."
+    json_key = "MULTIPLEXING_unrecognized_feature_bc_frac"
 
         [[multiplexing_physical_library_metrics.fraction_unknown_cmo.alerts]]
         error_threshold = 1.0
@@ -1563,39 +1806,94 @@ entries = [
     type = "Percent"
     header = "Fraction reads from multiplets"
     help = "Amongst all sequenced read pairs, fraction with a cell-barcode identified as a multiplet."
+    json_key = "MULTIPLEXING_frac_reads_from_multiplets"
 
 
 # --------------------------------------------------------------------------------------------------
 # Multiplexing -> Metrics per CMO
 # --------------------------------------------------------------------------------------------------
-[multiplexing_cmo_metrics]
+[cmo_per_tag_metrics]
 title = "Metrics per CMO"
+tier = "library"
 entries = [
     "gem_well_cmo",
-    "reads_in_cell_associated_partitions",
+    "sample_id",
+    "cmo_reads_in_cell_associated_partitions",
     "singlets_assigned_to_cmo",
     "cmo_signal_to_background_ratio",
 ]
+group_by_key = "gem_well_cmo"
 
-    [multiplexing_cmo_metrics.gem_well_cmo]
+    [cmo_per_tag_metrics.conditions]
+    library_types = ["Multiplexing Capture"]
+
+    [cmo_per_tag_metrics.gem_well_cmo]
     type = "String"
     header = "CMO Name"
     help = "Metrics in this table are provided for each CMO."
 
-    [multiplexing_cmo_metrics.reads_in_cell_associated_partitions]
+    [cmo_per_tag_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+    help = "The identifier of the sample associated with this CMO."
+
+    [cmo_per_tag_metrics.cmo_reads_in_cell_associated_partitions]
     type = "Percent"
     header = "Fraction reads in cell-associated barcodes"
     help = "Amongst all reads with a valid barcode, valid UMI, and this particular CMO sequence, fraction arising from cell-containing partitions."
 
-    [multiplexing_cmo_metrics.singlets_assigned_to_cmo]
-    type = "Percent"
-    header = "Cells assigned to CMO"
+    [cmo_per_tag_metrics.singlets_assigned_to_cmo]
+    type = "CountAndPercent"
+    header = "Cells per CMO"
     help = "Fraction of cells assigned this particular CMO (and only this CMO) amongst all cells detected in this GEM well."
 
-    [multiplexing_cmo_metrics.cmo_signal_to_background_ratio]
+    [cmo_per_tag_metrics.cmo_signal_to_background_ratio]
     type = "f64"
     header = "CMO signal-to-noise ratio"
     help = "Computed as the difference between labeled and unlabelled mean CMO counts (log scale) divided by the variance."
+
+# --------------------------------------------------------------------------------------------------
+# Hashtag -> Metrics per Hashtag
+# --------------------------------------------------------------------------------------------------
+[hashtag_per_tag_metrics]
+title = "Metrics per Hashtag"
+tier = "library"
+entries = [
+    "gem_well_hashtag",
+    "sample_id",
+    "hashtag_reads_in_cell_associated_partitions",
+    "singlets_assigned_to_hashtag",
+    "hashtag_signal_to_background_ratio",
+]
+group_by_key = "gem_well_hashtag"
+
+    [hashtag_per_tag_metrics.conditions]
+    library_types = ["Antibody Capture"]
+
+    [hashtag_per_tag_metrics.gem_well_hashtag]
+    type = "String"
+    header = "Hashtag Name"
+    help = "Metrics in this table are provided for each Hashtag."
+
+    [hashtag_per_tag_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+    help = "The identifier of the sample associated with this hashtag."
+
+    [hashtag_per_tag_metrics.hashtag_reads_in_cell_associated_partitions]
+    type = "Percent"
+    header = "Fraction reads in cell-associated barcodes"
+    help = "Amongst all reads with a valid barcode, valid UMI for this particular Hashtag, fraction arising from cell-containing partitions."
+
+    [hashtag_per_tag_metrics.singlets_assigned_to_hashtag]
+    type = "CountAndPercent"
+    header = "Cells per Hashtag"
+    help = "Fraction of cells assigned this particular Hashtag (and only this Hashtag) amongst all cells detected in this GEM well."
+
+    [hashtag_per_tag_metrics.hashtag_signal_to_background_ratio]
+    type = "f64"
+    header = "Hashtag signal-to-noise ratio"
+    help = "Computed as the difference between labeled and unlabelled mean Hashtag counts (log scale) divided by the variance."
 
 ####################################################################################################
 # Section 2: Tables that appear in the "Sample" Tab
@@ -1606,19 +1904,21 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [gex_sample_hero_metrics]
 title = "Cells"
+tier = "sample"
 entries = [
     "genome",
     "total_singlets",
     "mean_reads_per_cell",
-    "median_reads_per_cell_on_target",
     "median_genes_per_singlet",
-    "median_genes_per_cell_on_target",
     "total_genes_detected",
-    "num_genes_detected_on_target",
     "median_umi_per_singlet",
-    "median_umis_per_cell_on_target",
     "confidently_mapped_reads_in_cells",
 ]
+group_by_key = "genome"
+
+    [gex_sample_hero_metrics.conditions]
+    library_types = ["Gene Expression"]
+
     [gex_sample_hero_metrics.genome]
     type = "String"
     optional = true
@@ -1643,23 +1943,11 @@ entries = [
     header = "Mean reads per cell"
     help = "Mean number of read pairs sequenced from the cells called from this sample."
 
-    [gex_sample_hero_metrics.median_reads_per_cell_on_target]
-    type = "FloatAsInt"
-    header = "Median targeted reads per cell"
-    optional = true
-    help = "Median number of targeted read pairs sequenced from the cells called from this sample."
-
     [gex_sample_hero_metrics.median_genes_per_singlet]
     type = "FloatAsInt"
     header = "Median genes per cell"
     optional = true # Not shown in targeted samples
     help = "The median number of genes detected per cell called from this sample. Detection is defined as the presence of at least 1 UMI count."
-
-    [gex_sample_hero_metrics.median_genes_per_cell_on_target]
-    type = "FloatAsInt"
-    optional = true
-    header = "Median targeted genes per cell"
-    help = "The median number of targeted genes detected per cell-associated barcode. Detection is defined as the presence of at least 1 UMI count."
 
     [gex_sample_hero_metrics.total_genes_detected]
     type = "usize"
@@ -1667,23 +1955,11 @@ entries = [
     header = "Total genes detected"
     help = "The number of genes with at least one UMI count in the cells in this sample."
 
-    [gex_sample_hero_metrics.num_genes_detected_on_target]
-    type = "usize"
-    optional = true
-    header = "Total targeted genes detected"
-    help = "The number of targeted genes with at least one UMI count in any cell."
-
     [gex_sample_hero_metrics.median_umi_per_singlet]
     type = "FloatAsInt"
     optional = true # Not shown in targeted samples
     header = "Median UMI counts per cell"
     help = "Median number of UMIs obtained from the cells called from this sample."
-
-    [gex_sample_hero_metrics.median_umis_per_cell_on_target]
-    type = "FloatAsInt"
-    optional = true
-    header = "Median targeted UMI counts per cell"
-    help = "The median number of targeted UMI counts per cell."
 
     [gex_sample_hero_metrics.confidently_mapped_reads_in_cells]
     type = "Percent"
@@ -1703,7 +1979,7 @@ entries = [
 # Shared by all sample tabs when multiplexing is enabled
 [gex_sample_cell_metrics]
 title = "Cell Multiplexing"
-help = "Summary statistics about cell-associated barcodes."
+tier = "sample"
 entries = [
     "physical_library_id",
     "singlets_assigned_to_this_sample",
@@ -1711,6 +1987,16 @@ entries = [
     "cell_associated_partitions_not_assigned_any_samples",
     "cell_associated_partitions_identified_as_multiplets",
 ]
+group_by_key = "physical_library_id"
+
+    [gex_sample_cell_metrics.conditions]
+    library_types = [
+        "Gene Expression",
+        "Antibody Capture",
+        "CRISPR Guide Capture",
+        "Custom",
+    ]
+    is_cmo_multiplexed = true
 
     [gex_sample_cell_metrics.physical_library_id]
     type = "String"
@@ -1743,12 +2029,22 @@ entries = [
 # Shared by all sample tabs when multiplexing is enabled
 [rtl_sample_cell_metrics]
 title = "Cell Multiplexing"
-help = "Summary statistics about cell-associated barcodes."
+tier = "sample"
 entries = [
     "physical_library_id",
     "singlets_assigned_to_this_sample",
     "singlets_assigned_to_other_samples",
 ]
+group_by_key = "physical_library_id"
+
+    [rtl_sample_cell_metrics.conditions]
+    library_types = [
+        "Gene Expression",
+        "Antibody Capture",
+        "CRISPR Guide Capture",
+        "Custom",
+    ]
+    is_read_multiplexed = true
 
     [rtl_sample_cell_metrics.physical_library_id]
     type = "String"
@@ -1763,13 +2059,14 @@ entries = [
     [rtl_sample_cell_metrics.singlets_assigned_to_other_samples]
     type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
     header = "Cells detected in other samples"
-    help = "Number and fraction of cells detected in other samples samples among all cells detected in this GEM well."
+    help = "Number and fraction of cells detected in other samples among all cells detected in this GEM well."
 
 # --------------------------------------------------------------------------------------------------
 # GEX -> Mapping metrics
 # --------------------------------------------------------------------------------------------------
 [gex_sample_mapping_metrics]
 title = "Mapping Metrics (Amongst Reads From Cells Assigned To Sample)"
+tier = "sample"
 entries = [
     "reads_from_cells_assigned_to_sample",
     "mapped_to_genome",
@@ -1782,25 +2079,33 @@ entries = [
     "confidently_mapped_antisense",
 ]
 
+    [gex_sample_mapping_metrics.conditions]
+    library_types = ["Gene Expression"]
+    is_rtl = false
+
     [gex_sample_mapping_metrics.reads_from_cells_assigned_to_sample]
     type = "usize"
     header = "Number of reads from cells called from this sample"
     help = "The total number of reads from cells called from this sample."
+    json_key = "total_read_pairs_in_filtered_barcodes"
 
     [gex_sample_mapping_metrics.mapped_to_genome]
     type = "Percent"
     header = "Mapped to genome"
     help = "Fraction of reads that mapped to the genome."
+    json_key = "multi_genome_mapped_reads_frac_in_filtered_barcodes"
 
     [gex_sample_mapping_metrics.confidently_mapped_to_genome]
     type = "Percent"
     header = "Confidently mapped to genome"
     help = "Fraction of reads that mapped uniquely to the genome. If a gene mapped to exonic loci from a single gene and also to non-exonic loci, it is considered uniquely mapped to one of the exonic loci."
+    json_key = "multi_genome_conf_mapped_reads_frac_in_filtered_barcodes"
 
     [gex_sample_mapping_metrics.confidently_mapped_to_transcriptome]
     type = "Percent"
     header = "Confidently mapped to transcriptome"
     help = "Fraction of reads that mapped to a unique gene in the transcriptome. The read must be consistent with annotated splice junctions. These reads are considered for UMI counting."
+    json_key = "multi_transcriptome_conf_mapped_reads_frac_in_filtered_barcodes"
 
         [[gex_sample_mapping_metrics.confidently_mapped_to_transcriptome.alerts]]
         error_threshold = 0.2
@@ -1813,61 +2118,53 @@ entries = [
     optional = true
     header = "Confidently mapped to targeted transcriptome"
     help = "Fraction of reads that mapped to a unique gene from the target panel. The read must be consistent with annotated splice junctions. These reads are considered for UMI counting."
+    json_key = "multi_transcriptome_targeted_conf_mapped_reads_frac_in_filtered_barcodes"
 
     [gex_sample_mapping_metrics.confidently_mapped_to_intronic_regions]
     type = "Percent"
     header = "Confidently mapped to intronic regions"
     help = "Fraction of reads that mapped uniquely to an intronic region of the genome."
+    json_key = "multi_intronic_conf_mapped_reads_frac_in_filtered_barcodes"
 
     [gex_sample_mapping_metrics.confidently_mapped_to_exonic_regions]
     type = "Percent"
     header = "Confidently mapped to exonic regions"
     help = "Fraction of reads that mapped uniquely to an exonic region of the genome."
+    json_key = "multi_exonic_conf_mapped_reads_frac_in_filtered_barcodes"
 
 
     [gex_sample_mapping_metrics.confidently_mapped_to_intergenic_regions]
     type = "Percent"
     header = "Confidently mapped to intergenic regions"
     help = "Fraction of reads that mapped uniquely to an intergenic region of the genome."
+    json_key = "multi_intergenic_conf_mapped_reads_frac_in_filtered_barcodes"
 
     [gex_sample_mapping_metrics.confidently_mapped_antisense]
     type = "Percent"
     header = "Confidently mapped antisense"
     help = "Fraction of reads confidently mapped to the transcriptome, but on the opposite strand of their annotated gene. A read is counted as antisense if it has any alignments that are consistent with an exon of a transcript but antisense to it, and has no sense alignments."
+    json_key = "multi_antisense_reads_frac_in_filtered_barcodes"
 
         [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = false, is_hybrid_capture = false }
+        conditions = { include_introns = false }
         error_threshold = 0.3
         warn_threshold = 0.1
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 10% for single cell samples. This metric will usually be higher if run with --include_introns. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
         [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = true, is_hybrid_capture = false }
+        conditions = { include_introns = true }
         error_threshold = 0.4
         warn_threshold = 0.2
         warn_title = "High Fraction of Reads Mapped Antisense to Genes"
         detail = "Ideal < 10% for single cell samples, but rates of 20% to 40% are common for single nuclei samples. This metric will usually be higher if run with --include_introns. If this is a single cell sample, this can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
-
-        [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = false, is_hybrid_capture = true }
-        error_threshold = 0.4
-        warn_threshold = 0.2
-        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
-        detail = "Ideal < 20%. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
-
-        [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
-        conditions = { include_introns = true, is_hybrid_capture = true }
-        error_threshold = 0.4
-        warn_threshold = 0.2
-        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
-        detail = "Ideal < 20%. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
 
 # --------------------------------------------------------------------------------------------------
 #  GEX (RTL) -> Mapping metrics
 # --------------------------------------------------------------------------------------------------
 [rtl_sample_mapping_metrics]
 title = "Mapping Metrics (Amongst Reads From Cells Assigned To Sample)"
+tier = "sample"
 entries = [
     "reads_from_cells_assigned_to_sample",
     "reads_half_mapped_to_probe_set",
@@ -1877,15 +2174,21 @@ entries = [
     "reads_confidently_mapped_to_filtered_probe_set",
 ]
 
+    [rtl_sample_mapping_metrics.conditions]
+    library_types = ["Gene Expression"]
+    is_rtl = true
+
     [rtl_sample_mapping_metrics.reads_from_cells_assigned_to_sample]
     type = "usize"
     header = "Number of reads from cells called from this sample"
     help = "The total number of reads from cells called from this sample"
+    json_key = "total_read_pairs_in_filtered_barcodes"
 
     [rtl_sample_mapping_metrics.reads_half_mapped_to_probe_set]
     type = "Percent"
     header = "Reads half-mapped to probe set"
     help = "Fraction of reads that mapped to unpaired ligation products."
+    json_key = "multi_transcriptome_half_mapped_reads_frac_in_filtered_barcodes"
 
         [[rtl_sample_mapping_metrics.reads_half_mapped_to_probe_set.alerts]]
         warn_threshold = 0.2
@@ -1897,6 +2200,7 @@ entries = [
     type = "Percent"
     header = "Reads split-mapped to probe set"
     help = "Fraction of reads that mapped to mispaired ligation products."
+    json_key = "multi_transcriptome_split_mapped_reads_frac_in_filtered_barcodes"
 
         [[rtl_sample_mapping_metrics.reads_split_mapped_to_probe_set.alerts]]
         warn_threshold = 0.2
@@ -1908,28 +2212,31 @@ entries = [
     type = "Percent"
     header = "Reads mapped to probe set"
     help = "Fraction of reads that mapped to the probe set."
+    json_key = "multi_transcriptome_mapped_reads_frac_in_filtered_barcodes"
 
     [rtl_sample_mapping_metrics.reads_confidently_mapped_to_probe_set]
     type = "Percent"
     header = "Reads confidently mapped to probe set"
     help = "Fraction of reads that mapped uniquely to a probe in the probe set."
+    json_key = "multi_transcriptome_conf_mapped_reads_frac_in_filtered_barcodes"
 
         [[rtl_sample_mapping_metrics.reads_confidently_mapped_to_probe_set.alerts]]
         error_threshold = 0.2
         warn_threshold = 0.5
         warn_title = "Low Fraction Reads Confidently Mapped to Probe Set"
-        detail = "Ideal > 50%. This can indicate low aggregate expression, use of the wrong probe set, or the use of input FASTQs from products other than Fixed RNA Profiling."
+        detail = "Ideal > 50%. This can indicate low aggregate expression, use of the wrong probe set, or the use of input FASTQs from products other than Flex."
 
     [rtl_sample_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set]
     type = "Percent"
     header = "Reads confidently mapped to filtered probe set"
     help = "Fraction of reads from probes that map to a unique gene. These reads are considered for UMI counting. For more information on probe filtering please visit https://www.10xgenomics.com/support"
+    json_key = "multi_transcriptome_targeted_conf_mapped_reads_frac_in_filtered_barcodes"
 
         [[rtl_sample_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set.alerts]]
         error_threshold = 0.2
         warn_threshold = 0.5
         warn_title = "Low Fraction Reads Confidently Mapped to Filtered Probe Set"
-        detail = "Ideal > 50%. This can indicate low aggregate expression, use of the wrong probe set, high expression genes removed by filtering, or the use of input FASTQs from products other than Fixed RNA Profiling."
+        detail = "Ideal > 50%. This can indicate low aggregate expression, use of the wrong probe set, high expression genes removed by filtering, or the use of input FASTQs from products other than Flex."
 
 
 
@@ -1938,16 +2245,27 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_t_sample_hero_metrics]
 title = "T Cell Expression"
+tier = "sample"
 entries = [
     "vdj_filtered_bcs",
     "multi_vdj_assembly_contig_pair_productive_full_len_bc_count",
     "TRA_vdj_assembly_umis_per_cell_median",
     "TRB_vdj_assembly_umis_per_cell_median",
+    "vdj_filtered_bcs_cum_frac",
 ]
+
+    [vdj_t_sample_hero_metrics.conditions]
+    library_types = ["VDJ-T"]
+
+    [vdj_t_sample_hero_metrics.vdj_filtered_bcs_cum_frac]
+    type = "Percent"
+    header = "Fraction reads in cells"
+    help = "Number of reads with cell-associated barcodes divided by the number of reads with valid barcodes."
+    optional = true
 
     [vdj_t_sample_hero_metrics.vdj_filtered_bcs]
     type = "usize"
-    header = "Estimated number of cells"
+    header = "VDJ cells"
     help = "The number of barcodes estimated to be associated with T cells."
 
     [vdj_t_sample_hero_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_count]
@@ -1984,16 +2302,27 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_tgd_sample_hero_metrics]
 title = "T Cell Expression"
+tier = "sample"
 entries = [
     "vdj_filtered_bcs",
     "multi_vdj_assembly_contig_pair_productive_full_len_bc_count",
     "TRG_vdj_assembly_umis_per_cell_median",
     "TRD_vdj_assembly_umis_per_cell_median",
+    "vdj_filtered_bcs_cum_frac",
 ]
+
+    [vdj_tgd_sample_hero_metrics.conditions]
+    library_types = ["VDJ-T-GD"]
+
+    [vdj_tgd_sample_hero_metrics.vdj_filtered_bcs_cum_frac]
+    type = "Percent"
+    header = "Fraction reads in cells"
+    help = "Number of reads with cell-associated barcodes divided by the number of reads with valid barcodes."
+    optional = true
 
     [vdj_tgd_sample_hero_metrics.vdj_filtered_bcs]
     type = "usize"
-    header = "Estimated number of cells"
+    header = "VDJ cells"
     help = "The number of barcodes estimated to be associated with T cells."
 
     [vdj_tgd_sample_hero_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_count]
@@ -2031,17 +2360,28 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_b_sample_hero_metrics]
 title = "B Cell Expression"
+tier = "sample"
 entries = [
     "vdj_filtered_bcs",
     "multi_vdj_assembly_contig_pair_productive_full_len_bc_count",
     "IGH_vdj_assembly_umis_per_cell_median",
     "IGK_vdj_assembly_umis_per_cell_median",
     "IGL_vdj_assembly_umis_per_cell_median",
+    "vdj_filtered_bcs_cum_frac",
 ]
+
+    [vdj_b_sample_hero_metrics.conditions]
+    library_types = ["VDJ-B"]
+
+    [vdj_b_sample_hero_metrics.vdj_filtered_bcs_cum_frac]
+    type = "Percent"
+    header = "Fraction reads in cells"
+    help = "Number of reads with cell-associated barcodes divided by the number of reads with valid barcodes."
+    optional = true
 
     [vdj_b_sample_hero_metrics.vdj_filtered_bcs]
     type = "usize"
-    header = "Estimated number of cells"
+    header = "VDJ cells"
     help = "The number of barcodes estimated to be associated with B cells."
 
     [vdj_b_sample_hero_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_count]
@@ -2069,9 +2409,9 @@ entries = [
 
         [[vdj_b_sample_hero_metrics.IGK_vdj_assembly_umis_per_cell_median.alerts]]
         if_metric_is = "less_than_or_equal"
-        error_threshold = 0
-        error_title = "Zero Median IGK UMIs per Cell"
-        detail = "Ideal > 0. This can indicate cells with extremely low IGK expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+        warn_threshold = 0
+        warn_title = "Zero Median IGK UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with exclusive expression of paired IGH and IGL chains, or it could be due to cells with extremely low IGK expression, poor quality, low yield from the RT reaction, or the use of unsupported chemistry (e.g., Single Cell 3' for V(D)J assembly). The warning should be interpreted in the context of productive V-J spanning pairing rate."
 
     [vdj_b_sample_hero_metrics.IGL_vdj_assembly_umis_per_cell_median]
     type = "FloatAsInt"
@@ -2081,10 +2421,9 @@ entries = [
 
         [[vdj_b_sample_hero_metrics.IGL_vdj_assembly_umis_per_cell_median.alerts]]
         if_metric_is = "less_than_or_equal"
-        error_threshold = 0
-        error_title = "Zero Median IGL UMIs per Cell"
-        detail = "Ideal > 0. This can indicate cells with extremely low IGL expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
-
+        warn_threshold = 0
+        warn_title = "Zero Median IGL UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with exclusive expression of paired IGH and IGK chains, or it could be due to cells with extremely low IGL expression, poor quality, low yield from the RT reaction, or the use of unsupported chemistry (e.g., Single Cell 3' for V(D)J assembly). The warning should be interpreted in the context of productive V-J spanning pairing rate."
 
 
 # --------------------------------------------------------------------------------------------------
@@ -2092,6 +2431,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_t_sample_annotation_metrics]
 title = "V(D)J Annotation"
+tier = "sample"
 entries = [
     "multi_vdj_assembly_contig_pair_productive_full_len_bc_frac",
     "TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac",
@@ -2099,6 +2439,9 @@ entries = [
     "TRB_vdj_assembly_prod_cdr_bc_frac",
     "multi_raw_vdj_paired_clonotype_diversity",
 ]
+
+    [vdj_t_sample_annotation_metrics.conditions]
+    library_types = ["VDJ-T"]
 
     [vdj_t_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
     type = "Percent"
@@ -2141,6 +2484,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_tgd_sample_annotation_metrics]
 title = "V(D)J Annotation"
+tier = "sample"
 entries = [
     "multi_vdj_assembly_contig_pair_productive_full_len_bc_frac",
     "TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac",
@@ -2148,6 +2492,9 @@ entries = [
     "TRD_vdj_assembly_prod_cdr_bc_frac",
     "multi_raw_vdj_paired_clonotype_diversity",
 ]
+
+    [vdj_tgd_sample_annotation_metrics.conditions]
+    library_types = ["VDJ-T-GD"]
 
     [vdj_tgd_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
     type = "Percent"
@@ -2185,6 +2532,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [vdj_b_sample_annotation_metrics]
 title = "V(D)J Annotation"
+tier = "sample"
 entries = [
     "multi_vdj_assembly_contig_pair_productive_full_len_bc_frac",
     "IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac",
@@ -2194,6 +2542,9 @@ entries = [
     "IGL_vdj_assembly_prod_cdr_bc_frac",
     "multi_raw_vdj_paired_clonotype_diversity",
 ]
+
+    [vdj_b_sample_annotation_metrics.conditions]
+    library_types = ["VDJ-B"]
 
     [vdj_b_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
     type = "Percent"
@@ -2248,12 +2599,16 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [antibody_sample_hero_metrics]
 title = "Antibody Expression"
+tier = "sample"
 entries = [
     "total_singlets",
     "median_umis_per_singlet",
     "antibody_reads_usable_per_cell",
     "reads_in_cells",
 ]
+
+    [antibody_sample_hero_metrics.conditions]
+    library_types = ["Antibody Capture"]
 
     [antibody_sample_hero_metrics.total_singlets]
     type = "usize"
@@ -2294,11 +2649,15 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [antibody_sample_mapping_metrics]
 title = "Mapping Metrics (Amongst Reads From Cells Assigned To Sample)"
+tier = "sample"
 entries = [
     "reads_from_cells_assigned_to_sample",
     "fraction_antibody_reads",
     "fraction_reads_in_aggregate_barcodes",
 ]
+
+    [antibody_sample_mapping_metrics.conditions]
+    library_types = ["Antibody Capture"]
 
     [antibody_sample_mapping_metrics.reads_from_cells_assigned_to_sample]
     type = "usize"
@@ -2315,6 +2674,7 @@ entries = [
     [antibody_sample_mapping_metrics.fraction_reads_in_aggregate_barcodes]
     type = "Percent"
     json_key = "ANTIBODY_reads_lost_to_aggregate_GEMs"
+    optional = true
     header = "Fraction antibody reads in aggregate barcodes"
     help = "Fraction of read pairs with valid barcodes that were removed because they are aggregates out of all reads with valid barcodes that are assigned to this sample (not just reads from cells)."
 
@@ -2341,18 +2701,22 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [antigen_sample_hero_metrics]
 title = "Antigen Expression"
+tier = "sample"
 entries = [
     "feature_type",
     "total_singlets",
     "median_umis_per_singlet",
     "antigen_reads_usable_per_cell",
 ]
+group_by_key = "feature_type"
+
+    [antigen_sample_hero_metrics.conditions]
+    library_types = ["Antigen Capture"]
 
     [antigen_sample_hero_metrics.feature_type]
     type = "String"
     header = "Feature Type"
     help = "The feature type used for computing the metrics."
-
 
     [antigen_sample_hero_metrics.total_singlets]
     type = "usize"
@@ -2385,6 +2749,7 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [crispr_sample_hero_metrics]
 title = "Guide Expression"
+tier = "sample"
 entries = [
     "total_singlets",
     "median_umis_per_singlet",
@@ -2393,6 +2758,9 @@ entries = [
     "cells_with_one_or_more_protospacers_detected",
     "cells_with_two_or_more_protospacers_detected",
 ]
+
+    [crispr_sample_hero_metrics.conditions]
+    library_types = ["CRISPR Guide Capture"]
 
     [crispr_sample_hero_metrics.total_singlets]
     type = "usize"
@@ -2436,12 +2804,16 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [crispr_sample_mapping_metrics]
 title = "Mapping Metrics (Amongst Reads From Cells Assigned To Sample)"
+tier = "sample"
 entries = [
     "number_of_reads",
     "fraction_reads_with_putative_protospacer",
     "fraction_guide_reads",
     "fraction_protospacer_not_recognized",
 ]
+
+    [crispr_sample_mapping_metrics.conditions]
+    library_types = ["CRISPR Guide Capture"]
 
     [crispr_sample_mapping_metrics.number_of_reads]
     type = "usize"
@@ -2486,23 +2858,68 @@ entries = [
 # --------------------------------------------------------------------------------------------------
 [custom_feature_sample_hero_metrics]
 title = "Feature Expression"
+tier = "sample"
 entries = [
     "total_singlets",
     "median_umis_per_singlet",
     "feature_reads_usable_per_cell",
 ]
 
+    [custom_feature_sample_hero_metrics.conditions]
+    library_types = ["Custom"]
+
     [custom_feature_sample_hero_metrics.total_singlets]
     type = "usize"
     header = "Cells"
     help = "Number of cells called from this sample."
+    json_key = "Custom_multi_filtered_bcs"
 
     [custom_feature_sample_hero_metrics.median_umis_per_singlet]
     type = "FloatAsInt"
     header = "Median UMI counts per cell"
     help = "Median number of UMIs obtained from the cells called from this sample."
+    json_key = "Custom_multi_filtered_bcs_median_counts"
 
     [custom_feature_sample_hero_metrics.feature_reads_usable_per_cell]
     type = "FloatAsInt"
     header = "Mean feature reads usable per cell"
     help = "Mean number of usable reads (valid UMI, recognized feature-barcode sequence) sequenced from the cells called from this sample."
+    json_key = "Custom_multi_usable_reads_per_filtered_bc"
+
+# --------------------------------------------------------------------------------------------------
+# GEX (OCM) -> Metrics per overhang
+# --------------------------------------------------------------------------------------------------
+[ocm_per_overhang_metrics]
+title = "Metrics per overhang"
+tier = "library"
+entries = [
+    "ocm_barcode_id",
+    "sample_id",
+    "umi_per_ocm_barcode",
+    "cells_per_ocm_barcode",
+]
+group_by_key = "ocm_barcode_id"
+
+    [ocm_per_overhang_metrics.conditions]
+    library_types = ["Gene Expression"]
+    is_oh_multiplexed = true
+
+    [ocm_per_overhang_metrics.ocm_barcode_id]
+    type = "String"
+    header = "OCM Barcode ID"
+    help = "The identifier of this OCM barcode."
+
+    [ocm_per_overhang_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+    help = "The identifier of the sample associated with this OCM barcode."
+
+    [ocm_per_overhang_metrics.umi_per_ocm_barcode]
+    type = "CountAndPercent"
+    header = "UMIs per OCM barcode"
+    help = "Number and fraction of UMIs for this overhang amongst all UMIs for that library type in the raw feature-barcode matrix."
+
+    [ocm_per_overhang_metrics.cells_per_ocm_barcode]
+    type = "CountAndPercent"
+    header = "Cells per OCM barcode"
+    help = "Number and fraction of cells per OCM Barcode ID amongst all cells detected in this GEM well. Cell calling is based on gene expression data when present."

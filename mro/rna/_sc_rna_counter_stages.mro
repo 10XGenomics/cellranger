@@ -11,9 +11,11 @@ filetype html;
 filetype tps.json;
 
 stage GET_AGGREGATE_BARCODES_OUT(
-    in  path antibody_analysis,
-    out csv  aggregate_barcodes,
-    src py   "stages/counter/get_aggregate_barcodes_out",
+    in  path   antibody_analysis,
+    in  bool   is_multi,
+    in  string multiplexing_method,
+    out csv    aggregate_barcodes,
+    src py     "stages/counter/get_aggregate_barcodes_out",
 )
 
 stage SUMMARIZE_REPORTS(
@@ -41,8 +43,8 @@ stage SUMMARIZE_REPORTS(
     out csv               feature_reference,
     out json              ws_data,
     src py                "stages/counter/summarize_reports",
+) split (
 ) using (
-    mem_gb   = 16,
     volatile = strict,
 ) retain (
     metrics_summary_json,

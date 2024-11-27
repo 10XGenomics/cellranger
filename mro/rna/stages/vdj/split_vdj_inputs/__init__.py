@@ -28,7 +28,6 @@ BCR_RECEPTOR = "IG"
 
 def main(args, outs):
     assert len(args.vdj_inputs) > 0
-    assert len(args.vdj_inputs) <= 3
     assert len(args.vdj_inputs) == len(args.vdj_chemistry_defs)
     assert len(args.vdj_inputs) == len(args.vdj_receptors)
 

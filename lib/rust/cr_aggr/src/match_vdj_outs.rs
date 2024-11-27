@@ -1,6 +1,6 @@
 //! MatchVdjOuts stage code
 
-use crate::run_enclone_aggr::FaFile;
+use crate::write_contig_proto::ProtoFile;
 use anyhow::Result;
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use vdj_reference::VdjReceptor;
 
+martian_filetype!(FaFile, "fa");
 martian_filetype!(FastaFile, "fasta");
 martian_filetype!(VdjLoupeFile, "vloupe");
+martian_filetype! {HtmlFile, "html"}
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct VdjAggrResults {
@@ -23,6 +25,8 @@ pub struct VdjAggrResults {
     consensus_annotations_csv: CsvFile<()>,
     web_summary_data: JsonFile<()>,
     vloupe: Option<VdjLoupeFile>,
+    filter_summary: HtmlFile,
+    enclone_output: ProtoFile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
@@ -48,6 +52,8 @@ pub struct MatchVdjOutsStageInputs {
     antigen_analysis: Vec<Option<AntigenAggrResults>>,
     antigen_aggr_web_summary_data_in: Vec<Option<JsonFile<()>>>,
     airr_rearrangements: Vec<TsvFile<()>>,
+    filter_summaries: Vec<HtmlFile>,
+    enclone_outputs: Vec<ProtoFile>,
 }
 
 impl MatchVdjOutsStageInputs {
@@ -61,6 +67,8 @@ impl MatchVdjOutsStageInputs {
             consensus_annotations_csv: self.consensus_annotations_csvs[i].clone(),
             web_summary_data: self.web_summary_data[i].clone(),
             vloupe: self.vloupes.as_ref().map(|v| v[i].clone()),
+            filter_summary: self.filter_summaries[i].clone(),
+            enclone_output: self.enclone_outputs[i].clone(),
         })
     }
 }

@@ -19,8 +19,7 @@ def sum_masked(
     row_mask: np.ndarray[int, np.dtype[np.bool_]],
     col_mask: np.ndarray[int, np.dtype[np.bool_]],
     axis: None,
-) -> np.generic:
-    ...
+) -> np.generic: ...
 
 
 @overload
@@ -29,8 +28,7 @@ def sum_masked(
     row_mask: np.ndarray[int, np.dtype[np.bool_]],
     col_mask: np.ndarray[int, np.dtype[np.bool_]],
     axis: int,
-) -> np.ndarray[int, np.dtype[np.generic]]:
-    ...
+) -> np.ndarray[int, np.dtype[np.generic]]: ...
 
 
 def sum_masked(
@@ -79,8 +77,7 @@ def count_ge_masked(
     threshold: int,
     axis: None,
     chunk_size_mb: int = 64,
-) -> np.uint64:
-    ...
+) -> np.uint64: ...
 
 
 @overload
@@ -91,8 +88,7 @@ def count_ge_masked(
     threshold: int,
     axis: int,
     chunk_size_mb: int = 64,
-) -> np.ndarray[int, np.dtype[np.uint64]]:
-    ...
+) -> np.ndarray[int, np.dtype[np.uint64]]: ...
 
 
 def count_ge_masked(

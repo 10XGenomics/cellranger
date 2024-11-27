@@ -49,6 +49,7 @@ pub mod assigner;
 pub use assigner::Assigner;
 pub mod fill_clonotype_info;
 pub mod handle_no_clonotyping;
+pub mod run_enclone_aggr;
 pub mod write_clonotype_outs;
 pub mod write_concat_ref_outs;
 pub mod write_consensus_bam;

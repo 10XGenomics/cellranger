@@ -68,7 +68,7 @@ SUBSAMPLE_BULK_FIXED_DEPTHS = [
 ]
 
 #  - for all other libraries
-SUBSAMPLE_FIXED_DEPTHS = [3000, 5000, 10000, 20000, 30000, 50000]
+SUBSAMPLE_FIXED_DEPTHS = [1000, 3000, 5000, 10000, 20000, 30000, 50000]
 
 # Number of additional quantile-based depth targets
 SUBSAMPLE_NUM_ADDITIONAL_DEPTHS = 10
@@ -171,12 +171,12 @@ def _subsampling_for_depth(
     target_depth: int,
     subsample_type: str,
     library_type: str,
-    num_cells_per_lib: np.ndarray[int, np.dtype[np.float_]],
-    usable_frac_per_lib: np.ndarray[int, np.dtype[np.float_]],
+    num_cells_per_lib: np.ndarray[int, np.dtype[np.float64]],
+    usable_frac_per_lib: np.ndarray[int, np.dtype[np.float64]],
     max_computed_depth: int | None,
     lib_indices: np.ndarray[int, np.dtype[np.int32]],
-    raw_reads_per_lib: np.ndarray[int, np.dtype[np.float_]],
-    usable_reads_per_lib: np.ndarray[int, np.dtype[np.float_]],
+    raw_reads_per_lib: np.ndarray[int, np.dtype[np.float64]],
+    usable_reads_per_lib: np.ndarray[int, np.dtype[np.float64]],
     library_count: int,
 ) -> SubsamplingDef:
     if subsample_type == BULK_SUBSAMPLE_TYPE:
@@ -190,7 +190,7 @@ def _subsampling_for_depth(
         target_usable_reads_per_lib = target_depth * num_cells_per_lib * usable_frac_per_lib
 
     # compute subsampling rates (frac. of usable reads)
-    subsample_rates: np.ndarray[int, np.dtype[np.float_]] = np.zeros(library_count, dtype=float)
+    subsample_rates: np.ndarray[int, np.dtype[np.float64]] = np.zeros(library_count, dtype=float)
     if subsample_type == BULK_SUBSAMPLE_TYPE:
         denominator = raw_reads_per_lib
     else:
@@ -274,8 +274,7 @@ def make_subsamplings(
         max_target_depth = np.min(
             (
                 raw_rppc_per_lib
-                if subsample_type == RAW_SUBSAMPLE_TYPE
-                or subsample_type == RAW_CELLS_SUBSAMPLE_TYPE
+                if subsample_type in (RAW_SUBSAMPLE_TYPE, RAW_CELLS_SUBSAMPLE_TYPE)
                 else usable_rppc_per_lib
             )[lib_indices]
         )
@@ -284,10 +283,10 @@ def make_subsamplings(
     # N.B. computed_depths is empty if max_target_depth is less than 1 read pair per cell.
     # This might happen if there are very few usable reads for this library type.
     max_computed_depth = np.max(computed_depths) if len(computed_depths) > 0 else None
-    target_depths: np.ndarray[
-        int, np.dtype[np.int_]
-    ] = np.concatenate(  # pylint: disable=unexpected-keyword-arg
-        [computed_depths, fixed_depths], dtype=int
+    target_depths: np.ndarray[int, np.dtype[np.int_]] = (
+        np.concatenate(  # pylint: disable=unexpected-keyword-arg
+            [computed_depths, fixed_depths], dtype=int
+        )
     )
     target_depths.sort()
     target_depths = np.unique(target_depths)
@@ -379,13 +378,12 @@ def construct_all_subsamplings(
                 if is_targeted_gex:
                     fixed_depths = SUBSAMPLE_TARGETED_FIXED_DEPTHS
                     subsampling_usable_reads_per_lib = usable_reads_per_lib
+                elif subsample_type == BULK_SUBSAMPLE_TYPE:
+                    fixed_depths = SUBSAMPLE_BULK_FIXED_DEPTHS
+                    subsampling_usable_reads_per_lib = transcriptomic_reads_per_lib
                 else:
-                    if subsample_type == BULK_SUBSAMPLE_TYPE:
-                        fixed_depths = SUBSAMPLE_BULK_FIXED_DEPTHS
-                        subsampling_usable_reads_per_lib = transcriptomic_reads_per_lib
-                    else:
-                        fixed_depths = SUBSAMPLE_FIXED_DEPTHS
-                        subsampling_usable_reads_per_lib = usable_reads_per_lib
+                    fixed_depths = SUBSAMPLE_FIXED_DEPTHS
+                    subsampling_usable_reads_per_lib = usable_reads_per_lib
 
                 subsamplings.extend(
                     make_subsamplings(

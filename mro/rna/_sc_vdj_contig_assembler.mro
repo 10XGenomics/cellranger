@@ -2,6 +2,7 @@
 @include "_cr_vdj_stages.mro"
 
 pipeline SC_VDJ_CONTIG_ASSEMBLER(
+    in  string            sample_id,
     in  map<ChemistryDef> chemistry_defs,
     in  int               gem_well,
     in  map[]             chunks,
@@ -30,11 +31,11 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
     out csv               barcode_support,
     out json[]            barcodes_in_chunks,
     out fastq             unmapped_sample_fastq,
-    out txt               report,
     out int               total_read_pairs,
     out arp.bincode       assemblable_reads_per_bc,
     out smf.json          sequencing_metrics,
     out bdf.bincode       barcode_brief,
+    out bd.bincode        barcode_full,
 )
 {
     call MAKE_SHARD(
@@ -45,7 +46,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         r2_length              = self.r2_length,
         subsample_rate         = self.subsample_rate,
         initial_read_pairs     = self.initial_reads,
-        libraries_to_translate = [],
         reference_path         = null,
         target_features        = null,
         target_set             = null,
@@ -61,9 +61,9 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         chemistry_defs         = self.chemistry_defs,
         invalid_uncorrected    = MAKE_SHARD.invalid,
         valid_read_metrics     = MAKE_SHARD.bc_correct_summary,
-        libraries_to_translate = [],
         min_reads_to_report_bc = 1000,
         correction_map         = null,
+        barcodes_under_tissue  = null,
     )
 
     call RUST_BRIDGE(
@@ -76,6 +76,7 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
     )
 
     call ASSEMBLE_VDJ(
+        sample_id                = self.sample_id,
         chemistry_defs           = self.chemistry_defs,
         bc_sorted_rna_reads      = RUST_BRIDGE.bc_sorted_rna_reads,
         vdj_reference_path       = self.vdj_reference_folder,
@@ -93,7 +94,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         summaries = [
             MAKE_SHARD.summary,
             BARCODE_CORRECTION.summary,
-            ASSEMBLE_VDJ.metrics_summary_json,
             RUST_BRIDGE.summary,
         ],
     )
@@ -118,10 +118,10 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         barcode_support          = ASSEMBLE_VDJ.barcode_support,
         barcodes_in_chunks       = ASSEMBLE_VDJ.barcodes_in_chunks,
         unmapped_sample_fastq    = ASSEMBLE_VDJ.unmapped_sample_fastq,
-        report                   = ASSEMBLE_VDJ.report,
         total_read_pairs         = MAKE_SHARD.total_read_pairs,
         assemblable_reads_per_bc = ASSEMBLE_VDJ.assemblable_reads_per_bc,
         sequencing_metrics       = MAKE_SHARD.sequencing_metrics,
         barcode_brief            = ASSEMBLE_VDJ.barcode_brief,
+        barcode_full             = ASSEMBLE_VDJ.barcode_full,
     )
 }

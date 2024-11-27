@@ -1,0 +1,49 @@
+[dependencies]
+[dependencies.amino]
+path = '../amino'
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.bio_edit]
+path = '../bio_edit'
+
+[dependencies.enclone_core]
+path = '../enclone_core'
+
+[dependencies.enclone_proto]
+path = '../enclone_proto'
+
+[dependencies.equiv]
+path = '../equiv'
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.permutation]
+workspace = true
+
+[dependencies.qd]
+workspace = true
+
+[dependencies.rayon]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.vdj_ann]
+path = '../vdj_ann'
+
+[dependencies.vector_utils]
+path = '../vector_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'enclone_process'
+publish = false
+version = '0.1.0'

@@ -27,7 +27,7 @@
 
 use io_utils::{fwriteln, open_for_write_new};
 use itertools::Itertools;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use string_utils::strme;
 use tenkit2::pack_dna::{unpack_bases_10, unpack_bases_16};

@@ -1,0 +1,31 @@
+[dependencies]
+[dependencies.debruijn]
+workspace = true
+
+[dependencies.flate2]
+workspace = true
+
+[dependencies.io_utils]
+path = '../io_utils'
+
+[dependencies.sha2]
+workspace = true
+
+[dependencies.string_utils]
+path = '../string_utils'
+
+[dependencies.vdj_ann]
+path = '../vdj_ann'
+
+[dependencies.vector_utils]
+path = '../vector_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'vdj_ann_ref'
+publish = false
+version = '0.1.0'

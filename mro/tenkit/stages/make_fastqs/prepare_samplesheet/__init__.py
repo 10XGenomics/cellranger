@@ -133,7 +133,7 @@ def main(args, outs):
     else:
         rc_i2_read = args.rc_i2_override
 
-    martian.log_info("I2 Read is RC: %s" % str(rc_i2_read))
+    martian.log_info(f"I2 Read is RC: {rc_i2_read!s}")
 
     lane_count = tk_lane.get_flowcell_lane_count(runinfo_path)
 
@@ -162,7 +162,7 @@ def main(args, outs):
         )
     except tk_sheet.IndexAmbiguityException as e:
         martian.exit(
-            """
+            f"""
 The sample sheet supplied has a sample index collision.  This can happen if the
 same sample index and lane were specified for multiple samples, or in certain
 cases where 10x Chromium i7 Multiplex Kit and i7 Multiplex Kit N samples were
@@ -178,9 +178,8 @@ mkfastq with a --barcode-mismatches=0 argument.  (The default parameter is
 match the sample indices exactly. The small percentage of reads that are a
 single base away from multiple sample indices will be ignored.
 
-Colliding sample index oligos: %s
+Colliding sample index oligos: {e.message}
 """
-            % e.message
         )
     except tk_sheet.SingleIndexFlowcellException:
         martian.exit(

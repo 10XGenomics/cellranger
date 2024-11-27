@@ -9,6 +9,7 @@ filetype em.json;
 filetype fa;
 filetype fasta;
 filetype h5;
+filetype html;
 filetype json;
 filetype pb;
 filetype tsv;
@@ -40,6 +41,8 @@ struct VdjAggrResults(
     csv    consensus_annotations_csv,
     json   web_summary_data,
     vloupe vloupe,
+    html   filter_summary,
+    pb     enclone_output,
 )
 
 stage MERGE_MOLECULES(
@@ -80,19 +83,6 @@ stage SETUP_VDJ_AGGR(
     out map                 enclone_gem_well_info,
 )
 
-stage RUN_ENCLONE_AGGR(
-    in  json[]  contig_ann_json_files,
-    in  csv     enclone_input_csv,
-    in  em.json enclone_gem_well_meta,
-    in  path    vdj_reference_path,
-    out pb      enclone_output,
-    out fa      donor_ref_fa,
-    src comp    "cr_aggr martian run_enclone_aggr",
-) using (
-    mem_gb  = 9,
-    threads = 4,
-)
-
 stage PARSE_AGGR_CSV(
     in  path           pipestance_root,
     in  csv            aggregation_csv,
@@ -115,6 +105,7 @@ stage WRITE_CONTIG_PROTO(
     in  string      sample_desc,
     in  string      multi_config_sha,
     in  bdf.bincode barcode_brief,
+    in  string      multiplexing_method,
     out pb          vdj_contig_info,
     src comp        "cr_aggr martian write_contig_proto",
 )
@@ -132,6 +123,8 @@ stage MATCH_VDJ_AGGR_OUTS(
     in  AntigenAggrResults[] antigen_analysis,
     in  json[]               antigen_aggr_web_summary_data_in,
     in  tsv[]                airr_rearrangements,
+    in  html[]               filter_summaries,
+    in  pb[]                 enclone_outputs,
     out VdjAggrResults       vdj_t_results,
     out VdjAggrResults       vdj_t_gd_results,
     out VdjAggrResults       vdj_b_results,

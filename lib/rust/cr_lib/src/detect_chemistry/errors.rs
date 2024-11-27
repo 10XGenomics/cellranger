@@ -8,7 +8,7 @@ use fastq_set::WhichRead;
 use itertools::{multizip, Itertools};
 use metric::{TxHashMap, TxHashSet};
 use ordered_float::NotNan;
-use std::cmp::Ordering;
+use std::cmp::Reverse;
 use std::fmt;
 use std::iter::Iterator;
 
@@ -73,9 +73,10 @@ impl fmt::Display for DetectChemistryErrors {
                 unit,
             } => format!(
                 "There were not enough reads to auto detect the chemistry: {unit}\n\
-                Note that you can avoid auto detection by specifying the specific chemistry type and version.\n\
-                - Minimum number of required reads = {min_reads}\n\
-                - Number of reads available = {num_reads}"
+                 Note that you can avoid auto detection by specifying the specific chemistry type \
+                 and version.\n\
+                 - Minimum number of required reads = {min_reads}\n\
+                 - Number of reads available = {num_reads}"
             ),
             ChemistryNotAllowed { input, allowed } => format!(
                 "The chemistry name '{input}' is not allowed in this pipeline. Allowed values:\n{}",
@@ -125,13 +126,13 @@ impl fmt::Display for DetectChemistryErrors {
                 } else {
                     let frac_matches_str = frac_matches
                         .iter()
-                        .sorted_by_key(|(k, &v)| (NotNan::new(-v).unwrap(), *k))
+                        .sorted_by_key(|(&k, &v)| (Reverse(NotNan::new(v).unwrap()), k))
                         .map(|(k, v)| format!("- {:.1}% for chemistry {k}", 100.0 * v))
-                        .join("\n");
+                        .format("\n");
                     format!(
-                        "An extremely low rate of correct barcodes was observed for all the \
-                        candidate chemistry choices for the input: {unit}. Please check your input data.\
-                        \n{frac_matches_str}"
+                        "An extremely low rate of correct barcodes was observed for \
+                         all the candidate chemistry choices for the input: {unit}. \
+                         Please check your input data.\n{frac_matches_str}"
                     )
                 }
             }
@@ -145,14 +146,15 @@ impl fmt::Display for DetectChemistryErrors {
                 multizip((units, per_unit_chems))
                     .map(|(u, c)| format!(
                         "One of [{}] is compatible with {u}",
-                        c.iter().sorted().join(", ")
+                        c.iter().sorted().format(", ")
                     ))
-                    .join("\n -")
+                    .format("\n -")
             ),
             NotEnoughMapping { stats, unit, chems } => format!(
-                "Unable to distinguish between [{}] chemistries based on the R2 read mapping for {unit}.\n{stats}\
-                \n\n{}\n\nPlease validate the inputs and/or specify the chemistry via the --chemistry argument.\n",
-                chems.iter().sorted().join(", "),
+                "Unable to distinguish between [{}] chemistries based on the R2 read \
+                 mapping for {unit}.\n{stats}\n\n{}\n\nPlease validate the inputs and/or specify \
+                 the chemistry via the --chemistry argument.",
+                chems.iter().sorted().format(", "),
                 MappingStats::help_text(),
             ),
             NotEnoughReadLength {
@@ -161,23 +163,22 @@ impl fmt::Display for DetectChemistryErrors {
                 chems,
                 max_lengths,
             } => format!(
-                "The read lengths are incompatible with all the chemistries for {}.\n{}\n\
-                The minimum read length for different chemistries are:\n{}\n\nWe expect that at \
-                least 50% of the reads exceed the minimum length.\n{}",
-                unit,
-                stats,
+                "The read lengths are incompatible with all the chemistries for {unit}.\n\
+                 {stats}\n\
+                 The minimum read length for different chemistries are:\n{}\n\n\
+                 We expect that at least 50% of the reads exceed the minimum length.\n{}",
                 chems
                     .iter()
                     .sorted()
-                    .map(|c| {
-                        let def = ChemistryDef::named(*c);
-                        let read_len_str = WHICH_LEN_READS
+                    .map(|&c| {
+                        let def = ChemistryDef::named(c);
+                        let read_lengths = WHICH_LEN_READS
                             .iter()
-                            .map(|which| format!("{which}: {}", def.min_read_length(*which)))
-                            .join(", ");
-                        format!("{:8} - {read_len_str}", c.to_string())
+                            .map(|&which| format!("{which}: {}", def.min_read_length(which)))
+                            .format(", ");
+                        format!("{c:8} - {read_lengths}")
                     })
-                    .join("\n"),
+                    .format("\n"),
                 if max_lengths.is_empty() {
                     String::new()
                 } else {
@@ -186,7 +187,7 @@ impl fmt::Display for DetectChemistryErrors {
                         WHICH_LEN_READS
                             .iter()
                             .filter_map(|r| max_lengths.get(r).map(|l| format!("- {r}: {l} bases")))
-                            .join("\n")
+                            .format("\n")
                     )
                 }
             ),
@@ -197,28 +198,21 @@ impl fmt::Display for DetectChemistryErrors {
                 min_lengths,
                 max_lengths,
             } => format!(
-                "The read lengths are incompatible with all features described in the feature reference for {}.\n{}\n\
-                The minimum read length for different feature types are:\n{}\n\nWe expect that at \
-                least 50% of the reads exceed the minimum length.\n{}",
-                unit,
-                stats,
+                "The read lengths are incompatible with all features described in the \
+                 feature reference for {unit}.\n{stats}\n\
+                 The minimum read length for different feature types are:\n{}\n\n\
+                 We expect that at least 50% of the reads exceed the minimum length.\n{}",
                 min_lengths
                     .iter()
-                    .sorted_by_key(|x| x.0)
-                    .flat_map(|(&ft, m)| {
-                        m.iter()
-                            .sorted_by(|(&a, _), (&b, _)| {
-                                if a == b {
-                                    Ordering::Equal
-                                } else if a == WhichRead::R1 {
-                                    Ordering::Less
-                                } else {
-                                    Ordering::Greater
-                                }
-                            })
-                            .map(move |(&wr, &sz)| format!("{:26} - {sz}", format!("{ft}/{wr}")))
+                    .sorted_by_key(|&(feature_type, _min_lengths)| feature_type)
+                    .flat_map(|(feature_type, min_lengths)| {
+                        min_lengths.iter()
+                            .sorted_by_key(|&(&which_read, _)| which_read as usize)
+                            .map(move |(which_read, length)|
+                                format!("{:26} - {length}", format!("{feature_type}/{which_read}"))
+                            )
                     })
-                    .join("\n"),
+                    .format("\n"),
                 if max_lengths.is_empty() {
                     String::new()
                 } else {
@@ -227,7 +221,7 @@ impl fmt::Display for DetectChemistryErrors {
                         WHICH_LEN_READS
                             .iter()
                             .filter_map(|r| max_lengths.get(r).map(|l| format!("- {r}: {l} bases")))
-                            .join("\n")
+                            .format("\n")
                     )
                 },
             ),
@@ -236,11 +230,11 @@ impl fmt::Display for DetectChemistryErrors {
             ),
             ProbeBarcodeMixture { mixture, unit } => format!(
                 "We detected multiple probe barcodes in: {}\n\
-                Singleplex Fixed RNA Profiling chemistry is invalid with >1 probe barcode. \
-                If this is a multiplex Fixed RNA Profiling library please include a [samples] section defining the inputs.\n\
-                The following top probe barcodes were observed: {}.\n",
+                 Singleplex Flex chemistry is invalid with >1 probe barcode. If this is a \
+                 multiplex Flex library please include a [samples] section defining the inputs.\n\
+                 The following top probe barcodes were observed: {}.\n",
                 unit,
-                mixture.iter().sorted().join(", ")
+                mixture.iter().sorted().format(", ")
             ),
         };
         write!(f, "{msg}")

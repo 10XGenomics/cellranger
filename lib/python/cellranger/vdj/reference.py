@@ -162,15 +162,15 @@ def build_reference_fasta_from_fasta(
             # Sanity check values
             if b" " in feat.region_type:
                 raise VDJReferenceConstructionError(
-                    'Spaces not allowed in region type: "%s"' % feat.region_type
+                    f'Spaces not allowed in region type: "{feat.region_type}"'
                 )
             if b" " in feat.gene_name:
                 raise VDJReferenceConstructionError(
-                    'Spaces not allowed in gene name: "%s"' % feat.gene_name
+                    f'Spaces not allowed in gene name: "{feat.gene_name}"'
                 )
             if b" " in feat.record_id:
                 raise VDJReferenceConstructionError(
-                    'Spaces not allowed in record ID: "%s"' % feat.record_id
+                    f'Spaces not allowed in record ID: "{feat.record_id}"'
                 )
 
             key = get_duplicate_feature_key(feat)
@@ -184,15 +184,13 @@ def build_reference_fasta_from_fasta(
             seq = feat.sequence
             if b"N" in seq:
                 print(
-                    "Warning: Feature %s contains Ns. Stripping from the ends."
-                    % str((feat.display_name, feat.record_id, feat.region_type))
+                    f"Warning: Feature {(feat.display_name, feat.record_id, feat.region_type)!s} contains Ns. Stripping from the ends."
                 )
                 seq = seq.strip(b"N")
 
             if len(seq) == 0:
                 print(
-                    "Warning: Feature %s is all Ns. Skipping."
-                    % str((feat.display_name, feat.record_id, feat.region_type))
+                    f"Warning: Feature {(feat.display_name, feat.record_id, feat.region_type)!s} is all Ns. Skipping."
                 )
                 continue
 
@@ -285,7 +283,7 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
     # Check the header
     if len(words) != 2:
         raise VDJReferenceConstructionError(
-            'Expected two strings separated by a space in FASTA header. Found "%s"' % header
+            f'Expected two strings separated by a space in FASTA header. Found "{header}"'
         )
 
     values1 = words[0].split(b"|")
@@ -326,7 +324,7 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
             raise ValueError()
     except ValueError:
         raise VDJReferenceConstructionError(
-            'The feature ID must be an integer greater than 0. Found: "%s"' % str(feature_id)
+            f'The feature ID must be an integer greater than 0. Found: "{feature_id!s}"'
         )
     fields["sequence"] = sequence
 

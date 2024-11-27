@@ -2,7 +2,7 @@ use crate::constants::UmiType;
 use bio;
 use bio::alignment::{Alignment, AlignmentOperation};
 use itertools::Itertools;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::cmp;
 pub type Scoring = bio::alignment::pairwise::Scoring<bio::alignment::pairwise::MatchParams>;
 

@@ -6,6 +6,7 @@ use itertools::Itertools;
 use std::path::PathBuf;
 
 const PD_CANONICAL_SLIDE_NAME: &str = "visium_hd_rc1";
+const PD_XL_CANONICAL_SLIDE_NAME: &str = "visium_hd_rcxl1";
 const CS_CANONICAL_SLIDE_NAME: &str = "visium_hd_v1";
 
 fn search_for_whitelist(
@@ -42,11 +43,15 @@ fn search_for_whitelist(
 pub fn find_slide_design(slide_name: &str) -> Result<PathBuf> {
     let fname = if slide_name == PD_CANONICAL_SLIDE_NAME || slide_name == CS_CANONICAL_SLIDE_NAME {
         find_whitelist(PD_CANONICAL_SLIDE_NAME, false)
-            .or_else(|_|find_whitelist(CS_CANONICAL_SLIDE_NAME, false))
-            .context( format!("Could not find slide files for slide designs {CS_CANONICAL_SLIDE_NAME} or {PD_CANONICAL_SLIDE_NAME}"))
+            .or_else(|_|find_whitelist(CS_CANONICAL_SLIDE_NAME, false).or_else(|_| find_whitelist(PD_XL_CANONICAL_SLIDE_NAME, false)))
+            .context( format!("Could not find slide files for slide designs {CS_CANONICAL_SLIDE_NAME} or {PD_CANONICAL_SLIDE_NAME} or {PD_XL_CANONICAL_SLIDE_NAME}"))
+    } else if slide_name == PD_XL_CANONICAL_SLIDE_NAME {
+        find_whitelist(slide_name, false)
+            .context("Could not find slide files for XL RC1 slide design")
     } else {
         find_whitelist(slide_name, false)
     }?;
+
     if fname.extension().is_some_and(|ext| ext == "slide") {
         Ok(fname)
     } else {
@@ -156,8 +161,8 @@ mod test {
     fn test_find_whitelist() -> Result<()> {
         let _ = find_whitelist("737K-august-2016", false)?;
         assert!(find_whitelist("737K-august-2016", true).is_err());
-        let _ = find_whitelist("3M-february-2018", false)?;
-        let _ = find_whitelist("3M-february-2018", true)?;
+        let _ = find_whitelist("3M-february-2018_TRU", false)?;
+        let _ = find_whitelist("3M-february-2018_NXT", true)?;
         let _ = find_whitelist("9K-LT-march-2021", false)?;
         let _ = find_whitelist("9K-LT-march-2021", true)?;
         let _ = find_atac_whitelist("737K-arc-v1")?;

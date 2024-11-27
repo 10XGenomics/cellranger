@@ -17,7 +17,7 @@ import cellranger.h5_constants as h5_constants
 from cellranger.wrapped_tables import tables
 
 STR_DTYPE_CHAR = np.dtype(np.bytes_).char
-UNICODE_DTYPE_CHAR = np.dtype(np.unicode_).char
+UNICODE_DTYPE_CHAR = np.dtype(np.str_).char
 STRING_DTYPE_CHARS = (STR_DTYPE_CHAR, UNICODE_DTYPE_CHAR)
 
 
@@ -112,7 +112,7 @@ def decode_ascii_xml(x: str | bytes) -> str:
     elif isinstance(x, bytes):
         return unescape(x.decode())
     else:
-        raise ValueError("Expected string type, got type %s" % str(type(x)))
+        raise ValueError(f"Expected string type, got type {type(x)!s}")
 
 
 def decode_ascii_xml_array(data):
@@ -127,7 +127,7 @@ def decode_ascii_xml_array(data):
 
     fixed_len = max(len(s) for s in unicode_data)
     # 0 length string type is Ok
-    dtype = np.dtype((np.unicode_, fixed_len))
+    dtype = np.dtype((np.str_, fixed_len))
 
     # note: python3 would require no.fromiter
     return np.array(unicode_data, dtype=dtype)
@@ -145,7 +145,7 @@ def encode_ascii_xml(x: str | bytes):
     elif isinstance(x, bytes):
         return x
     else:
-        raise ValueError("Expected string type, got type %s" % str(type(x)))
+        raise ValueError(f"Expected string type, got type {type(x)!s}")
 
 
 def encode_ascii_xml_array(

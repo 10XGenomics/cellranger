@@ -1,14 +1,7 @@
 [dependencies]
-bio = '1'
-csv = '1'
-fxhash = '0.2'
-lazy_static = '1'
-proc-macro2 = '1'
-quote = '1'
 serde_bytes = '0.11'
-serde_with = '2'
+serde_with = '3'
 sha1 = '0.10'
-thiserror = '1'
 
 [dependencies.anyhow]
 workspace = true
@@ -19,13 +12,25 @@ workspace = true
 [dependencies.barcode]
 path = '../barcode'
 
+[dependencies.bio]
+workspace = true
+
+[dependencies.csv]
+workspace = true
+
 [dependencies.derive_more]
 workspace = true
 
 [dependencies.fastq_set]
 workspace = true
 
+[dependencies.fxhash]
+workspace = true
+
 [dependencies.itertools]
+workspace = true
+
+[dependencies.lazy_static]
 workspace = true
 
 [dependencies.martian]
@@ -40,10 +45,14 @@ workspace = true
 [dependencies.metric]
 path = '../metric'
 
+[dependencies.proc-macro2]
+workspace = true
+
+[dependencies.quote]
+workspace = true
+
 [dependencies.regex]
-default-features = false
-features = ['std', 'perf']
-version = '1'
+workspace = true
 
 [dependencies.serde]
 workspace = true
@@ -61,6 +70,9 @@ path = '../slide_design'
 workspace = true
 
 [dependencies.strum_macros]
+workspace = true
+
+[dependencies.thiserror]
 workspace = true
 
 [dependencies.transcriptome]

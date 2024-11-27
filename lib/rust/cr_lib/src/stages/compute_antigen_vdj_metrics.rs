@@ -122,15 +122,20 @@ mod tests {
     fn test_run_compute_antigen_vdj_stage() -> Result<()> {
         let tmp_dir = tempfile::tempdir()?;
 
-        let barcodes = vec![
-            "AAACCTGAGAAACCAT-1".to_string(),
-            "AAACCTGAGAAACCGC-1".to_string(),
-            "AAACCTGAGAAACCTA-1".to_string(),
-            "AAACCTGAGAAACGAG-1".to_string(),
-            "AAACCTGAGAAACGCC-1".to_string(),
-            "AAACCTGAGAAAGTGG-1".to_string(),
+        let barcodes = [
+            "AAACCTGAGAAACCAT-1",
+            "AAACCTGAGAAACCGC-1",
+            "AAACCTGAGAAACCTA-1",
+            "AAACCTGAGAAACGAG-1",
+            "AAACCTGAGAAACGCC-1",
+            "AAACCTGAGAAAGTGG-1",
         ];
-        let vdj_cells: Vec<_> = barcodes.iter().take(3).cloned().collect();
+        let vdj_cells: Vec<_> = barcodes
+            .iter()
+            .take(3)
+            .copied()
+            .map(str::to_string)
+            .collect();
         let vdj_cell_barcodes = JsonFile::new(&tmp_dir, "vdj_cell_barcodes");
         vdj_cell_barcodes.write(&vdj_cells)?;
 
@@ -139,7 +144,7 @@ mod tests {
             ShardWriter::new(&metrics_shard, 100, 100, 100)?;
         let mut sender = metrics_writer.get_sender();
 
-        for (i, bc) in barcodes.iter().enumerate() {
+        for (i, bc) in barcodes.into_iter().enumerate() {
             let barcode: Barcode = bc.parse()?;
             for (j, library_type) in [LibraryType::Gex, LibraryType::Antigen]
                 .into_iter()

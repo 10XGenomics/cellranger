@@ -1,0 +1,16 @@
+[dependencies]
+[dependencies.permutation]
+workspace = true
+
+[dependencies.superslice]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'vector_utils'
+publish = false
+version = '0.1.0'

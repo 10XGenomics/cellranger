@@ -7,12 +7,13 @@
 // TODO: fix these.
 #![allow(clippy::needless_range_loop)]
 
-use crate::barcode_data::{write_json_metric_f64, write_json_metric_ratio};
-use align_tools::{affine_align, summary_less};
+use bio_edit::alignment::Alignment;
+use bio_edit::alignment::AlignmentOperation::{Del, Ins, Subst};
 use debruijn::dna_string::DnaString;
 use debruijn::Mer;
 use io_utils::{fwriteln, open_for_read};
 use itertools::Itertools;
+use metric::{JsonReporter, PercentMetric};
 use rayon::prelude::*;
 use serde_json::Value;
 use stats_utils::percent_ratio;
@@ -21,10 +22,11 @@ use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 use std::path::Path;
 use string_utils::{abbrev_list, strme, TextUtils};
+use vdj_ann::align::affine_align;
 use vdj_ann::annotate::annotate_seq;
 use vdj_ann::refx::RefData;
-use vdj_ann::transcript::is_valid;
-use vector_utils::{bin_member, erase_if, next_diff1_6};
+use vdj_ann::transcript::is_productive_contig;
+use vector_utils::{bin_member, erase_if, next_diff1_6, reverse_sort};
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // CODE FOR STREAMING A JSON VECTOR
@@ -89,20 +91,19 @@ fn read_vector_entry_from_json<R: BufRead>(json: &mut R) -> Option<Vec<u8>> {
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // ANALYZE V SEGMENTS
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, unused)]
 pub fn analyze_vs(
-    o: Vec<&str>,        // outs directories or lena ids
-    species: &str,       // species (human or mouse or unknown)
-    refdata: &RefData,   // reference data
-    use_knowns: bool,    // use known alleles
-    from_scratch: bool,  // compute annotations from scratch
-    parallel: bool,      // parallelize
-    do_aff: bool,        // show affine alignments of erroneous V segments (slow)
-    context: bool,       // print context; also turns on json metrics
-    novels: bool,        // print novel alleles
-    json: &mut Vec<u8>,  // dump metrics here
-    log: &mut Vec<u8>,   // dump logging here
-    is_gd: Option<bool>, // is gamma/delta mode
+    o: Vec<&str>,            // outs directories or lena ids
+    species: &str,           // species (human or mouse or unknown)
+    refdata: &RefData,       // reference data
+    use_knowns: bool,        // use known alleles
+    from_scratch: bool,      // compute annotations from scratch
+    parallel: bool,          // parallelize
+    do_aff: bool,            // show affine alignments of erroneous V segments (slow)
+    context: bool,           // print context; also turns on json metrics
+    novels: bool,            // print novel alleles
+    json: &mut JsonReporter, // dump metrics here
+    log: &mut Vec<u8>,       // dump logging here
 ) {
     let mut outs = Vec::<String>::new();
     let mut lenas = Vec::<String>::new();
@@ -389,14 +390,12 @@ pub fn analyze_vs(
                     }
                 }
             } else {
-                let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-                annotate_seq(tig, refdata, &mut ann, true, false, true);
-                let mut log = Vec::<u8>::new();
-                if is_valid(tig, refdata, &ann, false, &mut log, is_gd) {
+                let ann = annotate_seq(tig, refdata, true, false, true);
+                if is_productive_contig(tig, refdata, &ann).0 {
                     for l in 0..ann.len() {
-                        let t = ann[l].2 as usize;
-                        if refdata.is_v(t) && ann[l].3 == 0 {
-                            let l = ann[l].0 as usize;
+                        let t = ann[l].ref_id as usize;
+                        if refdata.is_v(t) && ann[l].ref_start == 0 {
+                            let l = ann[l].tig_start as usize;
                             let n = refdata.refs[t].len();
                             if l + n <= tig.len() {
                                 make_report(refdata, t, l, n, i, tig, do_aff, &tigsx, r);
@@ -444,7 +443,7 @@ pub fn analyze_vs(
         let mut commons = Vec::<(String, String, String, DnaString)>::new();
         let mut ntiglets_q60 = 0;
         while i < tiglets.len() {
-            let j = next_diff1_6(&tiglets, i as i32) as usize;
+            let j = next_diff1_6(&tiglets, i);
             let denom = totals[tiglets[i].4];
             let mut count = 0; // number that are q60
             for k in i..j {
@@ -580,17 +579,68 @@ pub fn analyze_vs(
             fwriteln!(log, "\nMETRICS USED ABOVE");
             fwriteln!(log, "frac_of_v_segments_having_an_error");
             let metric = "frac_of_v_segments_having_an_error";
-            write_json_metric_ratio(metric, tiglets.len() - common, total, json);
+            let metric_val = PercentMetric::from_parts(
+                (tiglets.len() - common).try_into().unwrap(),
+                total as i64,
+            );
+            json.insert(metric, &metric_val);
             fwriteln!(log, "frac_of_q60_v_segments_having_an_error");
             let metric = "frac_of_q60_v_segments_having_an_error";
-            write_json_metric_ratio(metric, ntiglets_q60 - common_q60, total_q60, json);
+            let metric_val = PercentMetric::from_parts(
+                (ntiglets_q60 - common_q60).try_into().unwrap(),
+                total_q60 as i64,
+            );
+            json.insert(metric, &metric_val);
             fwriteln!(log, "number_of_v_segments_having_an_error");
             let metric = "number_of_v_segments_having_an_error";
-            write_json_metric_f64(metric, (tiglets.len() - common) as f64, json);
+            json.insert(metric, tiglets.len() - common);
             fwriteln!(log, "number_of_q60_v_segments_having_an_error");
             let metric = "number_of_q60_v_segments_having_an_error";
-            write_json_metric_f64(metric, (ntiglets_q60 - common_q60) as f64, json);
+            json.insert(metric, ntiglets_q60 - common_q60);
         }
         fwriteln!(log, "");
     });
+}
+
+pub fn summary_less(a: &Alignment) -> String {
+    let ops = &a.operations;
+    let mut sub = 0;
+    let (mut del, mut ins) = (Vec::<usize>::new(), Vec::<usize>::new());
+    let mut i = 0;
+    while i < ops.len() {
+        if ops[i] == Del || ops[i] == Ins {
+            let mut j = i + 1;
+            while j < ops.len() && ops[j] == ops[i] {
+                j += 1;
+            }
+            if ops[i] == Del {
+                del.push(j - i);
+            } else {
+                ins.push(j - i);
+            }
+            i = j - 1;
+        } else if ops[i] == Subst {
+            sub += 1;
+        }
+        i += 1;
+    }
+    reverse_sort(&mut del);
+    reverse_sort(&mut ins);
+    if sub == 0 && del.is_empty() && ins.is_empty() {
+        "0".to_string()
+    } else {
+        let mut s = if sub > 0 {
+            format!("{sub}")
+        } else {
+            String::new()
+        };
+        s.reserve_exact(2 * (del.len() + ins.len()));
+        for d in del {
+            write!(s, "D{d}").unwrap();
+        }
+        for i in ins {
+            write!(s, "I{i}").unwrap();
+        }
+        s
+    }
 }

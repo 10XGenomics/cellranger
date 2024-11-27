@@ -1,5 +1,6 @@
 [dependencies]
-lazy_static = '1'
+[dependencies.lazy_static]
+workspace = true
 
 [lib]
 test = false

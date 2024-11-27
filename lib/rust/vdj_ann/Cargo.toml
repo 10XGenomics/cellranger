@@ -1,0 +1,49 @@
+[dependencies]
+[dependencies.amino]
+path = '../amino'
+
+[dependencies.bio_edit]
+path = '../bio_edit'
+
+[dependencies.debruijn]
+workspace = true
+
+[dependencies.hyperbase]
+path = '../hyperbase'
+
+[dependencies.io_utils]
+path = '../io_utils'
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.kmer_lookup]
+path = '../kmer_lookup'
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.stats_utils]
+path = '../stats_utils'
+
+[dependencies.string_utils]
+path = '../string_utils'
+
+[dependencies.vdj_types]
+path = '../vdj_types'
+
+[dependencies.vector_utils]
+path = '../vector_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'vdj_ann'
+publish = false
+version = '0.1.0'

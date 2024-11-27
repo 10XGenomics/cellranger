@@ -46,7 +46,7 @@ impl TestrunArgs {
                 sample: Some(vec![String::from("tiny_arc_atac")]),
                 lanes: None,
             }
-            .get_sample_defs(LibraryType::Atac, None)?,
+            .get_sample_defs(LibraryType::Atac)?,
         );
         sample_defs.extend(
             FastqArgs {
@@ -55,7 +55,7 @@ impl TestrunArgs {
                 sample: Some(vec![String::from("tiny_arc_gex")]),
                 lanes: None,
             }
-            .get_sample_defs(LibraryType::Gex, None)?,
+            .get_sample_defs(LibraryType::Gex)?,
         );
         Ok(CountMro {
             sample_id: t.id.clone(),

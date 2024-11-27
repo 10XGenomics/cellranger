@@ -1,0 +1,21 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.multi]
+path = '../multi'
+
+[dependencies.serde_json]
+workspace = true
+
+[lib]
+crate-type = ['staticlib']
+name = 'multiconfig_converter'
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'multiconfig_converter'
+publish = false
+version = '0.1.0'

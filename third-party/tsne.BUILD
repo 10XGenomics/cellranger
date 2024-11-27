@@ -9,6 +9,7 @@ load("@tenx_bazel_rules//rules:cython_library.bzl", "cython_library")
 load(
     "@tenx_bazel_rules//rules/conda:conda_manifest.bzl",
     "conda_deps",
+    "conda_files",
     "conda_manifest",
 )
 
@@ -35,42 +36,17 @@ license(
     license_text = site_packages + "/LICENSE",
 )
 
-filegroup(
-    name = "conda_package_tsne_hdrs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_tsne_libs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_tsne_solibs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_tsne_python",
-    srcs = [
+conda_files(
+    name = "files",
+    link_safe_runfiles = [
+        ":bh_sne_3d_cp",
+        ":bh_sne_cp",
+    ],
+    py_srcs = [
         site_packages + "/tsne/__init__.py",
         site_packages + "/tsne/_version.py",
     ],
     visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_tsne_data",
-    srcs = [
-        ":bh_sne_3d_cp",
-        ":bh_sne_cp",
-    ],
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-exports_files(
-    ["BUILD.bazel"],
-    visibility = ["//visibility:public"],
 )
 
 copy_file(
@@ -176,7 +152,6 @@ cc_library(
 conda_manifest(
     name = "conda_metadata",
     info_files = ["info/index.json"],
-    manifest = "info/files",
     visibility = ["//visibility:public"],
 )
 

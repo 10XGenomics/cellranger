@@ -5,14 +5,14 @@ use crate::transcript::{
 use anyhow::Result;
 use cr_bam::bam_tags::{
     ExtraFlags, ANTISENSE_TAG, EXTRA_FLAGS_TAG, FEATURE_IDS_TAG, FEATURE_QUAL_TAG, FEATURE_RAW_TAG,
-    FEATURE_SEQ_TAG, GENE_ID_TAG, GENE_NAME_TAG, MULTIMAPPER_TAG, PROBE_TAG, PROC_BC_SEQ_TAG,
-    PROC_UMI_SEQ_TAG, RAW_BARCODE_QUAL_TAG, RAW_BARCODE_SEQ_TAG, RAW_GEL_BEAD_BARCODE_QUAL_TAG,
-    RAW_GEL_BEAD_BARCODE_SEQ_TAG, RAW_UMI_QUAL_TAG, RAW_UMI_SEQ_TAG, READ_GROUP_TAG, REGION_TAG,
-    REST_R1_QUAL_TAG, REST_R1_SEQ_TAG, REST_R2_QUAL_TAG, REST_R2_SEQ_TAG, TRANSCRIPT_TAG,
-    UNPAIRED_GENE_ID_TAG, UNPAIRED_GENE_NAME_TAG,
+    FEATURE_SEQ_TAG, GAP_COORDINATES_TAG, GENE_ID_TAG, GENE_NAME_TAG, MULTIMAPPER_TAG, PROBE_TAG,
+    PROC_BC_SEQ_TAG, PROC_UMI_SEQ_TAG, RAW_BARCODE_QUAL_TAG, RAW_BARCODE_SEQ_TAG,
+    RAW_GEL_BEAD_BARCODE_QUAL_TAG, RAW_GEL_BEAD_BARCODE_SEQ_TAG, RAW_UMI_QUAL_TAG, RAW_UMI_SEQ_TAG,
+    READ_GROUP_TAG, REGION_TAG, REST_R1_QUAL_TAG, REST_R1_SEQ_TAG, REST_R2_QUAL_TAG,
+    REST_R2_SEQ_TAG, TRANSCRIPT_TAG, UNPAIRED_GENE_ID_TAG, UNPAIRED_GENE_NAME_TAG,
 };
 use cr_types::chemistry::ChemistryDef;
-use cr_types::probe_set::MappedProbe;
+use cr_types::probe_set::{GapInfo, MappedProbe};
 use cr_types::reference::feature_extraction::FeatureData;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::{RnaChunk, RnaRead, UmiPart, HIGH_CONF_MAPQ};
@@ -23,7 +23,7 @@ use itertools::Itertools;
 use martian_derive::{martian_filetype, MartianStruct};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::lz4_file::Lz4;
-use rust_htslib::bam::record::{Aux, Record};
+use rust_htslib::bam::record::{Aux, AuxArray, Record};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashSet;
@@ -435,8 +435,11 @@ impl ReadAnnotations {
             Aux::String(std::str::from_utf8(self.read.raw_illumina_read1_qual()).unwrap()),
         )?;
 
-        // Attach the rest of R2, which follows the probe.
-        assert_eq!(self.read.r1_range().read(), fastq_set::WhichRead::R2);
+        // Attach the rest of R2, which follows the probe if the chemistry has an R2.
+        if self.read.r1_range().read() != fastq_set::WhichRead::R2 {
+            println!("Not attaching HD tags as the chemistry is R1 only!");
+            return Ok(());
+        }
         assert_eq!(self.read.r1_range().offset(), 0);
         if let Some(len) = self.read.r1_range().len() {
             let read2_end = self.read.r1_range().offset() + len;
@@ -518,7 +521,7 @@ impl ReadAnnotations {
                 .unwrap();
         });
 
-        if self.read.barcode().is_valid() {
+        if self.read.barcode_is_valid() {
             let bc_vec = self.read.barcode().to_string();
             self.primary
                 .for_each_rec(|rec| rec.push_aux(PROC_BC_SEQ_TAG, Aux::String(&bc_vec)).unwrap());
@@ -574,7 +577,7 @@ impl ReadAnnotations {
             };
 
         let is_valid_umi = self.umi_info.is_valid;
-        let is_valid_bc = self.read.barcode().is_valid();
+        let is_valid_bc = self.read.barcode_is_valid();
         let read_group = &self.read.read_chunk(read_chunks).read_group;
         self.for_each_rec(|ann| {
             ann.attach_tags(
@@ -1329,6 +1332,17 @@ impl RecordAnnotation {
 
                     let probes = data.probes().join(";");
                     rec.push_aux(PROBE_TAG, Aux::String(&probes)).unwrap();
+
+                    if let Some(GapInfo {
+                        lhs_end, rhs_start, ..
+                    }) = data.gap_info()
+                    {
+                        rec.push_aux(
+                            GAP_COORDINATES_TAG,
+                            Aux::ArrayU8(AuxArray::from(&vec![lhs_end as u8, rhs_start as u8])),
+                        )
+                        .unwrap();
+                    }
                 }
             }
             RecordAnnotation::FeatureExtracted(ref mut rec1, ref data, ref mut rec2) => {

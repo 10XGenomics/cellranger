@@ -1,7 +1,7 @@
 //! WriteContigProto stage code
 
 use anyhow::Result;
-use cr_types::MetricsFile;
+use cr_types::{BarcodeMultiplexingType, CellLevel, MetricsFile, ReadLevel};
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
@@ -28,6 +28,7 @@ pub struct WriteContigProtoStageInputs {
     sample_desc: String,
     multi_config_sha: Option<String>,
     barcode_brief: BarcodeDataBriefFile,
+    multiplexing_method: Option<BarcodeMultiplexingType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
@@ -48,6 +49,16 @@ impl MartianMain for WriteContigProto {
         let reference = VdjReferenceRaw::new(&args.vdj_reference_path)?;
 
         let cell_barcodes = args.cell_barcodes.read()?;
+        let multiplexing_method = match args.multiplexing_method {
+            None => vdj_proto::types::MultiplexingMethod::None,
+            Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::OH)) => {
+                vdj_proto::types::MultiplexingMethod::Ocm
+            }
+            Some(BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag)) => {
+                vdj_proto::types::MultiplexingMethod::Hashtag
+            }
+            Some(_) => panic!("Unsupported Vdj multiplexing method!"),
+        };
         let metadata = VdjMetadata {
             reference_fasta_hash: reference.fasta_hash(),
             pipeline_version: rover.pipelines_version(),
@@ -58,6 +69,7 @@ impl MartianMain for WriteContigProto {
             sample_desc: args.sample_desc,
             multi_config_sha: args.multi_config_sha.unwrap_or_default(),
             protobuf_version: String::from(PROTOBUF_VERSION),
+            multiplexing_method: multiplexing_method.into(),
         };
 
         let metrics = MetricsSummary::from_metrics_json(&args.metrics_summary_json)?;
@@ -122,6 +134,7 @@ mod tests {
             multi_config_sha: None,
             metrics_summary_json,
             barcode_brief: barcode_data_brief_file,
+            multiplexing_method: None,
         };
 
         let outs = WriteContigProto.test_run(&dir, args)?;

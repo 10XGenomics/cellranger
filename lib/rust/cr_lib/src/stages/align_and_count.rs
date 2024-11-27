@@ -4,6 +4,7 @@ use crate::align_and_count_metrics::StageVisitor;
 use crate::align_metrics::{BarcodeMetrics, LibFeatThenBarcodeOrder};
 use crate::aligner::{Aligner, BarcodeSummary, MAX_ANNOTATIONS_IN_MEM};
 use crate::barcode_sort::BarcodeOrder;
+use crate::parquet_file::{ParquetFile, ParquetWriter, PerReadGapAlignRow};
 #[cfg(feature = "tenx_internal")]
 use crate::stages::internal::get_barcode_subsampling;
 #[cfg(feature = "tenx_source_available")]
@@ -19,9 +20,11 @@ use cr_bam::constants::{
     ALN_BC_DISK_CHUNK_SZ, ALN_BC_GIB, ALN_BC_ITEM_BUFFER_SZ, ALN_BC_SEND_BUFFER_SZ,
 };
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
-use cr_types::probe_set::{ProbeSetReference, ProbeSetReferenceMetadata};
+use cr_types::probe_set::{
+    MappedGap, MappedGapAlignmentInfo, ProbeSetReference, ProbeSetReferenceMetadata,
+};
 use cr_types::reference::feature_checker::compute_feature_dist;
-use cr_types::reference::feature_reference::TargetSetFile;
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::rna_read::{RnaChunk, RnaRead, HIGH_CONF_MAPQ};
 use cr_types::spill_vec::SpillVec;
 use cr_types::types::{
@@ -56,7 +59,10 @@ use std::collections::{BTreeMap, BinaryHeap};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tx_annotation::read::{AnnotationFiles, AnnotationInfo, ReadAnnotationsFormat, ReadAnnotator};
+use tx_annotation::read::{
+    AnnotationFiles, AnnotationInfo, ReadAnnotations, ReadAnnotationsFormat, ReadAnnotator,
+    RecordAnnotation,
+};
 use tx_annotation::visitor::AnnotatedReadVisitor;
 
 /// Default value for the stage parameter transcriptome_min_score, STAR parameter --outFilterScoreMin.
@@ -87,7 +93,7 @@ pub struct AlignAndCountMetrics {
 pub struct StageInputs {
     pub gem_well: GemWell,
     pub read_chunks: Vec<RnaChunk>,
-    pub reference_path: PathBuf,
+    pub reference_path: Option<PathBuf>,
 
     pub read_shards: ReadShards,
 
@@ -159,6 +165,7 @@ pub struct ChunkOutputs {
     annotation_files: Option<AnnotationFiles>,
     metrics_shard: BarcodeMetricsShardFile,
     no_star_alignments: bool,
+    per_read_gap_align: Vec<ParquetFile>,
 }
 
 #[derive(Serialize, MartianStruct)]
@@ -187,6 +194,9 @@ pub struct StageOutputs {
     /// Annotation files for consumption by a PD stage
     pub annotation_files: Option<AnnotationFiles>,
 
+    /// parquet files containing gap align information
+    pub per_read_gap_align: Vec<ParquetFile>,
+
     /// Metrics computed per barcode sorted by (library type, barcode)
     pub per_barcode_metrics: Vec<BarcodeMetricsShardFile>,
 
@@ -209,7 +219,7 @@ pub const READS_PER_CHUNK: usize = 15_000_000;
 pub struct AlignAndCount;
 
 /// A list of shard files that contains all the reads that need to be processed:
-///  - `valid_reads`: A list of iles containing`RnaRead`s with a valid barcode
+///  - `valid_reads`: A list of files containing`RnaRead`s with a valid barcode
 ///  - `corrected_reads`: A list of files containing `RnaRead`s which originally had an invalid
 ///                       barcode, but we were able to correct it to a barcode in our whitelist
 /// - `invalid_reads`: a list of files containing `RnaRead`s with an invalid barcode
@@ -261,12 +271,88 @@ where
     bc_umi_info_sender: ShardSender<BcUmiInfo, BcUmiInfo>,
     bc_counts_sender: ShardSender<FeatureBarcodeCount, BarcodeThenFeatureOrder>,
     bc_probe_counts_sender: Option<ShardSender<ProbeBarcodeCount>>,
+    per_read_gap_align_writer: Option<ParquetWriter<PerReadGapAlignRow>>,
     pos_reads_sender: ShardSender<Record, BamPosSort>,
     visitor: V,
     // set of barcodes to align/annotate
     barcode_set: BarcodeSet,
     barcodes_to_subsample: TxHashSet<Barcode>,
     barcode_subsample_rate: Option<f64>,
+}
+
+impl<V> AlignThreadProcessor<V>
+where
+    V: AnnotatedReadVisitor,
+{
+    fn handle_gap_align_annotation(
+        per_read_gap_align_writer: &mut Option<ParquetWriter<PerReadGapAlignRow>>,
+        ann: &ReadAnnotations,
+    ) -> Result<()> {
+        if let Some(writer) = per_read_gap_align_writer {
+            if let RecordAnnotation::Probe(_, mapped_probe) = &ann.primary {
+                if let Some(gap_info) = mapped_probe.gap_info() {
+                    let read = &ann.read;
+                    assert!(
+                        !read.r2_exists(),
+                        "Paired end reads not expected in gap align!"
+                    );
+                    let read_gap_sequence =
+                        String::from_utf8(gap_info.gap_seq(read.r1_seq()).to_vec()).unwrap();
+                    let gap = mapped_probe.gap();
+                    let mgi = gap.as_ref().and_then(|x| {
+                        if x.gap_within_max_error() {
+                            Some(MappedGapAlignmentInfo {
+                                gap_seq: x.gap_seq.clone(),
+                                expected_gap_seq: x.expected_gap_seq.clone(),
+                                alignment_operations: x.get_alignment().operations.clone(),
+                            })
+                        } else {
+                            None
+                        }
+                    });
+
+                    writer.push(PerReadGapAlignRow {
+                        barcode: read.barcode().to_string(),
+                        is_valid_barcode: ann.read.barcode_is_valid(),
+                        umi: read.umi().to_string(),
+                        probe_type: gap_info.probe_type.to_string(),
+                        left_probe_id: mapped_probe.lhs_probe().unwrap().probe_id.to_string(),
+                        right_probe_id: mapped_probe.rhs_probe().unwrap().probe_id.to_string(),
+                        read_gap_sequence: read_gap_sequence.clone(),
+                        read_gap_len: read_gap_sequence.len(),
+                        expected_gap_sequence: gap.as_ref().map(MappedGap::get_expected_gap_seq),
+                        gap_levenshtein_distance: gap
+                            .as_ref()
+                            .map(MappedGap::get_gap_levenshtein_distance),
+                        gap_within_max_error: gap.as_ref().map(MappedGap::gap_within_max_error),
+                        gap_exactly_matches_expected: gap
+                            .map(|x| read_gap_sequence == x.expected_gap_seq),
+                        num_matches: mgi.as_ref().map(MappedGapAlignmentInfo::get_num_matches),
+                        num_mismatches: mgi
+                            .as_ref()
+                            .map(MappedGapAlignmentInfo::get_num_mismatches),
+                        num_deletions: mgi.as_ref().map(MappedGapAlignmentInfo::get_num_deletions),
+                        num_insertions: mgi
+                            .as_ref()
+                            .map(MappedGapAlignmentInfo::get_num_insertions),
+                        starts_with_deletion: mgi
+                            .as_ref()
+                            .map(MappedGapAlignmentInfo::starts_with_deletion),
+                        starts_with_insertion: mgi
+                            .as_ref()
+                            .map(MappedGapAlignmentInfo::starts_with_insertion),
+                        ends_with_deletion: mgi
+                            .as_ref()
+                            .map(MappedGapAlignmentInfo::ends_with_deletion),
+                        ends_with_insertion: mgi
+                            .as_ref()
+                            .map(MappedGapAlignmentInfo::ends_with_insertion),
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<V> Proc for AlignThreadProcessor<V>
@@ -304,6 +390,7 @@ where
             }
 
             self.visitor.visit_read_annotation(&ann);
+            Self::handle_gap_align_annotation(&mut self.per_read_gap_align_writer, &ann)?;
             for r in ann.records() {
                 self.pos_reads_sender.send(r)?;
             }
@@ -438,7 +525,7 @@ fn make_dummy_header_for_probes(n_probes: usize) -> HeaderView {
     let mut header = Header::new();
     for i in 0..n_probes {
         let mut header_rec = HeaderRecord::new(b"SQ");
-        header_rec.push_tag(b"SN", &format!("PROBE{i}"));
+        header_rec.push_tag(b"SN", format!("PROBE{i}"));
         header_rec.push_tag(b"LN", n_probes + 1);
         header.push_record(&header_rec);
     }
@@ -474,9 +561,11 @@ impl MartianStage for AlignAndCount {
             // The memory used by the Hurtle reference is non-zero, but it's less than the
             // wiggle room added to mem_gb below.
             0.0
-        } else {
-            let settings = star_settings(&args.reference_path, args.transcriptome_min_score)?;
+        } else if let Some(reference_path) = &args.reference_path {
+            let settings = star_settings(reference_path, args.transcriptome_min_score)?;
             settings.est_mem()? as f64 / ALN_BC_GIB
+        } else {
+            0.0
         };
 
         let barcode_counts: BTreeMap<Barcode, CountMetric> =
@@ -569,7 +658,7 @@ impl MartianStage for AlignAndCount {
         let probe_set_reference = if choose_aligner_from_args(&args)? == AlignerParam::Hurtle {
             Some(ProbeSetReference::from_path(
                 args.target_set.as_ref().unwrap(),
-                &args.reference_path,
+                args.reference_path.as_deref(),
                 args.transcriptome_min_score
                     .unwrap_or(DEFAULT_TRANSCRIPTOME_MIN_SCORE),
             )?)
@@ -581,14 +670,16 @@ impl MartianStage for AlignAndCount {
         let star_reference = if is_targeted_rtl && args.no_bam {
             // For probe assays, STAR is needed only to produce alignments for the BAM file.
             None
-        } else {
+        } else if let Some(reference_path) = &args.reference_path {
             // load up the aligner and annotator
             // do this first because Orbit loads the reference in the background
             // with mmap, so we want to start this ASAP.
             Some(StarReference::load(star_settings(
-                &args.reference_path,
+                reference_path,
                 args.transcriptome_min_score,
             )?)?)
+        } else {
+            None
         };
 
         let reader = args.read_shards.reader()?;
@@ -658,12 +749,35 @@ impl MartianStage for AlignAndCount {
         let feature_dist = compute_feature_dist(args.feature_counts.read()?, &feature_reference)?;
         let target_genes = feature_reference.target_genes();
 
-        let annotator = ReadAnnotator::new(
-            &args.reference_path,
-            args.chemistry_defs.primary(),
-            args.include_exons,
-            args.include_introns,
-        )?;
+        let annotator = if let Some(reference_path) = &args.reference_path {
+            Some(ReadAnnotator::new(
+                reference_path,
+                args.chemistry_defs.primary(),
+                args.include_exons,
+                args.include_introns,
+            )?)
+        } else {
+            None
+        };
+
+        let n_threads = rover.get_threads().max(1);
+
+        let per_read_gap_align_files = match &probe_set_reference {
+            Some(probe_set_ref) if probe_set_ref.has_gap_probes => (0..n_threads)
+                .map(|i| {
+                    Some(rover.make_path::<ParquetFile>(format!("per_read_gap_alignments_{i}")))
+                })
+                .collect(),
+            _ => vec![None; n_threads],
+        };
+        let per_read_gap_align_writers: Vec<_> = per_read_gap_align_files
+            .iter()
+            .map(|f| {
+                f.as_ref()
+                    .map(|f| f.writer(PerReadGapAlignRow::ROW_GROUP_SIZE))
+                    .transpose()
+            })
+            .try_collect()?;
 
         let mut subsample_rate = chunk_args.read_ann_subsample_rate;
 
@@ -688,7 +802,6 @@ impl MartianStage for AlignAndCount {
             probe_set_reference,
         )?;
 
-        let n_threads = rover.get_threads().max(1);
         let ann_files: Vec<ReadAnnotationsFormat> = (0..n_threads)
             .map(|i| rover.make_path(format!("read_annotations_{i}")))
             .collect();
@@ -701,10 +814,9 @@ impl MartianStage for AlignAndCount {
         // - An Arc<StarReference> which is the shared reference data structure used by STAR
         // - Shared FeatureReference and ReadAnnotator structs used to
         let is_pd = args.is_pd;
-        let processors = ann_files
-            .iter()
+        let processors = izip!(&ann_files, per_read_gap_align_writers)
             .enumerate()
-            .map(|(idx, f)| {
+            .map(|(idx, (ann_file, per_read_gap_align_writer))| {
                 anyhow::Ok(AlignThreadProcessor {
                     args: args.clone(),
                     aligner: aligner.clone(),
@@ -712,12 +824,13 @@ impl MartianStage for AlignAndCount {
                     bc_counts_sender: bc_counts.get_sender(),
                     pos_reads_sender: pos_reads.get_sender(),
                     bc_probe_counts_sender: bc_probe_counts.as_mut().map(|x| x.get_sender()),
+                    per_read_gap_align_writer,
                     visitor: if is_pd {
                         let rng = ChaCha20Rng::seed_from_u64(idx as u64);
                         StageVisitor::with_ann_writer_sample(
                             metrics_writer.get_sender(),
                             target_genes.clone(),
-                            f.lazy_writer()?,
+                            ann_file.lazy_writer()?,
                             subsample_rate,
                             rng,
                         )
@@ -783,6 +896,7 @@ impl MartianStage for AlignAndCount {
             } else {
                 None
             },
+            per_read_gap_align: per_read_gap_align_files.into_iter().flatten().collect(),
             metrics_shard,
             no_star_alignments,
         })
@@ -865,6 +979,10 @@ impl MartianStage for AlignAndCount {
             } else {
                 None
             },
+            per_read_gap_align: chunk_outs
+                .iter()
+                .flat_map(|x| x.per_read_gap_align.clone())
+                .collect(),
             per_barcode_metrics: chunk_outs.iter().map(|x| x.metrics_shard.clone()).collect(),
             summary,
             no_star_alignments: chunk_outs[0].no_star_alignments,
@@ -881,7 +999,9 @@ mod test {
 
     #[test]
     fn test_choose_aligner() -> Result<()> {
-        use cr_types::chemistry::ChemistryName::{SpatialThreePrimeV1, ThreePrimeV3, MFRP_RNA};
+        use cr_types::chemistry::ChemistryName::{
+            SpatialThreePrimeV1, ThreePrimeV3PolyA, MFRP_RNA,
+        };
         use AlignerParam::{Hurtle, Star};
 
         let hybcap_file = "test/target_panels/Immunology_targeting_hybrid.csv".into();
@@ -906,12 +1026,15 @@ mod test {
 
         // Test chemistry and target_panel_file_format.
         let spatial_is_rtl = SpatialThreePrimeV1.is_rtl();
-        assert_eq!(choose_aligner(None, ThreePrimeV3.is_rtl(), hybcap)?, Star);
+        assert_eq!(
+            choose_aligner(None, ThreePrimeV3PolyA.is_rtl(), hybcap)?,
+            Star
+        );
         assert!(choose_aligner(None, MFRP_RNA.is_rtl(), hybcap).is_err());
         assert_eq!(choose_aligner(None, spatial_is_rtl, hybcap)?, Star);
 
         // Test chemistry and probe_set_file_format.
-        assert_eq!(choose_aligner(None, ThreePrimeV3.is_rtl(), rtl)?, Star);
+        assert_eq!(choose_aligner(None, ThreePrimeV3PolyA.is_rtl(), rtl)?, Star);
         assert_eq!(choose_aligner(None, MFRP_RNA.is_rtl(), rtl)?, Hurtle);
         assert_eq!(choose_aligner(None, spatial_is_rtl, rtl)?, Hurtle);
 

@@ -53,7 +53,7 @@ impl MartianStage for HierarchicalClusteringStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let mem_gib = (2.0 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()) as isize;
+        let mem_gib = (4.0 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()) as isize;
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
 
         Ok(ACTIVE_FEATURE_TYPES

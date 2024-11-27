@@ -189,15 +189,15 @@ class ReferenceBuilder(NewGtfParser):
                 contig_lengths[chrom] = length
         if not contig_lengths:
             raise GexReferenceError(
-                "The samtools-constructed FASTA index file {} is empty. The supplied FASTA file(s) "
-                "have no contigs: {}".format(self.fasta_path, self.in_fasta_fns)
+                f"The samtools-constructed FASTA index file {self.fasta_path} is empty. The supplied FASTA file(s) "
+                f"have no contigs: {self.in_fasta_fns}"
             )
         return contig_lengths
 
     def build_gex_reference(self, out_dir_exists: bool = False):
         """Construct a cellranger/spaceranger-compatible reference."""
         if not out_dir_exists:
-            print("Creating new reference folder at %s" % self.out_dir)
+            print(f"Creating new reference folder at {self.out_dir}")
             os.mkdir(self.out_dir)
             print("...done\n")
 
@@ -248,10 +248,8 @@ class ReferenceBuilder(NewGtfParser):
                     raise GexReferenceError(f"Input FASTA file {fn} is empty")
                 if byte1 != b">":
                     raise GexReferenceError(
-                        "Input FASTA file {} is invalid. The first byte = {} but it must be "
-                        "'>'. Note that gzipped FASTA files cannot be processed by mkref.".format(
-                            fn, repr(byte1)
-                        )
+                        f"Input FASTA file {fn} is invalid. The first byte = {byte1!r} but it must be "
+                        "'>'. Note that gzipped FASTA files cannot be processed by mkref."
                     )
 
         if len(self.genomes) > 1:
@@ -436,7 +434,7 @@ class STAR:
         limit_ram=None,
     ):
         if os.path.exists(self.reference_star_path):
-            raise Exception("STAR reference path %s already exists" % self.reference_star_path)
+            raise Exception(f"STAR reference path {self.reference_star_path} already exists")
 
         os.mkdir(self.reference_star_path)
 

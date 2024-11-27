@@ -30,7 +30,7 @@ def get_mro_params(fastq_paths, fastqprefixes):
         print(f"{fastq_mode}\t{ensure_str(sample_name)}")
         sys.exit(0)
     except ValueError as ex:
-        sys.stderr.write("%s\n" % str(ex))
+        sys.stderr.write(f"{ex!s}\n")
         sys.exit(1)
 
 

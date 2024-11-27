@@ -27,11 +27,12 @@ struct StageMetrics {
     vdj_filtered_bcs: i64,
     /// This is the customer facing metric "Mean Read Pairs per Cell", defined as:
     /// "Number of input read pairs divided by the estimated number of cells."
-    vdj_total_raw_read_pairs_per_filtered_bc: f64,
+    /// Is not computed at the sample-level for CellLevel multiplexing i.e. CMO/Hashtags.
+    vdj_total_raw_read_pairs_per_filtered_bc: Option<f64>,
     /// This is the customer facing metric Fraction Reads in Cells, defined as:
     /// "Number of read pairs with cell-associated barcodes divided by the number of
     /// read pairs with valid barcodes."
-    vdj_filtered_bcs_cum: PercentMetric,
+    vdj_filtered_bcs_cum: Option<PercentMetric>,
     /// The fraction of productive contigs that are in barcodes that were called a cell.
     /// Numerator: Number of productive high confidence contigs in cell barcodes
     /// Denominator: Number of productive contigs in all barcodes
@@ -69,8 +70,8 @@ struct StageMetrics {
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct WriteContigOutsStageInputs {
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
-    pub total_read_pairs: i64,
-    pub corrected_bc_counts: JsonFile<SimpleHistogram<String>>,
+    pub total_read_pairs: Option<i64>,
+    pub corrected_bc_counts: Option<JsonFile<SimpleHistogram<String>>>,
     pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
 }
 
@@ -351,17 +352,21 @@ impl MartianMain for WriteContigOuts {
             // Compute the metrics here
             let metrics = StageMetrics {
                 vdj_filtered_bcs: cell_barcodes.len() as i64,
-                vdj_total_raw_read_pairs_per_filtered_bc: if !cell_barcodes.is_empty() {
-                    (args.total_read_pairs as f64) / (cell_barcodes.len() as f64)
-                } else {
-                    0.0f64
-                },
-                vdj_filtered_bcs_cum: {
-                    let bc_read_counts = args.corrected_bc_counts.read()?;
+                vdj_total_raw_read_pairs_per_filtered_bc: args.total_read_pairs.map(|t| {
+                    if cell_barcodes.is_empty() {
+                        0.0f64
+                    } else {
+                        (t as f64) / cell_barcodes.len() as f64
+                    }
+                }),
+                vdj_filtered_bcs_cum: if let Some(corrected_bc_counts) = args.corrected_bc_counts {
+                    let bc_read_counts = corrected_bc_counts.read()?;
                     let reads_in_valid_barcodes: i64 = bc_read_counts.raw_counts().sum();
                     let reads_in_cell_barcodes =
                         cell_barcodes.iter().map(|bc| bc_read_counts.get(bc)).sum();
-                    (reads_in_cell_barcodes, reads_in_valid_barcodes).into()
+                    Some((reads_in_cell_barcodes, reads_in_valid_barcodes).into())
+                } else {
+                    None
                 },
                 vdj_high_conf_prod_contig: (num_cell_productive_contigs, num_productive_contigs)
                     .into(),

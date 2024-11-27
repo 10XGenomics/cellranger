@@ -94,9 +94,9 @@ impl PercentMetric {
 /// from a boolean.
 ///
 /// * `True` will be converted to a `PercentMetric` with numerator and denominator
-/// equal to one
+///   equal to one
 /// * `False` will be converted to a `PercentMetric` with numerator equal to zero
-/// and denominator equal to one
+///   and denominator equal to one
 ///
 /// # Example
 ///

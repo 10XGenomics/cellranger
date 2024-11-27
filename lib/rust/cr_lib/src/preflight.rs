@@ -3,7 +3,8 @@ use bio::alphabets::dna::revcomp;
 use cr_h5::probe_reference_io::PROBE_DATA_LEN;
 use cr_types::probe_set::ProbeSetReferenceMetadata;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
-use cr_types::reference::reference_info::MULTI_GENOME_SEPARATOR;
+use cr_types::reference::probe_set_reference::TargetSetFile;
+use cr_types::reference::reference_info::{ReferenceInfo, MULTI_GENOME_SEPARATOR};
 use cr_types::types::FeatureBarcodeType;
 use cr_types::{GenomeName, TargetingMethod};
 use itertools::Itertools;
@@ -15,7 +16,6 @@ use libc::{getrlimit64 as getrlimit, rlimit64 as rlimit, RLIMIT_NOFILE};
 use metric::{TxHashMap, TxHashSet};
 use multi::config::preflight::check_file;
 use regex::bytes::Regex;
-use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
@@ -87,16 +87,16 @@ pub fn check_resource_limits() -> Result<()> {
     }
 }
 
-const METADATA_KEY_PANEL_NAME: &str = "panel_name";
-const METADATA_KEY_REFERENCE_GENOME: &str = "reference_genome";
-
+/// Required probe set CSV metadata.
 const REQUIRED_METADATA_ARRAY: [&str; 4] = [
-    METADATA_KEY_REFERENCE_GENOME,
-    "reference_version",
+    "panel_name",
     "panel_type",
-    METADATA_KEY_PANEL_NAME,
+    "reference_genome",
+    "reference_version",
 ];
-const HEADERS: [&str; 7] = [
+
+/// Probe set CSV headers.
+const HEADERS: [&str; 8] = [
     "gene_id",
     "bait_seq",
     "bait_id",
@@ -104,14 +104,17 @@ const HEADERS: [&str; 7] = [
     "probe_id",
     "included",
     "region",
+    "gene_name",
 ];
+
+/// Minimum number of genes in a target set.
 const MIN_TARGET_PANEL_LENGTH: usize = 10;
 
 lazy_static! {
     static ref REQUIRED_METADATA: TxHashSet<&'static str> =
         REQUIRED_METADATA_ARRAY.iter().copied().collect();
     static ref ALLOWED_HEADERS: TxHashSet<&'static str> = HEADERS.iter().copied().collect();
-    static ref BAIT_SEQ: Regex = Regex::new("^[ACGTN]+$").unwrap();
+    static ref BAIT_SEQ: Regex = Regex::new("^[ACGTN-]+$").unwrap(); // "-" used as separator between probe halves (and if present gap)
 }
 
 fn make_required_headers(method: TargetingMethod) -> TxHashSet<&'static str> {
@@ -138,12 +141,12 @@ fn validate_probe_field(field_name: &str, field_value: &str) -> Result<()> {
     Ok(())
 }
 
+/// checks that genome ref name & version match in the target panel and the reference
 pub fn check_target_panel(
-    transcriptome: &Transcriptome,
-    genomes: Vec<GenomeName>,
-    probe_set: &Path,
+    transcriptome: Option<&Transcriptome>,
+    ref_info: Option<&ReferenceInfo>,
+    probe_set: &TargetSetFile,
     targeting_method: TargetingMethod,
-    is_pd: bool,
 ) -> Result<TxHashSet<String>> {
     use TargetingMethod::{HybridCapture, TemplatedLigation};
 
@@ -154,13 +157,19 @@ pub fn check_target_panel(
         probe_set.display(),
     );
 
-    // Read the transcriptome GTF to map gene IDs to gene names.
-    let gene_name_to_id: TxHashMap<_, _> = transcriptome
-        .genes
-        .iter()
-        .map(|x| (x.name.as_str(), x.id.as_str()))
-        .collect();
-    let gene_ids: TxHashSet<_> = transcriptome.genes.iter().map(|x| x.id.as_str()).collect();
+    // Read the transcriptome GTF to map gene names to gene IDs, used for hybcap.
+    let gene_ids: TxHashSet<_> = transcriptome
+        .map(|transcriptome| transcriptome.genes.iter().map(|x| x.id.as_str()).collect())
+        .unwrap_or_default();
+    let gene_name_to_id: TxHashMap<_, _> = if let Some(transcriptome) = transcriptome {
+        transcriptome
+            .genes
+            .iter()
+            .map(|x| (x.name.as_str(), x.id.as_str()))
+            .collect()
+    } else {
+        TxHashMap::default()
+    };
 
     let metadata = ProbeSetReferenceMetadata::load_from(probe_set)?;
     let metadata_fields = metadata.keys().map(String::as_str).collect();
@@ -175,7 +184,7 @@ pub fn check_target_panel(
         missing_metadata_fields.into_iter().join("\", \""),
     );
 
-    let panel_name = &metadata[METADATA_KEY_PANEL_NAME];
+    let panel_name = metadata.panel_name();
     ensure!(
         !panel_name.contains('/'),
         "The character \"/\" cannot appear in the probe set CSV panel name: {panel_name}"
@@ -210,8 +219,8 @@ pub fn check_target_panel(
         file_format_version.parse::<f64>(),
         file_format_version.contains('.'),
     ) {
-        (Ok(v), true) if v > 2.0 => bail!(
-            "The probe set CSV file contains unknown #{}={}. Must be 2.0 or less.",
+        (Ok(v), true) if v > 3.0 => bail!(
+            "The probe set CSV file contains unknown #{}={}. Must be 3.0 or less.",
             file_format,
             file_format_version
         ),
@@ -224,19 +233,23 @@ pub fn check_target_panel(
         _ => (),
     }
 
-    // Block barnyard genomes for RTL
-    if targeting_method == TemplatedLigation {
-        if !is_pd && genomes.len() > 1 {
-            bail!("Barnyard references are unsupported with probe set CSV!");
-        }
-        let probe_set_ref = &metadata[METADATA_KEY_REFERENCE_GENOME];
-        let probe_set_genomes: HashSet<&str> =
-            probe_set_ref.split(MULTI_GENOME_SEPARATOR).collect();
-        let genomes_set: HashSet<&str> = genomes.iter().map(GenomeName::as_str).collect();
-        if genomes_set != probe_set_genomes {
-            bail!(
-                "Reference genome \"{}\" does not match probe set CSV reference \"{probe_set_ref}\"",
-                genomes.iter().format(MULTI_GENOME_SEPARATOR),
+    if let (Some(ref_info), TemplatedLigation) = (ref_info, targeting_method) {
+        let probe_set_genome = metadata.reference_genome();
+        ensure!(
+            itertools::equal(
+                ref_info.genomes.iter().map(GenomeName::as_str).sorted(),
+                probe_set_genome.split(MULTI_GENOME_SEPARATOR).sorted()
+            ),
+            "Reference genome \"{}\" does not match probe set CSV reference \"{probe_set_genome}\"",
+            ref_info.genomes.iter().format(MULTI_GENOME_SEPARATOR),
+        );
+
+        if let Some(reference_version) = &ref_info.version {
+            let probe_set_ref_version = metadata.reference_version();
+            ensure!(
+                probe_set_ref_version == reference_version,
+                "Reference version \"{reference_version}\" does not match \
+                 probe set CSV reference version \"{probe_set_ref_version}\"",
             );
         }
     }
@@ -349,7 +362,9 @@ pub fn check_target_panel(
                 TemplatedLigation => gene_id,
                 HybridCapture => {
                     let gene = gene_id.split('.').next().unwrap();
-                    if gene_ids.contains(gene) {
+                    if transcriptome.is_none() {
+                        gene_id
+                    } else if gene_ids.contains(gene) {
                         gene
                     } else if let Some(&gene_id) = gene_name_to_id.get(gene) {
                         gene_id
@@ -371,7 +386,7 @@ pub fn check_target_panel(
                     ensure!(
                         BAIT_SEQ.is_match(probe_seq.as_bytes()),
                         "The probe set CSV file contains an invalid probe sequence on row {row}: \
-                         \"{probe_seq}\". May only contain \"ACGTN\"",
+                         \"{probe_seq}\". May only contain \"ACGTN-\"",
                     );
                 }
             }
@@ -410,6 +425,29 @@ pub fn check_target_panel(
                     if included.to_lowercase().as_str() == "false" {
                         excluded_n += 1;
                     };
+                }
+            }
+        }
+
+        if let Some(&gene_name_index) = hdr_to_idx.get("gene_name") {
+            let gene_id = &record[gene_id_idx];
+            let Some(gene_name) = record.get(gene_name_index) else {
+                bail!("gene_name must not be empty for {gene_id} on row {row}");
+            };
+            ensure!(
+                !gene_name.is_empty(),
+                "gene_name must not be empty for {gene_id} on row {row}",
+            );
+            validate_probe_field("gene_name", gene_name)?;
+            if let Some(transcriptome) = transcriptome {
+                if let Some(gene_index) = transcriptome.gene_id_to_idx.get(gene_id) {
+                    let transcriptome_gene_name =
+                        transcriptome.genes[gene_index.0 as usize].name.as_str();
+                    ensure!(
+                        gene_name == transcriptome_gene_name,
+                        "The gene_name {gene_name} of gene_id {gene_id} on row {row} does not \
+                         match the gene name {transcriptome_gene_name} in the transcriptome",
+                    );
                 }
             }
         }
@@ -646,37 +684,28 @@ pub fn check_vdj_known_enrichment_primers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cr_types::reference::reference_info::ReferenceInfo;
     use glob::glob;
-    use test_refdata::{refdata_available, refdata_path};
+    use insta::assert_debug_snapshot;
 
     #[test]
     fn test_invalid_target_panels() -> Result<()> {
-        if !refdata_available() {
-            return Ok(());
-        }
-        let ref_path = refdata_path("GRCh38-2020-A/");
-        let txome = Transcriptome::from_reference_path(&ref_path)?;
-        let genomes = ReferenceInfo::from_reference_path(&ref_path)?.genomes;
-        let mut target_panels: Vec<_> =
-            glob("test/target_panels/invalid_csvs/*.csv")?.try_collect()?;
-        target_panels.sort();
+        let target_panels: Vec<_> = glob("test/target_panels/invalid_csvs/*.csv")?.try_collect()?;
         let outs: Vec<_> = target_panels
             .iter()
+            .sorted()
             .map(|target_panel| {
                 (
                     target_panel,
                     check_target_panel(
-                        &txome,
-                        genomes.clone(),
-                        target_panel,
+                        None,
+                        None,
+                        &TargetSetFile::from(target_panel),
                         TargetingMethod::HybridCapture,
-                        false,
                     ),
                 )
             })
             .collect();
-        insta::assert_debug_snapshot!(outs);
+        assert_debug_snapshot!(outs);
         Ok(())
     }
 

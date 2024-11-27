@@ -46,12 +46,15 @@
 )]
 pub mod airrfilter;
 pub mod asm_call_cells;
+pub mod asm_metrics;
 mod assembly;
 pub use assembly::{Assembly, BarcodeDataBriefFile};
 mod adapter;
 pub mod assembly_types;
 mod contig_aligner;
+pub mod filter_exact_clonotypes;
 pub mod handle_gex_cells;
+pub mod make_exact_clonotypes;
 pub mod make_filter_switch;
 pub mod merge_per_sample_annotations;
 pub mod subset_assembly_outs;

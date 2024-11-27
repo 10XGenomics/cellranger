@@ -8,6 +8,7 @@ import json
 import cellranger.report as cr_report
 import cellranger.webshim.common as cr_webshim
 import cellranger.websummary.vdj as vdj_web
+from cellranger.analysis.singlegenome import TSNE_NAME
 from cellranger.webshim.constants.shared import PIPELINE_VDJ
 from cellranger.websummary.sample_properties import SampleDataPaths, VdjSampleProperties
 
@@ -22,6 +23,7 @@ stage SUMMARIZE_VDJ_REPORTS(
     in  csv          clonotype_summary,
     in  csv          barcode_support,
     in  string       receptor,
+    in  int          n50_n50_rpu,
     out string       receptor,
     out json         metrics_summary_json,
     out csv          metrics_summary_csv,
@@ -55,6 +57,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         "chain_type": args.receptor,
         # Hack to pass this metric at the per-sample level, CELLRANGER-7783
         "VDJ_total_read_pairs": args.total_read_pairs,
+        "n50_n50_rpu": args.n50_n50_rpu,
     }
 
     cr_report.merge_jsons(args.summaries, outs.metrics_summary_json, dicts=[sample_info])
@@ -74,7 +77,9 @@ def join(args, outs, chunk_defs, chunk_outs):
         chemistry_def=args.vdj_chemistry_def,
         chain_type=outs.receptor,
     )
-    sample_data = cr_webshim.load_sample_data(sample_properties, sample_data_paths)
+    sample_data = cr_webshim.load_sample_data(
+        sample_properties, sample_data_paths, projections=TSNE_NAME
+    )
 
     ws_data = vdj_web.build_vdj_web_summary_html(outs.web_summary, sample_properties, sample_data)
     with open(outs.web_summary_data, "w") as f:

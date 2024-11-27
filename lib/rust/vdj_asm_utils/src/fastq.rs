@@ -1,4 +1,3 @@
-use crate::constants::ReadType;
 use std::collections::HashMap;
 
 pub struct CellrangerFastqHeader {
@@ -33,21 +32,22 @@ impl CellrangerFastqHeader {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Record {
-    pub id: ReadType,
-    pub seq: Vec<u8>,
-    pub quals: Vec<u8>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{UmiType, PROCESSED_UMI_TAG, QUAL_OFFSET, RAW_UMI_TAG};
+    use crate::constants::{ReadType, UmiType, PROCESSED_UMI_TAG, QUAL_OFFSET, RAW_UMI_TAG};
     use crate::utils;
     use io_utils::open_maybe_compressed;
     use std::io::{BufRead, BufReader, Lines, Read};
     use std::path::Path;
+
+    #[derive(Clone, Debug)]
+    pub struct Record {
+        pub id: ReadType,
+        pub seq: Vec<u8>,
+        #[allow(dead_code)]
+        pub quals: Vec<u8>,
+    }
 
     fn extract_head(header: &str) -> String {
         // Remove the @ at the beginning and then take stuff before whitespace

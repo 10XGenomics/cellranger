@@ -1,0 +1,43 @@
+[dependencies]
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.debruijn]
+workspace = true
+
+[dependencies.enclone_core]
+path = '../enclone_core'
+
+[dependencies.io_utils]
+path = '../io_utils'
+
+[dependencies.itertools]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
+[dependencies.rayon]
+workspace = true
+
+[dependencies.string_utils]
+path = '../string_utils'
+
+[dependencies.vdj_ann]
+path = '../vdj_ann'
+
+[dependencies.vdj_types]
+path = '../vdj_types'
+
+[dependencies.vector_utils]
+path = '../vector_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'enclone_args'
+publish = false
+version = '0.1.0'

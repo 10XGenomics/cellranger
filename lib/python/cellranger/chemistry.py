@@ -21,7 +21,11 @@ CHEMISTRY_DEFS: dict[str, ChemistryDef] = json.load(
 )
 
 # HT chemistries
-HT_CHEMISTRIES = [CHEMISTRY_DEFS["SC3Pv3HT"], CHEMISTRY_DEFS["SC5PHT"]]
+HT_CHEMISTRIES = [
+    CHEMISTRY_DEFS["SC3Pv3HT-polyA"],
+    CHEMISTRY_DEFS["SC3Pv3HT-CS1"],
+    CHEMISTRY_DEFS["SC5PHT"],
+]
 
 # LT v3 Chemistry
 CHEMISTRY_SC3P_LT = CHEMISTRY_DEFS["SC3Pv3LT"]
@@ -36,15 +40,27 @@ CHEMISTRY_SPATIAL3P_V1 = CHEMISTRY_DEFS["SPATIAL3Pv1"]
 CHEMISTRY_ARC_V1 = CHEMISTRY_DEFS["ARC-v1"]
 
 # Single Cell 3' chemistries
-CHEMISTRY_SC3P_V3 = CHEMISTRY_DEFS["SC3Pv3"]
+CHEMISTRY_SC3P_V3_POLYA = CHEMISTRY_DEFS["SC3Pv3-polyA"]
+CHEMISTRY_SC3P_V3_CS1 = CHEMISTRY_DEFS["SC3Pv3-CS1"]
+
+SC3P_V3_CHEMISTRIES = [
+    CHEMISTRY_SC3P_V3_POLYA,
+    CHEMISTRY_SC3P_V3_CS1,
+]
+
+SC3P_V4_PREFIX = "SC3Pv4"
+
 SC3P_V4_CHEMISTRIES = [
-    CHEMISTRY_DEFS["SC3Pv4"],
-    CHEMISTRY_DEFS["SC3Pv4-OH"],
+    CHEMISTRY_DEFS["SC3Pv4-polyA"],
+    CHEMISTRY_DEFS["SC3Pv4-CS1"],
+    CHEMISTRY_DEFS["SC3Pv4-polyA-OCM"],
+    CHEMISTRY_DEFS["SC3Pv4-CS1-OCM"],
 ]
 SC3P_CHEMISTRIES = [
     CHEMISTRY_DEFS["SC3Pv1"],
     CHEMISTRY_DEFS["SC3Pv2"],
-    CHEMISTRY_SC3P_V3,
+    CHEMISTRY_SC3P_V3_POLYA,
+    CHEMISTRY_SC3P_V3_CS1,
 ] + SC3P_V4_CHEMISTRIES
 
 
@@ -52,7 +68,7 @@ SC5P_V3_CHEMISTRIES = [
     # v3 versions, with a 3.6M whitelist and 12bp UMI
     CHEMISTRY_DEFS["SC5P-PE-v3"],
     CHEMISTRY_DEFS["SC5P-R2-v3"],
-    CHEMISTRY_DEFS["SC5P-R2-OH-v3"],
+    CHEMISTRY_DEFS["SC5P-R2-OCM-v3"],
     CHEMISTRY_DEFS["SC5P-R1-v3"],
 ]
 
@@ -64,6 +80,8 @@ SC5P_CHEMISTRIES = [
     CHEMISTRY_DEFS["SC5P-R1"],
 ] + SC5P_V3_CHEMISTRIES
 
+SC_GEMX_CHEMISTRIES = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
+
 # Single Cell V(D)J (5-prime) chemistries
 SCVDJ_CHEMISTRIES = [
     CHEMISTRY_DEFS["SCVDJ"],
@@ -73,11 +91,10 @@ SCVDJ_CHEMISTRIES = [
     CHEMISTRY_DEFS["SCVDJ-R2-v3"],
 ]
 
-
-DEFINED_CHEMISTRIES = list(CHEMISTRY_DEFS.values())
-
 # Aliases for human usage
 CHEMISTRY_ALIASES = OrderedDict([("threeprime", "SC3P_auto"), ("fiveprime", "SC5P_auto")])
+
+DEFINED_CHEMISTRIES = list(CHEMISTRY_DEFS.values())
 
 # User-defined chemistry (use the various read_type/offset/length arguments passed to the pipeline)
 CUSTOM_CHEMISTRY_NAME = "custom"
@@ -93,9 +110,9 @@ def get_chemistry(name) -> ChemistryDef:
 
     chemistries = [n for n in DEFINED_CHEMISTRIES if n["name"] == name]
     if len(chemistries) == 0:
-        raise ValueError("Could not find chemistry named %s" % name)
+        raise ValueError(f"Could not find chemistry named {name}")
     if len(chemistries) > 1:
-        raise ValueError("Found multiple chemistries with name %s" % name)
+        raise ValueError(f"Found multiple chemistries with name {name}")
     return chemistries[0]
 
 
@@ -159,3 +176,15 @@ def get_primary_chemistry_def(chemistry_defs: ChemistryDefs) -> ChemistryDef:
         return chemistry_defs[GENE_EXPRESSION_LIBRARY_TYPE]
     except KeyError as exc:
         raise ValueError("no gene expression chemistry found") from exc
+
+
+def get_whitelists_from_chemistry_defs(defs: ChemistryDefs) -> set[str]:
+    """Get all gel bead whitelists from the provided dict of chemistry defs."""
+    whitelists = set()
+    for chem in defs.values():
+        barcode_read_component = chem["barcode"][0]
+        assert barcode_read_component["kind"] == "gel_bead"
+        whitelist = barcode_read_component["whitelist"]["name"]
+        assert isinstance(whitelist, str)
+        whitelists.add(whitelist)
+    return whitelists

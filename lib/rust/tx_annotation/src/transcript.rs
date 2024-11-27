@@ -1095,6 +1095,7 @@ mod tests {
         ]);
         let seq = "AAAAAAAAA".as_bytes();
         let qual = "IIIIIIIII".as_bytes();
+        read.unset_flags();
         read.set_mapq(255);
         read.set_tid(0);
         read.set(qname, Some(&cigar), seq, qual);
@@ -1191,6 +1192,7 @@ mod tests {
         ]);
         let seq = "AAAAAAAAAAAA".as_bytes();
         let qual = "IIIIIIIIIIII".as_bytes();
+        read.unset_flags();
         read.set_mapq(255);
         read.set_tid(0);
         read.set(qname, Some(&cigar), seq, qual);
@@ -1242,6 +1244,7 @@ mod tests {
         ]);
         let seq = "AAAAAAAAAAAA".as_bytes();
         let qual = "IIIIIIIIIIII".as_bytes();
+        read.unset_flags();
         read.set_mapq(255);
         read.set_tid(0);
         read.set(qname, Some(&cigar), seq, qual);
@@ -1270,6 +1273,7 @@ mod tests {
         let cigar = CigarString(vec![Cigar::Match(5), Cigar::RefSkip(25), Cigar::Match(7)]);
         let seq = "AAAAAAAAAAAA".as_bytes();
         let qual = "IIIIIIIIIIII".as_bytes();
+        read.unset_flags();
         read.set_mapq(255);
         read.set_tid(0);
         read.set(qname, Some(&cigar), seq, qual);

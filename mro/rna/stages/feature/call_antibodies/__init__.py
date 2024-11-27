@@ -7,6 +7,7 @@
 import cellranger.feature.utils as feature_utils
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
+from cellranger.fast_utils import MultiGraph
 
 # from cellranger.feature.feature_assigner import AntibodyAssigner
 from cellranger.websummary.histograms import make_antibody_histograms
@@ -19,6 +20,8 @@ stage CALL_ANTIBODIES(
     in  h5   filtered_feature_counts_matrix,
     in  bool is_antibody,
     in  bool is_spatial,
+    in  json multi_graph,
+    in  string sample_id,
     out json antibody_histograms_json,
     out json antibody_treemap_json,
     src py   "stages/feature/call_antibodies",
@@ -89,8 +92,17 @@ def join(args, outs, chunk_defs, chunk_outs):
     # ab_assigner.assignments = ab_assigner.get_feature_assignments()
     # ab_assigner.assignment_metadata = ab_assigner.compute_assignment_metadata()
 
+    # Read in the multi graph
+
+    is_hashtag_multiplexed = False
+    if args.multi_graph:
+        multi_graph = MultiGraph.from_path(args.multi_graph)
+        is_hashtag_multiplexed = multi_graph.is_hashtag_multiplexed()
+
+    hashtags = multi_graph.sample_tag_ids().get(args.sample_id) if is_hashtag_multiplexed else None
+
     antibody_histograms = make_antibody_histograms(
-        filtered_ab_counts_matrix, is_spatial=args.is_spatial
+        filtered_ab_counts_matrix, is_spatial=args.is_spatial, hashtags=hashtags
     )
     antibody_treemap = make_antibody_treemap_plot(
         filtered_ab_counts_matrix, feature_type, MIN_ANTIBODY_UMI, args.is_spatial

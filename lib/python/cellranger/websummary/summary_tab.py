@@ -425,19 +425,46 @@ def _get_chemistry_description(
         return chemistry_description
 
     if sample_data.targeting_method == TARGETING_METHOD_TL:
+        # covers both fresh/fixed frozen and FFPE products
         # Determine the assay from the chemistry.
-        assay = {
-            "Visium V1 Slide": "FFPE v1",
-            "Visium V2 Slide": "FFPE v1",
-            "Visium V3 Slide": "FFPE v2",
-            "Visium V4 Slide": "FFPE v2",
-            "Visium V5 Slide": "FFPE v2",
-        }.get(chemistry_description, "FFPE")
+        assay_version = {
+            "Visium V1 Slide": "v1",
+            "Visium V2 Slide": "v1",
+            "Visium V3 Slide": "v2",
+            "Visium V4 Slide": "v2",
+            "Visium V5 Slide": "v2",
+            "Visium HD v1": "v1",
+        }.get(chemistry_description)
+        assay_base = {"Visium HD v1": "HD probe-based"}.get(chemistry_description, "Probe-based")
+        assay = f"{assay_base} {assay_version}" if assay_version else assay_base
     elif sample_data.targeting_method == TARGETING_METHOD_HC:
         assay = "Targeted"
     else:
         assay = "3'"
-    return f"{chemistry_description } - {assay}"
+    sanitised_chemistry_description = {"Visium HD v1": "Visium HD H1 Slide"}.get(
+        chemistry_description, chemistry_description
+    )
+    return f"{sanitised_chemistry_description} - {assay}"
+
+
+def _add_throughput_to_chemistry(chemistry_desc: str, sample_data: SampleData) -> str:
+    throughput_inferred = sample_data.summary.get(THROUGHPUT_INFERRED_METRIC)
+
+    chemistry_with_throughput = chemistry_desc
+    if throughput_inferred == HT_THROUGHPUT and chemistry_desc[-2:] not in [
+        LT_THROUGHPUT,
+        MT_THROUGHPUT,
+        HT_THROUGHPUT,
+    ]:
+        chemistry_with_throughput = f"{chemistry_desc} {HT_THROUGHPUT}"
+
+    if (
+        chemistry_desc.endswith(HT_THROUGHPUT)
+        and throughput_inferred
+        and throughput_inferred != HT_THROUGHPUT
+    ):
+        sample_data.summary[INCONSISTENT_THROUGHPUT_METRIC] = HT_THROUGHPUT
+    return chemistry_with_throughput
 
 
 # pylint: disable=too-many-branches
@@ -466,34 +493,40 @@ def pipeline_info_table(
 
     alarms = []
 
-    throughput_inferred = sample_data.summary.get(THROUGHPUT_INFERRED_METRIC)
-
     # Get the chemistry description for the sample(s)
     if isinstance(sample_properties, AggrCountSampleProperties) and sample_defs:
         chemistry_row = []
         for sample_def in sample_defs:
             chemistry = _get_chemistry_description(sample_data=sample_data, sample_def=sample_def)
             chemistry_row.append([f"Chemistry ({sample_def['library_id']})", chemistry])
+    elif not sample_properties.is_spatial and isinstance(
+        sample_properties, ExtendedCountSampleProperties
+    ):
+        # We may have different chemistries per library; need to collect them.
+        # If chemistry for every library is the same, only produce one line.
+        # Do not do this for spatial.
+        chem_desc_unique = set(
+            chem_def["description"] for chem_def in sample_properties.chemistry_defs.values()
+        )
+        if len(chem_desc_unique) == 1:
+            chemistry_row = [
+                ["Chemistry", _add_throughput_to_chemistry(chem_desc_unique.pop(), sample_data)]
+            ]
+        else:
+            chemistry_row = [
+                [
+                    f"Chemistry ({lib_type})",
+                    _add_throughput_to_chemistry(chem_def["description"], sample_data),
+                ]
+                for (lib_type, chem_def) in sample_properties.chemistry_defs.items()
+            ]
+            # Ensure stable ordering by alphabetized library type.
+            chemistry_row.sort()
     else:
         chemistry = _get_chemistry_description(
             sample_data=sample_data, sample_properties=sample_properties
         )
-
-        chemistry_with_throughput = chemistry
-        if throughput_inferred == HT_THROUGHPUT and chemistry[-2:] not in [
-            LT_THROUGHPUT,
-            MT_THROUGHPUT,
-            HT_THROUGHPUT,
-        ]:
-            chemistry_with_throughput = f"{chemistry} {HT_THROUGHPUT}"
-
-        if (
-            chemistry.endswith(HT_THROUGHPUT)
-            and throughput_inferred
-            and throughput_inferred != HT_THROUGHPUT
-        ):
-            sample_data.summary[INCONSISTENT_THROUGHPUT_METRIC] = HT_THROUGHPUT
-        chemistry_row = [["Chemistry", chemistry_with_throughput]]
+        chemistry_row = [["Chemistry", _add_throughput_to_chemistry(chemistry, sample_data)]]
 
     if pipeline == shared_constants.PIPELINE_AGGR:
         run_identifier = "Run"
@@ -556,7 +589,7 @@ def pipeline_info_table(
 
                 ref_version_key = f"{prefix}{cr_constants.REFERENCE_VERSION_KEY}"
                 if ref_version_key in sample_data.summary:
-                    ref_version = "-%s" % sample_data.summary.get(ref_version_key)
+                    ref_version = f"-{sample_data.summary.get(ref_version_key)}"
                 else:
                     ref_version = ""
 
@@ -577,10 +610,7 @@ def pipeline_info_table(
         and sample_properties.is_spatial
         and pipeline not in shared_constants.PIPELINE_AGGR
     ):
-        if (
-            sample_properties.reorientation_mode == "rotation"
-            or sample_properties.reorientation_mode == "rotation+mirror"
-        ):
+        if sample_properties.reorientation_mode in ("rotation", "rotation+mirror"):
             rows.append(["Image Reorientation", "On"])
         else:
             rows.append(["Image Reorientation", "Off"])
@@ -597,6 +627,29 @@ def pipeline_info_table(
     # add filter_probes mode description to the Sample table
     if sample_data.targeting_method == TARGETING_METHOD_TL:
         rows.append(["Filter Probes", "Off" if sample_properties.filter_probes is False else "On"])
+
+    # add cytassist metadata
+    if (
+        isinstance(sample_properties, ExtendedCountSampleProperties)
+        and sample_properties.is_spatial
+        and sample_properties.cytassist_run_properties
+    ):
+        rows.extend(
+            [
+                [
+                    "CytAssist Run Name",
+                    sample_properties.cytassist_run_properties.cytassist_run_name,
+                ],
+                [
+                    "CytAssist Instrument Serial ID",
+                    sample_properties.cytassist_run_properties.cytassist_instrument_serial,
+                ],
+                [
+                    "CytAssist Instrument Software Version",
+                    sample_properties.cytassist_run_properties.cytassist_instrument_software_version,
+                ],
+            ]
+        )
 
     pipeline_info = {
         "header": ["Sample"],
@@ -641,10 +694,10 @@ def pipeline_info_table(
         }
         to_return[ALARMS].extend([aligner_info_alarm])
 
-    # chevron downsampling
+    # pattern downsampling
     if (
         isinstance(sample_properties, CountSampleProperties)
-        and sample_properties.v1_filtered_fbm
+        and sample_properties.v1_pattern_fix
         and sample_properties.is_spatial
     ):
         if ALARMS not in to_return:
@@ -678,13 +731,14 @@ def pipeline_info_table(
         isinstance(sample_properties, CountSampleProperties)
         and sample_properties.override_id
         and sample_properties.is_visium_hd
+        and sample_properties.loupe_alignment_file is None
     ):
         if ALARMS not in to_return:
             to_return[ALARMS] = []
         override_id_alarm = {
             "formatted_value": None,
             "title": "Override ID Used",
-            "message": "Visium HD slide ID entered on the CytAssist instrument was overridden by the slide ID provided to the Space Ranger pipeline. Confirm that the slide ID matches the slide used to generate the dataset.",
+            "message": "Visium HD slide ID entered on the CytAssist instrument was overridden by the inputs provided to the Space Ranger pipeline. Confirm that the slide ID matches the slide used to generate the dataset.",
             "level": WARNING_THRESHOLD,
         }
         to_return[ALARMS].extend([override_id_alarm])
@@ -704,6 +758,23 @@ def pipeline_info_table(
             "level": WARNING_THRESHOLD,
         }
         to_return[ALARMS].extend([slide_id_mismatch_alarm])
+
+    if (
+        isinstance(sample_properties, CountSampleProperties)
+        and sample_properties.itk_error_string
+        and sample_properties.is_visium_hd
+    ):
+        if ALARMS not in to_return:
+            to_return[ALARMS] = []
+        itk_error_alarm = {
+            "formatted_value": None,
+            "title": "Tissue Registration",
+            "message": "CytAssist to microscope image registration metrics indicate a possible poor alignment. "
+            "Review your registration carefully. If automated registration performs poorly, perform manual alignment via "
+            "<a href='https://www.10xgenomics.com/support/software/loupe-browser/latest' target='_blank' title='Loupe Browser' rel='noopener noreferrer'>Loupe Browser</a>.",
+            "level": WARNING_THRESHOLD,
+        }
+        to_return[ALARMS].extend([itk_error_alarm])
 
     # If Isotype Normalization was used
     if sample_data.summary.get("ANTIBODY_isotype_normalized") is not None:
@@ -775,12 +846,15 @@ def create_table_with_alarms(
     return result
 
 
-def sequencing_table(metadata, sample_data, species_list, is_targeted=False):
+def sequencing_table(metadata, sample_data, species_list, is_targeted=False, is_hd=False):
     """Sequencing info for GEX."""
+    metric_keys = SEQUENCING_METRIC_KEYS if not is_targeted else TARGETED_SEQUENCING_METRIC_KEYS
+    if is_hd:
+        metric_keys.append("filtered_bcs_conf_mapped_barcoded_reads_cum_frac")
     return create_table_with_alarms(
         "sequencing",
         "Sequencing",
-        SEQUENCING_METRIC_KEYS if not is_targeted else TARGETED_SEQUENCING_METRIC_KEYS,
+        metric_keys,
         SEQUENCING_ALARM_KEYS,
         metadata,
         sample_data,
@@ -833,10 +907,12 @@ def mapping_table(metadata, sample_data, species_list):
     return create_table_with_alarms(
         "mapping",
         "Mapping",
-        MAPPING_KEYS
-        if "targeting_method" not in sample_data.summary
-        or sample_data.targeting_method == TARGETING_METHOD_HC
-        else TEMP_LIG_MAPPING_KEYS,
+        (
+            MAPPING_KEYS
+            if "targeting_method" not in sample_data.summary
+            or sample_data.targeting_method == TARGETING_METHOD_HC
+            else TEMP_LIG_MAPPING_KEYS
+        ),
         alarm_keys,
         metadata,
         sample_data,
@@ -1045,7 +1121,7 @@ def split_table_by_samples(table, table_name):
         for row_name in all_samples:
             row_content = [row_name]
             for metric_name in all_metrics:
-                row_content.append(data[row_name][metric_name])
+                row_content.append(data[row_name].get(metric_name, float("NaN")))
             new_rows.append(row_content)
 
         table[table_name]["table"]["header"] = ["Sample ID"] + all_metrics

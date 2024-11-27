@@ -2,6 +2,7 @@
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 #
 @include "_cr_lib_stages.mro"
+@include "_v1_pattern_fix.mro"
 
 filetype bam;
 filetype bam.bai;
@@ -139,28 +140,28 @@ stage SUBSAMPLE_READS(
 )
 
 stage COMPUTE_CORRECTION_FACTOR(
-    in  h5    v1_filtered_fbm,
-    in  json  barcodes_under_tissue,
-    out float correction_factor,
-    out json  affected_barcodes,
-    out bool  disable_downsampling,
-    src py    "stages/spatial/compute_correction_factor",
+    in  V1PatternFixArgs v1_pattern_fix,
+    in  json             barcodes_under_tissue,
+    out float            correction_factor,
+    out json             affected_barcodes,
+    out bool             disable_downsampling,
+    src py               "stages/spatial/compute_correction_factor",
 ) using (
     volatile = strict,
 )
 
 stage DISABLE_CORRECTION_FACTOR(
-    in  h5   v1_filtered_fbm,
-    out bool disable_correction_factor,
-    src py   "stages/spatial/disable_correction_factor",
+    in  V1PatternFixArgs v1_pattern_fix,
+    out bool             disable_correction_factor,
+    src py               "stages/spatial/disable_correction_factor",
 ) using (
     volatile = strict,
 )
 
 stage CHECK_CORRECTION_FACTOR(
-    in  h5 v1_filtered_fbm,
-    in  h5 filtered_fbm,
-    src py "stages/spatial/check_correction_factor",
+    in  V1PatternFixArgs v1_pattern_fix,
+    in  h5               filtered_fbm,
+    src py               "stages/spatial/check_correction_factor",
 ) using (
     volatile = strict,
 )

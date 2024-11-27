@@ -33,6 +33,7 @@ pub struct FilteredBarcodes {
 enum GenomeChoice {
     All,
     One(usize),
+    Unobserved,
 }
 
 impl GenomeChoice {
@@ -40,6 +41,7 @@ impl GenomeChoice {
         match self {
             GenomeChoice::All => true,
             GenomeChoice::One(genome_index) => *genome_index == index,
+            GenomeChoice::Unobserved => false,
         }
     }
 }
@@ -132,6 +134,20 @@ impl FilteredBarcodes {
             .collect()
     }
 
+    pub fn sorted_barcodes(&self, py: Python<'_>) -> Vec<Py<PyBytes>> {
+        self.sorted_barcodes
+            .iter()
+            .map(|bc| PyBytes::new(py, bc.to_string().as_bytes()).into())
+            .collect()
+    }
+
+    pub fn sorted_barcodes_string(&self) -> Vec<String> {
+        self.sorted_barcodes
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
     /// Returns true if the barcode is in the list of filtered barcodes for the given genome.
     ///
     /// NOTE: In the python code genome = "" is used to refer to all genomes.
@@ -168,7 +184,11 @@ impl FilteredBarcodes {
 
     fn genome_choice(&self, genome: Option<&GenomeNameStr>) -> GenomeChoice {
         match genome {
-            Some(genome) if !genome.is_empty() => GenomeChoice::One(self.index_of_genome(genome)),
+            Some(genome) if !genome.is_empty() => {
+                // In OCM barnyard, multiplexed samples can have cells called exclusively from one species
+                self.index_of_genome(genome)
+                    .map_or(GenomeChoice::Unobserved, GenomeChoice::One)
+            }
             Some(_) | None => GenomeChoice::All,
         }
     }
@@ -193,11 +213,8 @@ impl FilteredBarcodes {
         Err(anyhow::anyhow!("barcode must be bytes or str, got {barcode_str_or_bytes:?}").into())
     }
 
-    fn index_of_genome(&self, genome: &GenomeNameStr) -> usize {
-        self.genomes
-            .iter()
-            .position(|g| g.as_str() == genome)
-            .unwrap_or_else(|| panic!("Could not find index for genome: {genome}"))
+    fn index_of_genome(&self, genome: &GenomeNameStr) -> Option<usize> {
+        self.genomes.iter().position(|g| g.as_str() == genome)
     }
 }
 

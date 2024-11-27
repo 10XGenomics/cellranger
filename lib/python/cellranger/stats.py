@@ -1,17 +1,16 @@
 #!/usr/bin/env python
 #
-# Copyright (c) 2015 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2024 10X Genomics, Inc. All rights reserved.
 #
 
-from __future__ import annotations
-
-import sys
-
 import numpy as np
-import scipy.stats as sp_stats
-from scipy.special import loggamma
+from scipy import optimize
+from scipy.special import betaln, gammaln, loggamma
 
 import tenkit.stats as tk_stats
+
+# Pre-seed the RNG on package import
+RNG = np.random.default_rng(seed=42)
 
 
 def effective_diversity(counts):
@@ -21,85 +20,274 @@ def effective_diversity(counts):
     return tk_stats.robust_divide(float(numerator), float(denominator))
 
 
-def eval_multinomial_loglikelihoods(matrix, profile_p, max_mem_gb: float = 0.1):
-    """Compute the multinomial log PMF for many barcodes.
+def incremental_counts_from_sample(sample_draws):
+    """Produces an incremental count vector from a categorial sample vector.
+
+    Takes a set of drawn samples from a multinomial or similar distribution
+    distribution and produces a vector of the same size, with each element the
+    the number of times the sample at that position has been seen
+    indices.  I.e., it would turn the following vector of sample draws:
+    [1, 1, 2, 1, 0, 2, 1, 3] into
+    [1, 2, 1, 3, 1, 2, 4, 1]
+
+    Args:
+      sample_draws (np.ndarray(int)): A vector of sample indices.
+
+    Returns:
+      inc_counts (np.ndarray(int)): The incremental counts of those sample indices.
+
+    """
+    idxs, c = np.unique(sample_draws, return_counts=True)
+    mask = np.isin(sample_draws, idxs[c > 1])
+    inc_counts = np.ones_like(sample_draws)
+    counts = {}
+    for i, j in zip(np.arange(len(sample_draws))[mask], sample_draws[mask]):
+        if j not in counts:
+            counts[j] = 2
+        else:
+            inc_counts[i] = counts[j]
+            counts[j] += 1
+    return inc_counts
+
+
+def collapse_draws_to_counts(sample_draws, num_features):
+    """Produces a count of items in the sample draws.
+
+    Takes an array of samples drawn from a distribution and returns a new
+    array of counts of how many times each feature was seen in the draws.
+
+    Args:
+      sample_draws (np.ndarray(int)): A vector of sample indices.
+
+    Returns:
+      counts (np.ndarray(int): A vector of counts for each feature index.
+
+    """
+    return np.bincount(sample_draws, minlength=num_features)
+
+
+def eval_multinomial_loglikelihoods(matrix, logp, n=None):
+    """Computes the multinomial log-likelihood for many barcodes.
+
+    Multinomial log-likelihood for a single barcode where the count of UMIs for
+    feature i is x_i is:
+    l = log(gamma(sum_i(x_i) + 1)) - sum_i(log(gamma(x_i + 1)) + sum_i(log(p_i) * x_i)
+
+    Because the input matrix is sparse and zero counts do not contribute to the
+    likelihood, we can rapidly remove zero elements from the computation.
 
     Args:
       matrix (scipy.sparse.csc_matrix): Matrix of UMI counts (feature x barcode)
-      profile_p (np.ndarray(float)): Multinomial probability vector
-      max_mem_gb (float): Try to bound memory usage.
+      logp (np.ndarray(float)): The natural log of the multinomial probability
+        vector across features
+      n (int, optional): The total number of UMIs per barcode.  Saves computation
+        if it can be precomputed.
 
     Returns:
-      log_likelihoods (np.ndarray(float)): Log-likelihood for each barcode
+      loglk (np.ndarray(float)): Log-likelihood for each barcode
     """
-    gb_per_bc = float(matrix.shape[0] * matrix.dtype.itemsize) / (1024**3)
-    bcs_per_chunk = max(1, int(np.round(max_mem_gb / gb_per_bc)))
     num_bcs = matrix.shape[1]
+    loglk = np.zeros(num_bcs, dtype=float)
+    if n is None:
+        n = np.asarray(matrix.sum(axis=0))[0]
 
-    loglk = np.zeros(num_bcs)
-
-    for chunk_start in range(0, num_bcs, bcs_per_chunk):
-        chunk = slice(chunk_start, chunk_start + bcs_per_chunk)
-        matrix_chunk = matrix[:, chunk].transpose().toarray()
-        n = matrix_chunk.sum(1)
-        loglk[chunk] = sp_stats.multinomial.logpmf(matrix_chunk, n, p=profile_p)
+    consts = gammaln(n + 1)
+    for i in range(num_bcs):
+        idx_start, idx_end = matrix.indptr[i], matrix.indptr[i + 1]
+        idxs = matrix.indices[idx_start:idx_end]
+        row = matrix.data[idx_start:idx_end]
+        short_logp = logp.take(idxs, axis=None, mode="clip")
+        loglk[i] = consts[i] - gammaln(row + 1).sum() + (row * short_logp).sum()
     return loglk
 
 
-def _get_sample(
-    profile_p: np.array,
-    sample_size: int,
-    *,
-    existing_sample: None | np.array,
-    current_index: None | int,
-):
-    """Gets single samples from a multinomial distribution.
+def eval_multinomial_loglikelihood_cumulative(sample_draws, logp):
+    """Computes the cumulative multinomial log-likelihood for a vector.
 
-    Code can take an existing array that has len(existing_sample) - current_index "unused" samples in it
-    and append that to the start of a new sample.  Done it this way to make sure the sample order of the code
-    in this file is always the same, even as we add more vectors.
+    Given a vector of sample draws from a multinomial distribution, computes the
+    log-likelihood of all of the draws up to each draw.  This is done incrementally,
+    by first pre-computing the rank R of each draw as the number of times that
+    feature was seen when it was drawn.  Then the incremental log-likelihood from
+    that draw is
+
+    dl = log(i) - log(R_i) + log(p_i)
 
     Args:
-        profile_p:
-        sample_size:
-        existing_sample:
-        current_index:
+      sample_draws (np.ndarray(int)): A vector of sample draws
+      logp (np.ndarray(float)): The log-probability of sampling each feature
 
     Returns:
-        An array of sampled indices
-
+      loglk (np.ndarray(float): The cumulative log-likelihood up to each draw
     """
-    if existing_sample is not None:
-        assert current_index is not None
-        old_sample = existing_sample[current_index : len(existing_sample)]
-        sample_size = sample_size - len(old_sample)
-        new_sample = np.random.choice(len(profile_p), size=sample_size, p=profile_p, replace=True)
-        return np.concatenate((old_sample, new_sample))
-    return np.random.choice(len(profile_p), size=sample_size, p=profile_p, replace=True)
+    marginal_counts = incremental_counts_from_sample(sample_draws)
+    nvals = np.arange(1, len(sample_draws) + 1)
+    loglk = np.log(nvals) - np.log(marginal_counts) + logp[sample_draws]
+    return np.cumsum(loglk)
 
 
-def simulate_multinomial_loglikelihoods(
-    profile_p,
-    umis_per_bc,
-    num_sims: int = 1000,
-    jump: int = 1000,
-    n_sample_feature_block: int = 1000000,
-    verbose: bool = False,
-):
-    """Simulate draws from a multinomial distribution for various values of N.
+def eval_dirichlet_multinomial_loglikelihoods(matrix, alpha, n=None):
+    """Computes the Dirichlet-multinomial log-likelihood for many barcodes.
 
-    Note, the samples within a given simulation are not independent.  Given two barcodes with UMIs equal to 10 and
-    another equal to 20, we simulate the 10 UMI barcode, than draw another 10 samples to get the likelihood for the
-    20 UMI barcode.
+    Dirichlet-Multinomial log-likelihood for a single barcode where the count
+    of UMIs for feature i is x_i is:
+    l = log(sum_i(x_i)) + log(beta(sum_i(a_i), sum_i(x_i))) -
+        sum_i(log(x_i)) - sum_i(log(beta(a_i, x_i)))
 
-    Uses the approximation from Lun et al. ( https://www.biorxiv.org/content/biorxiv/early/2018/04/04/234872.full.pdf )
+    Because the input matrix is sparse and zero counts do not contribute to the
+    likelihood, we can rapidly remove zero elements from the computation.
 
     Args:
-      profile_p (np.ndarray(float)): Probability of observing each feature.
-      umis_per_bc (np.ndarray(int)): UMI counts per barcode (multinomial N).
-      num_sims (int): Number of simulations per distinct N value.
-      jump (int): Vectorize the sampling if the gap between two distinct Ns exceeds this.
-      n_sample_feature_block (int): Vectorize this many feature samplings at a time.
+      matrix (scipy.sparse.csc_matrix): Matrix of UMI counts (feature x barcode)
+      alpha (np.ndarray(float)): The vector of Dirichlet parameters for each feature
+      n (int, optional): The total number of UMIs per barcode.  Saves computation
+        if it can be precomputed.
+
+    Returns:
+      loglk (np.ndarray(float)): Log-likelihood for each barcode
+    """
+    num_bcs = matrix.shape[1]
+    loglk = np.zeros(num_bcs)
+    if n is None:
+        n = np.asarray(matrix.sum(axis=0))[0]
+    consts = np.log(n) + betaln(np.sum(alpha), n)
+    for bc_index in range(matrix.shape[1]):
+        idx_start, idx_end = matrix.indptr[bc_index], matrix.indptr[bc_index + 1]
+        idxs = matrix.indices[idx_start:idx_end]
+        row = matrix.data[idx_start:idx_end]
+        short_alpha = alpha.take(idxs, axis=None, mode="clip")
+        loglk[bc_index] = consts[bc_index] - np.log(row).sum() - betaln(short_alpha, row).sum()
+    return loglk
+
+
+def eval_dirichlet_multinomial_loglikelihood_cumulative(sample_draws, alpha):
+    """Computes the cumulative Dirichlet-multinomial log-likelihood for a vector.
+
+    Given a vector of sample draws from a Dirichlet-multinomial distribution, computes the
+    log-likelihood of all of the draws up to each draw.  This is done incrementally,
+    by first pre-computing the rank R of each draw as the number of times that
+    feature was seen when it was drawn.  Then the incremental log-likelihood from
+    that draw is
+
+    dl = log(i) - log(R_i) - log(i + sum_i(a_i) - 1) + log(R_i + a_i - 1)
+
+    Args:
+      sample_draws (np.ndarray(int)): A vector of sample draws
+      alpha (np.ndarray(float)): The Dirichlet parameter for each feature
+
+    Returns:
+      loglk (np.ndarray(float): The cumulative log-likelihood up to each draw
+    """
+    marginal_counts = incremental_counts_from_sample(sample_draws)
+    nvals = np.arange(1, len(sample_draws) + 1)
+    alpha_0 = np.sum(alpha)
+    loglk = (
+        np.log(nvals)
+        - np.log(marginal_counts)
+        - np.log(nvals + alpha_0 - 1)
+        + np.log((marginal_counts - 1) + alpha[sample_draws])
+    )
+    return np.cumsum(loglk)
+
+
+def estimate_dirichlet_overdispersion(matrix, ambient_bcs, p):
+    """Estimates the best-fit overdispersion parameter for data.
+
+    Uses a Dirichlet-multinomial to maximize the log-likelihood of the ambient
+    barcode signal, given an input probability per feature that is scaled by
+    a fixed overdispersion parameter.
+
+    Args:
+      matrix (scipy.sparse.csc_matrix): Matrix of UMI counts (feature x barcode)
+      ambient_bcs (np.array): Array of barcode indexes to use for the ambient background
+      p (np.ndarray(float)): The estimated multinomial probability vector across features
+
+    Returns:
+      alpha (float): Best-fit overdispersion for the data
+    """
+    matrix = matrix[:, ambient_bcs]
+
+    umis_per_bc = np.asarray(matrix.sum(axis=0)).flatten()
+
+    def ambient_loglk(alpha, matrix, p, umis_per_bc):
+        # We return the negative so function minimization gets the max likelihood
+        return np.sum(-eval_dirichlet_multinomial_loglikelihoods(matrix, alpha * p, n=umis_per_bc))
+
+    bounds = [0.001, 10000]
+    result = optimize.minimize_scalar(
+        ambient_loglk,
+        bounds=bounds,
+        args=(matrix, p, umis_per_bc),
+    )
+    if not result.success:
+        raise ValueError(f"Could not find valid alpha: {result.message}")
+    else:
+        print(
+            f"Alpha = {result.x}: maximizes the likelihood of the ambient barcodes. Search bounds: {bounds}"
+        )
+    return result.x
+
+
+def draw_multinomial_sample(num_draws, p_cumulative):
+    """Returns a fixed size array of multinomial draws from the input probabilities.
+
+    Given a number of samples to draw and a probability vector for all features
+    to sample from, produces an array of feature indices of the desired size,
+    drawn according to a multinomial distribution.  Because it is significantly
+    faster to generate random numbers on the unit interval, we use that and then
+    find the feature index using the cumulative probabilities of the probability
+    vector.
+
+    Args:
+      num_draws (int): The number of samples to draw from the distribution
+      p_cumulative (np.ndarray(float)): The cumulative probability of all possible
+        features.  The length of this array should be the number of features.
+        It should be sorted from smallest to largest, and the last entry should
+        be 1.
+
+    Returns:
+      sample_draws (np.ndarray(float)): A random set of draws from a multinomial
+        distribution.
+    """
+    rng_nums = RNG.random(size=num_draws)
+    return np.searchsorted(p_cumulative, rng_nums)
+
+
+def draw_dirichlet_multinomial_sample(num_draws, alpha):
+    """Returns an array of Dirichlet-multinomial draws from the input parameters.
+
+    Given a number of samples to draw and a vector of alpha parameters for all
+    features to sample from, produces an array of feature indices of the desired
+    size, drawn according to a Dirichlet-multinomial distribution.  Note that
+    Dirichlet-multinomial draws are *not* independent and identically-distributed,
+    so that all draws for a sample must be done with a single call or the
+    sample variance will be under-stated.
+
+    Args:
+      num_draws (int): The number of samples to draw from the distribution
+      alpha (np.ndarray(float)): The Dirichlet parameters for each feature.
+      Normalized to a sum of 1, these are the mean probabilities of each feature
+      over many draws of many samples.  The length of this array should be the
+      number of features.
+
+    Returns:
+      sample_draws (np.ndarray(float)): A random set of draws from a Dirichlet-
+        multinomial distribution.
+    """
+    probs = RNG.dirichlet(alpha)
+    return draw_multinomial_sample(num_draws, np.cumsum(probs))
+
+
+def simulate_multinomial_loglikelihoods(p, umis_per_bc, num_sims):
+    """Simulate draws from a multinomial distribution for many values of N.
+
+    Note that the samples within each simulation are not independent; we generate
+    N draws for the largest value of N and use subsamples of the largest simulation
+    for smaller values of N.
+
+    Args:
+      p (np.ndarray(float)): Probability of observing each feature.
+      umis_per_bc (np.ndarray(int)): UMI counts per barcode.
+      num_sims (int): Number of simulations to perform.
 
     Returns:
       distinct_ns (np.ndarray(int)): an array containing the distinct N values
@@ -107,98 +295,49 @@ def simulate_multinomial_loglikelihoods(
       log_likelihoods (np.ndarray(float)): a len(distinct_ns) x num_sims matrix
           containing the simulated log likelihoods.
     """
-    np.random.seed(0)
-
     distinct_n = np.flatnonzero(np.bincount(umis_per_bc))
-
+    max_n = max(distinct_n)
     loglk = np.zeros((len(distinct_n), num_sims), dtype=float)
-    num_all_n = np.max(distinct_n) - np.min(distinct_n)
-    if verbose:
-        print("Number of distinct N supplied: %d" % len(distinct_n))
-        print("Range of N: %d" % num_all_n)
-        print("Number of features: %d" % len(profile_p))
+    p_cumulative = np.cumsum(p)
+    logp = np.log(p)
 
-    sampled_features = _get_sample(
-        profile_p, n_sample_feature_block, existing_sample=None, current_index=None
-    )
-    k = 0
+    for i in range(num_sims):
+        draw = draw_multinomial_sample(max_n, p_cumulative)
+        # Note we can use the distinct N values as indices to extract the log-likelihood
+        # at each N value.
+        loglk[:, i] = eval_multinomial_loglikelihood_cumulative(draw, logp)[distinct_n - 1]
+    return distinct_n, loglk
 
-    log_profile_p = np.log(profile_p)
 
-    for sim_idx in range(num_sims):
-        if verbose and sim_idx % 100 == 99:
-            sys.stdout.write(".")
-            sys.stdout.flush()
-        curr_counts = np.ravel(sp_stats.multinomial.rvs(distinct_n[0], profile_p, size=1))
+def simulate_dirichlet_multinomial_loglikelihoods(alpha, umis_per_bc, num_sims):
+    """Simulate draws from a Dirichlet-multinomial distribution for many values of N.
 
-        curr_loglk = sp_stats.multinomial.logpmf(curr_counts, distinct_n[0], p=profile_p)
+    Note that the samples within each simulation are not independent; we generate
+    N draws for the largest value of N and use subsamples of the largest simulation
+    for smaller values of N.
 
-        loglk[0, sim_idx] = curr_loglk
+    Args:
+      alpha (np.ndarray(float)): Dirichlet parameter for each feature.
+      umis_per_bc (np.ndarray(int)): UMI counts per barcode.
+      num_sims (int): Number of simulations to perform.
 
-        # There are three strategies here for incrementing the likelihood to go from a Barcode that had X UMIs observed
-        # to one with X+Y UMIs observed.  We either get a whole new Y sample, add it to the old one, and recompute the
-        # full likelihood, we add a single new observation Y times, or we add a group of Y new observations together at
-        # once.  This design comes from trying to maintain compatibility with the original version of the code while
-        # improving performance, would not be the way to do this from scratch.
-        for i in range(1, len(distinct_n)):
-            step = distinct_n[i] - distinct_n[i - 1]
-            if step >= jump:
-                # Instead of iterating for each n, sample the intermediate ns all at once
-                curr_counts += np.ravel(sp_stats.multinomial.rvs(step, profile_p, size=1))
-                curr_loglk = sp_stats.multinomial.logpmf(curr_counts, distinct_n[i], p=profile_p)
-                assert not np.isnan(curr_loglk)
-            elif (
-                step < 20
-            ):  # With small sizes calling np.unique and doing a vector version not worth the overhead
-                # Profiling test_filter_barcodes showed 20 was faster than 10 but slower than 100,
-                # further optimization of the cutoff might be possible.
-                # In this case we'll iteratively sample between the two distinct values of n
-                for n in range(distinct_n[i - 1] + 1, distinct_n[i] + 1):
-                    j = sampled_features[k]
-                    k += 1
-                    if k >= n_sample_feature_block:
-                        # Amortize this operation
-                        sampled_features = _get_sample(
-                            profile_p,
-                            n_sample_feature_block,
-                            existing_sample=None,
-                            current_index=None,
-                        )
-                        k = 0
-                    curr_counts[j] += 1
-                    curr_loglk += log_profile_p[j] + np.log(float(n) / curr_counts[j])
-            else:
-                # Vectorized version of an incremental new sampling, grab all new samples at once
-                end = k + step
-                if end >= n_sample_feature_block:
-                    if step >= n_sample_feature_block:
-                        n_sample_feature_block = step + 1
-                    sampled_features = _get_sample(
-                        profile_p,
-                        n_sample_feature_block,
-                        existing_sample=sampled_features,
-                        current_index=k,
-                    )
-                    k = 0
-                    end = step
-                feats, cnts = np.unique(sampled_features[k:end], return_counts=True)
-                k = end
-                old_cnts = curr_counts[feats]
-                curr_counts[feats] += cnts
-                # Log(p_i^k)
-                curr_loglk += np.sum(np.multiply(log_profile_p[feats], cnts))
-                # calc N_new! - (N_new-N_old)! to incrementally update likelihood
-                factorial_increase = loggamma((distinct_n[i] + 1, distinct_n[i - 1] + 1))
-                curr_loglk += factorial_increase[0] - factorial_increase[1]
-                # calc X_new! - (X_new - X_old)! and subtract as that's in the denominator
-                curr_loglk -= np.sum(loggamma(old_cnts + cnts + 1) - loggamma(old_cnts + 1))
-                del old_cnts
+    Returns:
+      distinct_ns (np.ndarray(int)): an array containing the distinct N values
+          that were simulated.
+      log_likelihoods (np.ndarray(float)): a len(distinct_ns) x num_sims matrix
+          containing the simulated log likelihoods.
+    """
+    distinct_n = np.flatnonzero(np.bincount(umis_per_bc))
+    max_n = max(distinct_n)
+    loglk = np.zeros((len(distinct_n), num_sims), dtype=float)
 
-            loglk[i, sim_idx] = curr_loglk
-
-    if verbose:
-        sys.stdout.write("\n")
-
+    for i in range(num_sims):
+        draw = draw_dirichlet_multinomial_sample(max_n, alpha)
+        # Note we can use the distinct N values as indices to extract the log-likelihood
+        # at each N value.
+        loglk[:, i] = eval_dirichlet_multinomial_loglikelihood_cumulative(draw, alpha)[
+            distinct_n - 1
+        ]
     return distinct_n, loglk
 
 

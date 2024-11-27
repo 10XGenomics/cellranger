@@ -68,11 +68,11 @@ impl From<crate::types::VdjRegion> for vdj_types::VdjRegion {
 impl From<crate::types::AnnotationFeature> for vdj_ann::annotate::AnnotationFeature {
     fn from(src: crate::types::AnnotationFeature) -> Self {
         vdj_ann::annotate::AnnotationFeature {
-            chain: crate::types::VdjChain::from_i32(src.chain).unwrap().into(),
+            chain: crate::types::VdjChain::try_from(src.chain).unwrap().into(),
             display_name: src.display_name,
             feature_id: src.feature_id as usize,
             gene_name: src.gene_name,
-            region_type: crate::types::VdjRegion::from_i32(src.region_type)
+            region_type: crate::types::VdjRegion::try_from(src.region_type)
                 .unwrap()
                 .into(),
         }
@@ -187,6 +187,34 @@ impl From<crate::types::BarcodeData> for vdj_asm_utils::barcode_data::BarcodeDat
     }
 }
 
+impl From<crate::types::ContigStatus> for vdj_ann::transcript::ContigStatus {
+    fn from(src: crate::types::ContigStatus) -> Self {
+        vdj_ann::transcript::ContigStatus {
+            full_length: src.full_length,
+            has_v_start: src.has_v_start,
+            in_frame: src.in_frame,
+            no_premature_stop: src.no_premature_stop,
+            has_cdr3: src.has_cdr3,
+            has_expected_size: src.has_expected_size,
+            correct_ann_order: src.correct_ann_order,
+        }
+    }
+}
+
+impl From<vdj_ann::transcript::ContigStatus> for crate::types::ContigStatus {
+    fn from(src: vdj_ann::transcript::ContigStatus) -> Self {
+        crate::types::ContigStatus {
+            full_length: src.full_length,
+            has_v_start: src.has_v_start,
+            in_frame: src.in_frame,
+            no_premature_stop: src.no_premature_stop,
+            has_cdr3: src.has_cdr3,
+            has_expected_size: src.has_expected_size,
+            correct_ann_order: src.correct_ann_order,
+        }
+    }
+}
+
 fn option_usize_to_i32(src: Option<usize>) -> i32 {
     src.map_or(-1i32, |x| x as i32)
 }
@@ -236,6 +264,7 @@ impl From<vdj_ann::annotate::ContigAnnotation> for crate::types::ContigAnnotatio
             high_confidence: src.high_confidence,
             is_cell: src.is_cell,
             productive: src.productive.unwrap_or(false),
+            productive_criteria: src.productive_criteria.map(Into::into),
             filtered: src.filtered,
             frame: option_usize_to_i32(src.frame),
             asm_data: src.is_asm_cell.map(|c| AsmData { is_asm_cell: c }),
@@ -286,6 +315,7 @@ impl From<crate::types::ContigAnnotation> for vdj_ann::annotate::ContigAnnotatio
             is_asm_cell: src.asm_data.map(|a| a.is_asm_cell),
             is_gex_cell: src.gex_data.map(|g| g.is_gex_cell),
             productive: Some(src.productive),
+            productive_criteria: src.productive_criteria.map(Into::into),
             filtered: src.filtered,
             frame: i32_to_option_usize(src.frame),
             full_length: Some(src.full_length),
@@ -393,7 +423,7 @@ impl From<vdj_reference::VdjReceptor> for crate::types::Receptor {
 
 impl VdjMetadata {
     pub fn vdj_receptor(&self) -> vdj_reference::VdjReceptor {
-        crate::types::Receptor::from_i32(self.receptor)
+        crate::types::Receptor::try_from(self.receptor)
             .unwrap()
             .into()
     }

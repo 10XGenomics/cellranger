@@ -19,7 +19,7 @@ DEFAULT_BALLTREE_LEAFSIZE = 40
 
 def batch_effect_score(
     dimred_matrix: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-    batch_ids: np.ndarray[int, np.dtype[np.string_]],
+    batch_ids: np.ndarray[int, np.dtype[np.bytes_]],
     knn_neighbors: int | None = None,
     knn_frac: float | None = 0.01,
     max_num_bcs: int | None = 10000,

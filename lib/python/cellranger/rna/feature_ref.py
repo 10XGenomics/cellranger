@@ -145,13 +145,11 @@ class FeatureExtractor:
                 continue
             if not pattern:
                 raise FeatureDefException(
-                    "Feature definition for %s has a sequence but no pattern specifying how to extract it."
-                    % fd.id
+                    f"Feature definition for {fd.id} has a sequence but no pattern specifying how to extract it."
                 )
             if not read:
                 raise FeatureDefException(
-                    "Feature definition for %s has a sequence but no read specifying where to extract it from."
-                    % fd.id
+                    f"Feature definition for {fd.id} has a sequence but no read specifying where to extract it from."
                 )
 
             regex_str, regex = compile_pattern(pattern, len(sequence))
@@ -376,9 +374,7 @@ def check_crispr_target_gene(
                 continue
 
             if target_id not in gene_id_name_map:
-                msg = "CRISPR: This target_gene_id ({}) declared for one or more guide RNAs in the feature reference does not exist in the transcriptome.".format(
-                    ensure_str(target_id)
-                )
+                msg = f"CRISPR: This target_gene_id ({ensure_str(target_id)}) declared for one or more guide RNAs in the feature reference does not exist in the transcriptome."
                 msg += "\nPlease specify a target_gene_id that exists in the reference, or use the string 'Non-Targeting' to indicate a control guide."
                 raise FeatureDefException(msg)
 
@@ -387,28 +383,20 @@ def check_crispr_target_gene(
                 # target_features maps target set name to list of gene indices
                 if not any(target_index in target_set for target_set in target_features.values()):
                     msg = (
-                        "CRISPR: {} was specified as the target_gene_id for a guide RNA in the feature reference, ".format(
-                            ensure_str(target_id)
-                        )
+                        f"CRISPR: {ensure_str(target_id)} was specified as the target_gene_id for a guide RNA in the feature reference, "
                         + "but this gene is not specified in the gene_id column of the target panel csv file."
                     )
                     raise FeatureDefException(msg)
 
             target_name = feat.tags.get("target_gene_name")
             if target_name is None or target_name == "":
-                msg = "CRISPR: No target_gene_name specified for this target_gene_id ({}) in the feature reference.".format(
-                    ensure_str(target_id)
-                )
+                msg = f"CRISPR: No target_gene_name specified for this target_gene_id ({ensure_str(target_id)}) in the feature reference."
                 raise FeatureDefException(msg)
 
             target_name = ensure_binary(target_name)
             if gene_id_name_map[target_id] != target_name:
-                msg = "CRISPR: You specified target_gene_id = {} and target_gene_name = {} in the feature reference.\n".format(
-                    ensure_str(target_id), ensure_str(target_name)
-                )
-                msg += "The transcriptome reference has gene_id = {} with name = {}. ".format(
-                    ensure_str(target_id), ensure_str(gene_id_name_map[target_id])
-                )
+                msg = f"CRISPR: You specified target_gene_id = {ensure_str(target_id)} and target_gene_name = {ensure_str(target_name)} in the feature reference.\n"
+                msg += f"The transcriptome reference has gene_id = {ensure_str(target_id)} with name = {ensure_str(gene_id_name_map[target_id])}. "
                 msg += "Please ensure the target_gene_name field has the correct gene name that matches the transcriptome."
                 raise FeatureDefException(msg)
 
@@ -419,7 +407,7 @@ def validate_sequence(seq: str):
         raise FeatureDefException("Feature sequence must be non-empty.")
     if not re.match("^[ACGTN]+$", seq):
         raise FeatureDefException(
-            'Invalid sequence: "%s". The only allowed characters are A, C, G, T, and N.' % seq
+            f'Invalid sequence: "{seq}". The only allowed characters are A, C, G, T, and N.'
         )
 
 
@@ -427,7 +415,7 @@ def compile_pattern(pattern_str, length: int):
     """Compile a feature definition pattern into a regex."""
     if "(BC)" not in pattern_str:
         raise FeatureDefException(
-            'Invalid pattern: "%s". The pattern must contain the string "(BC)".' % pattern_str
+            f'Invalid pattern: "{pattern_str}". The pattern must contain the string "(BC)".'
         )
 
     # keep for reporting errors against the initial input
@@ -443,8 +431,7 @@ def compile_pattern(pattern_str, length: int):
     check_pattern = re.sub(r"\(BC\)", "", pattern_str)
     if not re.match(r"^\^{0,1}[ACGTN]*\${0,1}$", check_pattern):
         raise FeatureDefException(
-            'Invalid pattern: "%s". The pattern must optionally start with "5P", optionally end with "3P", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.'
-            % input_pattern_str
+            f'Invalid pattern: "{input_pattern_str}". The pattern must optionally start with "5P", optionally end with "3P", contain exactly one instance of the string "(BC)" and otherwise contain only the characters A, C, G, T, and N.'
         )
 
     # Allow Ns to match anything
@@ -524,7 +511,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
 
         # Check for a valid library_type
         if FeatureExtractor.get_feature_type(row) not in ALLOWED_FEATURE_TYPES:
-            options = " or ".join("'%s'" % x for x in PUBLIC_FEATURE_TYPES)
+            options = " or ".join(f"'{x}'" for x in PUBLIC_FEATURE_TYPES)
             msg = (
                 f"Unknown feature_type: '{FeatureExtractor.get_feature_type(row)}'."
                 "\nThe 'feature_type' field in the feature reference"
@@ -537,7 +524,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
         f_id: bytes = ensure_binary(row["id"])
         if id in seen_ids:
             raise FeatureDefException(
-                'Found duplicated ID in feature reference file: "%s"' % row["id"]
+                'Found duplicated ID in feature reference file: "{}"'.format(row["id"])
             )
         seen_ids.add(f_id)
 
@@ -551,7 +538,9 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
             )
         seen_multi_unicity.add(multi_unicity)
         if "\t" in row["name"]:
-            raise FeatureDefException("Feature name field cannot contain tabs: '%s'" % row["name"])
+            raise FeatureDefException(
+                "Feature name field cannot contain tabs: '{}'".format(row["name"])
+            )
 
         allowed_id_chars = set(string.printable) - set(string.whitespace) - set("/,'\"\\`")
 
@@ -559,7 +548,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
             if not c in allowed_id_chars:
                 if c in string.whitespace:
                     raise FeatureDefException(
-                        "Feature id field cannot contain whitespace: '%s'" % row["id"]
+                        "Feature id field cannot contain whitespace: '{}'".format(row["id"])
                     )
                 else:
                     msg = "Feature id field contains an illegal character at position %d: '%s'" % (
@@ -577,8 +566,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
         for key in tag_cols:
             if key in RESERVED_TAGS:
                 raise FeatureDefException(
-                    'Found invalid column name "%s." This name cannot be used as a custom feature tag because it is reserved for internal use.'
-                    % key
+                    f'Found invalid column name "{key}." This name cannot be used as a custom feature tag because it is reserved for internal use.'
                 )
             elif key in TAGS_VALIDATION:
                 row[key] = TAGS_VALIDATION[key](row[key], key)
@@ -589,15 +577,17 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
         # Validate fields
         if len(tags["sequence"]) == 0:
             raise FeatureDefException(
-                "Found blank feature barcode sequence for feature id %s. The sequence column must be populated for this feature."
-                % row["id"]
+                "Found blank feature barcode sequence for feature id {}. The sequence column must be populated for this feature.".format(
+                    row["id"]
+                )
             )
         validate_sequence(tags["sequence"])
 
         if len(tags["pattern"]) == 0:
             raise FeatureDefException(
-                "Found blank feature barcode pattern for feature id %s. The pattern column must be populated for this feature."
-                % row["id"]
+                "Found blank feature barcode pattern for feature id {}. The pattern column must be populated for this feature.".format(
+                    row["id"]
+                )
             )
         compile_pattern(tags["pattern"], len(tags["sequence"]))
 

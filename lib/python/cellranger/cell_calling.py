@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2024 10X Genomics, Inc. All rights reserved.
 #
 
 """Functions for calling cell-associated barcodes."""
@@ -19,12 +19,11 @@ from cellranger.chemistry import (
     CHEMISTRY_DESCRIPTION_FIELD,
     CHEMISTRY_SC3P_LT,
     HT_CHEMISTRIES,
+    SC3P_V3_CHEMISTRIES,
     SC3P_V4_CHEMISTRIES,
+    SC5P_CHEMISTRIES,
     SC5P_V3_CHEMISTRIES,
 )
-
-# Drop this top fraction of the barcodes when estimating ambient.
-MAX_OCCUPIED_PARTITIONS_FRAC = 0.5
 
 # Minimum number of UMIs for a barcode to be called as a cell
 MIN_GLOBAL_UMIS = 0
@@ -36,7 +35,7 @@ MAX_MITO_PCT = 100.0
 MIN_UMIS = 500
 
 # Default number of background simulations to make
-NUM_SIMS = 10000
+NUM_SIMS = 100000
 
 # Minimum number of UMIS per barcode to consider after the initial cell calling for targeted GEX
 TARGETED_CC_MIN_UMIS_ADDITIONAL_CELLS = 10
@@ -115,9 +114,9 @@ class NonAmbientBarcodeResult(NamedTuple):
 def get_empty_drops_fdr(chemistry_description: str) -> float:
     """Gets the maximum adjusted p-value to call a barcode as non-ambient."""
     # The chips used with V4 have roughly double the GEMs as the older V3 chips
-    v4_chemistries = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
-    v4_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in v4_chemistries]
-    return 0.001 if chemistry_description in v4_chem_names else 0.01
+    chemistries = SC3P_V4_CHEMISTRIES + SC3P_V3_CHEMISTRIES + SC5P_CHEMISTRIES + HT_CHEMISTRIES
+    chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in chemistries]
+    return 0.001 if chemistry_description in chem_names else 0.01
 
 
 def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None) -> tuple[int, int]:
@@ -125,25 +124,28 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
 
     Args:
         chemistry_description: A string describing the chemistry
+        num_probe_bcs: The number of probe or OCM multiplexing barcodes
 
     Returns:
-        low_index:
-        high_index:
+        (lower_range, upper_range)
     """
-    # The chips used with V4 have roughly double the GEMs as the older V3 chips
-    v4_chemistries = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
-    v4_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in v4_chemistries]
-    ht_chem_names = [chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in HT_CHEMISTRIES]
-
     if chemistry_description == CHEMISTRY_SC3P_LT[CHEMISTRY_DESCRIPTION_FIELD]:
-        N_PARTITIONS = 9000
-    elif chemistry_description in ht_chem_names:
-        N_PARTITIONS = 160000
-    elif chemistry_description in v4_chem_names:
-        N_PARTITIONS = 80000 * num_probe_bcs if num_probe_bcs and num_probe_bcs > 1 else 160000
+        n_partitions = 9000
+    elif chemistry_description in [
+        chem[CHEMISTRY_DESCRIPTION_FIELD]
+        for chem in HT_CHEMISTRIES + SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
+    ]:
+        if num_probe_bcs is None:
+            n_partitions = 160000
+        else:
+            # OCM
+            n_partitions = 40000 * num_probe_bcs
+    elif num_probe_bcs is not None:
+        # Flex
+        n_partitions = 90000 * num_probe_bcs
     else:
-        N_PARTITIONS = 45000 * num_probe_bcs if num_probe_bcs and num_probe_bcs > 1 else 90000
-    return (N_PARTITIONS // 2, N_PARTITIONS)
+        n_partitions = 90000
+    return (n_partitions // 2, n_partitions)
 
 
 def find_nonambient_barcodes(
@@ -154,17 +156,23 @@ def find_nonambient_barcodes(
     *,
     emptydrops_minimum_umis=MIN_UMIS,
     num_sims=NUM_SIMS,
-):
+    method="multinomial",
+) -> NonAmbientBarcodeResult | None:
     """Call barcodes as being sufficiently distinct from the ambient profile.
 
     Args:
       matrix (CountMatrix): Full expression matrix.
       orig_cell_bcs (iterable of str): Strings of initially-called cell barcodes.
       chemistry_description: Change ambient RNA estimation for LT chemistry
+      num_probe_bcs: The number of probe or OCM multiplexing barcodes
+      emptydrops_minimum_umis: Minimum UMI threshold
+      num_sims: Number of simulations
 
     Returns:
       NonAmbientBarcodeResult
     """
+    assert method in ["dirichlet", "multinomial"]
+
     # Estimate an ambient RNA profile
     umis_per_bc = matrix.get_counts_per_bc()
     bc_order = np.argsort(umis_per_bc)
@@ -181,11 +189,16 @@ def find_nonambient_barcodes(
     nz_bcs = np.flatnonzero(umis_per_bc)
     nz_bcs.sort()
 
-    use_bcs = np.intersect1d(empty_bcs, nz_bcs, assume_unique=True)
+    ambient_bcs = np.intersect1d(empty_bcs, nz_bcs, assume_unique=True)
 
-    if len(use_bcs) > 0:
+    if len(ambient_bcs) > 0:
         try:
-            eval_features, ambient_profile_p = est_background_profile_sgt(matrix.m, use_bcs)
+            eval_features, ambient_profile_p = est_background_profile_sgt(matrix.m, ambient_bcs)
+            if method == "dirichlet":
+                alpha = cr_stats.estimate_dirichlet_overdispersion(
+                    matrix.m, ambient_bcs, ambient_profile_p
+                )
+
         except cr_sgt.SimpleGoodTuringError as e:
             print(str(e))
             return None
@@ -231,6 +244,8 @@ def find_nonambient_barcodes(
     assert not np.any(np.isin(eval_bcs, empty_bcs))
     print(f"Number of candidate bcs: {len(eval_bcs)}")
     print(f"Range candidate bc umis: {umis_per_bc[eval_bcs].min()}, {umis_per_bc[eval_bcs].max()}")
+    print(f"Number of empty bcs: {len(empty_bcs)}")
+    print(f"Number of original cell calls: {len(orig_cells)}")
 
     eval_mat = matrix.m[eval_features, :][:, eval_bcs]
 
@@ -240,13 +255,20 @@ def find_nonambient_barcodes(
         sim_loglk = np.repeat(np.nan, len(eval_bcs))
         return None
 
-    # Compute observed log-likelihood of barcodes being generated from ambient RNA
-    obs_loglk = cr_stats.eval_multinomial_loglikelihoods(eval_mat, ambient_profile_p)
-
-    # Simulate log likelihoods
-    distinct_ns, sim_loglk = cr_stats.simulate_multinomial_loglikelihoods(
-        ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims, verbose=True
-    )
+    # Compute observed log-likelihood of barcodes being generated from ambient RNA and
+    # simulate log-likelihoods
+    if method == "dirichlet":
+        obs_loglk = cr_stats.eval_dirichlet_multinomial_loglikelihoods(
+            eval_mat, alpha * ambient_profile_p
+        )
+        distinct_ns, sim_loglk = cr_stats.simulate_dirichlet_multinomial_loglikelihoods(
+            alpha * ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
+        )
+    else:
+        obs_loglk = cr_stats.eval_multinomial_loglikelihoods(eval_mat, np.log(ambient_profile_p))
+        distinct_ns, sim_loglk = cr_stats.simulate_multinomial_loglikelihoods(
+            ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
+        )
 
     # Compute p-values
     pvalues = cr_stats.compute_ambient_pvalues(
@@ -256,7 +278,10 @@ def find_nonambient_barcodes(
     pvalues_adj = adjust_pvalue_bh(pvalues)
 
     print(f"Max adjusted P-value: {max_adj_pvalue}")
+    print(f"Min observed P-value: {min(pvalues_adj)}")
     is_nonambient = pvalues_adj <= max_adj_pvalue
+
+    print(f"Non-ambient bcs identified by empty drops: {sum(is_nonambient)}")
 
     return NonAmbientBarcodeResult(
         eval_bcs=eval_bcs,

@@ -10,7 +10,6 @@ use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use ndarray::{s, Array2};
 use std::collections::BTreeMap;
-use std::path::Path;
 
 const VERSION_DS: &str = "version";
 const VERSION: i64 = 2;
@@ -27,13 +26,6 @@ pub(crate) fn make_fixed_ascii32(s: &str) -> Result<FA32> {
     Ok(FA32::from_ascii(s)?)
 }
 
-pub(crate) fn matrix_nnz(matrix: &Path) -> Result<usize> {
-    Ok(hdf5::File::open(matrix)?
-        .group("matrix")?
-        .dataset("data")?
-        .size())
-}
-
 pub(crate) mod matrix {
     pub(crate) const GROUP: &str = "matrix";
     pub(crate) const SHAPE: &str = "shape";
@@ -41,18 +33,16 @@ pub(crate) mod matrix {
     pub(crate) const FEATURE_TYPE: &str = "feature_type";
 }
 
-pub(crate) fn matrix_shape(matrix: impl AsRef<Path>) -> Result<(isize, isize)> {
-    let arr = hdf5::File::open(&matrix)?
-        .group(matrix::GROUP)?
-        .dataset(matrix::SHAPE)?
-        .read_1d::<isize>()?;
-    Ok((arr[0], arr[1]))
+/// Return (num_features, num_barcodes, nnz).
+pub(crate) fn matrix_shape(matrix: &H5File) -> Result<(isize, isize, isize)> {
+    let matrix = hdf5::File::open(matrix)?.group(matrix::GROUP)?;
+    let shape = matrix.dataset(matrix::SHAPE)?.read_1d::<isize>()?;
+    let nnz = matrix.dataset("data")?.size() as isize;
+    Ok((shape[0], shape[1], nnz))
 }
 
-pub(crate) fn matrix_feature_types(
-    matrix: impl AsRef<Path>,
-) -> Result<BTreeMap<FeatureType, usize>> {
-    let dataset = hdf5::File::open(&matrix)?
+pub(crate) fn matrix_feature_types(matrix: &H5File) -> Result<BTreeMap<FeatureType, usize>> {
+    let dataset = hdf5::File::open(matrix)?
         .group(matrix::GROUP)?
         .group(matrix::FEATURE_GROUP)?
         .dataset(matrix::FEATURE_TYPE)?;
@@ -72,8 +62,15 @@ pub(crate) fn matrix_feature_types(
 }
 
 /// Estimate the memory (GiB) required to load a matrix from the number of non-zero entries (NNZ).
-pub(crate) fn estimate_mem_gib_from_nnz(matrix: &Path) -> Result<f64> {
-    Ok(20e-9 * matrix_nnz(matrix)? as f64)
+pub(crate) fn estimate_mem_gib_from_nnz(matrix: &H5File) -> Result<f64> {
+    let (_num_features, _num_cells, nnz) = matrix_shape(matrix)?;
+    Ok(20e-9 * nnz as f64)
+}
+
+/// Estimate the memory (GiB) required to store the PCA outputs.
+pub(crate) fn estimate_mem_gib_for_pca_outs(matrix: &H5File, num_pcs: usize) -> Result<f64> {
+    let (num_features, num_cells, _nnz) = matrix_shape(matrix)?;
+    Ok(20e-9 * ((num_features + num_cells) * num_pcs as isize) as f64)
 }
 
 pub(crate) mod pca {
@@ -106,11 +103,11 @@ pub(crate) struct PcaMatrixShape {
 }
 
 pub(crate) fn load_transformed_pca(
-    pca_h5: impl AsRef<Path>,
+    pca_h5: &H5File,
     feature_type: FeatureType,
     input_pcs: Option<usize>,
 ) -> Result<(hdf5::Group, PcaMatrixShape)> {
-    let file = hdf5::File::open(&pca_h5)?;
+    let file = hdf5::File::open(pca_h5)?;
     let group = file.group(pca::GROUP)?;
     let n_components = feature_group(group, feature_type)?;
     let sh = n_components.dataset(pca::MATRIX)?.shape();
@@ -127,7 +124,7 @@ pub(crate) fn load_transformed_pca(
 }
 
 pub(crate) fn load_transformed_pca_matrix(
-    pca_h5: impl AsRef<Path>,
+    pca_h5: &H5File,
     feature_type: FeatureType,
     input_pcs: Option<usize>,
 ) -> Result<Array2<f64>> {

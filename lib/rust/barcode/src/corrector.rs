@@ -102,7 +102,7 @@ pub struct Posterior {
 impl Default for Posterior {
     fn default() -> Self {
         Self {
-            max_expected_barcode_errors: std::f64::MAX,
+            max_expected_barcode_errors: f64::MAX,
             bc_confidence_threshold: BARCODE_CONFIDENCE_THRESHOLD,
         }
     }

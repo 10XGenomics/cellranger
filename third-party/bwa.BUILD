@@ -80,6 +80,7 @@ DFLAGS = [
     "-DUSE_MALLOC_WRAPPERS",
     "-Wno-unused-function",
     "-Wno-unused-but-set-variable",
+    "-Wno-single-bit-bitfield-constant-conversion",
 ]
 
 cc_library(

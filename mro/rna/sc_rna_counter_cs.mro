@@ -4,6 +4,7 @@
 
 @include "sc_multi_core.mro"
 @include "sc_multi_cs.mro"
+@include "_cell_annotation_common_stages.mro"
 @include "_common_stages.mro"
 @include "_cr_lib_stages.mro"
 @include "_sc_multi_defs.mro"
@@ -12,7 +13,6 @@
 pipeline _STRUCTIFY(
     in  CommonInputs        common_input,
     in  CountInputsCS       count_input,
-    in  BasicPipelineConfig config,
     out CommonInputs        common_input,
     out CountInputsCS       count_input,
     out BasicPipelineConfig config,
@@ -21,57 +21,72 @@ pipeline _STRUCTIFY(
     return (
         common_input = self.common_input,
         count_input  = self.count_input,
-        config       = self.config,
+        config       = {
+            disable_annotate:    self.count_input.skip_cell_annotation,
+            disable_count:       false,
+            disable_multi:       true,
+            disable_multi_count: true,
+            disable_rtl:         true,
+            disable_vdj:         true,
+        },
     )
 }
 
 pipeline SC_RNA_COUNTER_CS(
-    in  string  sample_id,
-    in  map[]   sample_def,
-    in  string  sample_desc,
-    in  path    reference_path,
-    in  int     recovered_cells,
-    in  bool    no_bam,
-    in  bool    filter_probes,
-    in  bool    no_secondary_analysis,
-    in  bool    no_target_umi_filter,
-    in  int     force_cells,
-    in  bool    include_introns,
-    in  bool    check_library_compatibility,
-    in  string  chemistry,
-    in  int     r1_length,
-    in  int     r2_length,
-    in  string  targeting_method,
-    in  string  aligner,
-    in  int     trim_polya_min_score,
-    in  int     trim_tso_min_score,
-    in  csv     feature_reference,
-    in  int     emptydrops_minimum_umis,
-    in  int     global_minimum_umis,
-    in  int     max_mito_percent,
-    in  bool    disable_ab_aggregate_detection,
-    in  int     min_crispr_umi_threshold,
-    out html    web_summary                     "Run summary HTML",
-    out csv     metrics_summary                 "Run summary CSV",
-    out bam     possorted_genome_bam            "BAM"                       "possorted_genome_bam.bam",
-    out bam.bai possorted_genome_bai_index      "BAM BAI index"             "possorted_genome_bam.bam.bai",
-    out bam.csi possorted_genome_csi_index      "BAM CSI index"             "possorted_genome_bam.bam.csi",
-    out path    filtered_feature_bc_matrix      "Filtered feature-barcode matrices MEX",
-    out h5      filtered_feature_bc_matrix_h5   "Filtered feature-barcode matrices HDF5"  "filtered_feature_bc_matrix.h5",
-    out path    raw_feature_bc_matrix           "Unfiltered feature-barcode matrices MEX",
-    out h5      raw_feature_bc_matrix_h5        "Unfiltered feature-barcode matrices HDF5"  "raw_feature_bc_matrix.h5",
-    out path    analysis                        "Secondary analysis output CSV",
-    out h5      molecule_info                   "Per-molecule read information",
-    out path    crispr_analysis                 "CRISPR-specific analysis",
-    out csv     aggregate_barcodes              "Antibody aggregate barcodes",
-    out cloupe  cloupe                          "Loupe Browser file",
-    out csv     feature_reference               "Feature Reference",
-    out csv     target_panel                    "Target Panel File",
-    out csv     probe_set                       "Probe Set File",
+    in  string    sample_id,
+    in  map[]     sample_def,
+    in  csv       target_set,
+    in  string    target_set_name,
+    in  string    sample_desc,
+    in  path      reference_path,
+    in  int       recovered_cells,
+    in  bool      no_bam,
+    in  bool      filter_probes,
+    in  bool      no_secondary_analysis,
+    in  bool      no_target_umi_filter,
+    in  int       force_cells,
+    in  bool      include_introns,
+    in  bool      check_library_compatibility,
+    in  string    chemistry,
+    in  int       r1_length,
+    in  int       r2_length,
+    in  string    targeting_method,
+    in  string    aligner,
+    in  int       trim_polya_min_score,
+    in  int       trim_tso_min_score,
+    in  csv       feature_reference,
+    in  int       emptydrops_minimum_umis,
+    in  int       global_minimum_umis,
+    in  int       max_mito_percent,
+    in  bool      disable_ab_aggregate_detection,
+    in  int       min_crispr_umi_threshold,
+    in  string    tenx_cloud_token_path,
+    in  string    cell_annotation_model           "The model used for Cell Annotation Service.  If null, use the default model.",
+    in  bool      skip_cell_annotation            "An override to skip cell annotation.",
+    out html      web_summary                     "Run summary HTML",
+    out csv       metrics_summary                 "Run summary CSV",
+    out bam       possorted_genome_bam            "BAM"                       "possorted_genome_bam.bam",
+    out bam.bai   possorted_genome_bai_index      "BAM BAI index"             "possorted_genome_bam.bam.bai",
+    out bam.csi   possorted_genome_csi_index      "BAM CSI index"             "possorted_genome_bam.bam.csi",
+    out path      filtered_feature_bc_matrix      "Filtered feature-barcode matrices MEX",
+    out h5        filtered_feature_bc_matrix_h5   "Filtered feature-barcode matrices HDF5"  "filtered_feature_bc_matrix.h5",
+    out path      raw_feature_bc_matrix           "Unfiltered feature-barcode matrices MEX",
+    out h5        raw_feature_bc_matrix_h5        "Unfiltered feature-barcode matrices HDF5"  "raw_feature_bc_matrix.h5",
+    out path      analysis                        "Secondary analysis output CSV",
+    out h5        molecule_info                   "Per-molecule read information",
+    out path      crispr_analysis                 "CRISPR-specific analysis",
+    out csv       aggregate_barcodes              "Antibody aggregate barcodes",
+    out cloupe    cloupe                          "Loupe Browser file",
+    out csv       feature_reference               "Feature Reference",
+    out csv       target_panel                    "Target Panel File",
+    out csv       probe_set                       "Probe Set File",
+    out CellTypes cell_types,
+    out html      web_summary_cell_types          "Symlink web_summary_cell_types.html",
 )
 {
     call CELLRANGER_PREFLIGHT as CELLRANGER_PREFLIGHT_LOCAL(
         sample_def        = self.sample_def,
+        target_set        = self.target_set,
         chemistry         = self.chemistry,
         reference_path    = self.reference_path,
         feature_reference = self.feature_reference,
@@ -94,6 +109,7 @@ pipeline SC_RNA_COUNTER_CS(
 
     call CELLRANGER_PREFLIGHT(
         sample_def        = self.sample_def,
+        target_set        = self.target_set,
         chemistry         = self.chemistry,
         reference_path    = self.reference_path,
         feature_reference = self.feature_reference,
@@ -109,6 +125,20 @@ pipeline SC_RNA_COUNTER_CS(
         r1_length         = self.r1_length,
         r2_length         = self.r2_length,
         targeting_method  = self.targeting_method,
+    ) using (
+        preflight = true,
+    )
+
+    call CELL_ANNOTATION_PREFLIGHT(
+        is_cr_annotate              = false,
+        is_multi                    = false,
+        tenx_cloud_token_path       = self.tenx_cloud_token_path,
+        cell_annotation_model       = self.cell_annotation_model,
+        reference_path              = self.reference_path,
+        skip_cell_annotation        = self.skip_cell_annotation,
+        cas_track_name              = null,
+        cr_annotate_filtered_matrix = null,
+        cr_annotate_sample_cloupe   = null,
     ) using (
         preflight = true,
     )
@@ -130,6 +160,7 @@ pipeline SC_RNA_COUNTER_CS(
         },
         count_input  = {
             aligner:                     self.aligner,
+            cell_annotation_model:       self.cell_annotation_model,
             cell_calling_config: {
                 cell_barcodes:                        null,
                 disable_ab_aggregate_detection:       self.disable_ab_aggregate_detection,
@@ -160,6 +191,7 @@ pipeline SC_RNA_COUNTER_CS(
             check_library_compatibility: self.check_library_compatibility,
             chemistry_specs:             COPY_CHEMISTRY_SPEC.chemistry_specs,
             emptydrops_minimum_umis:     self.emptydrops_minimum_umis,
+            enable_tsne:                 true,
             feature_reference:           self.feature_reference,
             filter_probes:               self.filter_probes,
             force_sample_barcodes: {
@@ -180,16 +212,14 @@ pipeline SC_RNA_COUNTER_CS(
             r2_length:                   self.r2_length,
             reference_path:              self.reference_path,
             sample_def:                  self.sample_def,
+            skip_cell_annotation:        self.skip_cell_annotation,
+            target_set:                  self.target_set,
+            target_set_name:             self.target_set_name,
             targeting_method:            self.targeting_method,
+            tenx_cloud_token_path:       self.tenx_cloud_token_path,
             tenx_cmos:                   null,
             trim_polya_min_score:        self.trim_polya_min_score,
             trim_tso_min_score:          self.trim_tso_min_score,
-        },
-        config       = {
-            disable_count:       false,
-            disable_multi:       true,
-            disable_multi_count: true,
-            disable_vdj:         true,
         },
     )
 
@@ -202,11 +232,14 @@ pipeline SC_RNA_COUNTER_CS(
             "fiveprime",
             "SC3Pv1",
             "SC3Pv2",
-            "SC3Pv3",
+            "SC3Pv3-polyA",
+            "SC3Pv3-CS1",
             # no longer supported, but included to allow DETECT_CHEMISTRY to produce a nice error message
             "SC3Pv3LT",
-            "SC3Pv3HT",
-            "SC3Pv4",
+            "SC3Pv3HT-polyA",
+            "SC3Pv3HT-CS1",
+            "SC3Pv4-polyA",
+            "SC3Pv4-CS1",
             "SC5P-PE",
             "SC5P-PE-v3",
             "SC5P-R2",
@@ -236,7 +269,9 @@ pipeline SC_RNA_COUNTER_CS(
     )
 
     call GET_AGGREGATE_BARCODES_OUT(
-        antibody_analysis = SC_MULTI_CORE.count_analyzer.antibody_analyzer.antibody_analysis,
+        antibody_analysis   = SC_MULTI_CORE.count_analyzer.antibody_analyzer.antibody_analysis,
+        is_multi            = false,
+        multiplexing_method = null,
     )
 
     return (
@@ -257,5 +292,7 @@ pipeline SC_RNA_COUNTER_CS(
         target_panel                  = SC_MULTI_CORE.multi_gw.count.target_outs.target_panel,
         probe_set                     = SC_MULTI_CORE.multi_gw.count.target_outs.probe_set,
         web_summary                   = SC_MULTI_CORE.multi_reporter.count_summary.web_summary,
+        cell_types                    = SC_MULTI_CORE.library_cell_types,
+        web_summary_cell_types        = SC_MULTI_CORE.library_cell_types.web_summary_cell_types,
     )
 }

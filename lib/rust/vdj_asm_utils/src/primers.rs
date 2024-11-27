@@ -124,18 +124,24 @@ pub fn outer_primers(species: &str, class: &str) -> Vec<Vec<u8>> {
 // the reverse complement of the given primer.  You can call this on the inner or
 // outer enrichment primers.  The 40-mers are represented as Vec<u8>s.
 
-pub fn get_primer_exts(primers: &[Vec<u8>], refdata: &RefData) -> Vec<Vec<Vec<u8>>> {
-    let mut exts = Vec::<Vec<Vec<u8>>>::with_capacity(primers.len());
-    for p in primers {
-        let mut p = p.clone();
-        reverse_complement(&mut p);
+pub fn get_primer_exts(list_of_primers: &[Vec<u8>], refdata: &RefData) -> Vec<Vec<Vec<u8>>> {
+    let mut exts = Vec::<Vec<Vec<u8>>>::with_capacity(list_of_primers.len());
+    for primer in list_of_primers {
+        let mut primer = primer.clone();
+        reverse_complement(&mut primer);
         let mut x = Vec::<Vec<u8>>::new();
-        for j in 0..refdata.refs.len() {
-            if refdata.is_c(j) {
-                let c = refdata.refs[j].to_ascii_vec();
-                for l in 0..c.len() {
-                    if contains_at(&c, &p, l) && l + p.len() >= PRIMER_EXT_LEN {
-                        x.push(c[l + p.len() - PRIMER_EXT_LEN..l + p.len()].to_vec());
+        for ref_idx in 0..refdata.refs.len() {
+            if refdata.is_c(ref_idx) {
+                let constant_region = refdata.refs[ref_idx].to_ascii_vec();
+                for pos in 0..constant_region.len() {
+                    if contains_at(&constant_region, &primer, pos)
+                        && pos + primer.len() >= PRIMER_EXT_LEN
+                    {
+                        x.push(
+                            constant_region
+                                [pos + primer.len() - PRIMER_EXT_LEN..pos + primer.len()]
+                                .to_vec(),
+                        );
                     }
                 }
             }

@@ -1,4 +1,4 @@
-# This template shows the possible cellranger multi config CSV options for analyzing Single Cell Gene Expression with Feature Barcode Technology (Antibody Capture, CRISPR Guide Capture, Cell Multiplexing, Antigen Capture), Fixed RNA Profiling, or Single Cell Immune Profiling data.
+# This template shows the possible cellranger multi config CSV options for analyzing Single Cell Gene Expression with Feature Barcode Technology (Antibody Capture, CRISPR Guide Capture, CellPlex Multiplexing, Antigen Capture), Flex Gene Expression, on-chip multiplexing, hashing with Antibody Capture, or Single Cell Immune Profiling data.
 # These options cannot be used all together - see section descriptions for detail.
 # Use 'cellranger multi-template --parameters' to see descriptions of all parameters.
 # Please see cellranger multi documentation for details and experimental design-specific examples at https://www.10xgenomics.com/support.
@@ -6,19 +6,22 @@
 [gene-expression]
 reference,/path/to/transcriptome
 create-bam,true
-# probe-set,/path/to/probe/set, # Required, Fixed RNA Profiling only
-# filter-probes,<true|false>, # Optional, Fixed RNA Profiling only
+# probe-set,/path/to/probe/set, # Required, Flex only
+# filter-probes,<true|false>, # Optional, Flex only
 # r1-length,<int>
 # r2-length,<int>
 # chemistry,<auto>
 # expect-cells,<int>
 # force-cells,<int>
+# emptydrops-minimum-umis,<int>, # See https://10xgen.com/scFFPE-cell-calling
 # no-secondary,<true|false>
 # check-library-compatibility,<true|false>
 # include-introns,<true|false>
-# min-assignment-confidence,<0.9>, # Optional, Cell Multiplexing only
-# cmo-set,/path/to/CMO/reference, # Optional, Cell Multiplexing only
-# barcode-sample-assignment,/path/to/barcode-sample-assignment/csv, # Optional, Cell Multiplexing only.
+# min-assignment-confidence,<0.9>, # Optional, CellPlex Multiplexing and hashtag multiplexing only
+# cmo-set,/path/to/CMO/reference, # Optional, CellPlex Multiplexing only
+# barcode-sample-assignment,/path/to/barcode-sample-assignment/csv, # Optional, CellPlex Multiplexing and hashtag multiplexing only
+# tenx-cloud-token-path,/path/to/cloud/token, # Optional, Cell Annotation only
+# cell-annotation-model,<str>, # Optional, Cell Annotation only
 
 [feature] # For Feature Barcode libraries only
 reference,/path/to/feature/reference
@@ -34,26 +37,36 @@ reference,/path/to/vdj_reference
 
 [libraries]
 fastq_id,fastqs,feature_types
-gex1,/path/to/fastqs,Gene Expression
-# Antibody1,/path/to/fastqs,Antibody Capture
+# GEX1,/path/to/fastqs,Gene Expression
+# Antibody1,/path/to/fastqs,Antibody Capture, # Antibody and hashtag multiplexing
 # CRISPR1,path/to/CRISPR_fastqs,CRISPR Guide Capture
-# CMO1,/path/to/fastqs,Multiplexing Capture, # Cell Multiplexing only
+# CMO1,/path/to/fastqs,Multiplexing Capture, # CellPlex Multiplexing only
 # VDJ_B1,path/to/vdj_B_fastqs,VDJ-B, # 5' Immune Profiling only
 # VDJ_T1,path/to/vdj_T_fastqs,VDJ-T, # 5' Immune Profiling only
 # VDJ_T_GD1,path/to/vdj_T_GD_fastqs,VDJ-T-GD, # 5' Immune Profiling only for gamma-delta TCR
-# Antigen1,path/to/antigen_capture_fastqs,Antigen Capture #5' Antigen Capture only
+# Antigen1,path/to/antigen_capture_fastqs,Antigen Capture, # 5' Antigen Capture only
 
 [antigen-specificity] # for 5' BCR/TCR Antigen Capture only
 control_id,mhc_allele
 Antigen1,AG001
 Antigen2,AG002
 
-[samples] # for Cell Multiplexing libraries only
+[samples] # for On-chip multiplexing data only
+sample_id,ocm_barcode_ids,description
+sample1,OB1,Control
+sample2,OB2,Treated
+
+[samples] # for CellPlex Multiplexing data only
 sample_id,cmo_ids,description
 sample1,CMO301,Control
 sample2,CMO303,Treated
 
-[samples] # for Fixed RNA Profiling multiplexed libraries only
+[samples] # for Flex multiplexed data only
 sample_id,probe_barcode_ids,description
 sample1,BC001,Control
 sample2,BC003,Treated
+
+[samples] # for hashtag multiplexing data only
+sample_id,hashtag_ids,description
+sample1,hashtag1,Control # ID used must match Feature ID in feature reference CSV
+sample2,hashtag2,Treated

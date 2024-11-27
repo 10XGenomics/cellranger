@@ -83,7 +83,7 @@ pub struct GraphClusteringChunkInputs {
 
 pub struct GraphClusteringStage;
 
-#[make_mro(stage_name = RUN_GRAPH_CLUSTERING_NG, volatile = strict)]
+#[make_mro(stage_name = RUN_GRAPH_CLUSTERING, volatile = strict)]
 impl MartianStage for GraphClusteringStage {
     type StageInputs = GraphClusteringStageInputs;
     type StageOutputs = GraphClusteringStageOutputs;

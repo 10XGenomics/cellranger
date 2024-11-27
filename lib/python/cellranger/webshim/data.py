@@ -10,6 +10,8 @@ from __future__ import annotations
 import collections
 import json
 import os
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
@@ -21,6 +23,10 @@ import cellranger.analysis.singlegenome as cr_sg_analysis
 import cellranger.utils as cr_utils
 import cellranger.vdj.utils as vdj_utils
 import cellranger.webshim.constants.gex as gex_constants
+
+if TYPE_CHECKING:
+    from cellranger.analysis.singlegenome import Projection
+
 from cellranger.websummary.sample_properties import (
     AggrCountSampleProperties,
     CountSampleProperties,
@@ -71,7 +77,7 @@ def generate_counter_barcode_rank_plot_data(
         - plot_segments: List of BarcodeRankPlotSegment
     """
     if restrict_barcodes:
-        restrict_indices = np.nonzero(np.in1d(barcode_summary["bc_sequence"][:], restrict_barcodes))
+        restrict_indices = np.nonzero(np.isin(barcode_summary["bc_sequence"][:], restrict_barcodes))
         counts_per_bc = barcode_summary[key][:][restrict_indices]
         barcode_sequences = barcode_summary["bc_sequence"][:][restrict_indices]
     else:
@@ -89,7 +95,13 @@ def generate_counter_barcode_rank_plot_data(
 
 
 class SampleData:
-    def __init__(self, sample_properties, sample_data_paths, plot_preprocess_func):
+    def __init__(
+        self,
+        sample_properties,
+        sample_data_paths,
+        plot_preprocess_func,
+        projections: Sequence[Projection],
+    ):
         if sample_properties:  # Can be None
             assert isinstance(sample_properties, SampleProperties)
         self.summary = load_metrics_summary(sample_data_paths.summary_path)
@@ -97,7 +109,7 @@ class SampleData:
         self.num_cells = self.summary.get("filtered_bcs_transcriptome_union")
 
         self.analyses, self.original_cluster_sizes = load_analyses(
-            sample_data_paths.analysis_path, plot_preprocess_func, sample_properties
+            sample_data_paths.analysis_path, plot_preprocess_func, sample_properties, projections
         )
 
         self.barcode_summary = load_barcode_summary(sample_data_paths.barcode_summary_path)
@@ -132,6 +144,7 @@ class SampleData:
                 converters={"barcode": ensure_binary},
             )
             if sample_data_paths.vdj_barcode_support_path
+            and os.path.getsize(sample_data_paths.vdj_barcode_support_path) != 0
             else None
         )
 
@@ -334,16 +347,28 @@ def load_treemap_data(antibody_treemap_path):
         return json.load(f)
 
 
-def load_analyses(base_dir, plot_preprocess_func, sample_properties):
+def load_analyses(
+    base_dir,
+    plot_preprocess_func,
+    sample_properties,
+    projections: Sequence[Projection],
+):
     """Returns (analysis_object, original_cluster_sizes)."""
     if base_dir is None:
         return None, None
+
     if isinstance(sample_properties, CountSampleProperties):
         if len(sample_properties.genomes) == 1:
-            analyses = [cr_sg_analysis.SingleGenomeAnalysis.load_default_format(base_dir, "pca")]
+            analyses = [
+                cr_sg_analysis.SingleGenomeAnalysis.load_default_format(
+                    base_dir, method="pca", projections=projections
+                )
+            ]
         else:
             analyses = [
-                cr_sg_analysis.SingleGenomeAnalysis.load_default_format(base_dir, "pca"),
+                cr_sg_analysis.SingleGenomeAnalysis.load_default_format(
+                    base_dir, method="pca", projections=projections
+                ),
                 cr_mg_analysis.MultiGenomeAnalysis.load_default_format(base_dir),
             ]
 

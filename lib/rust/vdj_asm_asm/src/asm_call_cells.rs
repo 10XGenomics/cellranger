@@ -8,18 +8,20 @@ use cr_types::{Fingerprint, FingerprintFile};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
-use martian_filetypes::lz4_file::Lz4;
 use martian_filetypes::{FileTypeRead, LazyFileTypeIO, LazyWrite};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use vdj_ann::annotate::ContigAnnotation;
-use vdj_asm_utils::barcode_data::analyze_barcode_data_brief;
-use vdj_asm_utils::filter_barcodes::{
-    cell_filter, confidence_filter, overhang_demux_filter, BarcodeCellInfo, BarcodeFilteringParams,
-    Contigs,
+use vdj_asm_utils::exact_clonotyping::generate_exact_contigs;
+use vdj_filter_barcodes::filter_barcode_level::{
+    barcode_has_chimeric_contig, cell_filter, confidence_filter, overhang_demux_filter,
+    BarcodeCellInfo, BarcodeFilteringParams, Contigs,
 };
-use vdj_asm_utils::filter_log::{FilterLogEntry, FilterLogger, FilterSwitch};
+use vdj_filter_barcodes::filter_library_level::{
+    analyze_barcode_data_brief, whitelist_indel_filter,
+};
+use vdj_filter_barcodes::filter_log::{FilterLogger, FilterSwitch, VdjFilterLogFormat};
 use vdj_reference::VdjReceptor;
 use vdj_types::VdjChain;
 use vector_utils::bin_member;
@@ -29,7 +31,7 @@ pub struct AsmCallCellsStageInputs {
     pub receptor: Option<VdjReceptor>,
     pub denovo: bool,
     pub vdj_reference_path: Option<PathBuf>,
-    pub count_chemistry_defs: Option<ChemistryDefs>,
+    pub vdj_chemistry_def: ChemistryDefs,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub barcode_brief: BarcodeDataBriefFile,
     pub n50_n50_rpu: u32,
@@ -41,7 +43,7 @@ pub struct AsmCallCellsStageInputs {
 pub struct AsmCallCellsStageOutputs {
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     #[mro_retain]
-    pub filter_diagnostics: Lz4<JsonFile<Vec<FilterLogEntry>>>,
+    pub filter_diagnostics: VdjFilterLogFormat,
 }
 
 // This is our stage struct
@@ -67,24 +69,27 @@ impl MartianMain for AsmCallCells {
             args.receptor == Some(VdjReceptor::TR) || args.receptor == Some(VdjReceptor::TRGD);
         let is_bcr = args.receptor == Some(VdjReceptor::IG);
         let gd_mode = args.receptor == Some(VdjReceptor::TRGD);
-        let filter_diagnostics_file: Lz4<JsonFile<_>> = rover.make_path("filter_diagnostics");
+        let filter_diagnostics_file: VdjFilterLogFormat = rover.make_path("filter_diagnostics");
         let mut filter_logger = FilterLogger::new(&filter_diagnostics_file)?;
         let mut barcode_cell_info = Vec::<BarcodeCellInfo>::new();
 
         let mut confident_bcs = HashSet::new();
+        let mut initial_cell_bcs = HashSet::new();
         let reader = args.barcode_brief.lazy_reader()?;
+        let contigs_by_bc = contigs_by_bc; // make it immutable.
         for brief in reader {
             let mut bc: BarcodeCellInfo = brief?.into();
-            let contigs = contigs_by_bc.remove(&bc.barcode).unwrap_or_default();
+            let default_contigs = Contigs::default();
+            let contigs = contigs_by_bc.get(&bc.barcode).unwrap_or(&default_contigs);
             let filtering_params =
-                BarcodeFilteringParams::build(&contigs, &bc, args.denovo, n50_n50_rpu, gd_mode)?;
+                BarcodeFilteringParams::build(contigs, &bc, args.denovo, n50_n50_rpu, gd_mode)?;
             let mut low_confidence_reasons = Vec::new();
             bc.high_confidence =
                 confidence_filter(&filtering_params, n50_n50_rpu, &mut low_confidence_reasons);
 
             if bc.high_confidence {
                 confident_bcs.insert(bc.barcode.clone());
-            };
+            }
             bc.now_a_cell = cell_filter(
                 &filtering_params,
                 &bc,
@@ -95,10 +100,28 @@ impl MartianMain for AsmCallCells {
                 Some(&mut filter_logger),
                 low_confidence_reasons,
             );
+            if bc.now_a_cell {
+                initial_cell_bcs.insert(bc.barcode.clone());
+            }
             bc.paired = filtering_params.paired;
             bc.chimdata = contigs.build_chimdata(bc.now_a_cell, args.denovo)?;
             bc.jundata = contigs.build_jundata(bc.high_confidence)?;
             barcode_cell_info.push(bc);
+        }
+
+        // Filter contaminating indel errors in gel bead oligos on the set of initial cell bcs
+        let exact_contigs =
+            generate_exact_contigs(&args.contig_annotations, initial_cell_bcs).unwrap();
+        let indel_contam_bcs = whitelist_indel_filter(exact_contigs, Some(&mut filter_logger));
+        for bc in &mut barcode_cell_info {
+            if bc.now_a_cell && indel_contam_bcs.contains(&bc.barcode) {
+                bc.now_a_cell = false;
+                bc.chimdata = bc
+                    .chimdata
+                    .iter()
+                    .map(|c| c.clone().update_productive(false))
+                    .collect();
+            }
         }
 
         let mut kills = Vec::<String>::new();
@@ -113,29 +136,43 @@ impl MartianMain for AsmCallCells {
 
         // Update now_a_cell field in barcode_cell_info.
         for bc in &mut barcode_cell_info {
-            if bc.now_a_cell && bin_member(&kills, &bc.barcode) {
+            // We are deliberately including the chimera filter here so that the
+            // behavior of the library level filtering does not change.
+            let default_contigs = Contigs::default();
+            let contigs = contigs_by_bc.get(&bc.barcode).unwrap_or(&default_contigs);
+
+            let all_contigs: Vec<ContigAnnotation> = contigs
+                .good_contigs
+                .iter()
+                .chain(contigs.reject_contigs.iter())
+                .cloned()
+                .collect();
+            let has_chimeric_contigs = barcode_has_chimeric_contig(
+                &all_contigs,
+                bc.barcode.clone(),
+                Some(&mut filter_logger),
+            );
+            if bc.now_a_cell && (bin_member(&kills, &bc.barcode) || has_chimeric_contigs) {
                 bc.now_a_cell = false;
             }
         }
-
         // OH demux filter
-        if let (Some(count_chems), Some(fingerprint)) =
-            (args.count_chemistry_defs, args.sample_fingerprint)
-        {
-            if let Some(overhang_read_barcode) = count_chems.overhang_read_barcode() {
-                let valid_overhang_ids: HashSet<BarcodeId> = fingerprint
-                    .read()?
-                    .iter()
-                    .flat_map(Fingerprint::tag_names)
-                    .map(|tag_name| BarcodeId::pack(tag_name))
-                    .collect();
-                overhang_demux_filter(
-                    overhang_read_barcode,
-                    valid_overhang_ids,
-                    &mut barcode_cell_info,
-                    Some(&mut filter_logger),
-                );
-            }
+        if let (Some(overhang_read_barcode), Some(fingerprint)) = (
+            args.vdj_chemistry_def.overhang_read_barcode(),
+            args.sample_fingerprint,
+        ) {
+            let valid_overhang_ids: HashSet<BarcodeId> = fingerprint
+                .read()?
+                .iter()
+                .flat_map(Fingerprint::tag_names)
+                .map(|tag_name| BarcodeId::pack(tag_name))
+                .collect();
+            overhang_demux_filter(
+                overhang_read_barcode,
+                valid_overhang_ids,
+                &mut barcode_cell_info,
+                Some(&mut filter_logger),
+            );
         }
 
         let mut asm_cell_barcodes = BTreeSet::new();
@@ -148,7 +185,7 @@ impl MartianMain for AsmCallCells {
         // In GD mode, take a pass to identify cells which have at least one productive G/D chain
         let mut gd_barcodes = HashSet::new();
         if gd_mode {
-            for can in args.contig_annotations.lazy_reader()? {
+            for can in args.contig_annotations.clone().lazy_reader()? {
                 let can: ContigAnnotation = can?;
                 if can.productive.unwrap_or(false)
                     && can

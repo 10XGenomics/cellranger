@@ -24,6 +24,7 @@ from cellranger.websummary.plotly_tools import MODE_BAR_BUTTONS, PLOT_CONFIG
 DEFAULT_MAX_HISTOGRAMS = 120
 MHC_ALLELE = "mhc_allele"
 TARGETING_ANTIGEN = "targeting_antigen"
+HASHTAG_LABEL = " (Hashtag)"
 
 
 class HistogramData(NamedTuple):
@@ -75,12 +76,12 @@ def make_histogram_help(is_antibody, is_spatial):
         return {
             "helpText": f"Only {link_text} antibodies with total UMI counts over {MIN_COUNTS_PER_ANTIBODY:,} are plotted, and only up to the top {DEFAULT_MAX_HISTOGRAMS} Antibodies by UMI count are shown. "
             f"The X-axis is the UMI counts in the log scale, while the Y-axis is the number of {spot_or_cell} observed with that UMI count.",
-            "title": "Histogram of Antibody Counts",
+            "title": "Histogram of Antibody UMI Counts",
         }
     else:
         return {
             "helpText": f"Only Antigens with non-zero total UMI counts in the library are shown. The X-axis is the UMI counts in log scale while the Y-axis is the number of {spot_or_cell} observed with that UMI count. The histogram excludes the 0 data point i.e. the number of barcodes with 0 UMI counts for a given Antigen.\nDouble-click on the name of any feature in the plot legend to view the UMI counts only for that feature.",
-            "title": "Histogram of Antigen Counts",
+            "title": "Histogram of Antigen UMI Counts",
         }
 
 
@@ -149,6 +150,7 @@ def make_histogram_as_bar_plot(
                 "opacity": 0.6,
                 "name": cnts.name,
                 "marker": {"color": color_map[cnts.name]},
+                "showlegend": True,
             }
             if cnts.group is not None and cnts.group != "":
                 trace["legendgroup"] = cnts.group
@@ -168,7 +170,7 @@ def make_histogram_as_bar_plot(
     return plot
 
 
-def make_antibody_histograms(ab_matrix, is_spatial):
+def make_antibody_histograms(ab_matrix, is_spatial, hashtags=None):
     """Take an antibody or antigen barcode matrix and generate json for web summary histograms.
 
     This is also used to define whether the antibody tab should be inserted into the websummary.
@@ -203,6 +205,10 @@ def make_antibody_histograms(ab_matrix, is_spatial):
     else:
         control_suffix = [""] * ab_matrix.features_dim
     vector_names = [ensure_str(x) for x in ab_matrix.feature_ids_map.keys()]
+
+    # Specify which features are hashtags.
+    hashtags = hashtags or []
+    vector_names = [f"{x}{HASHTAG_LABEL}" if x in hashtags else x for x in vector_names]
     color_map = make_color_map(vector_names, jibes_plot=False)
     data = []
     for (
@@ -212,10 +218,11 @@ def make_antibody_histograms(ab_matrix, is_spatial):
         cnts = ab_counts[index, :]
         if not is_antibody:
             cnts = cnts[cnts != 0]
+        hashtag_label_value = HASHTAG_LABEL if feature_id.decode("utf-8") in hashtags else ""
         data.append(
             HistogramData(
                 cnts,
-                ensure_str(feature_id),
+                (f"{ensure_str(feature_id)}{hashtag_label_value}"),
                 legend_group[index],
                 control_suffix[index],
             )

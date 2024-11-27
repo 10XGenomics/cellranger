@@ -26,6 +26,6 @@ def get_cmd_names(product_name: str) -> tuple[str, str]:
     else:
         # will never happen, but if it does we need to catch in testing with an exception
         raise RuntimeError(
-            "Unrecognized product name: '%s'. Expected 'spaceranger' or 'cellranger' or "
-            "'cellranger-arc' or 'cellranger-atac'" % product_name
+            f"Unrecognized product name: '{product_name}'. Expected 'spaceranger' or 'cellranger' or "
+            "'cellranger-arc' or 'cellranger-atac'"
         )

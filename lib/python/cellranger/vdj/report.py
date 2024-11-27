@@ -307,134 +307,26 @@ class VdjReporter(cr_report.Reporter):
             "vdj_filtered_bcs_relative_difference_from_recovered_cells"
         ).set_value(len(cell_barcodes) - recovered_cells, recovered_cells)
 
-    def vdj_recombinome_bam_cb(self, read1, read2, bam, strand):
-        """Report on a single read-to-germline-segment alignment.
-
-        Returns (chain1, chain2); chain annotations for each read
-        """
-        paired_end = read2 is not None
-
-        if paired_end:
-            assert read1.is_secondary == read2.is_secondary
-            if read1.is_secondary or read2.is_secondary:
-                return (None, None)
-        else:
-            if read1.is_secondary:
-                return (None, None)
-
-        read1_mapped = not read1.is_unmapped
-        read2_mapped = paired_end and not read2.is_unmapped
-        pair_mapped = (read1_mapped and read2_mapped) or (not paired_end) and read1_mapped
-
-        if read1_mapped:
-            ref_name = bam.references[read1.tid]
-            feature_id = vdj_reference.get_feature_id_from_aligned_ref_name(ref_name)
-            read1_chain = self.vdj_reference.get_feature_by_id(feature_id).chain
-        else:
-            read1_chain = None
-
-        if read2_mapped:
-            ref_name = bam.references[read2.tid]
-            feature_id = vdj_reference.get_feature_id_from_aligned_ref_name(ref_name)
-            read2_chain = self.vdj_reference.get_feature_by_id(feature_id).chain
-        else:
-            read2_chain = None
-
-        for chain in vdj_constants.VDJ_GENES + [lib_constants.MULTI_REFS_PREFIX]:
-            if chain == lib_constants.MULTI_REFS_PREFIX:
-                read1_this_chain = True
-                read2_this_chain = True
-            else:
-                read1_this_chain = read1_chain == chain
-                read2_this_chain = read2_chain == chain
-
-            mapped_reads_frac = self._get_metric_attr("vdj_recombinome_mapped_reads_frac", chain)
-            mapped_reads_frac.add(1, filter=read1_mapped and read1_this_chain)
-            mapped_reads_frac.add(1, filter=read2_mapped and read2_this_chain)
-            self._get_metric_attr("vdj_recombinome_mapped_read1_frac", chain).add(
-                1, filter=read1_mapped and read1_this_chain
-            )
-            self._get_metric_attr("vdj_recombinome_mapped_read2_frac", chain).add(
-                1, filter=read2_mapped and read2_this_chain
-            )
-
-            is_pair_mapped = (
-                pair_mapped
-                and read1_this_chain
-                and read2_this_chain
-                or (not paired_end)
-                and pair_mapped
-                and read1_this_chain
-            )
-            self._get_metric_attr("vdj_recombinome_mapped_read_pairs_frac", chain).add(
-                1, filter=is_pair_mapped
-            )
-
-            self._get_metric_attr("vdj_recombinome_chimeric_read_pairs_frac", chain).add(
-                1,
-                filter=paired_end
-                and pair_mapped
-                and read1_chain != read2_chain
-                and (read1_this_chain or read2_this_chain),
-            )
-
-            is_antisense = (
-                is_pair_mapped
-                and (
-                    (strand == "+" and read1.is_reverse and (not read2.is_reverse))
-                    or (strand == "-" and (not read1.is_reverse) and read2.is_reverse)
-                )
-                or (not paired_end)
-                and (
-                    (strand == "+" and read1.is_reverse) or (strand == "-" and not read1.is_reverse)
-                )
-            )
-            self._get_metric_attr("vdj_recombinome_antisense_read_pairs_frac", chain).add(
-                1, filter=is_antisense
-            )
-
-        return (read1_chain, read2_chain)
-
     def vdj_assembly_cb(
         self,
-        summary_df: pd.DataFrame | None,
         umi_summary_df: pd.DataFrame | None,
         annotation_dicts: Iterable[vdj_annot.AnnotationDict],
         reference: vdj_reference.VdjReference,
         prefix="",
     ):
-        # From contig name to its chain (eg. TRA, TRB)
-        contig_chains: dict[str, bytes] = {
-            annotation.contig_name: next(iter(annotation.contig_chains()))
-            for annotation in (
-                vdj_annot.AnnotatedContig.from_dict(annotation_dict, reference)
-                for annotation_dict in annotation_dicts
-            )
-            if annotation.high_confidence and annotation.is_single_chain()
-        }
-
-        good_umis: set[str] = (
-            set()
-            if umi_summary_df is None
-            else {str(int(s)) for s in umi_summary_df[umi_summary_df["good_umi"]]["umi_id"]}
-        )
-
-        # From chain to the umis assigned to contigs of that chain
-        chain_umis: defaultdict[str, list[str]] = defaultdict(list)
-        if not summary_df is None:
-            for _, row in summary_df.iterrows():
-                assert isinstance(row.contig_name, str)
-                if row.contig_name in contig_chains:
-                    # If the contig was assigned to a single chain...
-                    chain: str = ensure_str(contig_chains[row.contig_name])
-                    # ...get all umis for that contig
-                    umis = [u for u in row.umi_list.split(",") if u in good_umis]
-                    chain_umis[chain].extend(umis)
-                    chain_umis[lib_constants.MULTI_REFS_PREFIX].extend(umis)
-
-        numis_by_chain: dict[str, int] = {
-            c: len(set(chain_umis.get(c, []))) for c in self.vdj_genes
-        }
+        # build the chain:num_umis dict using contig_annotations_json
+        numis_by_chain: dict[str, int] = {key: 0 for key in self.vdj_genes}
+        for annotation_dict in annotation_dicts:
+            annot = vdj_annot.AnnotatedContig.from_dict(annotation_dict, reference)
+            if prefix == "":
+                if annot.productive and annot.high_confidence and annot.is_single_chain():
+                    chain = annot.contig_chains().pop()
+                    numis_by_chain[ensure_str(chain)] += annot.umi_count
+                    numis_by_chain[lib_constants.MULTI_REFS_PREFIX] += annot.umi_count
+            elif annot.high_confidence and annot.is_single_chain():
+                chain = annot.contig_chains().pop()
+                numis_by_chain[ensure_str(chain)] += annot.umi_count
+                numis_by_chain[lib_constants.MULTI_REFS_PREFIX] += annot.umi_count
 
         def exclusive_count_mismatch(chain):
             assert isinstance(chain, str)
@@ -537,7 +429,7 @@ class VdjReporter(cr_report.Reporter):
 
             # Gene-specific per-contig metrics
             for gene in self.vdj_genes:
-                is_gene = gene == contig_gene or gene == lib_constants.MULTI_REFS_PREFIX
+                is_gene = gene in (contig_gene, lib_constants.MULTI_REFS_PREFIX)
 
                 # Contig length
                 if is_gene:

@@ -152,7 +152,7 @@ def build_reference_fasta_from_ensembl(
             continue
 
         if not all(r.strand == regions[0].strand for r in regions):
-            print("Warning: Transcript %s spans multiple strands. Skipping." % transcript_id)
+            print(f"Warning: Transcript {transcript_id} spans multiple strands. Skipping.")
             continue
 
         chrom: str = regions[0].chrom
@@ -181,15 +181,13 @@ def build_reference_fasta_from_ensembl(
         # Strip Ns from termini
         if b"N" in seq:
             print(
-                "Warning: Feature %s contains Ns. Stripping from the ends."
-                % str((ens_gene_name, transcript_id, region_type))
+                f"Warning: Feature {(ens_gene_name, transcript_id, region_type)!s} contains Ns. Stripping from the ends."
             )
             seq = seq.strip(b"N")
 
         if len(seq) == 0:
             print(
-                "Warning: Feature %s is all Ns. Skipping."
-                % str((ens_gene_name, transcript_id, region_type))
+                f"Warning: Feature {(ens_gene_name, transcript_id, region_type)!s} is all Ns. Skipping."
             )
             continue
 
@@ -205,12 +203,12 @@ def build_reference_fasta_from_ensembl(
         # Disallow spaces in these fields
         if " " in region_type:
             raise VDJReferenceConstructionError(
-                'Spaces not allowed in region type: "%s"' % region_type
+                f'Spaces not allowed in region type: "{region_type}"'
             )
         if " " in gene_name:
-            raise VDJReferenceConstructionError('Spaces not allowed in gene name: "%s"' % gene_name)
+            raise VDJReferenceConstructionError(f'Spaces not allowed in gene name: "{gene_name}"')
         if " " in record_id:
-            raise VDJReferenceConstructionError('Spaces not allowed in record ID: "%s"' % record_id)
+            raise VDJReferenceConstructionError(f'Spaces not allowed in record ID: "{record_id}"')
 
         # Warn on features we couldn't classify properly
         if chain_type not in chain_types.VDJ_CHAIN_TYPES:

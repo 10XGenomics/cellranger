@@ -22,7 +22,6 @@ pipeline _ASSIGN_TAGS(
     in  int                gem_well,
     in  float              min_assignment_confidence,
     in  string             throughput,
-    in  string             library_type,
     in  json               inferred_throughputs,
     out AssignTagsOuts     assign_tags_outs,
 )
@@ -32,12 +31,13 @@ pipeline _ASSIGN_TAGS(
     )
 
     call CALL_TAGS_MARGINAL(
-        filtered_barcodes = self.filtered_barcodes,
+        filtered_barcodes   = self.filtered_barcodes,
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        throughput        = self.throughput,
-        library_type      = self.library_type,
+        throughput          = self.throughput,
+        multiplexing_method = MULTIPLEXING_METHOD.multiplexing_method,
+        library_type        = null,
     ) using (
-        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo,
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )
 
     call CALL_TAGS_JIBES(
@@ -48,9 +48,10 @@ pipeline _ASSIGN_TAGS(
         marginal_tag_frequencies    = CALL_TAGS_MARGINAL.marginal_tag_frequencies,
         throughput                  = self.throughput,
         min_assignment_confidence   = self.min_assignment_confidence,
-        library_type                = self.library_type,
+        multiplexing_method         = MULTIPLEXING_METHOD.multiplexing_method,
+        library_type                = null,
     ) using (
-        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo,
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )
 
     call CALL_TAGS_RTL(
@@ -63,8 +64,9 @@ pipeline _ASSIGN_TAGS(
     )
 
     call CALL_TAGS_OH(
-        chemistry_defs        = self.chemistry_defs,
-        raw_feature_bc_matrix = self.raw_feature_bc_matrix,
+        chemistry_defs             = self.chemistry_defs,
+        raw_feature_bc_matrix      = self.raw_feature_bc_matrix,
+        filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_oh,
     )
@@ -89,6 +91,9 @@ pipeline _ASSIGN_TAGS(
         multi_graph          = self.multi_graph,
         sample_cell_barcodes = DETERMINE_SAMPLE_ASSIGNMENTS.sample_cell_barcodes,
         non_singlet_barcodes = DETERMINE_SAMPLE_ASSIGNMENTS.non_singlet_barcodes,
+        multiplexing_method  = MULTIPLEXING_METHOD.multiplexing_method,
+    ) using (
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )
 
     call MERGE_METRICS(
@@ -112,7 +117,7 @@ pipeline _ASSIGN_TAGS(
             jibes_parameters:              CALL_TAGS_JIBES.jibes_parameters,
             jibes_summary_data:            CALL_TAGS_JIBES.jibes_summary_data,
             marginal_tag_frequencies:      CALL_TAGS_MARGINAL.marginal_tag_frequencies,
-            multiplexing_is_not_cmo:       MULTIPLEXING_METHOD.multiplexing_is_not_cmo,
+            multiplexing_method:           MULTIPLEXING_METHOD.multiplexing_method,
             non_singlet_barcodes:          DETERMINE_SAMPLE_ASSIGNMENTS.non_singlet_barcodes,
             output_per_sample_raw_matrix:  MULTIPLEXING_METHOD.output_per_sample_raw_matrix,
             sample_assignment_metrics:     DETERMINE_SAMPLE_ASSIGNMENTS.sample_summaries,

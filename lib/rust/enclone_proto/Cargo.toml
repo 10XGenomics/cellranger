@@ -1,0 +1,33 @@
+[dependencies]
+[dependencies.bio_edit]
+path = '../bio_edit'
+
+[dependencies.byteorder]
+workspace = true
+
+[dependencies.prost]
+workspace = true
+
+[dependencies.serde]
+features = []
+workspace = true
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.vdj_ann]
+path = '../vdj_ann'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'enclone_proto'
+publish = false
+version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['serde']

@@ -5,12 +5,12 @@
 
 __MRO__ = """
 stage COMPUTE_CORRECTION_FACTOR(
-    in  h5     v1_filtered_fbm,
-    in  json   barcodes_under_tissue,
-    out float  correction_factor,
-    out json   affected_barcodes,
-    out bool   disable_downsampling,
-    src py     "stages/spatial/compute_correction_factor",
+    in  V1PatternFixArgs v1_pattern_fix,
+    in  json             barcodes_under_tissue,
+    out float            correction_factor,
+    out json             affected_barcodes,
+    out bool             disable_downsampling,
+    src py               "stages/spatial/compute_correction_factor",
 )
 """
 

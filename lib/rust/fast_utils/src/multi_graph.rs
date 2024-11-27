@@ -1,5 +1,5 @@
 //! Wrapping the Rust handling of the multi config.
-use cr_types::{CellMultiplexingType, CrMultiGraph, Fingerprint};
+use cr_types::{BarcodeMultiplexingType, CellLevel, CrMultiGraph, Fingerprint, ReadLevel};
 use itertools::Itertools;
 use martian::MartianFileType;
 use martian_filetypes::json_file::JsonFile;
@@ -81,17 +81,26 @@ impl MultiGraph {
 
     /// Return true if this data is using CMO multiplexing.
     pub fn is_cmo_multiplexed(&self) -> bool {
-        self.0.cell_multiplexing_type() == Some(CellMultiplexingType::CMO)
+        self.0.barcode_multiplexing_type()
+            == Some(BarcodeMultiplexingType::CellLevel(CellLevel::CMO))
+    }
+
+    /// Return true if this data is using HASHTAG multiplexing.
+    pub fn is_hashtag_multiplexed(&self) -> bool {
+        self.0.barcode_multiplexing_type()
+            == Some(BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag))
     }
 
     /// Return true if this data is using RTL multiplexing.
     pub fn is_rtl_multiplexed(&self) -> bool {
-        self.0.cell_multiplexing_type() == Some(CellMultiplexingType::RTL)
+        self.0.barcode_multiplexing_type()
+            == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL))
     }
 
     /// Return true if this data is using OH multiplexing.
     pub fn is_oh_multiplexed(&self) -> bool {
-        self.0.cell_multiplexing_type() == Some(CellMultiplexingType::OH)
+        self.0.barcode_multiplexing_type()
+            == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::OH))
     }
 
     /// Return tuples of sample ID and finerprints.

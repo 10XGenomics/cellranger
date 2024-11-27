@@ -185,11 +185,10 @@ class FeatureAssignmentsMatrix:
     # Dataype used for the dataframe
     FEATURE_ASSIGNMENT_DTYPE = "uint8"
 
-    def __init__(self, df: pd.DataFrame, matrix: CountMatrix, library_type: str):
+    def __init__(self, df: pd.DataFrame, matrix: CountMatrix):
         """Constructor for children classes."""
         self.df = df
         self.matrix = matrix
-        self.library_type = library_type
         self.features_per_cell_table = None
 
     def get_shape(self):
@@ -390,9 +389,7 @@ class FeatureAssignmentsMatrix:
         Returns:
             int32: number of barcodes that do not have any feature umis
         """
-        counts = self.matrix.get_subselected_counts(
-            log_transform=False, library_type=self.library_type
-        )
+        counts = self.matrix.get_subselected_counts(log_transform=False)
         return np.sum(counts == 0)
 
 

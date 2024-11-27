@@ -1,17 +1,18 @@
 [dependencies]
-debruijn = '0.3'
+[dependencies.debruijn]
+workspace = true
 
 [dependencies.io_utils]
-workspace = true
+path = '../io_utils'
 
 [dependencies.itertools]
 workspace = true
 
 [dependencies.string_utils]
-workspace = true
+path = '../string_utils'
 
 [dependencies.vector_utils]
-workspace = true
+path = '../vector_utils'
 
 [lib]
 test = false

@@ -1,0 +1,15 @@
+[dependencies]
+bit-set = '0.5'
+
+[dependencies.bio-types]
+workspace = true
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'bio_edit'
+publish = false
+version = '0.1.0'

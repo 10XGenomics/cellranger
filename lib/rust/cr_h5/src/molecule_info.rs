@@ -1,3 +1,4 @@
+use crate::iter::H5Iterator;
 use crate::{
     extend_dataset, feature_reference_io, make_column_ds, probe_reference_io, scalar_attribute,
     write_column_ds,
@@ -500,6 +501,10 @@ impl MoleculeInfoReader {
         Ok(Self::open(path)?.dataset(BARCODE_DATASET_NAME)?.size())
     }
 
+    pub fn read_gem_groups_size(path: &Path) -> Result<usize> {
+        Ok(Self::open(path)?.dataset(GEM_GROUP_COL_NAME)?.size())
+    }
+
     pub fn read_filtered_barcode_ids(path: &Path) -> Result<TxHashSet<u64>> {
         let (barcode_info_pass_filter, _) = MoleculeInfoReader::read_barcode_info(path)?;
         Ok(barcode_info_pass_filter
@@ -554,6 +559,14 @@ impl MoleculeInfoReader {
         Ok(Self::open(path)?
             .dataset(GEM_GROUP_COL_NAME)?
             .read_1d::<GemGroupType>()?)
+    }
+
+    /// Return an iterator over gem groups.
+    pub fn iter_gem_groups(path: &Path) -> Result<H5Iterator<GemGroupType>> {
+        Ok(H5Iterator::new(
+            Self::open(path)?.dataset(GEM_GROUP_COL_NAME)?,
+            ITERATOR_CHUNK_SIZE,
+        ))
     }
 
     pub fn nrows(path: &Path) -> Result<usize> {

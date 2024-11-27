@@ -50,8 +50,6 @@ from cellranger.targeted.rtl_multiplexing import get_probe_bc_defn
 from cellranger.targeted.simple_utils import determine_targeting_type_from_csv
 from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC
 
-FILTER_BARCODES_MIN_MEM_GB = 2.0
-
 PROBE_BC_SAMPLE_ID = "id"
 PROBE_BC_SEQS = "sequence"
 PROBE_BC_OFFSET = "offset"
@@ -136,9 +134,7 @@ def split(args):
     chemistry_def = cr_chemistry.get_primary_chemistry_def(args.chemistry_defs)
     chemistry_barcode = chemistry_def["barcode"]
 
-    # We need to store one full copy of the matrix.
-    mem_gb = 2.3 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5) + 1
-    mem_gb = max(mem_gb, FILTER_BARCODES_MIN_MEM_GB)
+    mem_gb = 2 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5, scale=6)
 
     if args.multi_graph is None:
         return {
@@ -261,10 +257,10 @@ def join(args, outs, chunk_defs, chunk_outs):
 
         if fbc_control_names or number_of_fbcs_in_matrix > MINIMUM_FBCS_TO_NORMALIZE:
             # Normalise the filtered matrix
-            normalisation_metrics[
-                "number_of_overflows_in_normalization"
-            ] = filtered_matrix.normalise_library_type_by_control_features(
-                rna_library.ANTIBODY_LIBRARY_TYPE, FBC_SCALE_FACTOR, fbc_control_names
+            normalisation_metrics["number_of_overflows_in_normalization"] = (
+                filtered_matrix.normalise_library_type_by_control_features(
+                    rna_library.ANTIBODY_LIBRARY_TYPE, FBC_SCALE_FACTOR, fbc_control_names
+                )
             )
 
             # Compute normalisation factor for all barcodes in raw matrix
@@ -307,7 +303,7 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     parse_filtered_bcs_method(filtered_metrics_groups, summary)
 
-    genomes = get_reference_genomes(args.reference_path)
+    genomes = get_reference_genomes(args.reference_path, args.target_set)
     summary = helpers.combine_initial_metrics(
         genomes, filtered_metrics_groups, genome_filtered_bcs, summary
     )
@@ -407,16 +403,14 @@ def filter_barcodes(args, outs):  # pylint: disable=too-many-branches
         method = FilterMethod.MANUAL
     elif force_cells is not None:
         method = FilterMethod.TOP_N_BARCODES
+    elif config.override_mode is not None:
+        method = get_filter_method_from_string(config.override_mode)
+    elif args.is_antibody_only:
+        method = FilterMethod.ORDMAG
+    elif is_targeted and not is_rtl:
+        method = FilterMethod.TARGETED
     else:
-        # Override from MRO takes precedence
-        if config.override_mode is not None:
-            method = get_filter_method_from_string(config.override_mode)
-        elif args.is_antibody_only:
-            method = FilterMethod.ORDMAG
-        elif is_targeted and not is_rtl:
-            method = FilterMethod.TARGETED
-        else:
-            method = FilterMethod.ORDMAG_NONAMBIENT
+        method = FilterMethod.ORDMAG_NONAMBIENT
 
     # Get unique gem groups
     unique_gem_groups = sorted(list(set(args.gem_groups)))
@@ -462,7 +456,11 @@ def filter_barcodes(args, outs):  # pylint: disable=too-many-branches
         # report all identified aggregate barcodes, together with their umis,
         # umi corrected reads, fraction of corrected reads, and fraction of total reads
         removed_bcs_df = removed_bcs_df.round(
-            {FRACTION_CORRECTED_READS: 3, FRACTION_TOTAL_READS: 3}
+            {
+                FRACTION_CORRECTED_READS: 3,
+                FRACTION_TOTAL_READS: 3,
+                ab_utils.FRACTION_SAMPLE_READS: 3,
+            }
         )
         if len(removed_bcs_df) != 0:
             removed_bcs_df.to_csv(outs.aggregate_barcodes)
@@ -482,12 +480,12 @@ def filter_barcodes(args, outs):  # pylint: disable=too-many-branches
     )
     summary[total_diversity_key] = matrix.bcs_dim
 
-    genomes = get_reference_genomes(args.reference_path)
+    genomes = get_reference_genomes(args.reference_path, args.target_set)
 
     # Get per-gem group cell load
     if recovered_cells is not None:
         gg_recovered_cells = int(float(recovered_cells) / float(len(unique_gem_groups)))
-    elif method == FilterMethod.ORDMAG or method == FilterMethod.ORDMAG_NONAMBIENT:
+    elif method in (FilterMethod.ORDMAG, FilterMethod.ORDMAG_NONAMBIENT):
         gg_recovered_cells = None
     else:
         gg_recovered_cells = cr_constants.DEFAULT_RECOVERED_CELLS_PER_GEM_GROUP
@@ -532,6 +530,7 @@ def filter_barcodes(args, outs):  # pylint: disable=too-many-branches
             filtered_bcs_groups,
             feature_types,
             chemistry_description,
+            probe_barcode_sample_id,
             num_probe_barcodes=num_probe_barcodes,
             emptydrops_minimum_umis=helpers.get_emptydrops_minimum_umis(
                 config.emptydrops_minimum_umis, probe_barcode_sample_id
@@ -540,7 +539,7 @@ def filter_barcodes(args, outs):  # pylint: disable=too-many-branches
         if nonambient_summary.empty:
             outs.nonambient_calls = None
         else:
-            nonambient_summary.to_csv(outs.nonambient_calls)
+            nonambient_summary.to_csv(outs.nonambient_calls, index=False)
         for (genome, gg), value in emptydrops_minimum_umis.items():
             summary[
                 f"{genome}_gem_group_{gg}_{get_filter_method_name(FilterMethod.ORDMAG_NONAMBIENT)}_threshold"

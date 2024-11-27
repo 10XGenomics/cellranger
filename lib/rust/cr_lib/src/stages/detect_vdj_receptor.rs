@@ -1,7 +1,7 @@
 //! Martian stage DETECT_VDJ_RECEPTOR
 
 use crate::detect_chemistry::chemistry_filter::detect_chemistry_units;
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use cr_types::reference::feature_reference::{BeamMode, FeatureConfig, FeatureReferenceFile};
 use cr_types::sample_def::SampleDef;
 use cr_types::LibraryType;
@@ -220,18 +220,13 @@ impl MartianMain for DetectVdjReceptor {
                     break;
                 }
             }
-            match stats.compatible_receptor() {
-                Some(receptor) => per_unit_receptors.push(receptor),
-                None => {
-                    bail!(
-                        "V(D)J Chain detection failed for {}.\n\n{}\n{}\n{}\n",
-                        unit,
-                        stats,
-                        ClassificationStats::help_text(),
-                        resolution_text,
-                    );
-                }
-            }
+            per_unit_receptors.push(stats.compatible_receptor().with_context(|| {
+                anyhow!(
+                    "V(D)J Chain detection failed for {unit}.\n\n{stats}\n{}\n\
+                     {resolution_text}\n",
+                    ClassificationStats::help_text(),
+                )
+            })?);
             println!("{stats}");
         }
 
@@ -475,6 +470,7 @@ mod tests {
                         has_mhc_allele_column: true,}),
                     beam_mode: None,
                     functional_map: None,
+                    hashtag_ids: None,
                 }),
             },
         );

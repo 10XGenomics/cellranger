@@ -1,6 +1,9 @@
 [dependencies]
-quote = '1'
-syn = '2'
+[dependencies.quote]
+workspace = true
+
+[dependencies.syn]
+workspace = true
 
 [lib]
 proc-macro = true

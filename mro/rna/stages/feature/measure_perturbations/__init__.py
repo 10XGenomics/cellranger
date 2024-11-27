@@ -42,7 +42,7 @@ def split(args):
 
     # Sometimes this stage uses a lot of vmem. It has proven difficult to reproduce and measure.
     vmem_gib = 6 + 2 * mem_gib
-    return {"chunks": [], "join": {"__mem_gb": mem_gib, "__threads": 2, "__vmem_gb": vmem_gib}}
+    return {"chunks": [], "join": {"__mem_gb": mem_gib, "__threads": 5, "__vmem_gb": vmem_gib}}
 
 
 def join(args, outs, _chunk_defs, _chunk_outs):

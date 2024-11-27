@@ -27,9 +27,9 @@ VERSION = 2
 def __encode_h5_arr(f: tables.File, arr, field: str, group: str, key: str, subgroup: tables.Group):
     # XML encode strings so we can store them as HDF5 ASCII
     if isinstance(arr, str):
-        arr = np.string_(arr.encode("ascii", "xmlcharrefreplace"))
+        arr = np.bytes_(arr.encode("ascii", "xmlcharrefreplace"))
     elif isinstance(arr, bytes):
-        arr = np.string_(arr)
+        arr = np.bytes_(arr)
 
     if not hasattr(arr, "dtype"):
         raise ValueError(f"{group}/{key} must be a numpy array or scalar")
@@ -224,13 +224,11 @@ def save_pca2_dimension_reduction_h5(
 @overload
 def load_dimension_reduction_from_h5(
     filename: str, group_name: str, ntuple: type[PCA]
-) -> list[PCA]:
-    ...
+) -> list[PCA]: ...
 
 
 @overload
-def load_dimension_reduction_from_h5(filename: str, group_name: str, ntuple: type[_T1]) -> _T1:
-    ...
+def load_dimension_reduction_from_h5(filename: str, group_name: str, ntuple: type[_T1]) -> _T1: ...
 
 
 def load_dimension_reduction_from_h5(filename: str, group_name: str, ntuple: type[_T1]):

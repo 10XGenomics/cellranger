@@ -61,7 +61,7 @@ def main():
     for attribute_str in attributes_str:
         parts = attribute_str.split(":")
         if len(parts) != 2:
-            sys.exit("Attribute option must have format <key;value>: %s" % attribute_str)
+            sys.exit(f"Attribute option must have format <key;value>: {attribute_str}")
         key, value = parts
         attributes[key].add(value)
 

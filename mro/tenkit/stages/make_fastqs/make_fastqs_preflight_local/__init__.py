@@ -22,7 +22,6 @@ stage MAKE_FASTQS_PREFLIGHT_LOCAL(
     in int[]    lanes,
     in map[]    specs,
     in string   bcl2fastq2_args,
-    in string   barcode_whitelist,
     in string   bc_read_type,
     in int      bc_start_index,
     in int      bc_length,
@@ -69,7 +68,7 @@ def check_specs(args):
         is_iem = tk_sheet.file_is_iem_samplesheet(csv_path)
         is_csv = tk_sheet.file_is_simple_samplesheet(csv_path)
         if not (is_iem or is_csv):
-            martian.exit("Formatting error in sample sheet: %s" % csv_path)
+            martian.exit(f"Formatting error in sample sheet: {csv_path}")
 
 
 def check_read_params(args, runinfo):
@@ -80,7 +79,7 @@ def check_read_params(args, runinfo):
     if args.bc_read_type is None:
         martian.exit("Barcode read must be specified.")
     if args.bc_read_type not in read_info_by_read_type:
-        martian.exit("Barcode read not found in run folder: %s" % args.bc_read_type)
+        martian.exit(f"Barcode read not found in run folder: {args.bc_read_type}")
 
     if args.bc_start_index is not None and args.bc_length is not None:
         if (
@@ -99,7 +98,7 @@ def check_read_params(args, runinfo):
 
     # if UMI present, do bounds check
     if args.umi_read_type is not None and args.umi_read_type not in read_info_by_read_type:
-        martian.exit("UMI read type not found in run folder: %s" % args.umi_read_type)
+        martian.exit(f"UMI read type not found in run folder: {args.umi_read_type}")
     if args.umi_start_index is not None and args.umi_length is not None:
         if (
             args.umi_start_index + args.umi_length
@@ -124,12 +123,12 @@ def emit_info(args):
             martian.log_info("samplesheet:")
             try:
                 with open(csv_path) as sheet:
-                    martian.log_info("\n%s" % sheet.read())
+                    martian.log_info(f"\n{sheet.read()}")
             except PermissionError:
-                martian.exit("Permission Denied: %s" % csv_path)
+                martian.exit(f"Permission Denied: {csv_path}")
 
         else:
-            martian.log_info("samplesheet not found: %s" % csv_path)
+            martian.log_info(f"samplesheet not found: {csv_path}")
     else:
         martian.log_info("specs:")
         martian.log_info(args.specs)
@@ -148,13 +147,6 @@ def main(args, outs):
     ok, msg = tk_preflight.check_ld_library_path()
     if not ok:
         martian.exit(msg)
-
-    if args.barcode_whitelist:
-        whitelist_candidates = args.barcode_whitelist.split(",")
-        for candidate in whitelist_candidates:
-            tk_preflight.check_barcode_whitelist(candidate)
-    else:
-        martian.exit("Must specify a barcode whitelist.")
 
     if args.check_executables:
         print("Checking bcl2fastq...")

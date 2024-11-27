@@ -7,6 +7,9 @@ use crate::AggregateBarcode;
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::filtered_barcodes::{read_filtered_barcodes_set, FilteredBarcodesCsv};
+use cr_types::probe_set::ProbeSetReferenceMetadata;
+use cr_types::reference::get_reference_genome_names;
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::{
     GenomeName, LibraryType, MetricsFile, SampleAssignment, SampleBarcodes, SampleBarcodesFile,
@@ -19,6 +22,7 @@ use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::FileTypeRead;
 use metric::{JsonReport, JsonReporter, TxHashMap, TxHashSet};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use shardio::ShardReader;
 use std::collections::HashMap;
 use std::fs::File;
@@ -53,7 +57,8 @@ impl From<&AggregateBarcode> for AggregateBarcodesMetrics {
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct CollateMetricsStageInputs {
     pub per_barcode_metrics: Vec<BarcodeMetricsShardFile>,
-    pub reference_path: PathBuf,
+    pub reference_path: Option<PathBuf>,
+    pub target_set: Option<TargetSetFile>,
     pub feature_reference: FeatureReferenceFormat,
     pub filtered_barcodes: Option<FilteredBarcodesCsv>,
     pub aggregate_barcodes: Option<CsvFile<AggregateBarcode>>,
@@ -285,7 +290,19 @@ impl MartianStage for CollateMetrics {
             .into_barcodes(&chunk_args.sample)
             .map(TxHashSet::from_iter);
 
-        let ref_info = ReferenceInfo::from_reference_path(&args.reference_path)?;
+        let ref_info = args
+            .reference_path
+            .as_deref()
+            .map(ReferenceInfo::from_reference_path)
+            .transpose()?;
+
+        let probe_set_metadata = args
+            .target_set
+            .as_ref()
+            .map(ProbeSetReferenceMetadata::load_from)
+            .transpose()?;
+
+        let genomes = get_reference_genome_names(ref_info.as_ref(), probe_set_metadata.as_ref());
 
         let has_targeted_gex = args.feature_reference.read()?.target_set.is_some();
 
@@ -301,7 +318,7 @@ impl MartianStage for CollateMetrics {
                 iter,
                 barcodes_for_sample.as_ref(),
                 filtered_barcodes.as_ref(),
-                &ref_info.genomes,
+                &genomes,
                 &mut csv_writer,
             )
         })??;
@@ -320,7 +337,7 @@ impl MartianStage for CollateMetrics {
             .map(|(library_type, metrics)| {
                 (
                     library_type,
-                    metrics.make_report(library_type, &ref_info.genomes, has_targeted_gex),
+                    metrics.make_report(library_type, &genomes, has_targeted_gex),
                 )
             })
             .collect();
@@ -338,9 +355,23 @@ impl MartianStage for CollateMetrics {
                 JsonReporter::default()
             };
 
+        let ref_info_report = if let Some(ref_info) = ref_info {
+            ref_info.into_json_report()
+        } else if let Some(probe_set_metadata) = probe_set_metadata {
+            [
+                ("reference_genomes", probe_set_metadata.reference_genome()),
+                ("reference_version", probe_set_metadata.reference_version()),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), Value::from(v)))
+            .collect()
+        } else {
+            Map::default()
+        };
+
         let metrics: TxHashMap<_, _> = chain!(
             per_lib_type_reports.to_json_reporter(),
-            ref_info.into_json_report(),
+            ref_info_report,
             aggregate_barcode_metrics,
         )
         .collect();

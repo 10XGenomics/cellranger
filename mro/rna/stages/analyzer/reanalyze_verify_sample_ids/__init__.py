@@ -40,9 +40,7 @@ def main(args, outs):
     if matrix_library_ids != csv_library_ids:
         str_csv_library_ids = ",".join([ensure_str(x) for x in sorted(csv_library_ids)])
         str_matrix_library_ids = ",".join([ensure_str(x) for x in sorted(matrix_library_ids)])
-        this_msg = "Sample IDs specified in CSV ({}) do not match those contained in the input matrix ({})".format(
-            str_csv_library_ids, str_matrix_library_ids
-        )
+        this_msg = f"Sample IDs specified in CSV ({str_csv_library_ids}) do not match those contained in the input matrix ({str_matrix_library_ids})"
         martian.exit(this_msg)
 
     # output the sample defs so we can ensure downstream stages execute after this one

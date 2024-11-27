@@ -10,16 +10,21 @@ splitting things up in this way allows turing repo to utilize TSNE/clustering/di
 
 from __future__ import annotations
 
-from copy import deepcopy
-
 import numpy as np
 
 import cellranger.rna.library as rna_library
 import cellranger.webshim.constants.gex as ws_gex_constants
 import cellranger.websummary.plotly_tools as pltly
+from cellranger.analysis.analysis_types import DifferentialExpressionWithFeatures
 from cellranger.analysis.clustering import AB_PREFIX, GEX_PREFIX
-from cellranger.analysis.singlegenome import TSNE_NAME, UMAP_NAME, SingleGenomeAnalysis
-from cellranger.websummary.helpers import get_tsne_key
+from cellranger.analysis.singlegenome import (
+    PROJECTION_TITLE,
+    TSNE_NAME,
+    UMAP_NAME,
+    Projection,
+    SingleGenomeAnalysis,
+)
+from cellranger.websummary.helpers import get_projection_key
 from cellranger.websummary.numeric_converters import round_floats_in_list
 from cellranger.websummary.react_components import (
     ClusteringData,
@@ -28,45 +33,6 @@ from cellranger.websummary.react_components import (
     DifferentialExpressionTableValue,
     SharedCoordinatePlotCollection,
 )
-
-TSNE_LAYOUT_CONFIG = {
-    "xaxis": {
-        "type": "linear",
-        "title": "t-SNE1",
-        "showline": False,
-        "zeroline": True,
-        "fixedrange": False,
-    },
-    "yaxis": {
-        "type": "linear",
-        "title": "t-SNE2",
-        "showline": False,
-        "zeroline": True,
-        "fixedrange": False,
-    },
-    "margin": {"t": 30},  # needed to keep screenshots from hitting the top
-    "hovermode": "closest",
-}
-
-UMAP_LAYOUT_CONFIG = {
-    "xaxis": {
-        "type": "linear",
-        "title": "UMAP1",
-        "showline": False,
-        "zeroline": True,
-        "fixedrange": False,
-    },
-    "yaxis": {
-        "type": "linear",
-        "title": "UMAP2",
-        "showline": False,
-        "zeroline": True,
-        "fixedrange": False,
-    },
-    "margin": {"t": 30},  # needed to keep screenshots from hitting the top
-    "hovermode": "closest",
-}
-
 
 DIFFEXP_TABLE_HELP = {
     "helpText": "The differential expression analysis seeks to find, for each cluster, features that are more highly expressed in that cluster relative to the rest of the sample. "
@@ -117,28 +83,6 @@ INSITU_DIFFEXP_TABLE_HELP = {
     "title": "Top Features by Cluster (Log2 fold-change, p-value)",
 }
 
-TSNE_CLUSTERING_PLOT_HELP = {
-    "data": [
-        [
-            "",
-            [
-                "(left) Shown here are the total UMI counts for each cell-barcode. "
-                "Cells with greater UMI counts likely have higher RNA content than cells with fewer UMI counts. "
-                "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
-                "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
-                "The display is limited to a random subset of cells.",
-                "(right) These are the assignments of each cell-barcode to clusters by an automated clustering algorithm. "
-                "The clustering groups together cells that have similar expression profiles. "
-                "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
-                "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
-                "The display is limited to a random subset of cells. "
-                "Please use Loupe Browser to view the entire dataset.",
-            ],
-        ]
-    ],
-    "title": "t-SNE Projection",
-}
-
 SPATIAL_TSNE_CLUSTERING_PLOT_HELP = {
     "data": [
         [
@@ -150,7 +94,7 @@ SPATIAL_TSNE_CLUSTERING_PLOT_HELP = {
                 "Only spots under tissue are used in the clustering algorithm.",
                 "(right) Spots are colored by clustering assignment and shown in t-SNE space. "
                 "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
-                "In this space, pairs of spots that are close to each other have more similar gene expression profiles than spots that are distant from each other. "
+                "In this space, pairs of spots that are close to each other have more similar gene expression profiles than spots that are distant from each other. ",
                 # "The display is limited to a random subset of spots.", # TODO: We should set a max # of cells in insitu and subsample if necessary
             ],
         ]
@@ -169,7 +113,7 @@ INSITU_TSNE_CLUSTERING_PLOT_HELP = {
                 "Only cells with a Nucleus detected in the DAPI stain are used in the clustering algorithm.",
                 "(right) Cells are colored by clustering assignment and shown in t-SNE space. "
                 "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
-                "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
+                "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. ",
                 # "The display is limited to a random subset of spots.", # TODO: We should set a max # of cells in insitu and subsample if necessary
             ],
         ]
@@ -180,12 +124,82 @@ INSITU_TSNE_CLUSTERING_PLOT_HELP = {
 UMI_TSNE_PLOT = "umi_tsne_plot"
 
 
-def diffexp_table(diffexp, clustering, analysis: SingleGenomeAnalysis):
-    """Show diffexp table for the given clustering."""
-    # pylint: disable=too-many-locals,invalid-name
-    n_clusters: int = clustering.clusters.max()
+def projection_clustering_plot_help(projection: Projection):
+    return {
+        "data": [
+            [
+                "",
+                [
+                    "(left) Shown here are the total UMI counts for each cell-barcode. "
+                    "Cells with greater UMI counts likely have higher RNA content than cells with fewer UMI counts. "
+                    f"The axes correspond to the 2-dimensional embedding produced by the {PROJECTION_TITLE[projection]} algorithm. "
+                    "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
+                    "The display is limited to a random subset of cells.",
+                    "(right) These are the assignments of each cell-barcode to clusters by an automated clustering algorithm. "
+                    "The clustering groups together cells that have similar expression profiles. "
+                    f"The axes correspond to the 2-dimensional embedding produced by the {PROJECTION_TITLE[projection]} algorithm. "
+                    "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
+                    "The display is limited to a random subset of cells. "
+                    "Please use Loupe Browser to view the entire dataset.",
+                ],
+            ]
+        ],
+        "title": f"{PROJECTION_TITLE[projection]} Projection",
+    }
 
+
+def projection_layout_config(projection: Projection):
+    return {
+        "xaxis": {
+            "type": "linear",
+            "title": f"{PROJECTION_TITLE[projection]}1",
+            "showline": False,
+            "zeroline": True,
+            "fixedrange": False,
+        },
+        "yaxis": {
+            "type": "linear",
+            "title": f"{PROJECTION_TITLE[projection]}2",
+            "showline": False,
+            "zeroline": True,
+            "fixedrange": False,
+        },
+        "margin": {"t": 30},  # needed to keep screenshots from hitting the top
+        "hovermode": "closest",
+    }
+
+
+def diffexp_table_from_analysis(
+    diffexp,
+    clustering,
+    analysis: SingleGenomeAnalysis,
+):
+    """Show diffexp table for the given clustering."""
+    if not analysis:
+        raise ValueError("A analysis object must be provided.")
+    if not clustering:
+        raise ValueError("A clustering must be provided.")
+
+    n_clusters: int = clustering.clusters.max()
+    cluster_names = [f"Cluster {i + 1}" for i in range(n_clusters)]
+    diffexp_with_features = DifferentialExpressionWithFeatures.from_cmatrix_and_diffexp(
+        cmatrix=analysis.matrix, diffexp=diffexp
+    )
+    return diffexp_table(diffexp_with_features=diffexp_with_features, cluster_names=cluster_names)
+
+
+def diffexp_table(
+    diffexp_with_features: DifferentialExpressionWithFeatures, cluster_names
+):  # pylint: disable=too-many-locals
+    """Show diffexp table for the given clustering."""
     # Limit the number of entries in the DE table
+    diffexp = diffexp_with_features.diffexp
+    feature_id_to_name = dict(
+        zip(diffexp_with_features.feature_ids, diffexp_with_features.feature_names)
+    )
+    feature_id_to_int = {x: i for i, x in enumerate(diffexp_with_features.feature_ids)}
+
+    n_clusters = len(cluster_names)
     n_genes = int(np.floor(float(ws_gex_constants.MAX_DE_TABLE_ENTRIES) / (n_clusters**2)))
     if n_genes < 1:
         n_genes = 1
@@ -204,8 +218,7 @@ def diffexp_table(diffexp, clustering, analysis: SingleGenomeAnalysis):
 
     # Get the union of top DE genes
     top_genes = set()
-    for i in range(n_clusters):
-        # Filter genes by mean count and sort by log2 fold-change, descending
+    for i, cluster_name in enumerate(cluster_names):
         means = diffexp.data[:, 0 + 3 * i]
         log2fcs = diffexp.data[:, 1 + 3 * i]
 
@@ -213,11 +226,11 @@ def diffexp_table(diffexp, clustering, analysis: SingleGenomeAnalysis):
         top_gene_indices = keep_indices[log2fcs[keep_indices].argsort()[::-1]][:n_genes]
 
         for j in top_gene_indices:
-            top_genes.add(analysis.matrix.int_to_feature_id(j))
+            top_genes.add(diffexp_with_features.feature_ids[j])
 
         columns.append(
             {
-                "Header": f"Cluster {i + 1}",
+                "Header": cluster_name,
                 "columns": [
                     {
                         "Header": "L2FC",
@@ -235,8 +248,8 @@ def diffexp_table(diffexp, clustering, analysis: SingleGenomeAnalysis):
 
     table = []
     for gene_id in top_genes:
-        i = analysis.matrix.feature_id_to_int(gene_id)
-        gene_name = analysis.matrix.feature_id_to_name(gene_id)
+        i = feature_id_to_int[gene_id]
+        gene_name = feature_id_to_name[gene_id]
 
         row = {"feature": {"fn": gene_name, "id": gene_id}}
 
@@ -246,8 +259,8 @@ def diffexp_table(diffexp, clustering, analysis: SingleGenomeAnalysis):
 
             greyed = bool(log2fc <= 0 or adj_p_value >= ws_gex_constants.PVALUE_DEEMPHASIS_CUTOFF)
 
-            cn = f"c{j + 1}"
-            row[cn] = DifferentialExpressionTableValue(adj_p_value, log2fc, greyed)
+            cluster_num = f"c{j + 1}"
+            row[cluster_num] = DifferentialExpressionTableValue(adj_p_value, log2fc, greyed)
 
         table.append(row)
 
@@ -282,12 +295,12 @@ def _get_unit_and_plt_type(is_spatial: bool = False, is_insitu: bool = False):
 
 def analysis_by_clustering_helper(
     analysis: SingleGenomeAnalysis,
+    projection: Projection,
     spatial: bool = False,
     insitu: bool = False,
     library_type: str = rna_library.GENE_EXPRESSION_LIBRARY_TYPE,
     projection_marker_opacity: float = 0.9,
     projection_marker_size: float = 4,
-    projection: str = TSNE_NAME,
     downsample_mask: np.ndarray | None = None,
 ):
     """Constructs a ClusteringSelector object from a SingleGenomeAnalyis.
@@ -302,8 +315,8 @@ def analysis_by_clustering_helper(
             Defaults to 0.9.
         projection_marker_size (float, optional): plotting marker size.
             Defaults to 4.
-        projection (str, optional): Which manifold projection to use in
-            plotting: 'tsne' or 'umap'. Defaults to 'tsne'.
+        projection (Projection): Which manifold projection to use in
+            plotting: 'tsne' or 'umap'.
         downsample_mask (Optional[np.ndarray], optional): downsample points.
             Defaults to None.
 
@@ -317,7 +330,7 @@ def analysis_by_clustering_helper(
     assert projection in (TSNE_NAME, UMAP_NAME)
 
     # pylint: disable=too-many-function-args,too-many-locals
-    key = get_tsne_key(library_type, 2)
+    key = get_projection_key(library_type, 2)
 
     unit, plt_type = _get_unit_and_plt_type(spatial, insitu)
 
@@ -325,17 +338,13 @@ def analysis_by_clustering_helper(
         if key not in analysis.tsne:
             return None
         proj_coords = analysis.get_tsne(key=key).transformed_tsne_matrix
-        layout = deepcopy(TSNE_LAYOUT_CONFIG)
-        layout["title"] = f"t-SNE Projection of {unit} by Clustering"
     elif projection == UMAP_NAME:
         if key not in analysis.umap:
             return None
         proj_coords = analysis.get_umap(key=key).transformed_umap_matrix
-        layout = deepcopy(UMAP_LAYOUT_CONFIG)
-        layout["title"] = f"UMAP Projection of {unit} by Clustering"
-    else:
-        raise NotImplementedError("projection must be 'tsne' or 'umap'")
 
+    layout = projection_layout_config(projection=projection).copy()
+    layout["title"] = f"{PROJECTION_TITLE[projection]} Projection of {unit} by Clustering"
     layout["hover_mode"] = "closest"
 
     if downsample_mask is not None:
@@ -364,7 +373,7 @@ def analysis_by_clustering_helper(
         diftblclust = ClusteringData(
             key=clustering_key,
             clustering=clustering,
-            data=diffexp_table(
+            data=diffexp_table_from_analysis(
                 analysis.differential_expression[clustering_key], clustering, analysis
             ),
         )
@@ -387,16 +396,23 @@ def analysis_by_clustering_helper(
             SPATIAL_TSNE_CLUSTERING_PLOT_HELP, SPATIAL_DIFFEXP_TABLE_HELP
         )
     else:
-        clust_select = ClusteringSelector(TSNE_CLUSTERING_PLOT_HELP, DIFFEXP_TABLE_HELP)
+        clust_select = ClusteringSelector(
+            projection_clustering_plot_help(projection=projection), DIFFEXP_TABLE_HELP
+        )
+
     clust_select.right_plots = proj_data
     clust_select.tables = diff_exp_tables
     return clust_select
 
 
 def analysis_by_clustering(
-    sample_data, spatial=False, library_type=rna_library.GENE_EXPRESSION_LIBRARY_TYPE
+    sample_data,
+    spatial=False,
+    library_type=rna_library.GENE_EXPRESSION_LIBRARY_TYPE,
+    *,
+    projection: Projection,
 ):
-    """Get the tSNE (colored by clustering) and diffexp table for each clustering."""
+    """Get the tSNE/UMAP (colored by clustering) and diffexp table for each clustering."""
     if sample_data is None:
         return None
 
@@ -405,30 +421,51 @@ def analysis_by_clustering(
         return None
     return analysis_by_clustering_helper(
         analysis,
+        projection=projection,
         spatial=spatial,
         library_type=library_type,
-        projection_marker_size=3
-        if analysis.matrix.bcs_dim > ws_gex_constants.MAX_WEBSHIM_BCS_DIM
-        else 4,
+        projection_marker_size=(
+            3 if analysis.matrix.bcs_dim > ws_gex_constants.MAX_WEBSHIM_BCS_DIM else 4
+        ),
     )
 
 
-def umi_on_tsne_helper(analysis: SingleGenomeAnalysis, spatial: bool = False, library_type=None):
-    """Get the tSNE projections for a given library adn retun the left-side plot as json."""
+def umi_on_projection_helper(
+    analysis: SingleGenomeAnalysis,
+    spatial: bool = False,
+    library_type=None,
+    tag_type=None,
+    *,
+    projection: Projection,
+):
+    """Get the t-SNE/UMAP projections for a given library and retun the left-side plot as json."""
     if library_type is None:
-        proj_coords = analysis.get_tsne().transformed_tsne_matrix
+
+        if projection == TSNE_NAME:
+            proj_coords = analysis.get_tsne().transformed_tsne_matrix
+        else:
+            proj_coords = analysis.get_umap().transformed_umap_matrix
         reads_per_bc = analysis.matrix.get_counts_per_bc()
     else:
-        key = get_tsne_key(library_type, 2)
-        if key not in analysis.tsne:
-            return None
-        proj_coords = analysis.get_tsne(key=key).transformed_tsne_matrix
-        matrix = analysis.matrix.select_features_by_type(library_type)
-        reads_per_bc = matrix.get_counts_per_bc()
+        key = get_projection_key(library_type, 2)
+        if projection == TSNE_NAME:
+            if key not in analysis.tsne:
+                return None
+            proj_coords = analysis.get_tsne(key=key).transformed_tsne_matrix
+        else:
+            assert projection == UMAP_NAME
+            if key not in analysis.umap:
+                return None
+            proj_coords = analysis.get_umap(key=key).transformed_umap_matrix
+        if tag_type is None:
+            matrix = analysis.matrix.select_features_by_type(library_type)
+            reads_per_bc = matrix.get_counts_per_bc()
+        else:
+            matrix = analysis.matrix.select_features_by_type_and_tag(library_type, tag_type)
+            reads_per_bc = matrix.get_counts_per_bc()
 
     color = get_umi_color(reads_per_bc)
     unit, plt_type = _get_unit_and_plt_type(spatial)
-    title = f"t-SNE Projection of {unit} Colored by UMI Counts"
     data = [
         {
             "name": unit,
@@ -447,16 +484,15 @@ def umi_on_tsne_helper(analysis: SingleGenomeAnalysis, spatial: bool = False, li
             "text": [f"{reads:,d}" for reads in reads_per_bc],
         }
     ]
-
     # Note: the help text has been included in tsne_cluster plot
-    layout = TSNE_LAYOUT_CONFIG.copy()
-    layout["title"] = title
-    umi_tsne_plot = {
+    layout = projection_layout_config(projection=projection).copy()
+    layout["title"] = f"{PROJECTION_TITLE[projection]} Projection of {unit} Colored by UMI Counts"
+    umi_projection_plot = {
         "config": pltly.PLOT_CONFIG,
         "layout": layout,
         "data": data,
     }
-    return umi_tsne_plot
+    return umi_projection_plot
 
 
 def get_umi_color(umi_per_bc):
@@ -468,60 +504,84 @@ def get_umi_color(umi_per_bc):
     return color
 
 
-def umi_on_tsne_plot(
-    sample_data, spatial=False, library_type=rna_library.GENE_EXPRESSION_LIBRARY_TYPE
+def umi_on_projection_plot(
+    sample_data,
+    *,
+    spatial,
+    library_type,
+    tag_type,
+    projection: Projection,
 ):
     """UMI count on tSNE plot."""
     if sample_data is None:
         return None
 
     analysis = sample_data.get_analysis(SingleGenomeAnalysis)
+
     if analysis is None:
         return None
 
-    return umi_on_tsne_helper(analysis, spatial=spatial, library_type=library_type)
+    return umi_on_projection_helper(
+        analysis,
+        spatial=spatial,
+        library_type=library_type,
+        tag_type=tag_type,
+        projection=projection,
+    )
 
 
 ########################### Only used in multi stages #######################################
-def tsne_diffexp_plots_from_path(analysis_dir, library_type=None):
+def projection_diffexp_plots_from_path(analysis_dir, *, projection: Projection, library_type=None):
     """Given the base analysis directory for a single genome analysis h5 file,.
 
-    Get the tSNEs (left-right plots colored by clustering and umi counts)
+    Get the tSNE/UMAPs (left-right plots colored by clustering and umi counts)
     and diffexp table for each clustering
     """
     if analysis_dir is None:
         return None
 
-    analysis = SingleGenomeAnalysis.load_default_format(analysis_dir, "pca")
+    analysis = SingleGenomeAnalysis.load_default_format(
+        analysis_dir, method="pca", projections=(projection,)
+    )
 
     if analysis is None:
         return None
 
     # right (colored by clustering) tsne plot and gene expression table
-    plots = analysis_by_clustering_helper(analysis, spatial=False, library_type=library_type)
+    plots = analysis_by_clustering_helper(
+        analysis, projection=projection, spatial=False, library_type=library_type
+    )
 
     # left (colored by umi count) tsne plot
     if plots:
-        left_plots = umi_on_tsne_helper(analysis, spatial=False, library_type=library_type)
+        left_plots = umi_on_projection_helper(
+            analysis, spatial=False, library_type=library_type, projection=projection
+        )
         if left_plots:
             plots.left_plots = left_plots
 
     return plots
 
 
-def umi_on_tsne_from_path(analysis_dir, library_type=None):
+def umi_on_projection_from_path(
+    analysis_dir, projection: Projection, library_type=None, tag_type=None
+):
     """Given the base analysis directory for a single genome analysis h5,.
 
-    Get the tSNE colored by umi counts, optionally filtered for a specific library type
+    Get the t-SNE/UMAP colored by umi counts, optionally filtered for a specific library type
     """
     # pylint: disable=missing-function-docstring
     if analysis_dir is None:
         return None
 
-    analysis = SingleGenomeAnalysis.load_default_format(analysis_dir, "pca")
+    analysis = SingleGenomeAnalysis.load_default_format(
+        analysis_dir, method="pca", projections=(projection,)
+    )
 
     if analysis is None:
         return None
 
     # left (colored by umi count) tsne plot
-    return umi_on_tsne_helper(analysis, spatial=False, library_type=library_type)
+    return umi_on_projection_helper(
+        analysis, spatial=False, library_type=library_type, tag_type=tag_type, projection=projection
+    )

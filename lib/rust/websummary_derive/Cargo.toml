@@ -1,15 +1,20 @@
 [dependencies]
-heck = '0.4'
-proc-macro2 = '1'
-quote = '1'
-
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.cr_types]
 path = '../cr_types'
 
+[dependencies.heck]
+workspace = true
+
 [dependencies.itertools]
+workspace = true
+
+[dependencies.proc-macro2]
+workspace = true
+
+[dependencies.quote]
 workspace = true
 
 [dependencies.serde]
@@ -17,7 +22,7 @@ workspace = true
 
 [dependencies.syn]
 features = ['full']
-version = '2'
+workspace = true
 
 [dependencies.toml]
 workspace = true

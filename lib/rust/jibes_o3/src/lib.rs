@@ -371,7 +371,7 @@ impl JibesEMO3 {
             counts: cnt_data,
             data: Some(data),
             model: model.clone(),
-            LL: std::f64::NEG_INFINITY,
+            LL: f64::NEG_INFINITY,
             converged: false,
             iterations: 0,
             posterior: Array::zeros((n, z)),
@@ -442,7 +442,7 @@ impl JibesEMO3 {
     fn one_EM_step(&mut self) -> f64 {
         // Perform one step of the EM algorithm.
         // :returns The current LL of the model.
-        if self.LL == std::f64::NEG_INFINITY {
+        if self.LL == f64::NEG_INFINITY {
             // initialize
             self._calculate_posterior_by_state();
         }
@@ -479,7 +479,7 @@ impl JibesEMO3 {
                 if rep > max_reps {
                     break;
                 }
-                if !(last_ll == std::f64::NEG_INFINITY)
+                if !(last_ll == f64::NEG_INFINITY)
                     & ((abs_change < abs_tol) | (rel_change < rel_tol))
                 {
                     println!("EM algorithm has converged.");
@@ -668,7 +668,7 @@ mod tests {
             data: None,
             estimated_cells: -2.0,
             model,
-            LL: std::f64::NEG_INFINITY,
+            LL: f64::NEG_INFINITY,
             converged: false,
             iterations: 0,
             posterior,

@@ -54,7 +54,7 @@ stage MULTI_WRITE_PER_SAMPLE_MATRICES(
 
 
 def split(args):
-    mem_gib = 3 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.5)
+    mem_gib = 4 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.5)
     return {
         "chunks": [
             {
@@ -64,7 +64,7 @@ def split(args):
             for sample_id in MultiGraph.from_path(args.multi_graph).sample_ids()
         ],
         "join": {
-            "__mem_gb": 3,
+            "__mem_gb": 1,
         },
     }
 
@@ -139,7 +139,13 @@ def main(args, outs):  # pylint: disable=too-many-locals
         has_header=False,
     )
 
-    if args.aggregate_barcodes is not None:
+    multi_graph = MultiGraph.from_path(args.multi_graph)
+
+    if (
+        args.aggregate_barcodes is not None
+        and not multi_graph.is_cmo_multiplexed()
+        and not multi_graph.is_hashtag_multiplexed()
+    ):
         sample_aggregate_barcodes_csv = martian.make_path(
             f"{args.sample}_aggregate_barcodes.csv"
         ).decode("utf8")

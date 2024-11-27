@@ -34,17 +34,18 @@ struct AssignTagsOuts(
     pickle             tag_assigner_pickle           "tag_assigner_pickle"                                                                                            "tag_assigner_pickle.pickle",
     map<json>          sample_assignment_metrics     "Per-sample sample assignment summary metrics"                                                                   "sample_assignment_metrics.json",
     json               gem_well_inferred_throughputs "Gem well inferred throughput"                                                                                   "gem_well_inferred_throughputs.json",
-    bool               multiplexing_is_not_cmo,
+    string             multiplexing_method,
     bool               output_per_sample_raw_matrix,
 )
 
 stage MULTIPLEXING_METHOD(
-    in  json multi_graph,
-    out bool multiplexing_is_not_rtl,
-    out bool multiplexing_is_not_cmo,
-    out bool multiplexing_is_not_oh,
-    out bool output_per_sample_raw_matrix,
-    src py   "../rna/stages/multi/multiplexing_method",
+    in  json   multi_graph,
+    out bool   multiplexing_is_not_rtl,
+    out bool   multiplexing_is_not_cmo_or_hashtag,
+    out bool   multiplexing_is_not_oh,
+    out bool   output_per_sample_raw_matrix,
+    out string multiplexing_method,
+    src py     "../rna/stages/multi/multiplexing_method",
 ) using (
     mem_gb   = 1,
     threads  = 1,
@@ -55,6 +56,7 @@ stage CALL_TAGS_MARGINAL(
     in  csv    filtered_barcodes,
     in  h5     filtered_feature_counts_matrix,
     in  string throughput,
+    in  string multiplexing_method,
     in  string library_type,
     out csv    marginal_tag_calls_per_cell,
     out csv    marginal_tag_frequencies,
@@ -71,6 +73,7 @@ stage CALL_TAGS_JIBES(
     in  h5     molecule_info,
     in  string throughput,
     in  string library_type,
+    in  string multiplexing_method,
     in  float  min_assignment_confidence,
     out json   jibes_parameters,
     out csv    jibes_model_summary,
@@ -111,13 +114,14 @@ stage DETERMINE_SAMPLE_ASSIGNMENTS(
 )
 
 stage COMPUTE_EXTRA_MULTIPLEXING_METRICS(
-    in  h5   molecule_info,
-    in  h5   filtered_feature_counts_matrix,
-    in  json multi_graph,
-    in  json sample_cell_barcodes,
-    in  json non_singlet_barcodes,
-    out json summary,
-    src py   "stages/multi/compute_extra_multiplexing_metrics",
+    in  h5     molecule_info,
+    in  h5     filtered_feature_counts_matrix,
+    in  json   multi_graph,
+    in  json   sample_cell_barcodes,
+    in  json   non_singlet_barcodes,
+    in  string multiplexing_method,
+    out json   summary,
+    src py     "stages/multi/compute_extra_multiplexing_metrics",
 ) split (
 ) using (
     volatile = strict,

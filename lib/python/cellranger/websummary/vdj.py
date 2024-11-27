@@ -353,7 +353,7 @@ def vdj_clonotype_table(sample_data):
             clonotypes in the analysis tab
     """
     assert sample_data.vdj_clonotype_summary is not None
-    table_heading = ["Clonotype ID", "CDR3s", "Frequency", "Proportion"]
+    table_heading = ["Clonotype ID", "CDR3s", "Number of cells", "Fraction of cells"]
     table_help = {
         "title": "Top 10 Clonotype CDR3 Sequences",
         "data": [
@@ -362,8 +362,8 @@ def vdj_clonotype_table(sample_data):
                 [
                     'This table lists the CDR3 sequence of the first exact subclonotype of the 10 \
                     most abundant clonotypes in this sample. For each of the top 10 clonotypes, \
-                    the constant region, number of cells (frequency), and what percentage of the \
-                    dataset those cells occupy (proportion) are also displayed. For the full table \
+                    the constant region, number of cells, and what percentage of the \
+                    dataset those cells occupy (Fraction of cells) are also displayed. For the full table \
                     and more details, please refer to the "clonotypes.csv" and \
                     "consensus_annotations.csv" files produced by the pipeline.',
                 ],

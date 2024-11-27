@@ -59,15 +59,16 @@ def main():
         filenames = download_files(args.species, queries)
 
     except urllib.error.URLError as ex:
-        print("Failed to download from IMGT. %s\n" % ex)
+        print(f"Failed to download from IMGT. {ex}\n")
         print("Failed to download all files from IMGT. Exiting.")
         sys.exit(1)
 
     fid = 0
     # Write IMGT fasta to a file
-    with open(args.genome + "-imgt-raw.fasta", "w") as raw_imgt_fa, open(
-        args.genome + "-mkvdjref-input.fasta", "w"
-    ) as mkvdjref_fa:
+    with (
+        open(args.genome + "-imgt-raw.fasta", "w") as raw_imgt_fa,
+        open(args.genome + "-mkvdjref-input.fasta", "w") as mkvdjref_fa,
+    ):
         for filename in filenames:
             with open(filename) as htmlfile:
                 fa_txt = _GetLastPreTag()
@@ -165,7 +166,7 @@ def download_files(species, queries):
         filename = "_".join((species.replace(" ", ""), number, gene)) + ".html"
         filenames.append(filename)
         if os.path.exists(filename):
-            print("Already downloaded %s, skipping" % filename)
+            print(f"Already downloaded {filename}, skipping")
             continue
 
         # Note: IMGT is sensitive to the param order
@@ -226,7 +227,7 @@ def make_feature(record, fid):
 
     region_type = get_region_type(row[4])
     if region_type is None:
-        print("Warning: Unrecognized IMGT region type: %s; skipping..." % row[4])
+        print(f"Warning: Unrecognized IMGT region type: {row[4]}; skipping...")
         return None
 
     chain_type = infer_imgt_vdj_chain_type(row[1])

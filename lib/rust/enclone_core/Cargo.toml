@@ -1,0 +1,44 @@
+[dependencies]
+[dependencies.bio_edit]
+path = '../bio_edit'
+
+[dependencies.debruijn]
+workspace = true
+
+[dependencies.enclone_proto]
+path = '../enclone_proto'
+
+[dependencies.qd]
+workspace = true
+
+[dependencies.rayon]
+workspace = true
+
+[dependencies.serde]
+features = []
+workspace = true
+
+[dependencies.stats_utils]
+path = '../stats_utils'
+
+[dependencies.string_utils]
+path = '../string_utils'
+
+[dependencies.vdj_ann]
+path = '../vdj_ann'
+
+[dependencies.vdj_types]
+path = '../vdj_types'
+
+[dependencies.vector_utils]
+path = '../vector_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'enclone_core'
+publish = false
+version = '0.1.0'

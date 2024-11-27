@@ -2,6 +2,7 @@
 
 # gazelle:repo bazel_gazelle
 load("@bazel_gazelle//:deps.bzl", "go_repository")
+load("@tenx_cloud_cli//:deps.bzl", "cloud_cli_dependencies")
 load("@tenx_loupekit//:deps.bzl", "loupekit_dependencies")
 
 def load_go_deps():
@@ -68,6 +69,8 @@ def load_go_deps():
 
     loupekit_dependencies()
 
+    cloud_cli_dependencies()
+
     _maybe_go_repository(
         name = "com_github_stretchr_testify",
         commit = "8019298d9fa5a04fc2ad10ae03349df3483096a6",
@@ -78,6 +81,13 @@ def load_go_deps():
         name = "in_gopkg_stretchr_testify_v1",
         commit = "f35b8ab0b5a2cef36673838d662e249dd9c94686",
         importpath = "gopkg.in/stretchr/testify.v1",
+    )
+
+    _maybe_go_repository(
+        name = "in_gopkg_yaml_v3",
+        sum = "h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=",
+        version = "v3.0.1",
+        importpath = "gopkg.in/yaml.v3",
     )
 
 def _maybe_go_repository(name, **kwargs):

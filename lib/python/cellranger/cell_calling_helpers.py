@@ -172,16 +172,16 @@ def validate_cell_calling_args(
     # this will throw a ValueError if it's not a recognized error
     method = get_filter_method_from_string(method_name)
 
-    if method == FilterMethod.ORDMAG or method == FilterMethod.ORDMAG_NONAMBIENT:
+    if method in (FilterMethod.ORDMAG, FilterMethod.ORDMAG_NONAMBIENT):
         pass
 
     elif method == FilterMethod.MANUAL:
         if cell_barcodes is None:
-            throw_err("'cell_barcodes' must be specified when method is '%s'" % method_name)
+            throw_err(f"'cell_barcodes' must be specified when method is '{method_name}'")
 
     elif method == FilterMethod.TOP_N_BARCODES:
         if force_cells is None:
-            throw_err("'force_cells' must be specified when method is '%s'" % method_name)
+            throw_err(f"'force_cells' must be specified when method is '{method_name}'")
 
 
 ###############################################################################
@@ -512,7 +512,7 @@ def _call_cells_by_gem_group(
     # counts per barcode
     gg_bc_counts = gg_matrix.get_counts_per_bc()
 
-    if method == FilterMethod.ORDMAG or method == FilterMethod.ORDMAG_NONAMBIENT:
+    if method in (FilterMethod.ORDMAG, FilterMethod.ORDMAG_NONAMBIENT):
         gg_filtered_indices, gg_filtered_metrics, msg = filter_cellular_barcodes_ordmag(
             gg_bc_counts,
             gg_recovered_cells,
@@ -563,7 +563,7 @@ def _call_cells_by_gem_group(
         gg_filtered_bcs = gg_matrix.ints_to_bcs(gg_filtered_indices)
 
     else:
-        martian.exit("Unsupported BC filtering method: %s" % method)
+        martian.exit(f"Unsupported BC filtering method: {method}")
         raise SystemExit()
 
     if msg is not None:
@@ -579,6 +579,7 @@ def call_additional_cells(
     filtered_bcs_groups,
     feature_types,
     chemistry_description,
+    probe_barcode_sample_id,
     *,
     num_probe_barcodes,
     emptydrops_minimum_umis: dict[tuple[str, int], int] | int,
@@ -600,21 +601,24 @@ def call_additional_cells(
     pvalue_adj_arrays = []
     nonambient_arrays = []
     genome_call_arrays = []
+    sample_id_arrays = []
 
     emptydrops_threshold = dict()
     matrix = matrix.select_features_by_types(feature_types)
 
-    # Do it by gem group and genome
-    for genome in genomes:
+    for gg in unique_gem_groups:
+        # Do it by gem group and genome
+        gg_matrix = matrix.select_barcodes_by_gem_group(gg)
+        # Get all initial cell calls for this gem group.
+        gg_bcs = set()
+        for group, bcs in filtered_bcs_groups.items():
+            if group[0] == gg:
+                gg_bcs.update(bcs)
+        gg_bcs = list(sorted(gg_bcs))
+
         # All sub-selection of the matrix should happen here & be driven by genome & feature_types
-        genome_matrix = matrix.select_features_by_genome(genome)
-        for gg in unique_gem_groups:
-            gg_matrix = genome_matrix.select_barcodes_by_gem_group(gg)
-            gg_bcs = set()
-            for group, bcs in filtered_bcs_groups.items():
-                if group[0] == gg:
-                    gg_bcs.update(bcs)
-            gg_bcs = list(sorted(gg_bcs))
+        for genome in genomes:
+            genome_matrix = gg_matrix.select_features_by_genome(genome)
 
             if isinstance(emptydrops_minimum_umis, int):
                 ed_minimum_umis = emptydrops_minimum_umis
@@ -622,7 +626,7 @@ def call_additional_cells(
                 ed_minimum_umis = emptydrops_minimum_umis[(genome, gg)]
 
             result = cr_cell.find_nonambient_barcodes(
-                gg_matrix,
+                genome_matrix,
                 gg_bcs,
                 chemistry_description,
                 num_probe_barcodes,
@@ -630,19 +634,21 @@ def call_additional_cells(
                 num_sims=num_sims,
             )
             if result is None:
-                print("Failed at attempt to call non-ambient barcodes in GEM well %s" % gg)
+                print(f"Failed at attempt to call non-ambient barcodes in GEM well {gg}")
                 continue
 
             umis_per_bc = gg_matrix.get_counts_per_bc()
 
             emptydrops_threshold[(genome, gg)] = result.emptydrops_minimum_umis
-            eval_bcs_arrays.append(np.array(gg_matrix.bcs)[result.eval_bcs])
+            eval_bcs = np.array([x.decode() for x in gg_matrix.bcs[result.eval_bcs]])
+            eval_bcs_arrays.append(eval_bcs)
             umis_per_bc_arrays.append(umis_per_bc[result.eval_bcs])
             loglk_arrays.append(result.log_likelihood)
             pvalue_arrays.append(result.pvalues)
             pvalue_adj_arrays.append(result.pvalues_adj)
             nonambient_arrays.append(result.is_nonambient)
             genome_call_arrays.append([genome] * len(result.eval_bcs))  # allow doublet calling
+            sample_id_arrays.append([probe_barcode_sample_id] * len(result.eval_bcs))
 
             # Update the lists of cell-associated barcodes
             eval_bc_strs = np.array(gg_matrix.bcs)[result.eval_bcs]
@@ -659,6 +665,7 @@ def call_additional_cells(
                     ("pvalue_adj", np.concatenate(pvalue_adj_arrays)),
                     ("nonambient", np.concatenate(nonambient_arrays)),
                     ("genome", np.concatenate(genome_call_arrays)),
+                    ("sample", np.concatenate(sample_id_arrays)),
                 ]
             )
         )
@@ -824,7 +831,7 @@ def combine_initial_metrics(
         prefix = genome + "_" if genome else ""
         summary.update({(f"{prefix}{key}"): summary for key, summary in txome_summary.items()})
 
-        summary["%sfiltered_bcs" % prefix] = len(genome_filtered_bcs.get(genome, {}))
+        summary[f"{prefix}filtered_bcs"] = len(genome_filtered_bcs.get(genome, {}))
 
     return summary
 
@@ -1015,7 +1022,7 @@ def filter_cellular_barcodes_gradient(
     nonzero_bc_counts = np.array(sorted(nonzero_bc_counts)[::-1])  # sort in descending order
     if len(nonzero_bc_counts) == 0:
         msg = "WARNING: All barcodes do not have enough reads for gradient, allowing no bcs through"
-        return [], metrics, msg
+        return np.array([]), metrics, msg
 
     baseline_bc_idx = int(np.round(float(recovered_cells) * (1 - ORDMAG_RECOVERED_CELLS_QUANTILE)))
     baseline_bc_idx = min(baseline_bc_idx, len(nonzero_bc_counts) - 1)
@@ -1205,7 +1212,7 @@ def get_global_minimum_umis(global_minimum_umis: CellCallingParam, sample=None) 
 
 
 def get_max_mito_percent(
-    max_mito_percent: (CellCallingParam | None), sample: (str | None) = None
+    max_mito_percent: CellCallingParam | None, sample: str | None = None
 ) -> float:
     """Extracts a value for maximum mitochondrial percentage from the CellCallingParam struct."""
     if max_mito_percent is not None:

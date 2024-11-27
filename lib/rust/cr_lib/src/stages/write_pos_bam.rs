@@ -108,7 +108,7 @@ pub struct WritePosBam;
 
 #[derive(Deserialize, Clone, MartianStruct)]
 pub struct StageInputs {
-    pub bam_header: PathBuf,
+    pub bam_header: Option<PathBuf>,
     pub alignments: Vec<AlignShardFile>,
     pub read_chunks: Vec<RnaChunk>,
     pub target_set_name: Option<String>,
@@ -155,7 +155,7 @@ fn attach_read_group_tags<'a>(
         // ID: {read_group}, SM: {sample_id}, LB: {library_id}.{gem_group}, PU: {read_group}
         record.push_tag(b"ID", read_group);
         record.push_tag(b"SM", parts[0]);
-        record.push_tag(b"LB", &format!("{}.{}", parts[1], parts[2]));
+        record.push_tag(b"LB", format!("{}.{}", parts[1], parts[2]));
         record.push_tag(b"PU", read_group);
         record.push_tag(b"PL", "ILLUMINA");
         header.push_record(&record);
@@ -282,7 +282,7 @@ impl MartianStage for WritePosBam {
 
         // Read in the header text & initialize the BAM file with it.
         let header = make_header(
-            Some(&args.bam_header),
+            args.bam_header.as_deref(),
             &args.read_chunks,
             args.target_set_name.as_deref(),
             chunk_args.write_header,
@@ -342,7 +342,7 @@ impl MartianStage for WritePosBam {
     ) -> Result<Self::StageOutputs> {
         //Determine the time of BAM index needed
         let header: Header = make_header(
-            Some(&args.bam_header),
+            args.bam_header.as_deref(),
             &args.read_chunks,
             args.target_set_name.as_deref(),
             false,
@@ -439,7 +439,7 @@ mod tests {
     fn test_fail_bam_comparison() {
         let chunk = get_test_chunk();
         let args = StageInputs {
-            bam_header: PathBuf::from("test/multi/write_bam_multi/test1/bam_header"),
+            bam_header: Some(PathBuf::from("test/multi/write_bam_multi/test1/bam_header")),
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
@@ -470,7 +470,7 @@ mod tests {
     fn test_single_sample() {
         let chunk = get_test_chunk();
         let args = StageInputs {
-            bam_header: PathBuf::from("test/multi/write_bam_multi/test1/bam_header"),
+            bam_header: Some(PathBuf::from("test/multi/write_bam_multi/test1/bam_header")),
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
@@ -503,7 +503,7 @@ mod tests {
         let chunk = get_test_chunk();
 
         let args = StageInputs {
-            bam_header: PathBuf::from("test/multi/write_bam_multi/test1/bam_header"),
+            bam_header: Some(PathBuf::from("test/multi/write_bam_multi/test1/bam_header")),
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],

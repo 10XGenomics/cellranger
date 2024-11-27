@@ -32,15 +32,14 @@ def get_input_path(oldpath: AnyStr, is_dir: bool = False) -> AnyStr:
         sys.exit(f"'{oldpath}' is not a valid string type and is an invalid path")
     path = fixpath(oldpath)
     if not os.path.exists(path):
-        sys.exit("Input file does not exist: %s" % path)
+        sys.exit(f"Input file does not exist: {path}")
     if not os.access(path, os.R_OK):
         sys.exit(f"Input file path {path} does not have read permissions")
     if is_dir:
         if not os.path.isdir(path):
-            sys.exit("Please provide a directory, not a file: %s" % path)
-    else:
-        if not os.path.isfile(path):
-            sys.exit("Please provide a file, not a directory: %s" % path)
+            sys.exit(f"Please provide a directory, not a file: {path}")
+    elif not os.path.isfile(path):
+        sys.exit(f"Please provide a file, not a directory: {path}")
     return path
 
 
@@ -61,23 +60,19 @@ def get_output_path(oldpath: AnyStr) -> AnyStr:
 
 
 @overload
-def open_maybe_gzip(filename: str | bytes, mode: Literal["r"] = "r") -> TextIO:
-    ...
+def open_maybe_gzip(filename: str | bytes, mode: Literal["r"] = "r") -> TextIO: ...
 
 
 @overload
-def open_maybe_gzip(filename: str | bytes, mode: Literal["w"] = ...) -> TextIO:
-    ...
+def open_maybe_gzip(filename: str | bytes, mode: Literal["w"] = ...) -> TextIO: ...
 
 
 @overload
-def open_maybe_gzip(filename: str | bytes, mode: Literal["rb"] = ...) -> io.BufferedReader:
-    ...
+def open_maybe_gzip(filename: str | bytes, mode: Literal["rb"] = ...) -> io.BufferedReader: ...
 
 
 @overload
-def open_maybe_gzip(filename: str | bytes, mode: Literal["wb"] = ...) -> io.BufferedReader:
-    ...
+def open_maybe_gzip(filename: str | bytes, mode: Literal["wb"] = ...) -> io.BufferedReader: ...
 
 
 def open_maybe_gzip(filename: str | bytes, mode: str = "r") -> IO[Any]:
@@ -102,7 +97,7 @@ def open_maybe_gzip(filename: str | bytes, mode: str = "r") -> IO[Any]:
         return io.BufferedWriter(raw, buffer_size=bufsize)
 
     else:
-        raise ValueError("Unsupported mode for compression: %s" % mode)
+        raise ValueError(f"Unsupported mode for compression: {mode}")
 
 
 class CRCalledProcessError(Exception):
@@ -125,7 +120,7 @@ def check_completed_process(p: subprocess.CompletedProcess, cmd: str) -> None:
         CRCalledProcessError
     """
     if p.returncode is None:
-        raise CRCalledProcessError("Process did not finish: %s ." % cmd)
+        raise CRCalledProcessError(f"Process did not finish: {cmd} .")
     elif p.returncode != 0:
         raise CRCalledProcessError("Process returned error code %d: %s ." % (p.returncode, cmd))
 
@@ -307,20 +302,18 @@ def recursive_hard_link_dict(in_files, prefixes=None):
     for k, path_or_dict in in_files.items():
         if path_or_dict is None:
             out_files[k] = None
+        elif isinstance(path_or_dict, dict):
+            out_files[k] = recursive_hard_link_dict(in_files[k], prefixes + [k])
+        elif isinstance(path_or_dict, (str)):
+            final_prefixes = prefixes + [k]
+            old_path = path_or_dict
+            new_path = martian.make_path(
+                "_".join(final_prefixes) + "_" + os.path.basename(old_path)
+            ).decode("utf8")
+            hardlink_with_fallback(old_path, new_path)
+            out_files[k] = new_path
         else:
-            if isinstance(path_or_dict, dict):
-                out_files[k] = recursive_hard_link_dict(in_files[k], prefixes + [k])
-            elif isinstance(path_or_dict, (str)):
-                final_prefixes = prefixes + [k]
-                old_path = path_or_dict
-                new_path = martian.make_path(
-                    "_".join(final_prefixes) + "_" + os.path.basename(old_path)
-                ).decode("utf8")
-                hardlink_with_fallback(old_path, new_path)
-                out_files[k] = new_path
-            else:
-                raise ValueError(
-                    "Input dictionary may not contain any elements other than dict and string: %s"
-                    % path_or_dict
-                )
+            raise ValueError(
+                f"Input dictionary may not contain any elements other than dict and string: {path_or_dict}"
+            )
     return out_files

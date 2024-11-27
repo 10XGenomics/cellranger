@@ -77,7 +77,7 @@ pub struct DiffExpChunkOutputs {
 
 pub struct DiffExpStage;
 
-#[make_mro(stage_name = RUN_DIFFERENTIAL_EXPRESSION_NG, volatile = strict)]
+#[make_mro(stage_name = RUN_DIFFERENTIAL_EXPRESSION_NG, mem_gb = 2, volatile = strict)]
 impl MartianStage for DiffExpStage {
     type StageInputs = DiffExpStageInputs;
     type StageOutputs = DiffExpStageOutputs;
@@ -121,7 +121,7 @@ impl MartianStage for DiffExpStage {
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
+            .num_threads(rover.get_threads())
             .build_global()?;
         let clusterings: HashMap<_, _> =
             h5::load_clusterings(&args.clustering_h5, args.is_antibody_only)?
@@ -173,7 +173,7 @@ impl MartianStage for DiffExpStage {
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
+            .num_threads(rover.get_threads())
             .build_global()?;
         let retained = if args.is_antibody_only {
             Some(FeatureType::Barcode(FeatureBarcodeType::Antibody).to_string())

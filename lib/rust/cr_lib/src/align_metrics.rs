@@ -1,7 +1,9 @@
 use crate::aligner::BarcodeSummary;
 use anyhow::Result;
 use barcode::Barcode;
-use cr_types::probe_set::{MAPQ_HALF_MAPPED, MAPQ_SPLIT_MAPPED};
+use cr_types::probe_set::{
+    MAPQ_GAP_MAPPED_NOT_WITHIN_MAX_ERR, MAPQ_HALF_MAPPED, MAPQ_SPLIT_MAPPED,
+};
 use cr_types::rna_read::RnaRead;
 use cr_types::{GenomeName, LibraryType};
 use fxhash::FxHashMap;
@@ -410,6 +412,9 @@ pub struct PerMappingStatusMetrics {
 
     /// Split-mapped probe reads (MAPQ = 3)
     pub split_mapped: CountMetric,
+
+    /// LHS and RHS map, but the gap sequence is not within max error of expected gap(MAPQ = 5)
+    pub gap_mapped_not_within_max_error: CountMetric,
 }
 
 #[derive(Clone, Default, Metric, Serialize, Deserialize)]
@@ -464,6 +469,9 @@ impl VisitorMetrics {
         match mapq {
             MAPQ_HALF_MAPPED => metric.half_mapped.increment(),
             MAPQ_SPLIT_MAPPED => metric.split_mapped.increment(),
+            MAPQ_GAP_MAPPED_NOT_WITHIN_MAX_ERR => {
+                metric.gap_mapped_not_within_max_error.increment();
+            }
             _ => (),
         };
     }
@@ -486,6 +494,9 @@ impl VisitorMetrics {
         match mapq {
             MAPQ_HALF_MAPPED => metric.half_mapped.increment(),
             MAPQ_SPLIT_MAPPED => metric.split_mapped.increment(),
+            MAPQ_GAP_MAPPED_NOT_WITHIN_MAX_ERR => {
+                metric.gap_mapped_not_within_max_error.increment();
+            }
             _ => (),
         }
     }
@@ -697,7 +708,10 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
 
     fn visit_every_read(&mut self, read: &RnaRead) {
         self.metrics.total_reads.increment();
-        if read.barcode.is_valid_and_at_least_one_segment_corrected() {
+        if read
+            .segmented_barcode
+            .is_valid_and_at_least_one_segment_corrected()
+        {
             self.metrics.barcode_corrected_sequenced_reads.increment();
         }
     }
@@ -851,6 +865,9 @@ struct RegionMetrics {
 
     /// Split-mapped probe reads (MAPQ = 3)
     split_mapped_reads: PercentMetric,
+
+    /// LHS and RHS map, but the gap sequence is not within max error of expected gap (MAPQ = 5)
+    gap_mapped_not_within_max_error_reads: PercentMetric,
 }
 
 impl RegionMetrics {
@@ -862,6 +879,7 @@ impl RegionMetrics {
             conf_mapped_bc,
             half_mapped,
             split_mapped,
+            gap_mapped_not_within_max_error,
         }: PerMappingStatusMetrics,
     ) -> Self {
         RegionMetrics {
@@ -870,6 +888,10 @@ impl RegionMetrics {
             conf_mapped_barcoded_reads: PercentMetric::from_parts(conf_mapped_bc, total),
             half_mapped_reads: PercentMetric::from_parts(half_mapped, total),
             split_mapped_reads: PercentMetric::from_parts(split_mapped, total),
+            gap_mapped_not_within_max_error_reads: PercentMetric::from_parts(
+                gap_mapped_not_within_max_error,
+                total,
+            ),
         }
     }
 
@@ -1139,6 +1161,10 @@ mod tests {
                 expected.insert(format!("{gm}_conf_mapped_barcoded_reads_frac"), 0.0f64);
                 expected.insert(format!("{gm}_half_mapped_reads_frac"), 0.0f64);
                 expected.insert(format!("{gm}_split_mapped_reads_frac"), 0.0f64);
+                expected.insert(
+                    format!("{gm}_gap_mapped_not_within_max_error_reads_frac"),
+                    0.0f64,
+                );
             }
             for ts in TargetingStatus::iter() {
                 let tm = TargetedMapping::new(g.clone(), MappingRegion::Transcriptome, ts);
@@ -1147,6 +1173,10 @@ mod tests {
                 expected.insert(format!("{tm}_conf_mapped_barcoded_reads_frac"), 0.0f64);
                 expected.insert(format!("{tm}_half_mapped_reads_frac"), 0.0f64);
                 expected.insert(format!("{tm}_split_mapped_reads_frac"), 0.0f64);
+                expected.insert(
+                    format!("{tm}_gap_mapped_not_within_max_error_reads_frac"),
+                    0.0f64,
+                );
             }
         }
         assert_eq!(actual, expected);

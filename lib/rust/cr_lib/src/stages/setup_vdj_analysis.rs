@@ -5,7 +5,7 @@ use crate::GexMatrices;
 use anyhow::Result;
 use cr_h5::count_matrix::CountMatrixFile;
 use cr_types::reference::feature_reference::BeamMode;
-use cr_types::CellMultiplexingType;
+use cr_types::{BarcodeMultiplexingType, ReadLevel};
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -38,6 +38,8 @@ pub struct SetupVdjAnalysisStageOutputs {
     pub disable_cell_calling: bool,
     pub disable_clonotyping: bool,
     pub disable_beam: bool,
+    pub disable_asm_metrics: bool,
+    pub multiplexing_method: Option<BarcodeMultiplexingType>,
     pub beam_mode: Option<BeamMode>,
     pub filtered_matrix_h5: Option<CountMatrixFile>,
     pub raw_matrix_h5: Option<CountMatrixFile>,
@@ -46,6 +48,7 @@ pub struct SetupVdjAnalysisStageOutputs {
 
 pub struct SetupVdjAnalysis;
 
+#[derive(Eq, PartialEq)]
 pub enum VdjAnalysisType {
     /// Cellranger vdj
     LibraryLevelCount,
@@ -107,13 +110,19 @@ impl MartianMain for SetupVdjAnalysis {
             fingerprint
                 .read()?
                 .into_iter()
-                .map(|f| f.cell_multiplexing_type())
+                .map(|f| f.barcode_multiplexing_type())
                 .dedup()
                 .exactly_one()
                 .unwrap()
         } else {
             None
         };
+
+        let disable_asm_metrics = analysis_type == VdjAnalysisType::SampleLevelMulti
+            && matches!(
+                multiplexing_type,
+                Some(BarcodeMultiplexingType::CellLevel(_))
+            );
 
         let sample_level_files =
             if let Some(sample) = args.demux_sample_info.and_then(|info| info.gex_matrices) {
@@ -132,12 +141,20 @@ impl MartianMain for SetupVdjAnalysis {
             (VdjAnalysisType::LibraryLevelMulti, _) => args.lib_level_gex.hardlink(&rover)?, // Hardlink to play nice with Martian
             // cellranger multi VDJ+GEX sample-level analysis
             (VdjAnalysisType::SampleLevelMulti, None) => sample_level_files,
-            // cellranger multi OH multiplexed sample-level analysis
-            (VdjAnalysisType::SampleLevelMulti, Some(CellMultiplexingType::OH)) => {
+            // cellranger multi CMO and Hashtag multiplexed sample-level analysis
+            (VdjAnalysisType::SampleLevelMulti, Some(BarcodeMultiplexingType::CellLevel(_))) => {
                 sample_level_files
             }
-            (VdjAnalysisType::SampleLevelMulti, Some(CellMultiplexingType::CMO)) => unreachable!(),
-            (VdjAnalysisType::SampleLevelMulti, Some(CellMultiplexingType::RTL)) => unreachable!(),
+            (
+                VdjAnalysisType::SampleLevelMulti,
+                Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::OH)),
+            ) => sample_level_files,
+            (
+                VdjAnalysisType::SampleLevelMulti,
+                Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL)),
+            ) => {
+                unreachable!()
+            }
         };
 
         let receptor = match (args.receptor, args.vdj_config.denovo) {
@@ -165,6 +182,8 @@ impl MartianMain for SetupVdjAnalysis {
             filtered_matrix_h5: gex_matrices.filtered_matrix_h5,
             raw_matrix_h5: gex_matrices.raw_matrix_h5,
             filtered_barcodes: gex_matrices.filtered_barcodes,
+            disable_asm_metrics,
+            multiplexing_method: multiplexing_type,
         })
     }
 }

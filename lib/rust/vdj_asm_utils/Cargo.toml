@@ -1,19 +1,6 @@
 [dependencies]
-arrayref = '0.3'
-bio = '1'
-debruijn = '0.3'
-lazy_static = '1'
-lz4 = '1'
-num-traits = '0.2'
-petgraph = '0.6'
-rayon = '1'
-superslice = '1'
-
-[dependencies.align_tools]
-workspace = true
-
 [dependencies.amino]
-workspace = true
+path = '../amino'
 
 [dependencies.anyhow]
 workspace = true
@@ -21,31 +8,40 @@ workspace = true
 [dependencies.barcode]
 path = '../barcode'
 
-[dependencies.cr_types]
-path = '../cr_types'
+[dependencies.bio]
+workspace = true
+
+[dependencies.bio_edit]
+path = '../bio_edit'
+
+[dependencies.debruijn]
+workspace = true
 
 [dependencies.equiv]
-workspace = true
+path = '../equiv'
 
 [dependencies.graph_simple]
-workspace = true
+path = '../graph_simple'
 
 [dependencies.hyperbase]
-workspace = true
+path = '../hyperbase'
 
 [dependencies.io_utils]
-workspace = true
+path = '../io_utils'
 
 [dependencies.itertools]
 workspace = true
 
 [dependencies.kmer_lookup]
+path = '../kmer_lookup'
+
+[dependencies.lazy_static]
+workspace = true
+
+[dependencies.lz4]
 workspace = true
 
 [dependencies.martian]
-workspace = true
-
-[dependencies.martian-derive]
 workspace = true
 
 [dependencies.martian-filetypes]
@@ -55,13 +51,12 @@ workspace = true
 path = '../metric'
 
 [dependencies.ordered-float]
-features = ['serde']
-version = '3'
-
-[dependencies.perf_stats]
 workspace = true
 
 [dependencies.rand]
+workspace = true
+
+[dependencies.rayon]
 workspace = true
 
 [dependencies.rust-htslib]
@@ -74,25 +69,25 @@ workspace = true
 workspace = true
 
 [dependencies.stats_utils]
-workspace = true
+path = '../stats_utils'
 
 [dependencies.string_utils]
-workspace = true
+path = '../string_utils'
 
-[dependencies.tables]
+[dependencies.superslice]
 workspace = true
 
 [dependencies.tenkit2]
 path = '../tenkit2'
 
 [dependencies.vdj_ann]
-workspace = true
+path = '../vdj_ann'
 
 [dependencies.vdj_types]
-workspace = true
+path = '../vdj_types'
 
 [dependencies.vector_utils]
-workspace = true
+path = '../vector_utils'
 
 [lib]
 test = false

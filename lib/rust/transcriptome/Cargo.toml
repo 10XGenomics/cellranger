@@ -3,12 +3,15 @@ name = 'gtf_to_gene_index'
 test = false
 
 [dependencies]
-bio = '1'
-bio-types = '1'
 smallvec = '1'
-tempfile = '3'
 
 [dependencies.anyhow]
+workspace = true
+
+[dependencies.bio]
+workspace = true
+
+[dependencies.bio-types]
 workspace = true
 
 [dependencies.flate2]
@@ -24,8 +27,7 @@ workspace = true
 workspace = true
 
 [dependencies.ordered-float]
-features = ['serde']
-version = '3'
+workspace = true
 
 [dependencies.serde]
 workspace = true
@@ -34,6 +36,9 @@ workspace = true
 workspace = true
 
 [dependencies.statrs]
+workspace = true
+
+[dependencies.tempfile]
 workspace = true
 
 [lib]

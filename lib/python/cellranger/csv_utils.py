@@ -36,26 +36,44 @@ def _iter_file_rows(filename_bytes, filename, descriptive_name):
         has_data = False
         # First non-comment row is treated specially, because it is the header.
         first = True
-        for row in f:
-            row = row.strip()
-            if not row:
-                # Skip blank rows.  The csv reader does this anyway, but doing
-                # it here saves us the trouble of decoding from ascii.
-                continue
-            if not row.startswith("#"):
-                has_data = True
-                if first:
-                    # Remove whitespace around column headers
-                    row = ",".join(x.strip() for x in row.split(","))
-                    first = False
-                # Verify is ASCII Compatible
-                if not row.isascii():
-                    raise CSVParseException(
-                        "The {} csv file {} contains non-ascii characters.\n\nRow:\n{}".format(
-                            descriptive_name, filename, row
+        try:
+            for row in f:
+                row = row.strip()
+                if not row:
+                    # Skip blank rows.  The csv reader does this anyway, but doing
+                    # it here saves us the trouble of decoding from ascii.
+                    continue
+                if not row.startswith("#"):
+                    has_data = True
+                    if first:
+                        # Remove whitespace around column headers
+                        row = ",".join(x.strip() for x in row.split(","))
+                        first = False
+                    # Verify is ASCII Compatible
+                    if not row.isascii():
+                        raise CSVParseException(
+                            f"The {descriptive_name} csv file {filename} contains non-ascii characters.\n\nRow:\n{row}"
                         )
-                    )
-                yield row
+                    yield row
+        # We could encounter invalid unicode when decoding any row, which has
+        # some behind-the-scenes buffering. Provide an error message that
+        # attempts to provide better context, showing the surrounding ~60 characters.
+        except UnicodeDecodeError as err:
+            context_start = max(err.start - 30, 0)
+            badchar_offset = err.start - context_start
+            snippet = (
+                err.object[context_start : err.start + 30]
+                .decode("utf-8", errors="replace")
+                .replace("\r", " ")
+                .replace("\n", " ")
+            )
+            caret = (" " * badchar_offset) + "^"
+            raise CSVParseException(
+                f"The {descriptive_name} csv file {filename} has one or more invalid utf-8 characters: {err.reason}. "
+                f"The first bad character is at absolute position {err.start}.\n"
+                "This snippet shows the offending character in context:\n"
+                f"{snippet}\n{caret}"
+            ) from err
 
     if not has_data:
         raise CSVEmptyException(f"The {descriptive_name} csv file {filename} has no data.")
@@ -89,10 +107,8 @@ The following columns are required: "{}".""".format(
                     ", ".join(required_cols)
                 )
 
-            msg += """
-Please check that you have formatted the {} file correctly and included the appropriate column headers.""".format(
-                descriptive_name
-            )
+            msg += f"""
+Please check that you have formatted the {descriptive_name} file correctly and included the appropriate column headers."""
 
             raise CSVParseException(msg)
 
@@ -104,13 +120,15 @@ Please check that you have formatted the {} file correctly and included the appr
         raise CSVParseException(msg)
 
 
-def load_csv_filter_comments(filename, descriptive_name, required_cols, valid_cols=None):
+def load_csv_filter_comments(
+    filename: os.PathLike, descriptive_name, required_cols, valid_cols=None
+):
     """Returns non-comment lines from the csv files.
 
     Verifies ASCII encoding and no duplicate columns.
 
     Args:
-        filename (str): The csv file to open.
+        filename: The csv file to open.
         descriptive_name (str): The description of the file, to use in error messages.
         required_cols (sequence of str): columns which must be present.
         valid_cols (sequence of str): columns which may be present.  If provided,
@@ -122,13 +140,13 @@ def load_csv_filter_comments(filename, descriptive_name, required_cols, valid_co
     Raises:
         CSVParseException
     """
-    filename_bytes = ensure_binary(filename)
+    filename_bytes = ensure_binary(os.fspath(filename))
     if not os.path.isfile(filename_bytes):
         raise CSVParseException(f"Could not find the {descriptive_name} csv file {filename}")
 
     if not os.access(filename_bytes, os.R_OK):
-        msg = "The {} csv is not readable, please check file permissions: {}".format(
-            descriptive_name, filename
+        msg = (
+            f"The {descriptive_name} csv is not readable, please check file permissions: {filename}"
         )
         raise CSVParseException(msg)
 

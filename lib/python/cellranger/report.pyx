@@ -54,8 +54,8 @@ class DictionaryMetric(Metric):
         self.d[elem] = self.d.get(elem, 0) + value
 
     def merge(self, metric: "DictionaryMetric"):
-        for elem in metric.d:
-            self.d[elem] += metric.d[elem]
+        for elem, value in metric.d.items():
+            self.add(elem, value)
 
     def report(self) -> dict[int | bytes | str, int | float]:
         return self.d
@@ -457,18 +457,16 @@ _BARCODES = intern("barcodes")
 _ALWAYS_ACTIVE = intern("always_active")
 
 
-def _make_default_metrics() -> (
-    dict[
-        str,
-        tuple[
-            type[Metric],
-            dict[
-                str,
-                dict[str, str | bool] | list[str] | list[int | float] | list[range | list[int]],
-            ],
+def _make_default_metrics() -> dict[
+    str,
+    tuple[
+        type[Metric],
+        dict[
+            str,
+            dict[str, str | bool] | list[str] | list[int | float] | list[range | list[int]],
         ],
-    ]
-):
+    ],
+]:
     # Common subsections of the default metrics get reused, reducing allocations
     # and making string comparisons in dict/set lookup faster.
     report_type = intern("report_type")
@@ -864,9 +862,7 @@ class Reporter:
                 self.metadata[f"{metric_prefix}{key}"] = value
             elif key == cr_constants.REFERENCE_GENOMES_KEY:
                 # Special case for genome key
-                self.metadata[
-                    f"{metric_prefix}{key}"
-                ] = get_ref_name_from_genomes(value)
+                self.metadata[f"{metric_prefix}{key}"] = get_ref_name_from_genomes(value)
             else:
                 self.metadata[f"{metric_prefix}{key}"] = ", ".join(str(x) for x in value)
 

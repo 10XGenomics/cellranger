@@ -90,6 +90,7 @@ stage PREPROCESS_MATRIX(
     in  bool disable_run_pca,
     in  bool disable_correct_chemistry_batch,
     in  bool skip_multigenome_analysis,
+    in  bool enable_tsne,
     out bool skip_antibody_analysis,
     out bool skip_antigen_analysis,
     out h5   cloupe_matrix_h5,
@@ -135,44 +136,6 @@ stage RUN_PCA(
     volatile = strict,
 )
 
-stage RUN_GRAPH_CLUSTERING(
-    in  h5     matrix_h5,
-    in  h5     pca_h5,
-    in  int    num_neighbors       "Use this many neighbors",
-    in  float  neighbor_a          "Use larger of (a+b*log10(n_cells) neighbors or num_neighbors",
-    in  float  neighbor_b          "Use larger of (a+b*log10(n_cells) neighbors or num_neighbors",
-    in  int    num_bcs             "Use this many cell-barcodes in clustering",
-    in  int    input_pcs           "Use top N PCs",
-    in  int    balltree_leaf_size,
-    in  string similarity_type     "Type of similarity to use (nn or snn)",
-    in  int    random_seed         "Seed for random number generator",
-    out h5     chunked_neighbors,
-    out h5     clusters_h5,
-    out path   clusters_csv,
-    src py     "stages/analyzer/run_graph_clustering",
-) split (
-    in  pickle neighbor_index,
-    in  h5     submatrix,
-    in  int    row_start,
-    in  int    total_rows,
-    in  int    k_nearest,
-    in  h5     use_bcs,
-) using (
-    volatile = strict,
-)
-
-stage MERGE_CLUSTERS(
-    in  h5   matrix_h5,
-    in  h5   pca_h5,
-    in  h5   clusters_h5,
-    out h5   clusters_h5,
-    out path clusters_csv,
-    src py   "stages/analyzer/merge_clusters",
-) split (
-) using (
-    volatile = strict,
-)
-
 stage COMBINE_CLUSTERING(
     in  h5   kmeans_h5,
     in  path kmeans_csv,
@@ -198,28 +161,6 @@ stage RUN_DIFFERENTIAL_EXPRESSION(
     src py     "stages/analyzer/run_differential_expression",
 ) split (
     in  string clustering_key,
-) using (
-    volatile = strict,
-)
-
-stage RUN_TSNE(
-    in  h5     matrix_h5,
-    in  h5     pca_h5,
-    in  int    random_seed,
-    in  int    perplexity,
-    in  int    input_pcs,
-    in  int    max_dims,
-    in  int    max_iter,
-    in  int    stop_lying_iter,
-    in  int    mom_switch_iter,
-    in  float  theta,
-    in  bool   is_antibody_only,
-    out h5     tsne_h5,
-    out path   tsne_csv,
-    src py     "stages/analyzer/run_tsne",
-) split (
-    in  int    tsne_dims,
-    in  string feature_type,
 ) using (
     volatile = strict,
 )

@@ -1,7 +1,10 @@
 //! Types shared between websummary derive macros and websummary construction.
+use anyhow::{bail, ensure, Result};
 use proc_macro2::TokenStream;
 use quote::quote;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::iter::zip;
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -23,64 +26,34 @@ impl quote::ToTokens for AlertIfMetricIs {
     }
 }
 
-impl AlertIfMetricIs {
-    fn symbol(&self) -> proc_macro2::TokenStream {
-        match *self {
-            AlertIfMetricIs::GreaterThanOrEqual => quote![>=],
-            AlertIfMetricIs::LessThanOrEqual => quote![<=],
-        }
-    }
-}
-
 // Should be synced with the context in cr_websummary
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct AlertConditions {
-    pub is_hybrid_capture: Option<bool>,
     pub is_rtl: Option<bool>,
-    pub is_lt_chemistry: Option<bool>,
-    pub is_arc_chemistry: Option<bool>,
     pub include_introns: Option<bool>,
 }
 
 impl AlertConditions {
     pub fn vec(&self) -> Vec<Option<bool>> {
         let AlertConditions {
-            is_hybrid_capture,
-            is_lt_chemistry,
-            is_arc_chemistry,
             include_introns,
             is_rtl,
         } = self;
-        vec![
-            *is_hybrid_capture,
-            *is_lt_chemistry,
-            *is_arc_chemistry,
-            *include_introns,
-            *is_rtl,
-        ]
+        vec![*include_introns, *is_rtl]
     }
 }
 
 impl quote::ToTokens for AlertConditions {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
-            is_hybrid_capture,
             is_rtl,
-            is_lt_chemistry,
-            is_arc_chemistry,
             include_introns,
         } = self;
-        let is_hybrid_capture = quote_option(is_hybrid_capture);
         let is_rtl = quote_option(is_rtl);
-        let is_lt_chemistry = quote_option(is_lt_chemistry);
-        let is_arc_chemistry = quote_option(is_arc_chemistry);
         let include_introns = quote_option(include_introns);
         tokens.extend(quote![
             ::cr_types::websummary::AlertConditions {
-                is_hybrid_capture: #is_hybrid_capture,
                 is_rtl: #is_rtl,
-                is_lt_chemistry: #is_lt_chemistry,
-                is_arc_chemistry: #is_arc_chemistry,
                 include_introns: #include_introns,
             }
         ]);
@@ -89,8 +62,6 @@ impl quote::ToTokens for AlertConditions {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AlertConfig {
-    #[serde(default)]
-    pub rank: u8,
     pub error_threshold: Option<f64>,
     pub warn_threshold: Option<f64>,
     pub if_metric_is: Option<AlertIfMetricIs>,
@@ -105,7 +76,6 @@ pub struct AlertConfig {
 impl quote::ToTokens for AlertConfig {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
-            rank,
             error_threshold,
             warn_threshold,
             if_metric_is,
@@ -121,7 +91,6 @@ impl quote::ToTokens for AlertConfig {
         let error_title = quote_string_option(error_title);
         tokens.extend(quote![
             ::cr_types::websummary::AlertConfig {
-                rank: #rank,
                 error_threshold: #error_threshold,
                 warn_threshold: #warn_threshold,
                 if_metric_is: #if_metric_is,
@@ -135,46 +104,40 @@ impl quote::ToTokens for AlertConfig {
 }
 
 impl AlertConfig {
-    pub fn symbol(&self, name: &str) -> proc_macro2::TokenStream {
-        match (self.error_threshold, self.warn_threshold) {
-            (Some(e), Some(w)) => {
-                assert!(
-                    self.if_metric_is.is_none(),
-                    "Do not specify `if_metric_is` in the alert for {name}. When both error and warn \
-                    thresholds are specified, it is automatically inferred."
-                );
+    /// Return the comparison operation to determine if this alert should fire.
+    pub fn alert_if(&self) -> Result<AlertIfMetricIs> {
+        match (self.error_threshold, self.warn_threshold, self.if_metric_is) {
+            (Some(e), Some(w), None) => {
                 if e < w {
-                    quote![<=]
+                    Ok(AlertIfMetricIs::LessThanOrEqual)
                 } else if e > w {
-                    quote![>=]
+                    Ok(AlertIfMetricIs::GreaterThanOrEqual)
                 } else {
-                    panic!(
-                        "ERROR: Error threshold ({e}) and warning threshold({w}) do not have \
-                        strict < or > relation for {name}"
+                    bail!(
+                        "error threshold ({e}) and warning threshold({w}) do not \
+                        have a strict < or > relation"
                     );
                 }
             }
-            (Some(_), None) => {
-                assert!(
-                    self.if_metric_is.is_some(),
-                    "Please specify `if_metric_is` in the alert for {name} as one of \
-                    \"greater_than_or_equal\" or \"less_than_or_equal\". With only an error threshold \
-                    specified, it cannot be automatically inferred."
-                );
-                self.if_metric_is.unwrap().symbol()
+            (Some(_), None, Some(if_metric_is)) | (None, Some(_), Some(if_metric_is)) => {
+                Ok(if_metric_is)
             }
-            (None, Some(_)) => {
-                assert!(
-                    self.if_metric_is.is_some(),
-                    "Please specify `if_metric_is` in the alert for {name} as one of \
-                    \"greater_than_or_equal\" or \"less_than_or_equal\". With only a warn threshold \
-                    specified, it cannot be automatically inferred."
+            (Some(_), Some(_), Some(_)) => {
+                bail!(
+                    "do not specify `if_metric_is` when both error and warn thresholds are \
+                    specified as it is automatically inferred"
                 );
-                self.if_metric_is.unwrap().symbol()
             }
-            (None, None) => panic!(
-                "At least one of error_threshold or warn_threshold needs to be specified \
-                in the alert for {name}"
+            (Some(_), None, None) | (None, Some(_), None) => {
+                bail!(
+                    "please specify `if_metric_is` in the alert as one of \
+                    \"greater_than_or_equal\" or \"less_than_or_equal\"; with only a single threshold \
+                    specified, it cannot be automatically inferred"
+                );
+            }
+            (None, None, _) => bail!(
+                "at least one of error_threshold or warn_threshold needs to be specified \
+                in the alert"
             ),
         }
     }
@@ -213,6 +176,27 @@ pub struct MetricConfig {
     pub alerts: Vec<AlertConfig>,
 }
 
+impl MetricConfig {
+    pub fn validate(&self) -> Result<()> {
+        // Ensure that expected transformed type is compatible with alerts.
+        // FIXME extract transformer keys as constants.
+        ensure!(
+            self.alerts.is_empty() || self.ty != "String",
+            "metric \"{}\" cannot be used in alerts",
+            self.header,
+        );
+
+        let conditions: Vec<_> = self.alerts.iter().map(|a| &a.conditions).collect();
+        ensure!(
+            check_exclusive_conditions(&conditions),
+            "The conditions for for the metric {} are not exclusive:\n{conditions:#?}.\
+            \n Please specify mutually exclusive conditions for each alert.",
+            &self.header
+        );
+        Ok(())
+    }
+}
+
 impl quote::ToTokens for MetricConfig {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
@@ -240,6 +224,31 @@ impl quote::ToTokens for MetricConfig {
     }
 }
 
+fn check_exclusive_conditions(conditions: &[&AlertConditions]) -> bool {
+    if conditions.len() < 2 {
+        return true;
+    }
+    let first = conditions[0].vec();
+    let mut seen_ids = HashSet::with_capacity(conditions.len());
+    for cond in conditions {
+        let cond_vec = cond.vec();
+        let mut this_id = Vec::new();
+        for (left, right) in zip(&first, cond_vec) {
+            // Both should be None or Some
+            match (left, right) {
+                (Some(_), Some(r)) => this_id.push(r),
+                (None, None) => {}
+                _ => return false,
+            }
+        }
+        if seen_ids.contains(&this_id) {
+            return false;
+        }
+        seen_ids.insert(this_id);
+    }
+    true
+}
+
 fn quote_option<T: quote::ToTokens>(arg: &Option<T>) -> proc_macro2::TokenStream {
     match arg {
         None => quote![None],
@@ -251,5 +260,55 @@ fn quote_string_option(arg: &Option<String>) -> proc_macro2::TokenStream {
     match arg {
         None => quote![None],
         Some(x) => quote![Some(#x.to_string())],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_check_exclusive_contexts() {
+        assert!(check_exclusive_conditions(&[]));
+        assert!(check_exclusive_conditions(&[&AlertConditions {
+            is_rtl: None,
+            include_introns: None
+        }]));
+        assert!(check_exclusive_conditions(&[&AlertConditions {
+            is_rtl: None,
+            include_introns: None
+        }]));
+
+        assert!(!check_exclusive_conditions(&[
+            &AlertConditions {
+                is_rtl: None,
+                include_introns: None
+            },
+            &AlertConditions {
+                include_introns: None,
+                is_rtl: None
+            }
+        ]));
+
+        assert!(check_exclusive_conditions(&[
+            &AlertConditions {
+                is_rtl: Some(true),
+                include_introns: None
+            },
+            &AlertConditions {
+                is_rtl: Some(false),
+                include_introns: None
+            }
+        ]));
+
+        assert!(!check_exclusive_conditions(&[
+            &AlertConditions {
+                is_rtl: Some(true),
+                include_introns: None
+            },
+            &AlertConditions {
+                is_rtl: Some(true),
+                include_introns: None
+            }
+        ]));
     }
 }

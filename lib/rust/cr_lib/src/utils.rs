@@ -37,3 +37,30 @@ pub fn hard_link_martianfile<P: MartianFileType + AsRef<Path>>(
     hard_link_file(&p, &new_link)?;
     Ok(new_link)
 }
+
+pub mod estimate_mem {
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    /// Return the total number of valid barcodes from a metrics JSON.
+    /// This is computed by the BARCODE_CORRECTION stage as the size of the union
+    /// set of the barcodes of all library types including barcodes_under_tissue.*
+    pub fn get_total_barcodes_detected(metrics: &HashMap<String, Value>) -> isize {
+        metrics
+            .get("total_barcodes_detected")
+            .and_then(Value::as_u64)
+            .unwrap() as isize
+    }
+
+    /// Return the memory requirement for a data structure given barcode_count,
+    /// bytes_per_barcode, and offset.
+    pub fn barcode_mem_gib(
+        barcodes_count: isize,
+        bytes_per_barcode: isize,
+        offset_gib: isize,
+    ) -> isize {
+        let mem_bytes = bytes_per_barcode * barcodes_count;
+
+        offset_gib + mem_bytes / 1024 / 1024 / 1024
+    }
+}

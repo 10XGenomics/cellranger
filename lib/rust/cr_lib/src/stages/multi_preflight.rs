@@ -7,10 +7,10 @@ use crate::preflight::{
 };
 use anyhow::{bail, ensure, Result};
 use cr_types::chemistry::ChemistryName;
-use cr_types::reference::feature_reference::FeatureType;
+use cr_types::probe_set::merge_probe_set_csvs;
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::types::FileOrBytes;
-use cr_types::FeatureBarcodeType;
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use multi::config::preflight::{
@@ -40,7 +40,7 @@ impl MartianMain for MultiPreflight {
     type StageInputs = MultiPreflightInputs;
     type StageOutputs = MultiPreflightOutputs;
 
-    fn main(&self, args: Self::StageInputs, _rover: MartianRover) -> Result<Self::StageOutputs> {
+    fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let hostname = hostname();
         check_resource_limits()?;
         // make a new chunk per sample_def to do chemistry detection
@@ -55,7 +55,12 @@ impl MartianMain for MultiPreflight {
             FileOrBytes {
                 bytes: None,
                 file: Some(ref file),
-            } => MultiConfigCsvFile::from(file).read(),
+            } => {
+                if file.extension().and_then(|ext| ext.to_str()) != Some("csv") {
+                    bail!("multi config file must have .csv extention")
+                }
+                MultiConfigCsvFile::from(file).read()
+            }
             FileOrBytes {
                 bytes: None,
                 file: None,
@@ -65,6 +70,7 @@ impl MartianMain for MultiPreflight {
                 file: Some(_),
             } => bail!("exactly one of either config file or config bytes must be provided"),
         }?;
+
         let gene_expression = cfg.gene_expression.as_ref();
         let (transcriptome, target_genes) = if let Some(gex) = gene_expression {
             ensure!(
@@ -74,41 +80,68 @@ impl MartianMain for MultiPreflight {
                 multiconst::GENE_EXPRESSION,
             );
 
-            let transcriptome = check_gex_reference(
-                &SectionCtx {
-                    section: "gene-expression",
-                    field: "reference",
-                },
-                &gex.reference_path,
-                &hostname,
-            )?;
-            let ref_info = ReferenceInfo::from_reference_path(&gex.reference_path)?;
-            ref_info.validate()?;
-            let genomes = ref_info.genomes;
-            let target_genes = if let (Some(probe_set), Some(targeting_method)) =
-                (gex.probe_set(), gex.targeting_method())
-            {
-                Some(check_target_panel(
-                    &transcriptome,
-                    genomes,
-                    probe_set,
-                    targeting_method,
-                    args.is_pd,
-                )?)
-            } else {
-                None
+            let transcriptome = gex
+                .reference_path
+                .as_deref()
+                .map(|ref_path| {
+                    check_gex_reference(
+                        &SectionCtx {
+                            section: "gene-expression",
+                            field: "reference",
+                        },
+                        ref_path,
+                        &hostname,
+                    )
+                })
+                .transpose()?;
+
+            let ref_info = gex
+                .reference_path
+                .as_deref()
+                .map(ReferenceInfo::from_reference_path)
+                .transpose()?;
+            if let Some(ref_info) = &ref_info {
+                ref_info.validate()?;
+            }
+
+            let probe_set_csv = match gex.probe_set() {
+                [] => None,
+                [probe_set] => Some(probe_set.clone()),
+                probe_sets => {
+                    let probe_set_csv: TargetSetFile = rover.make_path("combined_probe_set");
+                    merge_probe_set_csvs(probe_sets, probe_set_csv.buf_writer()?)?;
+                    Some(probe_set_csv)
+                }
             };
-            (Some(transcriptome), target_genes)
+
+            let target_genes = probe_set_csv
+                .as_ref()
+                .map(|probe_set_csv| {
+                    check_target_panel(
+                        transcriptome.as_ref(),
+                        ref_info.as_ref(),
+                        probe_set_csv,
+                        gex.targeting_method().unwrap(),
+                    )
+                })
+                .transpose()?;
+            (transcriptome, target_genes)
         } else {
             (None, None)
         };
-        let max_multiplexing_tags = *max_multiplexing_tags()?;
 
+        if cfg.libraries.has_gene_expression() && !cfg.is_rtl() {
+            ensure!(
+                transcriptome.is_some(),
+                "A reference transcriptome or probe set is required to analyze a Gene Expression library."
+            );
+        }
+
+        let max_multiplexing_tags = *max_multiplexing_tags()?;
         let (feature_reference, _tenx_cmos) =
             build_feature_reference_with_cmos(&cfg, args.is_pd, &hostname, max_multiplexing_tags)?;
 
-        if let (Some(transcriptome), Some(feature_reference)) =
-            (transcriptome.as_ref(), feature_reference.as_ref())
+        if let (Some(transcriptome), Some(feature_reference)) = (&transcriptome, &feature_reference)
         {
             check_crispr_target_genes(transcriptome, feature_reference, target_genes.as_ref())?;
         }
@@ -152,20 +185,6 @@ impl MartianMain for MultiPreflight {
             bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
         }
 
-        // Check for CRISPR guide capture libraries and v4 of 3pGEX, which are incompatible.
-        if let Some(feature_reference) = feature_reference.as_ref() {
-            for feat in &feature_reference.feature_defs {
-                if feat.feature_type == FeatureType::Barcode(FeatureBarcodeType::Crispr)
-                    && cfg.chemistry_specs()?.values().any(|chem| {
-                        chem.refined() == Some(ChemistryName::ThreePrimeV4)
-                            || chem.refined() == Some(ChemistryName::ThreePrimeV4OH)
-                    })
-                {
-                    bail!("The chemistry SC3Pv4 (Single Cell 3'v4) is not supported with CRISPR Guide Capture libraries.")
-                }
-            }
-        }
-
         Ok(MultiPreflightOutputs {})
     }
 }
@@ -174,6 +193,7 @@ impl MartianMain for MultiPreflight {
 mod tests {
     use super::*;
     use glob::glob;
+    use insta::{assert_debug_snapshot, assert_snapshot};
     use itertools::Itertools;
     use multi::config::preflight::check_feature_reference;
     use std::path::Path;
@@ -199,17 +219,7 @@ mod tests {
     #[test]
     fn test_gex_missing_gex_section() {
         let outs = test_run_stage("test/multi/invalid_csvs/gex_missing_gex_section.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
-    }
-
-    #[test]
-    fn test_3pgexv4_crispr_incompatible() {
-        if !refdata_available() {
-            return;
-        }
-
-        let outs = test_run_stage("test/multi/3pgexv4_crispr_incompatible.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
@@ -218,7 +228,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/gex_multi_dup1.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -227,7 +237,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/gex_multi_dup2.csv");
-        insta::assert_display_snapshot!(&outs.unwrap_err());
+        assert_snapshot!(&outs.unwrap_err());
     }
 
     #[test]
@@ -247,7 +257,7 @@ mod tests {
                 )
             })
             .collect();
-        insta::assert_debug_snapshot!(outs);
+        assert_debug_snapshot!(outs);
         Ok(())
     }
 
@@ -257,7 +267,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/gex_multi_no_feature.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -266,7 +276,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/gex_multi_only.csv");
-        insta::assert_display_snapshot!(&outs.unwrap_err());
+        assert_snapshot!(&outs.unwrap_err());
     }
 
     #[test]
@@ -275,7 +285,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/gex_multi_unsupp.csv");
-        insta::assert_display_snapshot!(&outs.unwrap_err());
+        assert_snapshot!(&outs.unwrap_err());
     }
 
     #[test]
@@ -284,7 +294,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/beamab_vdj_gex_invalid_antigen_spec1.csv");
-        insta::assert_display_snapshot!(&outs.unwrap_err());
+        assert_snapshot!(&outs.unwrap_err());
     }
 
     #[test]
@@ -293,43 +303,43 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/beamt_vdj_gex_invalid_antigen_spec1.csv");
-        insta::assert_display_snapshot!(&outs.unwrap_err());
+        assert_snapshot!(&outs.unwrap_err());
     }
 
     #[test]
     fn test_invalid_beamab_with_allele() {
         let outs = test_run_stage("test/multi/beamab_vdj_gex_with_allele.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
     fn test_invalid_beamab_config_w_allele_featureref_no_allele() {
         let outs = test_run_stage("test/multi/beamab_config_w_allele_featureref_no_allele.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
     fn beamab_config_no_allele_featureref_w_allele() {
         let outs = test_run_stage("test/multi/beamab_config_no_allele_featureref_w_allele.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
     fn beamt_config_no_allele_featureref_w_allele() {
         let outs = test_run_stage("test/multi/beamt_config_no_allele_featureref_w_allele.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
     fn beamt_config_no_allele_featureref_no_allele() {
         let outs = test_run_stage("test/multi/beamt_config_no_allele_featureref_no_allele.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
     fn beamt_config_incompatible_allele() {
         let outs = test_run_stage("test/multi/beamt_config_incompatible_allele.csv");
-        insta::assert_display_snapshot!(outs.unwrap_err());
+        assert_snapshot!(outs.unwrap_err());
     }
 
     #[test]
@@ -338,7 +348,7 @@ mod tests {
             return;
         }
         let outs = test_run_stage("test/multi/beamab_vdj_gex_invalid_functional_map.csv");
-        insta::assert_display_snapshot!(&outs.unwrap_err());
+        assert_snapshot!(&outs.unwrap_err());
     }
 
     #[test]
@@ -348,7 +358,7 @@ mod tests {
         }
         assert!(test_run_stage_is_pd("test/multi/mfrp_ab_multi.csv", true).is_ok());
         let outs = test_run_stage("test/multi/mfrp_ab_multi.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -358,7 +368,7 @@ mod tests {
         }
         let outs =
             test_run_stage("test/multi/invalid_csvs/mfrp_ab_multi_invalid_probe_barcode.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -368,7 +378,7 @@ mod tests {
         }
         let outs =
             test_run_stage("test/multi/invalid_csvs/mfrp_ab_multi_unknown_probe_barcode.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -380,7 +390,7 @@ mod tests {
             test_run_stage_is_pd("test/multi/mfrp_ab_multi_without_ab_library.csv", true).is_ok()
         );
         let outs = test_run_stage("test/multi/mfrp_ab_multi_without_ab_library.csv");
-        insta::assert_debug_snapshot!(&outs);
+        assert_debug_snapshot!(&outs);
     }
 
     #[test]
@@ -390,6 +400,16 @@ mod tests {
         }
 
         let outs = test_run_stage("test/multi/invalid_csvs/invalid_overhang_ids.csv");
-        insta::assert_debug_snapshot!(&outs.unwrap_err().to_string());
+        assert_debug_snapshot!(&outs.unwrap_err().to_string());
+    }
+
+    #[test]
+    fn test_invalid_hashtag_ids() {
+        if !refdata_available() {
+            return;
+        }
+
+        let outs = test_run_stage("test/multi/invalid_csvs/invalid_hashtag_ids.csv");
+        assert_debug_snapshot!(&outs.unwrap_err().to_string());
     }
 }

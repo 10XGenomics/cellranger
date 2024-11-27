@@ -47,9 +47,6 @@
 )]
 
 #[macro_use]
-extern crate arrayref;
-
-#[macro_use]
 extern crate io_utils;
 
 #[macro_use]
@@ -63,16 +60,14 @@ pub mod bam_utils;
 pub mod barcode_data;
 pub mod constants;
 mod contigs;
+pub mod exact_clonotyping;
 mod fastq;
-pub mod filter_barcodes;
-pub mod filter_log;
 pub mod graph_read;
 pub mod heuristics;
 pub mod hops;
 pub mod log_opts;
 mod metrics;
 pub mod primers;
-mod print_hyper;
 pub mod process;
 mod ref_free;
 pub mod sw;

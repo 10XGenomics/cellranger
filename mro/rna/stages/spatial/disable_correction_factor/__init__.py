@@ -3,7 +3,7 @@
 
 __MRO__ = """
 stage DISABLE_CORRECTION_FACTOR(
-    in  h5   v1_filtered_fbm,
+    in  V1PatternFixArgs v1_pattern_fix,
     out bool disable_correction_factor,
     src py   "stages/spatial/disable_correction_factor",
 )
@@ -11,4 +11,4 @@ stage DISABLE_CORRECTION_FACTOR(
 
 
 def main(args, outs):
-    outs.disable_correction_factor = not bool(args.v1_filtered_fbm)
+    outs.disable_correction_factor = args.v1_pattern_fix is None

@@ -12,13 +12,19 @@ import cellranger.feature.multiplexing.infer_throughput as it
 import cellranger.feature.utils as feature_utils
 import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
-from cellranger.chemistry import CHEMISTRY_DESCRIPTION_FIELD, CHEMISTRY_SC3P_LT
+from cellranger.chemistry import (
+    CHEMISTRY_DESCRIPTION_FIELD,
+    CHEMISTRY_SC3P_LT,
+    SC_GEMX_CHEMISTRIES,
+)
 from cellranger.feature.throughputs import (
+    GEMX_THROUGHPUT,
     HT_THROUGHPUT,
     LT_THROUGHPUT,
     MT_THROUGHPUT,
     THROUGHPUT_INFERRED_METRIC,
 )
+from cellranger.feature_ref import HASHTAG_TAG
 from cellranger.matrix import CountMatrix
 from cellranger.reference_paths import get_reference_genomes
 
@@ -41,7 +47,10 @@ stage INFER_GEM_WELL_THROUGHPUT(
 
 def main(args, outs):
     feature_ref = CountMatrix.load_feature_ref_from_h5_file(args.filtered_feature_counts_matrix)
-    no_cmos = feature_ref.get_count_of_feature_type(rna_library.MULTIPLEXING_LIBRARY_TYPE) == 0
+    no_cmos = (
+        feature_ref.get_count_of_feature_type(rna_library.MULTIPLEXING_LIBRARY_TYPE) == 0
+        and HASHTAG_TAG not in feature_ref.all_tag_keys
+    )
     if no_cmos or not feature_utils.all_files_present([args.barcode_summary_h5]):
         outs.throughput = None
         outs.inferred_throughputs = None
@@ -78,6 +87,15 @@ def main(args, outs):
 
     gex_chemistry_def = args.chemistry_defs[rna_library.GENE_EXPRESSION_LIBRARY_TYPE]
     gex_chemistry_description = gex_chemistry_def[CHEMISTRY_DESCRIPTION_FIELD]
+
+    if gex_chemistry_description in [
+        chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in SC_GEMX_CHEMISTRIES
+    ]:
+        # Downstream code uses "throughput" to estimate droplet counts, so GEM-X
+        # data needs an annotated "throughput" to handle this, even though
+        # it no longer supports actual throughput differences.
+        outs.throughput = GEMX_THROUGHPUT
+        return
 
     inferred_throughputs = {
         "throughput_specified_by_chemistry": gex_chemistry_description,

@@ -66,5 +66,3 @@ def main(args, outs):
             args.perturbation_effects_by_target,
             perturbation_effects_by_target_dir,
         )
-
-    return

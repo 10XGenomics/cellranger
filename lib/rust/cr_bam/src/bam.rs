@@ -219,7 +219,7 @@ pub struct BamPosSort;
 // fxhash has issues with the least bytes of byte arrays, use siphash
 fn hash32<T: Hash + ?Sized>(v: &T) -> u32 {
     let h = hash64(v);
-    let mask = std::u32::MAX as u64;
+    let mask = u32::MAX as u64;
     (h & mask) as u32 ^ ((h >> 32) & mask) as u32
 }
 

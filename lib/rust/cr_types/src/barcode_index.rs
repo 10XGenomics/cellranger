@@ -24,15 +24,16 @@ impl BarcodeIndex {
         let barcodes = bc_count_file
             .read()?
             .into_values()
-            .flat_map(|h| h.into_iter().map(|(barcode, _)| barcode));
-        Ok(if let Some(json_file) = barcodes_under_tissue {
-            let additional_barcodes = json_file.read()?;
-            barcodes
-                .chain(additional_barcodes.into_iter().map(|x| x.parse().unwrap()))
-                .collect()
-        } else {
-            barcodes.collect()
-        })
+            .flat_map(|h| h.into_iter().map(|(barcode, _)| barcode))
+            .chain(
+                barcodes_under_tissue
+                    .map(martian_filetypes::FileTypeRead::read)
+                    .transpose()?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|x| x.parse().unwrap()),
+            );
+        Ok(barcodes.collect())
     }
 }
 

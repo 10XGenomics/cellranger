@@ -31,6 +31,7 @@ stage PREPROCESS_MATRIX(
     in  bool disable_run_pca,
     in  bool disable_correct_chemistry_batch,
     in  bool skip_multigenome_analysis,
+    in  bool enable_tsne,
     out bool skip_antibody_analysis,
     out bool skip_antigen_analysis,
     out h5   cloupe_matrix_h5,
@@ -130,16 +131,14 @@ def split(args):
     return {"chunks": [], "join": {"__mem_gb": max(matrix_mem_gb, h5_constants.MIN_MEM_GB)}}
 
 
-def main(args, outs):
-    pass
-
-
 def join(args, outs, chunk_defs, chunk_outs):
     outs.skip = args.skip
-    outs.skip_tsne = outs.skip or args.is_visium_hd
-    outs.disable_hierarchical_clustering = outs.skip or not args.is_visium_hd or not args.is_pd
+    outs.skip_tsne = (not args.enable_tsne) or outs.skip or args.is_visium_hd
     outs.is_antibody_only = args.is_antibody_only
     outs.disable_run_pca = args.disable_run_pca
+    outs.disable_hierarchical_clustering = (
+        outs.skip or not args.is_visium_hd or args.disable_run_pca or not args.is_pd
+    )
     outs.disable_correct_chemistry_batch = args.disable_correct_chemistry_batch
     outs.skip_multigenome_analysis = args.skip_multigenome_analysis
     outs.skip_antibody_analysis = False
@@ -232,6 +231,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.disable_run_pca = True
         outs.disable_correct_chemistry_batch = True
         outs.skip_multigenome_analysis = True
+        outs.disable_hierarchical_clustering = True
         return
 
     feature_cnts = matrix.get_count_of_feature_types()
@@ -254,5 +254,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         )
         outs.skip = True
         outs.disable_run_pca = True
+        outs.disable_hierarchical_clustering = True
         outs.disable_correct_chemistry_batch = True
         outs.skip_multigenome_analysis = True

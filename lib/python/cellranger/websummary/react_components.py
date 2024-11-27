@@ -636,9 +636,9 @@ class WebSummaryData(React10X):
         Also, invalidate the reference.
         """
         if self._antibody_clustering_selector:
-            self.antibody_tab[
-                WebSummaryData._ANTIBODY_CLUSTERING_SELECTOR
-            ] = self._antibody_clustering_selector
+            self.antibody_tab[WebSummaryData._ANTIBODY_CLUSTERING_SELECTOR] = (
+                self._antibody_clustering_selector
+            )
             self._antibody_clustering_selector = None
 
     def _get_safe(self, key):

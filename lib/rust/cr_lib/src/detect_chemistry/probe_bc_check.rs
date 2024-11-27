@@ -52,7 +52,7 @@ pub(crate) fn validate_no_probe_bc_mixture_in_sfrp(
 
         let chem_def = ChemistryDef::named(chemistry);
         let bc_range = chem_def.barcode_range().probe();
-        let whitelist_source = chem_def.barcode_whitelist().probe().as_source(true)?;
+        let whitelist_source = chem_def.barcode_whitelist().probe().as_source()?;
         let id_map = whitelist_source.as_raw_seq_to_id()?;
         let whitelist = whitelist_source.as_whitelist()?;
 
@@ -62,7 +62,7 @@ pub(crate) fn validate_no_probe_bc_mixture_in_sfrp(
             .filter_map(|read_pair| {
                 read_pair
                     .get_range(bc_range, ReadPart::Seq)
-                    .and_then(|seq| whitelist.match_to_whitelist(BcSegSeq::from_bytes(seq)))
+                    .and_then(|seq| whitelist.match_to_whitelist(BcSegSeq::from_bytes(seq), false))
                     .map(|bc_in_wl| &id_map[&bc_in_wl])
             })
             .collect();
@@ -70,9 +70,10 @@ pub(crate) fn validate_no_probe_bc_mixture_in_sfrp(
         let num_valid_bcs = bc_counts.raw_counts().sum();
         if usize::try_from(num_valid_bcs)? < MIN_VALID_PROBE_BCS {
             print!(
-                "Skipping probe BC check in {unit}, because there were not enough reads with valid probe barcodes to confirm singleplex Fixed RNA Profiling chemistry.\n\
-                - Minimum number of required reads with valid probe barcodes = {MIN_VALID_PROBE_BCS}\n\
-                - Number of reads with valid probe barcodes available = {num_valid_bcs}\n",
+                "Skipping probe BC check in {unit}, because there were not enough reads with valid \
+                 probe barcodes to confirm singleplex Flex chemistry.\n\
+                 - Minimum number of required reads with valid probe barcodes = {MIN_VALID_PROBE_BCS}\n\
+                 - Number of reads with valid probe barcodes available = {num_valid_bcs}\n",
             );
             continue;
         }

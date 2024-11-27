@@ -6,6 +6,7 @@ load(
 load(
     "@tenx_bazel_rules//rules/conda:conda_manifest.bzl",
     "conda_deps",
+    "conda_files",
     "conda_manifest",
 )
 
@@ -30,38 +31,12 @@ license(
     license_text = "src/LICENSE",
 )
 
-alias(
-    name = "conda_package_py_opencv_python",
-    actual = ":cv2",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_py_opencv_hdrs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_py_opencv_libs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_py_opencv_solibs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_py_opencv_data",
-    srcs = [
+conda_files(
+    name = "files",
+    link_safe_runfiles = [
         ":cv2",
     ],
     visibility = ["@anaconda//:__pkg__"],
-)
-
-exports_files(
-    ["BUILD.bazel"],
-    visibility = ["//visibility:public"],
 )
 
 filegroup(
@@ -132,7 +107,6 @@ genrule(
 conda_manifest(
     name = "conda_metadata",
     info_files = ["info/index.json"],
-    manifest = "info/files",
     visibility = ["//visibility:public"],
 )
 

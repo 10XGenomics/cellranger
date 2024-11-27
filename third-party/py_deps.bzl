@@ -1,6 +1,10 @@
 """Repository rule invocations for third-party python dependencies."""
 
 load(
+    "@tenx_bazel_rules//rules:conda_package_repository.bzl",
+    "conda_package_repository",
+)
+load(
     "@tenx_bazel_rules//rules:new_conda_package_repository.bzl",
     "new_conda_package_http_repository",
 )
@@ -48,11 +52,15 @@ def load_py_deps():
         patch_args = ["-p1"],
         patches = ["@cellranger//third-party:open-cv-warnings.patch", "@cellranger//third-party:open-cv-grabcut.patch"],
         sha256 = "c20bb83dd790fc69df9f105477e24267706715a9d3c705ca1e7f613c7b3bad3d",
-        exported_files = [
-            site_packages + "/cv2.so",
-        ],
-        license = "Apache-2.0",
-        version = opencv_version,
+    )
+
+    # This package over-constrains libtiff, which makes other updates impossible.
+    # So, just pull it in separately without letting it take part in the solve.
+    conda_package_repository(
+        name = "conda_package_simpleitk",
+        base_urls = ["https://conda.anaconda.org/simpleitk/linux-64"],
+        dist_name = "simpleitk-2.2.1-py310h3fd9d12_0",
+        sha256 = "bbe4fce613459cf15d5c176b30ecc0d8b7c17d594822c36af9b3d735c7283aee",
     )
 
     tenxpy_commit = "c99de5e11ed7c564752c2c44c9bb8e4890dac1bf"
@@ -67,17 +75,10 @@ def load_py_deps():
         ],
         strip_prefix = "tenxpy-" + tenxpy_commit,
         add_prefix = site_packages,
-        exported_files = [site_packages + "/tenxpy/" + f for f in [
-            "__init__.py",
-            "constants.py",
-            "lena2.py",
-            "utils.py",
-        ]],
         sha256 = "b1aa4089b075d02b089e71ac9da8b4a69bb3ea611d82810bf142af2d95f0490a",
         auth_patterns = {
             "github.com": "token <password>",
         },
-        license = "10X Genomics",
     )
 
     tsne_commit = "45360b641183b6d899bdef201455d89de59a03a2"
@@ -91,41 +92,7 @@ def load_py_deps():
         ],
         strip_prefix = "tsne-" + tsne_commit,
         add_prefix = site_packages,
-        exported_files = [
-            site_packages + "/bh_sne.so",
-            site_packages + "/bh_sne_3d.so",
-            site_packages + "/tsne/__init__.py",
-            site_packages + "/tsne/_version.py",
-        ],
         sha256 = "7c7c29c19a703c4ec30d3d5886656f35ae4352e070c4106115336e317279a4c0",
-        license = "BSD-4-Clause",
-        version = "0.1.5-10x",
-    )
-
-    cas_commit = "9aa178dae7a0a03a8ac05a2fd3deb75e67388ea3"
-    cas_version = "1.4.0.dev"
-    cas_prefix = site_packages + "/cellarium/cas/"
-    new_conda_package_http_repository(
-        name = "conda_package_cellarium",
-        build_file = "@cellranger//third-party:cell-annotation-service-client.BUILD",
-        urls = [
-            "https://github.com/cellarium-ai/cellarium-cas/archive/{}.tar.gz".format(cas_commit),
-        ],
-        strip_prefix = "cellarium-cas-" + cas_commit,
-        add_prefix = site_packages,
-        exported_files = [cas_prefix + f for f in [
-            "service.py",
-            "__init__.py",
-            "_io.py",
-            "assets/cellarium_cas_tx_pca_002_grch38_2020_a.json",
-            "client.py",
-            "data_preparation.py",
-            "endpoints.py",
-            "exceptions.py",
-        ]],
-        sha256 = "3c9a44141ba01c5c0f8a054cc9d8e8bd6d41acd849dcdb3e35cb974424f45c86",
-        license = "BSD-3-Clause",
-        version = cas_version,
     )
 
     hjson_version = "3.0.2"
@@ -139,51 +106,6 @@ def load_py_deps():
         sha256 = "1c16084568a6328ba404703aad6db8ddf7e3b6afec9e141b375a40a61a209c30",
         strip_prefix = "hjson-py-" + hjson_version,
         add_prefix = site_packages,
-        exported_files = [site_packages + "/hjson/" + f for f in [
-            "__init__.py",
-            "compat.py",
-            "decoder.py",
-            "encoder.py",
-            "encoderH.py",
-            "ordered_dict.py",
-            "scanner.py",
-            "tool.py",
-        ]],
-        license = "MIT and AFL-2.1",
-        version = hjson_version,
-    )
-
-    shinywidgets_version = "0.2.4"
-
-    new_conda_package_http_repository(
-        name = "conda_package_shinywidgets",
-        build_file = "@cellranger//third-party:shinywidgets.BUILD",
-        urls = [
-            "https://github.com/posit-dev/py-shinywidgets/archive/refs/tags/v{}.tar.gz".format(shinywidgets_version),
-        ],
-        sha256 = "b167449404e46827d313973ce7d08ef4a98997fc07726a5e406e0cb791826f16",
-        strip_prefix = "py-shinywidgets-" + shinywidgets_version,
-        add_prefix = site_packages,
-        exported_files = [site_packages + "/shinywidgets/" + f for f in [
-            "__init__.py",
-            "_as_widget.py",
-            "_comm.py",
-            "_dependencies.py",
-            "_serialization.py",
-            "_shinywidgets.py",
-            "static/1e59d2330b4c6deb84b340635ed36249.ttf",
-            "static/20fd1704ea223900efa9fd4e869efb08.woff2",
-            "static/8b43027f47b20503057dfbbaa9401fef.eot",
-            "static/c1e38fd9e0e74ba58f7a2b77ef29fdd3.svg",
-            "static/f691f37e57f04c152e2315ab7dbad881.woff",
-            "static/libembed-amd.js",
-            "static/node_modules_codemirror_mode_sync_recursive_js_.output.js",
-            "static/output.js",
-            "static/vendors-node_modules_codemirror_mode_apl_apl_js-node_modules_codemirror_mode_asciiarmor_ascii-26282f.output.js",
-            "static/shinywidgets.css",
-        ]],
-        license = "MIT",
-        version = shinywidgets_version,
     )
 
     ipytablewidgets_version = "0.3.1"
@@ -196,35 +118,6 @@ def load_py_deps():
         ],
         sha256 = "6624cbeb73c73c68c5900a3a7719bf6aab560455e76247d373f3fa50336342a8",
         add_prefix = site_packages,
-        exported_files = [site_packages + "/ipytablewidgets/" + f for f in [
-            "__init__.py",
-            "_frontend.py",
-            "_version.py",
-            "compressors.py",
-            "numpy_adapter.py",
-            "pandas_adapter.py",
-            "progressivis_adapter.py",
-            "serializers.py",
-            "source_adapter.py",
-            "traitlets.py",
-            "widgets.py",
-            "labextension/package.json",
-            "labextension/static/149.40f4249249bc14416a21.js",
-            "labextension/static/261.bc115825a135ccbef0e9.js",
-            "labextension/static/405.6e1d012d86b0ed03bddf.js",
-            "labextension/static/424.e42e48076aba64887fd2.js",
-            "labextension/static/568.46074a0ad0e0cb2bad6c.js",
-            "labextension/static/861.78ea6fdd74d109f94c90.js",
-            "labextension/static/861.78ea6fdd74d109f94c90.js.LICENSE.txt",
-            "labextension/static/remoteEntry.830facb2b8d2798f80f1.js",
-            "labextension/static/style.js",
-            "labextension/static/third-party-licenses.json",
-            "static/extension.js",
-            "static/index.js",
-            "static/index.js.LICENSE.txt",
-        ]],
-        license = "BSD-3-Clause",
-        version = ipytablewidgets_version,
         patch_args = ["-p1"],
         patches = ["@cellranger//third-party:ipytablewidgets_dependency_fix.patch"],
         type = "zip",
@@ -240,14 +133,19 @@ def load_py_deps():
         ],
         sha256 = "8a32638798dfaae1f84c1d215fef2fa4936e51a07ea48b667422b6756943ab4c",
         add_prefix = site_packages,
-        exported_files = [site_packages + "/faicons/" + f for f in [
-            "__init__.py",
-            "_core.py",
-            "icons.json",
-            "py.typed",
-        ]],
-        license = "MIT",
-        version = faicons_version,
+        type = "zip",
+    )
+
+    pyarrow_version = "15.0.2"
+
+    new_conda_package_http_repository(
+        name = "conda_package_pyarrow",
+        build_file = "@cellranger//third-party:pyarrow.BUILD",
+        urls = [
+            "https://files.pythonhosted.org/packages/01/e0/13aada7b0af1039554e675bd8c878acb3d86bab690e5a6b05fc8547a9cf2/pyarrow-{}-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl".format(pyarrow_version),
+        ],
+        sha256 = "f639c059035011db8c0497e541a8a45d98a58dbe34dc8fadd0ef128f2cee46e5",
+        add_prefix = site_packages,
         type = "zip",
     )
 
@@ -261,52 +159,6 @@ def load_py_deps():
         ],
         sha256 = "404e7d3496a1f2a15eb94b4fd25a543f3b502466223b0e7c2220aef3eb4d2e0a",
         add_prefix = site_packages,
-        exported_files = [site_packages + "/shiny_semantic/" + f for f in [
-            "__init__.py",
-            "_utils.py",
-            "page.py",
-            "collections/__init__.py",
-            "elements/__init__.py",
-            "elements/button.py",
-            "elements/container.py",
-            "elements/divider.py",
-            "elements/emoji.py",
-            "elements/flag.py",
-            "elements/header.py",
-            "elements/icon.py",
-            "elements/input.py",
-            "elements/segment.py",
-            "modules/__init__.py",
-            "modules/checkbox.py",
-            "modules/dropdown.py",
-            "modules/modal.py",
-            "modules/slider.py",
-            "types/__init__.py",
-            "views/__init__.py",
-            "views/statistic.py",
-            "www/shiny-semantic-bindings.js",
-            "www/bindings/semanticButton.js",
-            "www/bindings/semanticCheckbox.js",
-            "www/bindings/semanticCheckboxGroup.js",
-            "www/bindings/semanticDropdown.js",
-            "www/bindings/semanticModal.js",
-            "www/bindings/semanticSlider.js",
-            "www/semantic/fomantic.min.css",
-            "www/semantic/fomantic.min.js",
-            "www/semantic/themes/default/assets/fonts/Lato-Bold.woff2",
-            "www/semantic/themes/default/assets/fonts/Lato-BoldItalic.woff2",
-            "www/semantic/themes/default/assets/fonts/Lato-Italic.woff2",
-            "www/semantic/themes/default/assets/fonts/Lato-Regular.woff2",
-            "www/semantic/themes/default/assets/fonts/LatoLatin-Bold.woff2",
-            "www/semantic/themes/default/assets/fonts/LatoLatin-BoldItalic.woff2",
-            "www/semantic/themes/default/assets/fonts/LatoLatin-Italic.woff2",
-            "www/semantic/themes/default/assets/fonts/LatoLatin-Regular.woff2",
-            "www/semantic/themes/default/assets/fonts/brand-icons.woff2",
-            "www/semantic/themes/default/assets/fonts/icons.woff2",
-            "www/semantic/themes/default/assets/fonts/outline-icons.woff2",
-        ]],
-        license = "LGPL-3.0",
-        version = shiny_semantic_version,
         type = "zip",
     )
 
@@ -321,27 +173,6 @@ def load_py_deps():
         sha256 = "a40002cc618bbd00fbe6f688024abb6a2805e93aed31df1f5f915d37c0c11688",
         strip_prefix = "ipyvega-" + vega_version,
         add_prefix = site_packages,
-        exported_files = [site_packages + "/vega/" + f for f in [
-            "__init__.py",
-            "_frontend.py",
-            "altair.py",
-            "base.py",
-            "utils.py",
-            "vega.py",
-            "vegalite.py",
-            "widget.py",
-            "static/extension.js",
-            "static/extension.js.map",
-            "static/index.js",
-            "static/index.js.LICENSE.txt",
-            "static/index.js.map",
-            "static/labplugin.js",
-            "static/labplugin.js.LICENSE.txt",
-            "static/labplugin.js.map",
-            "static/vega.js",
-        ]],
-        license = "BSD-3-Clause",
-        version = vega_version,
     )
 
     fbpca_commit = "151c2364cd0ec1fd7da6dec6d3ed2de9c6bfec5d"
@@ -355,9 +186,6 @@ def load_py_deps():
         sha256 = "49ea11626b7ef26ed3b2ff27e6efca04cd16e3e499442202a73d52f2e4a9f345",
         strip_prefix = "fbpca-" + fbpca_commit,
         add_prefix = site_packages,
-        exported_files = [site_packages + "/fbpca.py"],
-        version = "1.0",
-        license = "BSD-3-Clause",
     )
 
     new_conda_package_http_repository(
@@ -369,16 +197,40 @@ def load_py_deps():
         sha256 = "79d9ffe8acb7d32182dd190bfd55ad9e3170d1f69ab53ee7e243d2c1449f50d4",
         strip_prefix = "MOODS-python-1.9.3",
         add_prefix = site_packages,
-        exported_files = [
-            site_packages + "/MOODS/__init__.py",
-            site_packages + "/MOODS/_parsers.so",
-            site_packages + "/MOODS/_scan.so",
-            site_packages + "/MOODS/_tools.so",
-            site_packages + "/MOODS/misc.py",
-            site_packages + "/MOODS/parsers.py",
-            site_packages + "/MOODS/scan.py",
-            site_packages + "/MOODS/tools.py",
+    )
+
+    csbdeep_version = "0.8.0"
+    new_conda_package_http_repository(
+        name = "conda_package_csbdeep",
+        build_file = "@cellranger//third-party:csbdeep.BUILD",
+        urls = [
+            "https://files.pythonhosted.org/packages/fa/ae/16c5541707c15bfb3ec438dd738846f274899312094b323677e9f47fa3f5/csbdeep-{}-py2.py3-none-any.whl".format(csbdeep_version),
         ],
-        license = "Biopython License Agreement and GPL-3.0",
-        version = "1.9.3",
+        sha256 = "366cfd039cc440331095f68786563afb54ecb1f35c6e0b629d045507a213f265",
+        add_prefix = site_packages,
+        type = "zip",
+    )
+
+    stardist_version = "0.9.1"
+    new_conda_package_http_repository(
+        name = "conda_package_stardist",
+        build_file = "@cellranger//third-party:stardist.BUILD",
+        urls = [
+            "https://files.pythonhosted.org/packages/75/5e/4c0d2e48d064dec8f81be2b88404ce1f3440d0b86ee68dc43ab6924008da/stardist-{}-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl".format(stardist_version),
+        ],
+        sha256 = "f0f4542970e1c37472bb185bb36c3e4acb9e4efd65181cbbb89de917b7511e42",
+        add_prefix = site_packages,
+        type = "zip",
+    )
+
+    keras_version = "2.13.1-py3"
+    new_conda_package_http_repository(
+        name = "conda_package_keras",
+        build_file = "@cellranger//third-party:keras.BUILD",
+        urls = [
+            "https://files.pythonhosted.org/packages/2e/f3/19da7511b45e80216cbbd9467137b2d28919c58ba1ccb971435cb631e470/keras-{}-none-any.whl".format(keras_version),
+        ],
+        sha256 = "5ce5f706f779fa7330e63632f327b75ce38144a120376b2ae1917c00fa6136af",
+        add_prefix = site_packages,
+        type = "zip",
     )

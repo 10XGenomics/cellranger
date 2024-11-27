@@ -116,7 +116,6 @@ IS_AGGREGATED_METRIC = "is_aggregated"
 TARGETING_METHOD_METRIC = "targeting_method"
 MOLECULE_INFO_TYPE_METRIC = "molecule_info_type"
 MOLECULE_INFO_TYPE_RAW = "raw"
-MOLECULE_INFO_TYPE_PERSAMPLE = "per_sample"
 MOLECULE_INFO_TYPE_COUNT = "count"
 ANALYSIS_PARAMETERS_METRIC = "analysis_parameters"
 
@@ -146,10 +145,13 @@ HDF5_CHUNK_SIZE = 32768
 # Per-barcode metadata. Sparse (not every barcode is listed)
 class BarcodeInfo(NamedTuple):
     # Array-ized list of (barcode_idx, library_idx, genome_idx)
+    PASS_FILTER_BARCODE_IDX = 0
+    PASS_FILTER_LIBRARY_IDX = 1
+    PASS_FILTER_GENOME_IDX = 2
     pass_filter: np.ndarray
     # tuples where presence indicates passing filter.
     # This is a binary 3-d sparse matrix in COO format.
-    genomes: str  # Genome strings for genome 0..j
+    genomes: list[str]  # Genome strings for genome 0..j
 
 
 BARCODE_INFO_DTYPES = {
@@ -165,7 +167,7 @@ def _write_barcodes(mc: MoleculeCounter, barcodes):
         mc: MoleculeCounter instance
         barcodes: a numpy array of strings or iterable of strings
     """
-    if isinstance(barcodes, np.ndarray) and barcodes.dtype.type is np.string_:
+    if isinstance(barcodes, np.ndarray) and barcodes.dtype.type is np.bytes_:
         mc.h5.create_dataset(BARCODE_DS_NAME, data=barcodes)
     elif len(barcodes) == 0:
         bc_array = np.array([], dtype="S", copy=False)
@@ -200,7 +202,7 @@ def create_dataset(mc: MoleculeCounter, name: str):
 def get_barcode_index_to_retain(mc: MoleculeCounter, tgt_chunk_len=2000000) -> np.ndarray:
     """Get barcode indices which have nonzero counts or pass the filter."""
     barcode_info = mc.get_barcode_info()
-    unique_bc_idx = barcode_info.pass_filter[:, 0]
+    unique_bc_idx = barcode_info.pass_filter[:, BarcodeInfo.PASS_FILTER_BARCODE_IDX]
     for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=False):
         unique_bc_idx = np.union1d(
             unique_bc_idx,
@@ -238,10 +240,10 @@ class NumpyEncoder(json.JSONEncoder):
         ):
             return int(o)
 
-        elif isinstance(o, np.float_ | np.float16 | np.float32 | np.float64):
+        elif isinstance(o, np.float16 | np.float32 | np.float64):
             return float(o)
 
-        elif isinstance(o, np.complex_ | np.complex64 | np.complex128):
+        elif isinstance(o, np.complex64 | np.complex128):
             return {"real": o.real, "imag": o.imag}
 
         elif isinstance(o, np.ndarray):
@@ -364,13 +366,11 @@ def get_h5py_file_and_version(mol_info_fname, mode="r") -> tuple[h5py.File, int]
         mc_h5 = h5py.File(mol_info_fname, mode=mode)
     except OSError as ex:
         raise OSError(
-            "The molecule info HDF5 file (%s) is invalid. Please provide a valid HDF5 file."
-            % mol_info_fname
+            f"The molecule info HDF5 file ({mol_info_fname}) is invalid. Please provide a valid HDF5 file."
         ) from ex
     if not is_valid_mol_info_h5(mc_h5):
         raise ValueError(
-            "The input molecule info HDF5 file (%s) does not appear to be properly formatted. Please provide a valid file."
-            % (mol_info_fname)
+            f"The input molecule info HDF5 file ({mol_info_fname}) does not appear to be properly formatted. Please provide a valid file."
         )
     elif FILE_VERSION_KEY in mc_h5.attrs:
         file_version = int(mc_h5.attrs[FILE_VERSION_KEY])
@@ -549,9 +549,9 @@ class MoleculeCounter:
 
         pass_filter = barcode_info.pass_filter
 
-        pf_barcode_idx = pass_filter[:, 0]
-        pf_library_idx = pass_filter[:, 1]
-        pf_genome_idx = pass_filter[:, 2]
+        pf_barcode_idx = pass_filter[:, BarcodeInfo.PASS_FILTER_BARCODE_IDX]
+        pf_library_idx = pass_filter[:, BarcodeInfo.PASS_FILTER_LIBRARY_IDX]
+        pf_genome_idx = pass_filter[:, BarcodeInfo.PASS_FILTER_GENOME_IDX]
 
         mask = np.ones(pass_filter.shape[0], dtype=bool)
         if genome_idx is not None:
@@ -714,7 +714,7 @@ class MoleculeCounter:
                 ):
                     pass
                 else:
-                    raise AttributeError("Unrecognized dataset key: %s" % key)
+                    raise AttributeError(f"Unrecognized dataset key: {key}")
 
             # Load library info
             mc.library_info = json.loads(cr_h5.read_hdf5_string_dataset(mc.h5["library_info"])[0])
@@ -849,7 +849,9 @@ class MoleculeCounter:
                 future
             ]
 
-        new_pass_filter[:, 0] = [new_positions[x] for x in new_pass_filter[:, 0]]
+        new_pass_filter[:, BarcodeInfo.PASS_FILTER_BARCODE_IDX] = [
+            new_positions[x] for x in new_pass_filter[:, BarcodeInfo.PASS_FILTER_BARCODE_IDX]
+        ]
         new_barcode_info = BarcodeInfo(
             pass_filter=new_pass_filter,
             genomes=old_barcode_info.genomes,

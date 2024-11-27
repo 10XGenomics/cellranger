@@ -9,6 +9,7 @@ use std::ops::Deref;
 use std::str::FromStr;
 
 pub mod binned;
+pub mod cell_name;
 pub mod corrector;
 mod io_utils;
 pub mod whitelist;
@@ -17,6 +18,7 @@ pub mod short_string;
 use anyhow::{anyhow, bail, Result};
 use arrayvec::ArrayVec;
 use binned::{SquareBinIndex, SquareBinRowOrColumnIndex};
+use cell_name::CellId;
 pub use corrector::BarcodeCorrector;
 use fastq_set::squality::SQualityGen;
 use fastq_set::sseq::SSeqGen;
@@ -57,6 +59,7 @@ pub type BcSegQual = SQualityGen<MAX_BARCODE_SEGMENT_LENGTH>;
 pub enum BarcodeContent {
     Sequence(BcSeq),
     SpatialIndex(SquareBinIndex),
+    CellName(CellId),
 }
 
 impl fmt::Display for BarcodeContent {
@@ -64,6 +67,7 @@ impl fmt::Display for BarcodeContent {
         match self {
             BarcodeContent::Sequence(seq) => write!(f, "{seq}"),
             BarcodeContent::SpatialIndex(index) => write!(f, "{index}"),
+            BarcodeContent::CellName(cell_id) => write!(f, "{cell_id}"),
         }
     }
 }
@@ -75,6 +79,8 @@ impl FromStr for BarcodeContent {
     fn from_str(content_str: &str) -> Result<BarcodeContent> {
         if content_str.starts_with(binned::SQUARE_BIN_PREFIX) {
             Ok(BarcodeContent::SpatialIndex(content_str.parse()?))
+        } else if content_str.starts_with(cell_name::CELL_ID_PREFIX) {
+            Ok(BarcodeContent::CellName(content_str.parse()?))
         } else {
             Ok(BarcodeContent::Sequence(BcSeq::from_bytes(
                 content_str.as_bytes(),
@@ -95,6 +101,9 @@ impl BarcodeContent {
                 panic!("Cannot get spatial index from sequence barcode")
             }
             BarcodeContent::SpatialIndex(index) => *index,
+            BarcodeContent::CellName(_) => {
+                panic!("Cannot get spatial index from segmented cell barcode")
+            }
         }
     }
     /// The sequence of the barcode, if it has one. Panics for
@@ -105,6 +114,23 @@ impl BarcodeContent {
             BarcodeContent::SpatialIndex(_) => {
                 panic!("Cannot get sequence from spatial barcode")
             }
+            BarcodeContent::CellName(_) => {
+                panic!("Cannot get sequence from segmented cell barcode")
+            }
+        }
+    }
+
+    // The sequence of the barcode, if it has one. Panics for
+    /// spatial index barcodes
+    pub fn cell_id(&self) -> CellId {
+        match self {
+            BarcodeContent::Sequence(_) => {
+                panic!("Cannot get cell ID from sequence barcode")
+            }
+            BarcodeContent::SpatialIndex(_) => {
+                panic!("Cannot get cell ID from spatial barcode")
+            }
+            BarcodeContent::CellName(cell_id) => *cell_id,
         }
     }
 }
@@ -118,9 +144,9 @@ impl BarcodeContent {
 /// by the barcode sequence.
 #[derive(Serialize, Deserialize, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
 pub struct Barcode {
-    gem_group: u16,
-    valid: bool,
-    content: BarcodeContent,
+    pub gem_group: u16,
+    pub valid: bool,
+    pub content: BarcodeContent,
 }
 
 impl Barcode {
@@ -147,6 +173,15 @@ impl Barcode {
         }
     }
 
+    /// Create a barcode with a cell ID. A barcode with a spatial index is a valid barcode
+    pub fn with_cell_id(gem_group: u16, id: u32) -> Self {
+        Barcode {
+            gem_group,
+            content: BarcodeContent::CellName(CellId { id }),
+            valid: true,
+        }
+    }
+
     pub fn with_content(gem_group: u16, content: BarcodeContent, valid: bool) -> Self {
         Barcode {
             gem_group,
@@ -159,7 +194,7 @@ impl Barcode {
     }
     /// The sequence of the barcode, if it has one. Panics for
     /// spatial index barcodes
-    fn sequence(&self) -> &BcSeq {
+    pub fn sequence(&self) -> &BcSeq {
         self.content.sequence()
     }
     /// The sequence of the barcode as byte slice, if it has one. Panics for
@@ -178,6 +213,9 @@ impl Barcode {
                 panic!("Cannot get spatial index from sequence barcode")
             }
             BarcodeContent::SpatialIndex(index) => index,
+            BarcodeContent::CellName(_) => {
+                panic!("Cannot get spatial index from segmented cell barcode")
+            }
         }
     }
 

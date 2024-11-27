@@ -234,7 +234,7 @@ class MultiGenomeAnalysis:
         # Fix random seed
         np.random.seed(0)
 
-        n_multiplet_boot: np.ndarray[int, np.dtype[np.float_]] = np.zeros(bootstraps)
+        n_multiplet_boot: np.ndarray[int, np.dtype[np.float64]] = np.zeros(bootstraps)
         for i in range(bootstraps):
             boot_idx = np.random.choice(len(counts0), len(counts0))
             counts0_boot = counts0[boot_idx]
@@ -313,14 +313,14 @@ class MultiGenomeAnalysis:
         ) = compute_count_purity(
             top_txome_reads_per_bc[0, :], top_txome_reads_per_bc[1, :], gem_class_call
         )
-        d["%s_filtered_bcs_mean_count_purity" % top_two_txomes[0]] = purity0
-        d["%s_filtered_bcs_mean_count_purity" % top_two_txomes[1]] = purity1
-        d["%s_filtered_bcs_mean_count_purity" % lib_constants.MULTI_REFS_PREFIX] = overall_purity
-        d["%s_filtered_bcs_purity_outliers" % top_two_txomes[0]] = n_purity_outlier0
-        d["%s_filtered_bcs_purity_outliers" % top_two_txomes[1]] = n_purity_outlier1
-        d["%s_filtered_bcs_frac_purity_outlier" % top_two_txomes[0]] = frac_purity_outlier0
-        d["%s_filtered_bcs_frac_purity_outlier" % top_two_txomes[1]] = frac_purity_outlier1
-        d["%s_filtered_bcs_frac_purity_outlier" % lib_constants.MULTI_REFS_PREFIX] = (
+        d[f"{top_two_txomes[0]}_filtered_bcs_mean_count_purity"] = purity0
+        d[f"{top_two_txomes[1]}_filtered_bcs_mean_count_purity"] = purity1
+        d[f"{lib_constants.MULTI_REFS_PREFIX}_filtered_bcs_mean_count_purity"] = overall_purity
+        d[f"{top_two_txomes[0]}_filtered_bcs_purity_outliers"] = n_purity_outlier0
+        d[f"{top_two_txomes[1]}_filtered_bcs_purity_outliers"] = n_purity_outlier1
+        d[f"{top_two_txomes[0]}_filtered_bcs_frac_purity_outlier"] = frac_purity_outlier0
+        d[f"{top_two_txomes[1]}_filtered_bcs_frac_purity_outlier"] = frac_purity_outlier1
+        d[f"{lib_constants.MULTI_REFS_PREFIX}_filtered_bcs_frac_purity_outlier"] = (
             frac_purity_outlier0 + frac_purity_outlier1
         )
         self.result = {

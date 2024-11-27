@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -70,6 +71,59 @@ report_prefix_map = {
     CUSTOM_LIBRARY_TYPE: DISPLAY_PREFIX_CUSTOM,
     MULTIPLEXING_LIBRARY_TYPE: DISPLAY_PREFIX_MULTIPLEXING,
 }
+
+
+# BarcodeMultiplexingType enum from lib/rust/cr_types/src/types.rs
+class ReadLevel(Enum):
+    RTL = "RTL"
+    OH = "OH"
+
+
+class CellLevel(Enum):
+    CMO = "CMO"
+    Hashtag = "Hashtag"
+
+
+class BarcodeMultiplexingType:
+    """A class representing the multiplexing type, which can either be cell-level or read-level."""
+
+    def __init__(self, value: str):
+        if value == CellLevel.CMO.value:
+            self.level = "CellLevel"
+            self.type = CellLevel.CMO
+        elif value == CellLevel.Hashtag.value:
+            self.level = "CellLevel"
+            self.type = CellLevel.Hashtag
+        elif value == ReadLevel.RTL.value:
+            self.level = "ReadLevel"
+            self.type = ReadLevel.RTL
+        elif value == ReadLevel.OH.value:
+            self.level = "ReadLevel"
+            self.type = ReadLevel.OH
+        else:
+            raise ValueError("Invalid type for BarcodeMultiplexingType")
+
+    def __str__(self):
+        return self.type.value
+
+    def multiplexing_library_type(self):
+        """Returns the library associated with a given cell-level multiplexing type."""
+        if self.level == "CellLevel":
+            if self.type == CellLevel.CMO:
+                return MULTIPLEXING_LIBRARY_TYPE
+            elif self.type == CellLevel.Hashtag:
+                return ANTIBODY_LIBRARY_TYPE
+            else:
+                raise ValueError("Invalid CellLevel BarcodeMultiplexingType!")
+        else:
+            raise ValueError("Multiplexing library is undefined for this BarcodeMultiplexingType!")
+
+    def is_cell_multiplexed(self):
+        return self.level == "CellLevel"
+
+    def is_read_multiplexed(self):
+        return self.level == "ReadLevel"
+
 
 # 'target_set_name' should be a key in library_info
 TARGET_SET_KEY = "target_set_name"

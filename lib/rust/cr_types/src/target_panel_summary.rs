@@ -1,8 +1,8 @@
+use crate::reference::probe_set_reference::TargetSetFile;
 use crate::types::TargetingMethod;
 use martian_derive::martian_filetype;
 use martian_filetypes::json_file::JsonFormat;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 martian_filetype!(_TargetPanelSummaryFile, "tps");
 pub type TargetPanelSummaryFormat = JsonFormat<_TargetPanelSummaryFile, TargetPanelSummary>;
@@ -11,7 +11,7 @@ pub type TargetPanelSummaryFormat = JsonFormat<_TargetPanelSummaryFile, TargetPa
 pub struct TargetPanelSummary {
     pub target_panel_hash: String,
     pub target_panel_name: String,
-    pub target_panel_path: PathBuf,
+    pub target_panel_path: TargetSetFile,
     pub target_panel_gene_count: i32,
     pub target_panel_type: String,
     pub targeting_method: TargetingMethod,

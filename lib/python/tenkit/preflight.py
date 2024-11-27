@@ -274,8 +274,7 @@ def check_rta_complete(folder_path: str) -> str:
     rta_complete = os.path.join(folder_path, "RTAComplete.txt")
     if not os.path.exists(rta_complete):
         martian.exit(
-            "On machine: %s, run does not appear to be complete yet.  RTAComplete.txt not found."
-            % hostname
+            f"On machine: {hostname}, run does not appear to be complete yet.  RTAComplete.txt not found."
         )
     return rta_complete
 
@@ -291,17 +290,11 @@ def check_runinfo_xml(folder_path: str) -> str:
     runinfo = os.path.join(folder_path, "RunInfo.xml")
     if not os.path.exists(runinfo):
         martian.exit(
-            "On machine: %s, RunInfo.xml not found. Cannot verify run was 10X-prepped." % hostname
+            f"On machine: {hostname}, RunInfo.xml not found. Cannot verify run was 10X-prepped."
         )
     if not os.access(runinfo, os.R_OK):
-        martian.exit("On machine: %s, insufficient permission to open RunInfo.xml." % hostname)
+        martian.exit(f"On machine: {hostname}, insufficient permission to open RunInfo.xml.")
     return runinfo
-
-
-def check_barcode_whitelist(whitelist_path: str) -> str:
-    hostname = socket.gethostname()
-    check_file("barcode whitelist", whitelist_path, hostname)
-    return whitelist_path
 
 
 def check_refdata(reference_path: str, max_contigs=None) -> tuple[bool, str]:
@@ -318,8 +311,7 @@ def check_refdata(reference_path: str, max_contigs=None) -> tuple[bool, str]:
         if not os.path.exists(version_path):
             return (
                 False,
-                "Your reference does not contain the expected files, or they are not readable. Please check your reference folder on %s."
-                % hostname,
+                f"Your reference does not contain the expected files, or they are not readable. Please check your reference folder on {hostname}.",
             )
 
         # Known genomes get a more stringent check
@@ -328,17 +320,13 @@ def check_refdata(reference_path: str, max_contigs=None) -> tuple[bool, str]:
         ):
             return (
                 False,
-                "Your reference does not contain the expected files, or they are not readable. Please check your reference folder on %s."
-                % hostname,
+                f"Your reference does not contain the expected files, or they are not readable. Please check your reference folder on {hostname}.",
             )
-    else:
-        # We only require the fasta for unknown genomes
-        if not os.path.exists(os.path.join(reference_path, "fasta/")):
-            return (
-                False,
-                "Your reference does not contain the expected files, or they are not readable. Please check your reference folder on %s."
-                % hostname,
-            )
+    elif not os.path.exists(os.path.join(reference_path, "fasta/")):
+        return (
+            False,
+            f"Your reference does not contain the expected files, or they are not readable. Please check your reference folder on {hostname}.",
+        )
 
     if not os.path.exists(
         os.path.join(reference_path, "fasta/genome.fa.flat")
@@ -358,9 +346,11 @@ touch {}
 
 to fix the issue. If you do not have write permissions, please contact your
 system administrator.""".format(
-            "please reinstall the 10X refdata\ntar file on "
-            if known_genome
-            else "please reindex your reference\nusing the mkref tool",
+            (
+                "please reinstall the 10X refdata\ntar file on "
+                if known_genome
+                else "please reindex your reference\nusing the mkref tool"
+            ),
             hostname if known_genome else "",
             os.path.join(reference_path, "fasta", "genome.fa.*"),
         )
@@ -454,9 +444,9 @@ def check_sample_indices(
             return (
                 None,
                 (
-                    "Sample index '%s' is not valid. Must be one of: any, SI-<number>, "
+                    f"Sample index '{sample_index}' is not valid. Must be one of: any, SI-<number>, "
                     "SI-<plate>-<well coordinate>, 220<part number>, or "
-                    "a nucleotide sequence." % sample_index
+                    "a nucleotide sequence."
                 ),
             )
 
@@ -509,8 +499,7 @@ def check_gem_groups(sample_def: Iterable[SampleDef]) -> tuple[bool, str | None]
         if group - prev > 1:
             return (
                 False,
-                "gem_groups must be numbered contiguously. missing groups: %s"
-                % list(range(prev + 1, group)),
+                f"gem_groups must be numbered contiguously. missing groups: {list(range(prev + 1, group))}",
             )
         prev = group
 

@@ -129,9 +129,9 @@ class RTAVersionInformation:
             "ApplicationName": self.application,
             "ApplicationVersion": self.application_version,
         }
-        martian.log_info("BCL folder RTA Version: %s" % self.rta_version)
-        martian.log_info("BCL params: %s" % str(bcl_params))
-        martian.log_info("RC'ing i2 read: %s" % str(self.rc_i2))
+        martian.log_info(f"BCL folder RTA Version: {self.rta_version}")
+        martian.log_info(f"BCL params: {bcl_params!s}")
+        martian.log_info(f"RC'ing i2 read: {self.rc_i2!s}")
 
     @property
     def sequencer(self) -> IlluminaSequencer:
@@ -302,16 +302,13 @@ class RTAVersionInformation:
                 if v1 is not None:
                     return Bcl2FastqVersion.V1, v1
                 else:
-                    msg = "mkfastq requires bcl2fastq 1.8.4 for RTA version: %s" % self.rta_version
+                    msg = f"mkfastq requires bcl2fastq 1.8.4 for RTA version: {self.rta_version}"
                     martian.exit(msg)
                     raise SystemExit()
         # RTA >= 1.18.54 -> run 2.17 or higher
         # NovaSeq X -> run 2.20 or higher
         if v2 is None:
-            msg = (
-                "No valid bcl2fastq found on path. Recommended version of bcl2fastq is v2.20.\n\n%s"
-                % v2_msg
-            )
+            msg = f"No valid bcl2fastq found on path. Recommended version of bcl2fastq is v2.20.\n\n{v2_msg}"
             martian.exit(msg)
             raise SystemExit()
 
@@ -353,7 +350,7 @@ def _get_bcl2fastq_v2(hostname: str) -> tuple[bytes, None] | tuple[None, str]:
                 [bcl2fastq, "--version"], env=new_environ, stderr=subprocess.STDOUT
             )
         except subprocess.CalledProcessError:
-            msg = "On machine: %s, bcl2fastq does not work." % hostname
+            msg = f"On machine: {hostname}, bcl2fastq does not work."
             return (None, msg)
         for l in output.split(b"\n"):
             match = re.match(b"bcl2fastq v([0-9.]+)", l)
@@ -365,7 +362,7 @@ def _get_bcl2fastq_v2(hostname: str) -> tuple[bytes, None] | tuple[None, str]:
             "bcl2fastq version not recognized -- please check the output of bcl2fastq --version",
         )
     else:
-        msg = "On machine: %s, bcl2fastq not found on PATH." % hostname
+        msg = f"On machine: {hostname}, bcl2fastq not found on PATH."
         return (None, msg)
 
 
@@ -493,18 +490,25 @@ def load_run_info(run_info_xml: str) -> tuple[list[ReadInfo], str | None]:
     read_info = [
         ReadInfo(
             read_length=x,
-            index_read=idx != 0 and idx != len(reads) - 1,
-            read_name="R1" if idx == 0 else "R2" if idx == len(reads) - 1 else "I" + str(idx),
+            index_read=(idx not in (0, len(reads) - 1)) or is_indexed_read,
+            read_name=(
+                "R1"
+                if idx == 0 and not is_indexed_read
+                else "R2" if idx == len(reads) - 1 and not is_indexed_read else "I" + str(idx)
+            ),
             original_read_name="R" + str(idx + 1),
         )
-        for idx, x in enumerate(int(read.attrib["NumCycles"]) for read in reads)
+        for idx, (x, is_indexed_read) in enumerate(
+            (int(read.attrib["NumCycles"]), read.attrib.get("IsIndexedRead") == "Y")
+            for read in reads
+        )
     ]
     flowcell = tree.getroot().find("Run").find("Flowcell").text
 
     # NB: currently you have to comment out the next two lines to get
     # nosetests to run correctly outside of a stage.
-    martian.log_info("Read Info: %s" % read_info)
-    martian.log_info("Flowcell ID: %s" % flowcell)
+    martian.log_info(f"Read Info: {read_info}")
+    martian.log_info(f"Flowcell ID: {flowcell}")
     return (read_info, flowcell)
 
 
@@ -547,7 +551,7 @@ def make_bases_mask_val(
             else:
                 return "Y" + str(read["read_length"])
         else:
-            martian.throw("read name was not recognized: %s" % read["read_name"])
+            martian.throw("read name was not recognized: {}".format(read["read_name"]))
             raise SystemExit()
 
     # Special hack to convert the bases_mask

@@ -171,11 +171,10 @@ impl MartianMain for ProcessVdjProto {
     }
 }
 
-#[cfg(test)]
 pub fn make_test_library(key: &'static str) -> VdjAggrCsvLibrary {
     VdjAggrCsvLibrary {
         library_id: key.into(),
-        vdj_contig_info: format!("test_resources/vdj_contig_info/{key}.pb").into(),
+        vdj_contig_info: format!("../cr_aggr/test_resources/vdj_contig_info/{key}.pb").into(),
         donor: "Donor".into(),
         origin: "Origin".into(),
         meta: HashMap::new(),
@@ -187,6 +186,7 @@ mod tests {
     use super::*;
     use dui_tests::stage_test::StageFailTest;
     use dui_tests::{stage_fail_dui_test, DuiTest};
+    use insta::assert_yaml_snapshot;
 
     #[test]
     fn test_conflicting_reference() -> Result<()> {
@@ -247,7 +247,7 @@ mod tests {
             count_gem_well_map: Some(count_gem_well_map),
         };
         let outs = ProcessVdjProto.test_run_tmpdir(args)?;
-        insta::assert_yaml_snapshot!(&outs);
+        assert_yaml_snapshot!(&outs);
         Ok(())
     }
 
@@ -262,7 +262,7 @@ mod tests {
             count_gem_well_map: None,
         };
         let outs = ProcessVdjProto.test_run_tmpdir(args)?;
-        insta::assert_yaml_snapshot!(&outs);
+        assert_yaml_snapshot!(&outs);
         Ok(())
     }
 }

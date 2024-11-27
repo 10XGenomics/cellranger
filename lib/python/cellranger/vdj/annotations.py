@@ -337,13 +337,11 @@ def search_cdr3_signature_no_vj(seq, v_region=None, j_region=None):
 
 
 @overload
-def _bytes_or_none(maybe_str: None) -> None:
-    ...
+def _bytes_or_none(maybe_str: None) -> None: ...
 
 
 @overload
-def _bytes_or_none(maybe_str: bytes | str) -> bytes:
-    ...
+def _bytes_or_none(maybe_str: bytes | str) -> bytes: ...
 
 
 def _bytes_or_none(maybe_str: bytes | str | None) -> bytes | None:
@@ -893,10 +891,7 @@ class AnnotatedContig:
                         ensure_str(self.contig_name),
                         str(anno.contig_match_start),
                         str(anno.contig_match_end),
-                        "{}_{}".format(
-                            ensure_str(anno.feature.display_name),
-                            ensure_str(anno.feature.region_type),
-                        ),
+                        f"{ensure_str(anno.feature.display_name)}_{ensure_str(anno.feature.region_type)}",
                     ]
                 )
 
@@ -981,11 +976,10 @@ class AnnotatedContig:
                 )
 
                 assert (cdr_pos[1] - cdr_pos[0]) % 3 == 0
+            elif cdr_pos is None:
+                flags.append("NO_CDR3")
             else:
-                if cdr_pos is None:
-                    flags.append("NO_CDR3")
-                else:
-                    flags.append("CDR3_TOO_LONG:%d" % (cdr_pos[1] - cdr_pos[0]))
+                flags.append("CDR3_TOO_LONG:%d" % (cdr_pos[1] - cdr_pos[0]))
 
         if not self.cdr3:
             # Either this didn't have both a V and a J, or the annotation-guided search failed to give a valid CDR3.
@@ -1818,14 +1812,14 @@ def report_clonotypes(
 
             if cl is not None:
                 paired_cls_metric.add(
-                    1, filter=is_cl_paired and (gp == vdj_gene_pair or gp == MULTI_REFS_PREFIX)
+                    1, filter=is_cl_paired and (gp in (vdj_gene_pair, MULTI_REFS_PREFIX))
                 )
                 bcs_in_paired_cls_metric.add(
                     len(bc_contig_lists),
-                    filter=is_cl_paired and (gp == vdj_gene_pair or gp == MULTI_REFS_PREFIX),
+                    filter=is_cl_paired and (gp in (vdj_gene_pair, MULTI_REFS_PREFIX)),
                 )
 
-                if gp == vdj_gene_pair or gp == MULTI_REFS_PREFIX:
+                if gp in (vdj_gene_pair, MULTI_REFS_PREFIX):
                     num_clonotypes_metric = reporter._get_metric_attr(
                         "vdj_clonotype_count", gp, prefix
                     )

@@ -4,6 +4,7 @@ use hdf5::{Dataset, Extents, Group, H5Type};
 pub mod compare;
 pub mod count_matrix;
 pub mod feature_reference_io;
+pub mod iter;
 pub mod molecule_info;
 pub mod probe_reference_io;
 

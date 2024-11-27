@@ -12,7 +12,6 @@ use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::LazyFileTypeIO;
-use perf_stats::elapsed;
 use rayon::prelude::*;
 use rust_htslib::bam;
 use serde::{Deserialize, Serialize};
@@ -23,7 +22,7 @@ use vdj_asm_utils::bam_utils::add_ref_to_bam_header;
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteConsensusBamStageInputs {
-    pub sample_number: Option<usize>,
+    pub sample_id: Option<String>,
     pub enclone_output: ProtoBinFile,
     pub all_contig_annotations_json: JsonFile<Vec<ContigAnnotation>>,
 }
@@ -79,7 +78,7 @@ impl MartianMain for WriteConsensusBam {
                     &mut header,
                     &ClonotypeId {
                         id: i + 1,
-                        sample_number: args.sample_number,
+                        sample_id: args.sample_id.as_deref(),
                     }
                     .consensus_name(j + 1),
                     seq.len(),
@@ -141,7 +140,10 @@ impl MartianMain for WriteConsensusBam {
                 }
             }
         }
-        println!("used {:.2} seconds building consensus sam", elapsed(&t));
+        println!(
+            "used {:.2} seconds building consensus sam",
+            t.elapsed().as_secs_f64()
+        );
 
         // Make the indexed bam.
 

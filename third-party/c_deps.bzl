@@ -67,7 +67,7 @@ def load_c_deps():
     # tracking the "bazel" branch in 10xdev/graphviz
     github_http_archive(
         name = "com_github_10xdev_graphviz",
-        commit = "d5953a58dea6568be4b623640cc68e49b79e5b86",
+        commit = "11a86ea0ca32a79d65102f90eae122dba203ddd6",
         url = "https://github.com/10XDev/graphviz",
-        sha256 = "b12b5938260ba9a6b358d7dc67cabc9b1541940132240d854eb6bf28940f9f4a",
+        sha256 = "aa7842ce0d400277531ba89016218b6426c2245deee6b2668d72c25aa055c2ef",
     )

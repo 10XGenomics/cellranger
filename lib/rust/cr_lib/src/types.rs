@@ -6,13 +6,13 @@ use cr_h5::count_matrix::CountMatrixFile;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::RnaRead;
 use cr_types::{LibraryType, SampleAssignment};
-use cr_websummary::multi::tables::SequencingMetricsTable;
+use cr_websummary::multi::tables::SequencingMetricsRow;
 use martian::MartianRover;
 use martian_derive::{martian_filetype, MartianStruct, MartianType};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::json_file::JsonFormat;
 use martian_filetypes::tabular_file::CsvFile;
-use metric::TxHashMap;
+use metric::{PercentMetric, TxHashMap};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tx_annotation::read::ReadAnnotations;
@@ -78,12 +78,42 @@ impl GexMatrices {
     }
 }
 
-impl From<SampleMatrices> for GexMatrices {
-    fn from(value: SampleMatrices) -> Self {
+impl GexMatrices {
+    pub fn from_sample_matrices(value: SampleMatrices, read_level_multiplexing: bool) -> Self {
         GexMatrices {
             filtered_matrix_h5: Some(value.filtered_matrix_h5),
-            raw_matrix_h5: Some(value.raw_matrix_h5),
+            raw_matrix_h5: read_level_multiplexing.then_some(value.raw_matrix_h5),
             filtered_barcodes: Some(value.filtered_barcodes),
+        }
+    }
+}
+
+/// Sequencing metrics for a specific FASTQ ID.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SequencingMetrics {
+    pub fastq_id: String,
+    pub number_of_reads: usize,
+    pub unprocessed_reads: usize,
+    pub q30_barcode: PercentMetric,
+    pub q30_gem_barcode: Option<PercentMetric>,
+    pub q30_probe_barcode: Option<PercentMetric>,
+    pub q30_umi: PercentMetric,
+    pub q30_read1: PercentMetric,
+    pub q30_read2: Option<PercentMetric>,
+}
+
+impl From<SequencingMetrics> for SequencingMetricsRow {
+    fn from(value: SequencingMetrics) -> Self {
+        SequencingMetricsRow {
+            fastq_id: Some(value.fastq_id),
+            number_of_reads: Some(value.number_of_reads),
+            unprocessed_reads: Some(value.unprocessed_reads),
+            q30_barcode: Some(value.q30_barcode.into()),
+            q30_gem_barcode: value.q30_gem_barcode.map(Into::into),
+            q30_probe_barcode: value.q30_probe_barcode.map(Into::into),
+            q30_umi: Some(value.q30_umi.into()),
+            q30_read1: Some(value.q30_read1.into()),
+            q30_read2: value.q30_read2.map(Into::into),
         }
     }
 }
@@ -117,8 +147,9 @@ martian_filetype!(BcListFile, "bcl");
 martian_filetype!(_FeatureReferenceFile, "frf");
 pub type FeatureReferenceFormat = BinaryFormat<_FeatureReferenceFile, FeatureReference>;
 
+pub type PerLibrarySequencingMetrics = TxHashMap<LibraryType, Vec<SequencingMetrics>>;
+
 martian_filetype!(_SequencingMetricsFile, "smf");
-pub type SequencingMetricsFormat =
-    JsonFormat<_SequencingMetricsFile, TxHashMap<LibraryType, SequencingMetricsTable>>;
+pub type SequencingMetricsFormat = JsonFormat<_SequencingMetricsFile, PerLibrarySequencingMetrics>;
 
 martian_filetype!(SvgFile, "svg");

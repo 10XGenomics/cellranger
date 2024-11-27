@@ -89,12 +89,10 @@ def parse_parameters(filename):
         return {}
 
     if not os.path.exists(filename):
-        martian.exit("Parameters file does not exist: %s" % filename)
+        martian.exit(f"Parameters file does not exist: {filename}")
 
     if not os.access(filename, os.R_OK):
-        martian.exit(
-            "Parameters file is not readable, please check file permissions: %s" % filename
-        )
+        martian.exit(f"Parameters file is not readable, please check file permissions: {filename}")
 
     params = {}
     with open(filename) as f:
@@ -106,9 +104,9 @@ def parse_parameters(filename):
             name = row[0].strip().lower()
             value = row[1].strip()
             if name not in ANALYSIS_PARAMS:
-                martian.exit("Unrecognized parameter: %s" % name)
+                martian.exit(f"Unrecognized parameter: {name}")
             if name in params:
-                martian.exit("Cannot specify the same parameter twice: %s" % name)
+                martian.exit(f"Cannot specify the same parameter twice: {name}")
             required_type = ANALYSIS_PARAMS[name]
             try:
                 if required_type == bool:
@@ -119,9 +117,7 @@ def parse_parameters(filename):
                     elif value == "false":
                         value = 0
                     else:
-                        msg = ("Parameter {} must be set to 'true' or 'false', not {}.").format(
-                            name, org_value
-                        )
+                        msg = f"Parameter {name} must be set to 'true' or 'false', not {org_value}."
                         martian.exit(msg)
                 cast_value = required_type(value)
                 params[name] = cast_value

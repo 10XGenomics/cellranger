@@ -26,8 +26,13 @@ fn construct_score_vector(nt: u8, seq: &[u8]) -> Vec<i64> {
 
 /// Find the best scoring 3' homopolymer run.
 pub fn align_homopolymer_threeprime(nt: u8, seq: &[u8]) -> Range<usize> {
+    if seq.is_empty() {
+        return 0..0;
+    }
+
     let score_vec = construct_score_vector(nt, seq);
-    if *score_vec.last().unwrap() <= 0 {
+
+    if score_vec.is_empty() || (*score_vec.last().unwrap() <= 0) {
         return 0..0;
     }
 
@@ -45,20 +50,28 @@ pub fn count_homopolymer_matches_threeprime(nt: u8, seq: &[u8]) -> usize {
 
 /// Find the best scoring homopolymer run.
 pub fn align_homopolymer(nt: u8, seq: &[u8]) -> Range<usize> {
-    let score_vec = construct_score_vector(nt, seq);
-    let max_score = *score_vec.iter().max().unwrap();
-    if max_score <= 0 {
+    if seq.is_empty() {
         return 0..0;
     }
 
-    // Backtrack
-    // TODO: Return the longest match when there are multiple matches with the best score.
-    let end = 1 + score_vec.iter().rposition(|&x| x == max_score).unwrap();
-    let start = score_vec[0..end]
+    let score_vec = construct_score_vector(nt, seq);
+    let max_score = *score_vec
         .iter()
-        .rposition(|&x| x < 0)
-        .map_or(0, |x| 1 + x);
-    start..end
+        .max()
+        .expect("The score vec did not have a max.");
+
+    if max_score > 0 {
+        // Backtrack
+        // TODO: Return the longest match when there are multiple matches with the best score.
+        let end = 1 + score_vec.iter().rposition(|&x| x == max_score).unwrap();
+        let start = score_vec[0..end]
+            .iter()
+            .rposition(|&x| x < 0)
+            .map_or(0, |x| 1 + x);
+        start..end
+    } else {
+        0..0
+    }
 }
 
 /// Count the number of matches in the longest homopolymer run, allowing for mismatches.

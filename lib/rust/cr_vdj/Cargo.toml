@@ -3,16 +3,20 @@ name = 'cr_vdj'
 test = false
 
 [dependencies]
-docopt = '1'
-
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.clonotype_assigner]
 path = '../clonotype_assigner'
 
-[dependencies.enclone_core]
+[dependencies.cr_lib]
+path = '../cr_lib'
+
+[dependencies.docopt]
 workspace = true
+
+[dependencies.enclone_core]
+path = '../enclone_core'
 
 [dependencies.hdf5]
 workspace = true
@@ -58,15 +62,14 @@ features = ['derive']
 workspace = true
 
 [dependencies.vdj_ann]
-workspace = true
+path = '../vdj_ann'
 
 [dependencies.vdj_asm_asm]
 default-features = false
 path = '../vdj_asm_asm'
 
-[dependencies.vdj_asm_utils]
-default-features = false
-path = '../vdj_asm_utils'
+[dependencies.vdj_filter_barcodes]
+path = '../vdj_filter_barcodes'
 
 [dependencies.websummary_build]
 path = '../websummary_build'

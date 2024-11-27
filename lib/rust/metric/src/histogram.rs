@@ -360,6 +360,7 @@ where
     /// Panics if:
     /// - start is not less than stop
     /// - step is equal to zero
+    ///
     /// TODO: May be create a `BinnedHistogram` class in the future?
     ///
     /// # Example

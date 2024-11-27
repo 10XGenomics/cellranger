@@ -164,6 +164,9 @@ def main(argv: list[str], outfile: TextIO) -> None:
     elif len(argv) > 1 and argv[1] == "cmo_multi":
         json_file = "cr_example/cmo.json"
         contents_file = "cr_example/multi_summary.html"
+    elif len(argv) > 1 and argv[1] == "hashtag_multi":
+        json_file = "cr_example/hashtag.json"
+        contents_file = "cr_example/multi_summary.html"
     elif len(argv) > 1 and argv[1] == "cas_multi":
         json_file = "cr_example/multi_cell_annotation.json"
         contents_file = "cr_example/multi_summary.html"

@@ -1,9 +1,14 @@
 [dependencies]
-proc-macro2 = '1'
-quote = '1'
-syn = '2'
-
 [dependencies.itertools]
+workspace = true
+
+[dependencies.proc-macro2]
+workspace = true
+
+[dependencies.quote]
+workspace = true
+
+[dependencies.syn]
 workspace = true
 
 [lib]

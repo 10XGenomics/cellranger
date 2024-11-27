@@ -129,6 +129,7 @@ def _compute_per_genome_metrics(
         barcode_metric_keys = [
             f"{barcode_metric_key}_{genome}" for barcode_metric_key in genome_metrics
         ]
+
         filtered_rows = per_barcode_metrics["barcode"].apply(
             lambda bc, genome=genome: is_valid_barcode(bc)
             and filtered_barcodes.contains(bc, genome)
@@ -140,6 +141,6 @@ def _compute_per_genome_metrics(
 
         for barcode_metric_key, metric_key in genome_metrics.items():
             metric_key = f"{genome}_{metric_key}"
-            metrics[metric_key] = metric_values[f"{barcode_metric_key}_{genome}"]
+            metrics[metric_key] = metric_values.get(f"{barcode_metric_key}_{genome}", 0)
 
     return metrics

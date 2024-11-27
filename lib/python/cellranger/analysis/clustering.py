@@ -37,9 +37,9 @@ class CLUSTERING(NamedTuple):
     clusters: np.ndarray[int, np.dtype[np.int64]]
     num_clusters: np.int64
     cluster_score: np.float64
-    clustering_type: np.string_
+    clustering_type: np.bytes_
     global_sort_key: np.float64
-    description: np.string_
+    description: np.bytes_
 
 
 def format_legacy_clustering_key(cluster_type: str, cluster_param: int):
@@ -64,7 +64,7 @@ def format_clustering_key(cluster_type: str, cluster_param: int):
     ):
         return cluster_type
     else:
-        raise ValueError("Unsupported cluster type: %s" % cluster_type)
+        raise ValueError(f"Unsupported cluster type: {cluster_type}")
 
 
 def _parse_number_of_clusters(clustering_key: str):
@@ -108,7 +108,7 @@ def parse_clustering_key(clustering_key: str):
     elif clustering_key == CLUSTER_TYPE_CELLTYPES:
         return (clustering_key, 0)
     else:
-        raise ValueError("Unsupported clustering type for clustering key: %s" % clustering_key)
+        raise ValueError(f"Unsupported clustering type for clustering key: {clustering_key}")
 
 
 def humanify_clustering_key(clustering_key: str):
@@ -185,7 +185,7 @@ def create_legacy_kmeans_nodes(
             f.create_soft_link(subgroup, field, target=target)
         else:
             sys.stderr.write(
-                "Skipped soft-link of legacy dataset to %s; node doesn't exist\n" % target
+                f"Skipped soft-link of legacy dataset to {target}; node doesn't exist\n"
             )
 
 
@@ -230,7 +230,7 @@ def create_clustering(
         clusters=np.asarray(clusters, dtype=np.int64),
         num_clusters=np.int64(num_clusters),
         cluster_score=np.float64(cluster_score),
-        clustering_type=np.string_(clustering_type),
+        clustering_type=np.bytes_(clustering_type),
         global_sort_key=np.float64(global_sort_key),
-        description=np.string_(description),
+        description=np.bytes_(description),
     )

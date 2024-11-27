@@ -10,13 +10,15 @@ filetype h5;
 filetype json;
 
 pipeline _ANTIBODY_ANALYZER(
-    in  h5   filtered_feature_counts_matrix,
-    in  csv  aggregate_barcodes,
-    in  bool is_antibody,
-    in  bool is_spatial,
-    out path antibody_analysis,
-    out json antibody_histograms_json,
-    out json antibody_treemap_json,
+    in  h5     filtered_feature_counts_matrix,
+    in  csv    aggregate_barcodes,
+    in  bool   is_antibody,
+    in  bool   is_spatial,
+    in  json   multi_graph,
+    in  string sample_id,
+    out path   antibody_analysis,
+    out json   antibody_histograms_json,
+    out json   antibody_treemap_json,
 )
 {
     # Currently makes histograms
@@ -24,6 +26,8 @@ pipeline _ANTIBODY_ANALYZER(
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
         is_antibody = self.is_antibody,
         is_spatial  = self.is_spatial,
+        multi_graph = self.multi_graph,
+        sample_id   = self.sample_id,
     )
 
     # Currently copies this file

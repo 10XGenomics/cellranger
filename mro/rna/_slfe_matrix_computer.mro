@@ -29,7 +29,6 @@ pipeline _SLFE_MATRIX_COMPUTER(
     in  bool              is_pd,
     in  map[]             chunks,
     in  path              reference_path,
-    in  string[]          libraries_to_translate,
     in  float             subsample_rate,
     in  int               initial_reads,
     in  int               r1_length,
@@ -49,7 +48,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
     in  FeatureConfig     feature_config,
     # Note: _SLFE_MATRIX_COMPUTER processes data from a single gem well.
     in  int               gem_well,
-    in  h5                v1_filtered_fbm,
+    in  V1PatternFixArgs  v1_pattern_fix,
     out frf.bincode       slfe_feature_reference,
     out csv               barcode_correction_csv,
     out h5                barcode_summary,
@@ -76,6 +75,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
     ### This has total barcodes from BARCODE_CORRECTION for use in Spatial
     out tbcc.bincode      barcode_counts,
     out bool              no_star_alignments,
+    out parquet[]         per_read_gap_align,
 )
 {
     call MAKE_SHARD(
@@ -92,7 +92,6 @@ pipeline _SLFE_MATRIX_COMPUTER(
         target_set             = self.target_set,
         target_set_name        = self.target_set_name,
         feature_reference_path = self.feature_reference,
-        libraries_to_translate = self.libraries_to_translate,
         feature_config         = self.feature_config,
     )
 
@@ -108,9 +107,9 @@ pipeline _SLFE_MATRIX_COMPUTER(
         chemistry_defs         = self.chemistry_defs,
         invalid_uncorrected    = MAKE_SHARD.invalid,
         valid_read_metrics     = MAKE_SHARD.bc_correct_summary,
-        libraries_to_translate = self.libraries_to_translate,
         min_reads_to_report_bc = self.min_reads_to_report_bc,
         correction_map         = MAKE_CORRECTION_MAP.correction_map,
+        barcodes_under_tissue  = self.barcodes_under_tissue,
     )
 
     call MAKE_READ_SHARDS_STRUCT(
@@ -140,11 +139,11 @@ pipeline _SLFE_MATRIX_COMPUTER(
     )
 
     call DISABLE_CORRECTION_FACTOR(
-        v1_filtered_fbm = self.v1_filtered_fbm,
+        v1_pattern_fix = self.v1_pattern_fix,
     )
 
     call COMPUTE_CORRECTION_FACTOR(
-        v1_filtered_fbm       = self.v1_filtered_fbm,
+        v1_pattern_fix        = self.v1_pattern_fix,
         barcodes_under_tissue = self.barcodes_under_tissue,
     ) using (
         disabled = DISABLE_CORRECTION_FACTOR.disable_correction_factor,
@@ -177,6 +176,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
     call COLLATE_METRICS(
         per_barcode_metrics = ALIGN_AND_COUNT.per_barcode_metrics,
         reference_path      = self.reference_path,
+        target_set          = self.target_set,
         feature_reference   = MAKE_SHARD.feature_reference,
         filtered_barcodes   = null,
         aggregate_barcodes  = null,
@@ -184,29 +184,33 @@ pipeline _SLFE_MATRIX_COMPUTER(
     )
 
     call WRITE_BARCODE_INDEX(
-        barcode_counts        = BARCODE_CORRECTION.corrected_barcode_counts,
-        barcodes_under_tissue = self.barcodes_under_tissue,
+        barcode_counts             = BARCODE_CORRECTION.corrected_barcode_counts,
+        barcodes_under_tissue      = self.barcodes_under_tissue,
+        barcode_correction_summary = BARCODE_CORRECTION.summary,
     )
 
     call WRITE_BARCODE_SUMMARY(
-        per_barcode_metrics = ALIGN_AND_COUNT.per_barcode_metrics,
-        feature_reference   = MAKE_SHARD.feature_reference,
-        barcode_index       = WRITE_BARCODE_INDEX.barcode_index,
+        per_barcode_metrics        = ALIGN_AND_COUNT.per_barcode_metrics,
+        feature_reference          = MAKE_SHARD.feature_reference,
+        barcode_index              = WRITE_BARCODE_INDEX.barcode_index,
+        barcode_correction_summary = BARCODE_CORRECTION.summary,
     )
 
     call WRITE_H5_MATRIX(
-        gem_well          = self.gem_well,
-        counts            = ALIGN_AND_COUNT.counts_bc_order,
-        feature_reference = MAKE_SHARD.feature_reference,
-        chemistry_defs    = self.chemistry_defs,
-        sample_id         = self.sample_id,
-        barcode_index     = WRITE_BARCODE_INDEX.barcode_index,
+        gem_well                   = self.gem_well,
+        counts                     = ALIGN_AND_COUNT.counts_bc_order,
+        feature_reference          = MAKE_SHARD.feature_reference,
+        chemistry_defs             = self.chemistry_defs,
+        sample_id                  = self.sample_id,
+        barcode_index              = WRITE_BARCODE_INDEX.barcode_index,
+        barcode_correction_summary = BARCODE_CORRECTION.summary,
     )
 
     call WRITE_MATRIX_MARKET(
-        counts            = ALIGN_AND_COUNT.counts_bc_order,
-        feature_reference = MAKE_SHARD.feature_reference,
-        barcode_index     = WRITE_BARCODE_INDEX.barcode_index,
+        counts                     = ALIGN_AND_COUNT.counts_bc_order,
+        feature_reference          = MAKE_SHARD.feature_reference,
+        barcode_index              = WRITE_BARCODE_INDEX.barcode_index,
+        barcode_correction_summary = BARCODE_CORRECTION.summary,
     )
 
     call MERGE_METRICS(
@@ -244,5 +248,6 @@ pipeline _SLFE_MATRIX_COMPUTER(
         barcode_counts             = BARCODE_CORRECTION.total_barcode_counts,
         probe_barcode_counts       = ALIGN_AND_COUNT.probe_barcode_counts,
         no_star_alignments         = ALIGN_AND_COUNT.no_star_alignments,
+        per_read_gap_align         = ALIGN_AND_COUNT.per_read_gap_align,
     )
 }

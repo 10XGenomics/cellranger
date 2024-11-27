@@ -95,7 +95,11 @@ impl From<VdjAggrAnnotationTable> for CardWithMetric {
         }
 
         CardWithMetric {
-            table: GenericTable { header: None, rows },
+            table: GenericTable {
+                header: None,
+                rows,
+                grouping_header: None,
+            },
             help: TitleWithTermDesc {
                 title: ANNOTATION_TABLE_TITLE.into(),
                 data: term_descs,
@@ -125,11 +129,11 @@ mod tests {
                     "rows": [
                         [
                             "Cells With Productive V-J Spanning Pair",
-                            "66.67%"
+                            "66.7%"
                         ],
                         [
                             "Cells With Productive V-J Spanning (TRA, TRB) Pair",
-                            "66.67%"
+                            "66.7%"
                         ]
                     ]
                 },
@@ -176,15 +180,15 @@ mod tests {
                     "rows": [
                         [
                             "Cells With Productive V-J Spanning Pair",
-                            "66.67%"
+                            "66.7%"
                         ],
                         [
                             "Cells With Productive V-J Spanning (IGK, IGH) Pair",
-                            "50.00%"
+                            "50.0%"
                         ],
                         [
                             "Cells With Productive V-J Spanning (IGL, IGH) Pair",
-                            "16.67%"
+                            "16.7%"
                         ]
                     ]
                 },

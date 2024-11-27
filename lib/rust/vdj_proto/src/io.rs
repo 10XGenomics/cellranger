@@ -41,7 +41,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek};
 use std::path::Path;
 
-pub const PROTOBUF_VERSION: &str = "1.0.0";
+pub const PROTOBUF_VERSION: &str = "1.1.0";
 
 /// Helper struct for writing vdj contig proto file.
 ///
@@ -218,17 +218,20 @@ impl VdjProtoReader {
         }))
     }
 
-    pub fn read_barcode_data(file_name: &Path) -> Result<Option<BarcodeData>> {
+    pub fn read_barcode_data(
+        file_name: &Path,
+    ) -> Result<Option<impl Iterator<Item = Result<BarcodeData>>>> {
         if Self::read_metadata(file_name)?.protobuf_version.is_empty() {
             Ok(None)
         } else {
-            let reader = VdjProtoReader::new(file_name)?;
-            for message in reader {
-                if let MessageContent::BarcodeData(m) = message?.content() {
-                    return Ok(Some(m));
-                }
-            }
-            Ok(None)
+            let iterator = VdjProtoReader::new(file_name)?.filter_map(|message| match message {
+                Ok(m) => match m.content() {
+                    MessageContent::BarcodeData(bc) => Some(Ok(bc)),
+                    _ => None,
+                },
+                Err(e) => Some(Err(e)),
+            });
+            Ok(Some(iterator))
         }
     }
 }
@@ -279,6 +282,7 @@ mod tests {
             any::<String>(),
             any::<String>(),
             PROTOBUF_VERSION,
+            0..2i32,
         )
             .prop_map(
                 |(
@@ -291,6 +295,7 @@ mod tests {
                     sample_desc,
                     multi_config_sha,
                     protobuf_version,
+                    multiplexing_method,
                 )| VdjMetadata {
                     reference_fasta_hash,
                     pipeline_version,
@@ -301,6 +306,7 @@ mod tests {
                     sample_desc,
                     multi_config_sha,
                     protobuf_version,
+                    multiplexing_method,
                 },
             )
             .boxed()
@@ -362,6 +368,7 @@ mod tests {
             multi_config_sha: "e96907faf862b9269bdd4649597778d2c44954dfa877095ceb934b8ce043bbca"
                 .into(),
             protobuf_version: String::new(),
+            multiplexing_method: 0,
         };
 
         let reference = VdjReferenceRaw {
@@ -403,6 +410,7 @@ mod tests {
         let file = Path::new("test/cellranger7-1_contig_info.pb");
         let metadata = VdjProtoReader::read_metadata(file)?;
         assert!(metadata.protobuf_version.is_empty());
+        assert!(metadata.multiplexing_method == 0);
 
         let barcode_data = VdjProtoReader::read_barcode_data(file)?;
         assert!(barcode_data.is_none());

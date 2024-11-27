@@ -93,8 +93,7 @@ def check_inner_enrichment_primers(primers_file, reference_path):
                             return
 
         raise PreflightException(
-            "Inner enrichment primers are required for species other than human or mouse for which primers are not provided by 10x Genomics. None of the constant regions in the reference (%s) is targeted by the known primers."
-            % reference_path
+            f"Inner enrichment primers are required for species other than human or mouse for which primers are not provided by 10x Genomics. None of the constant regions in the reference ({reference_path}) is targeted by the known primers."
         )
 
     hostname = socket.gethostname()
@@ -124,8 +123,7 @@ def check_inner_enrichment_primers(primers_file, reference_path):
 
     if not inner_primers:  # Empty file
         raise PreflightException(
-            "Inner enrichment primers file (%s) contains zero entries. You should specify at least one primer"
-            % primers_file
+            f"Inner enrichment primers file ({primers_file}) contains zero entries. You should specify at least one primer"
         )
 
     if reference_path:

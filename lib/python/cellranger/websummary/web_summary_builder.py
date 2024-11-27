@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import cellranger.rna.library as rna_library
 import cellranger.websummary.sample_properties as wsp
 import cellranger.websummary.violin_plots as violin_plots
+from cellranger.analysis.singlegenome import TSNE_NAME, UMAP_NAME, Projection
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
 from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC, TARGETING_METHOD_TL
 from cellranger.webshim.common import load_sample_data
@@ -28,8 +29,9 @@ from cellranger.websummary.analysis_tab_aux import (
     seq_saturation_plot,
     targeted_table,
 )
-from cellranger.websummary.analysis_tab_core import analysis_by_clustering, umi_on_tsne_plot
+from cellranger.websummary.analysis_tab_core import analysis_by_clustering, umi_on_projection_plot
 from cellranger.websummary.metrics import (
+    INFO_THRESHOLD,
     LTMetricAnnotations,
     MetricAnnotations,
     TargetedMetricAnnotations,
@@ -99,7 +101,11 @@ def _build_summary_tab_common(
             summary_tab,
             alarm_list,
             sequencing_table(
-                metadata, sample_data, species_list, is_targeted=sample_data.is_targeted()
+                metadata,
+                sample_data,
+                species_list,
+                is_targeted=sample_data.is_targeted(),
+                is_hd=sample_data.is_visium_hd,
             ),
         )
         add_data(
@@ -169,7 +175,7 @@ def _build_summary_tab_common(
                     [
                         "",
                         [
-                            f"<span style='font-size: 18px;'><code><pre>{sample_properties.cmdline!s}</pre></code></span>"
+                            f"<span style='font-size: 18px;'><code><pre style='white-space: pre-wrap;'>{sample_properties.cmdline!s}</pre></code></span>"
                         ],
                     ]
                 ],
@@ -198,7 +204,14 @@ def _add_gdna_to_websummary(ws_data: WebSummaryData, g_table: BarnyardPanel) -> 
 
 
 def _build_analysis_tab_common(
-    metadata, sample_data, pipeline, species_list, sample_properties, ws_data
+    metadata,
+    sample_data,
+    pipeline,
+    species_list,
+    sample_properties,
+    ws_data,
+    *,
+    projection: Projection,
 ):
     """Code to create analysis tab shared by spatial and single cell."""
     alarm_list = ws_data.alarms
@@ -214,7 +227,7 @@ def _build_analysis_tab_common(
         median_gene_plot(sample_data, sample_properties, species_list),
     )
     ws_data.clustering_selector = analysis_by_clustering(
-        sample_data, spatial=sample_properties.is_spatial
+        sample_data, spatial=sample_properties.is_spatial, projection=projection
     )
     # gDNA
     g_table = gdna_table(metadata, sample_data, species_list)
@@ -223,7 +236,7 @@ def _build_analysis_tab_common(
 
     violin_plot = None
     if sample_properties.is_spatial:
-        violin_plot = violin_plots.make_violin_plots(
+        violin_plot = violin_plots.make_gene_umi_violin_plots(
             sample_data,
             library_type=GENE_EXPRESSION_LIBRARY_TYPE,
             is_spatial=sample_properties.is_spatial,
@@ -236,7 +249,7 @@ def _build_analysis_tab_common(
         )
 
 
-def _build_antibody_tab_common(sample_data, sample_properties, ws_data):
+def _build_antibody_tab_common(sample_data, sample_properties, ws_data, *, projection: Projection):
     """Code to create antibody tab shared by spatial and single cell."""
     alarm_list = ws_data.alarms
     antibody_tab = ws_data.antibody_tab
@@ -271,6 +284,7 @@ def _build_antibody_tab_common(sample_data, sample_properties, ws_data):
         sample_data,
         spatial=sample_properties.is_spatial,
         library_type=rna_library.ANTIBODY_LIBRARY_TYPE,
+        projection=projection,
     )
 
 
@@ -297,6 +311,7 @@ def _build_diagnostic_values(sample_data, ws_data):
         "i1_bases_with_q30_frac",
         "i2_bases_with_q30_frac",
         "low_support_umi_reads_frac",
+        "corrected_bc_frac",
     ]
     mets = {}
     for met in diagnostic_metrics:
@@ -314,10 +329,13 @@ def build_web_summary_data_common(
     zoom_images=None,
     regist_images=None,
     sample_defs=None,
+    *,
+    projection: Projection,
 ):
     """Produce common data shared by both spatial and cell ranger, VDJ is currently independent."""
     is_spatial = command != CELLRANGER_COMMAND_NAME
     wsd = WebSummaryData(sample_properties, command, pipeline)
+
     species_list = sample_properties.genomes
     _build_summary_tab_common(
         metadata,
@@ -339,10 +357,11 @@ def build_web_summary_data_common(
             species_list,
             sample_properties,
             wsd,
+            projection=projection,
         )
     # use presence/absence of the histograms as a proxy for whether to build the antibody/antigen tabs
     if sample_data.antibody_histograms is not None:
-        _build_antibody_tab_common(sample_data, sample_properties, wsd)
+        _build_antibody_tab_common(sample_data, sample_properties, wsd, projection=projection)
     if sample_data.antigen_histograms is not None:
         _build_antigen_tab_common(sample_data, sample_properties, wsd)
     _build_diagnostic_values(sample_data, wsd)
@@ -385,12 +404,14 @@ def build_web_summary_html_sc_and_aggr(
     pipeline,
     metadata,
     command_name,
+    *,
+    projection: Projection,
     sample_defs=None,
 ):
     """Produce the main websummary."""
     assert isinstance(sample_properties, CountSampleProperties)
     assert isinstance(sample_data_paths, SampleDataPaths)
-    sample_data = load_sample_data(sample_properties, sample_data_paths)
+    sample_data = load_sample_data(sample_properties, sample_data_paths, (projection,))
 
     species_list = sample_properties.genomes
     web_sum_data = build_web_summary_data_common(
@@ -400,7 +421,9 @@ def build_web_summary_html_sc_and_aggr(
         metadata,
         command_name,
         sample_defs=sample_defs,
+        projection=projection,
     )
+
     # Single cell specific stuff
     add_data(
         web_sum_data.summary_tab,
@@ -418,17 +441,34 @@ def build_web_summary_html_sc_and_aggr(
         batch_correction_table(metadata, sample_data, species_list),
     )
 
-    # t-SNE plot appears as a constant left plot in the Cell Ranger
+    # t-SNE/UMAP plot appears as a constant left plot in the Cell Ranger
     # clustering selector
     if web_sum_data.clustering_selector:
-        web_sum_data.clustering_selector.left_plots = umi_on_tsne_plot(
-            sample_data, spatial=sample_properties.is_spatial
-        )
-    if web_sum_data.antibody_clustering_selector:
-        web_sum_data.antibody_clustering_selector.left_plots = umi_on_tsne_plot(
+        web_sum_data.clustering_selector.left_plots = umi_on_projection_plot(
             sample_data,
             spatial=sample_properties.is_spatial,
+            projection=projection,
+            library_type=rna_library.GENE_EXPRESSION_LIBRARY_TYPE,
+            tag_type=None,
+        )
+        if pipeline == PIPELINE_AGGR and projection == UMAP_NAME:
+            web_sum_data.alarms.extend(
+                [
+                    {
+                        "formatted_value": None,
+                        "title": "UMAP Projection",
+                        "message": """UMAP projection is now the default for Cellranger Aggr. Run cellranger aggr with --enable-tsne=true to enable t-SNE projection.""",
+                        "level": INFO_THRESHOLD,
+                    }
+                ]
+            )
+    if web_sum_data.antibody_clustering_selector:
+        web_sum_data.antibody_clustering_selector.left_plots = umi_on_projection_plot(
+            sample_data,
+            projection=projection,
+            spatial=sample_properties.is_spatial,
             library_type=rna_library.ANTIBODY_LIBRARY_TYPE,
+            tag_type=None,
         )
 
     # Barnyard
@@ -458,7 +498,8 @@ def build_web_summary_html_sc(
         pipeline,
         metadata,
         command,
-        sample_defs,
+        projection=TSNE_NAME,
+        sample_defs=sample_defs,
     )
     # to circumvent self._check_valid
     data = copy.deepcopy(web_sum_data)

@@ -43,11 +43,11 @@ impl MartianStage for Pca2Stage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let nnz = h5::matrix_nnz(&args.matrix_h5)?;
+        let (num_features, num_cells, nnz) = h5::matrix_shape(&args.matrix_h5)?;
         let mem_gib = 10 + 72 * nnz / 1024 / 1024 / 1024;
-        println!("nnz={nnz},mem_gib={mem_gib}");
+        println!("num_features={num_features},num_cells={num_cells},nnz={nnz},mem_gib={mem_gib}");
         Ok(StageDef::with_join_resource(
-            Resource::with_mem_gb(mem_gib as isize).threads(4),
+            Resource::with_mem_gb(mem_gib).threads(4),
         ))
     }
 

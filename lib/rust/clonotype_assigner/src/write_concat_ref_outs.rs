@@ -26,7 +26,7 @@ martian_filetype!(FastaFaiFile, "fasta.fai");
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteConcatRefOutsStageInputs {
-    pub sample_number: Option<usize>,
+    pub sample_id: Option<String>,
     pub enclone_output: ProtoBinFile,
     pub all_contig_annotations_json: JsonFile<Vec<ContigAnnotation>>,
 }
@@ -44,7 +44,7 @@ pub struct WriteConcatRefOuts;
 
 const CONCAT_REF: &str = "concat_ref";
 
-#[make_mro(mem_gb = 5, threads = 4)]
+#[make_mro(mem_gb = 12, threads = 4)]
 impl MartianMain for WriteConcatRefOuts {
     type StageInputs = WriteConcatRefOutsStageInputs;
     type StageOutputs = WriteConcatRefOutsStageOutputs;
@@ -80,7 +80,7 @@ impl MartianMain for WriteConcatRefOuts {
         for (i, x) in enclone_outs.clonotypes.iter().enumerate() {
             let clonotype_id = ClonotypeId {
                 id: i + 1,
-                sample_number: args.sample_number,
+                sample_id: args.sample_id.as_deref(),
             };
             for j in 0..x.chains.len() {
                 let record_name = clonotype_id.concat_ref_name(j + 1);
@@ -133,7 +133,7 @@ impl MartianMain for WriteConcatRefOuts {
                 let x = &enclone_outs.clonotypes[i];
                 let clonotype_id = ClonotypeId {
                     id: i + 1,
-                    sample_number: args.sample_number,
+                    sample_id: args.sample_id.as_deref(),
                 };
                 for j in 0..x.exact_clonotypes.len() {
                     let barcodes: &Vec<String> = &x.exact_clonotypes[j].cell_barcodes;

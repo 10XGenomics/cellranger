@@ -27,7 +27,7 @@ GET_UPLOAD_INFO_FAIL_MSG = f"""Could not contact https://{SUPPORT_URL} (%s)
 def _parse_args(argv: list[str]) -> tuple[str, str]:
     """Parse command line."""
     usage_message = """Usage:
-        %s upload <your_email> <file>""" % (
+        {} upload <your_email> <file>""".format(
         os.getenv("TENX_PRODUCT", "")
     )
 
@@ -161,7 +161,7 @@ class FileReader(BinaryIO):
                 ("%d%%" % pctg).rjust(4),  # percentage
                 (("=" * (pctg // 3)) + ">").ljust(34),  # progress bar
                 pn(self.bcount).rjust(len(pn(self.bsize))),  # bytes sent
-                ("%.2fMb/s" % mbps).rjust(10),  # bitrate
+                (f"{mbps:.2f}Mb/s").rjust(10),  # bitrate
                 ("%dm" % etam),  # eta min
                 ("%ds" % etas).rjust(3),  # eta sec
             )
@@ -202,7 +202,7 @@ def _upload(filename: str, size: int, upurl: str, context: ssl.SSLContext):
             print("\nError:")
             root = ET.fromstring(contents)
             for e in root:
-                if e.tag != "RequestId" and e.tag != "HostId":
+                if e.tag not in ("RequestId", "HostId"):
                     print(f"   {e.tag}: {e.text}")
         else:
             print("\nUpload complete!")

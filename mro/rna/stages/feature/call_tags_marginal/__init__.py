@@ -8,12 +8,10 @@ import martian
 import numpy as np
 
 import cellranger.feature.utils as feature_utils
+import cellranger.feature_ref as feature_ref
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
-from cellranger.feature.feature_assigner import (
-    CellEstimateCantConvergeException,
-    TagAssigner,
-)
+from cellranger.feature.feature_assigner import CellEstimateCantConvergeException, TagAssigner
 from cellranger.feature.throughputs import G19_N_GEMS
 from cellranger.pandas_utils import sanitize_dataframe
 
@@ -22,6 +20,7 @@ stage CALL_TAGS_MARGINAL(
     in  csv    filtered_barcodes,
     in  h5     filtered_feature_counts_matrix,
     in  string throughput,
+    in  string multiplexing_method,
     in  string library_type,
     out csv    marginal_tag_calls_per_cell,
     out csv    marginal_tag_frequencies,
@@ -62,11 +61,6 @@ def join(args, outs, chunk_defs, chunk_outs):
         set_empty(outs)
         return
 
-    if args.library_type is None:
-        library_type = rna_library.MULTIPLEXING_LIBRARY_TYPE
-    else:
-        library_type = args.library_type
-
     filtered_feature_counts_matrix = cr_matrix.CountMatrix.load_h5_file(
         args.filtered_feature_counts_matrix
     )
@@ -74,9 +68,27 @@ def join(args, outs, chunk_defs, chunk_outs):
     filtered_feature_counts_matrix = filtered_feature_counts_matrix.select_barcodes_by_seq(
         feature_utils.get_gex_cell_list(args.filtered_barcodes)
     )
-    filtered_tag_counts_matrix = filtered_feature_counts_matrix.select_features_by_type(
-        library_type
-    )
+
+    # exactly one of library_type or multiplexing_method is required to be set
+    assert (args.library_type is None) ^ (args.multiplexing_method is None)
+    if args.multiplexing_method is not None:
+        multiplexing_method = rna_library.BarcodeMultiplexingType(args.multiplexing_method)
+        assert multiplexing_method.is_cell_multiplexed(), "Unsupported multiplexing method!"
+        library_type = multiplexing_method.multiplexing_library_type()
+        if multiplexing_method.type == rna_library.CellLevel.Hashtag:
+            filtered_tag_counts_matrix = (
+                filtered_feature_counts_matrix.select_features_by_type_and_tag(
+                    library_type, feature_ref.HASHTAG_TAG
+                )
+            )
+        else:
+            filtered_tag_counts_matrix = filtered_feature_counts_matrix.select_features_by_type(
+                library_type
+            )
+    else:
+        filtered_tag_counts_matrix = filtered_feature_counts_matrix.select_features_by_type(
+            args.library_type
+        )
 
     if feature_utils.check_if_none_or_empty(filtered_tag_counts_matrix):
         set_empty(outs)
@@ -85,7 +97,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     # Tag calling
     n_gems = G19_N_GEMS[args.throughput]
     tag_assigner = TagAssigner(
-        matrix=filtered_feature_counts_matrix,
+        matrix=filtered_tag_counts_matrix,
         feature_type=library_type,
         n_gems=n_gems,
     )
@@ -105,7 +117,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     features_per_cell_table = tag_assignments_matrix.get_features_per_cell_table()
 
     # Save memory
-    del tag_assigner.matrix
+    del tag_assigner.sub_matrix
     del filtered_feature_counts_matrix
     sanitize_dataframe(features_per_cell_table, inplace=True).to_csv(
         outs.marginal_tag_calls_per_cell

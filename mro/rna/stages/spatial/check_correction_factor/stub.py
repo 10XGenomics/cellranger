@@ -5,9 +5,9 @@
 
 __MRO__ = """
 stage COMPUTE_CORRECTION_FACTOR(
-    in  h5     v1_filtered_fbm,
-    in  h5     filtered_fbm,
-    src py     "stages/spatial/check_correction_factor",
+    in  V1PatternFixArgs v1_pattern_fix,
+    in  h5               filtered_fbm,
+    src py               "stages/spatial/check_correction_factor",
 )
 """
 

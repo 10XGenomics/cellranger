@@ -49,6 +49,11 @@
 #[macro_use]
 extern crate itertools;
 
+use martian_derive::martian_filetype;
+use serde::{Deserialize, Serialize};
+
+martian_filetype! {HtmlFile, "html"}
+
 mod align_and_count_metrics;
 pub mod align_metrics;
 
@@ -67,6 +72,9 @@ mod barcode_overlap;
 /// Barcode sorting workflow used by MAKE_SHARD
 pub mod barcode_sort;
 
+/// Struct containing cell annotation metrics for all figures
+mod cell_annotation_ws_parameters;
+
 pub mod detect_chemistry;
 
 /// Read environment variables.
@@ -83,6 +91,9 @@ mod macros;
 
 /// Metrics for MAKE_SHARD
 pub mod make_shard_metrics;
+
+/// Parquet file IO
+pub mod parquet_file;
 
 /// Preflight checks and utilities
 pub mod preflight;

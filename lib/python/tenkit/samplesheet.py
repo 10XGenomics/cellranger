@@ -83,7 +83,7 @@ def index_hamming(x, y):
         # if SI lengths are different, for some reason, return min(len(x,y))
         return min(len(x), len(y))
     # if Ns in sample index, count as distance 0
-    return sum(xi != yi and xi != "N" and yi != "N" for xi, yi in zip(x, y))
+    return sum(xi not in (yi, "N") for xi, yi in zip(x, y))
 
 
 class SampleSheetSection:
@@ -95,7 +95,7 @@ class SampleSheetSection:
 
     def to_row_array(self):
         if self.name:
-            output_rows = [["[%s]" % self.name]]
+            output_rows = [[f"[{self.name}]"]]
         else:
             output_rows = []
         output_rows.extend(self.rows)
@@ -257,7 +257,7 @@ def row_is_simple_data(row):
     if not len(row) >= 3:
         return False, "Row has less than three columns"
     if not cell_is_valid_lane(row[0]):
-        return False, "First column not a valid lane: %s" % row[0]
+        return False, f"First column not a valid lane: {row[0]}"
     if not row[1]:
         return False, "Sample name blank"
     if not (
@@ -265,9 +265,9 @@ def row_is_simple_data(row):
         or row[2] in SAMPLE_DUAL_INDEX_MAP
         or OLIGO_RE.match(row[2])
     ):
-        return False, "Unrecognized sample index: %s" % row[2]
+        return False, f"Unrecognized sample index: {row[2]}"
     if len(row) > 3 and not (row[3] in SAMPLE_DUAL_INDEX_MAP or OLIGO_RE.match(row[3])):
-        return False, "Unrecognized dual index: %s" % row[3]
+        return False, f"Unrecognized dual index: {row[3]}"
     return True, None
 
 
@@ -341,7 +341,7 @@ def file_get_iem_data_frame(path):
     """
     rows = read_csv_rows(path)
     if not rows_are_iem_samplesheet(rows):
-        raise ValueError("Invalid IEM samplesheet format: %s" % path)
+        raise ValueError(f"Invalid IEM samplesheet format: {path}")
     section_gen = rows_iem_section_generator(rows)
     for section in section_gen:
         if section_is_valid_data(section):
@@ -350,7 +350,7 @@ def file_get_iem_data_frame(path):
             df = pandas.DataFrame(data=section.rows[1:], columns=section.rows[0])
             # skip tailing rows
             return df[df["Sample_ID"].notnull()]
-    raise ValueError("Invalid IEM samplesheet format, no data found: %s" % path)
+    raise ValueError(f"Invalid IEM samplesheet format, no data found: {path}")
 
 
 def rows_are_iem_samplesheet(rows):
@@ -611,7 +611,7 @@ def check_sample_index_collision(data_section, barcode_mismatches_param="1"):
         for spec2 in index_specs[idx + 1 :]:
             # if not on same lane (and a lane is specified; a blank lane is an inferred wildcard),
             # ignore
-            if spec1.lane != "" and spec2.lane != "" and spec1.lane != spec2.lane:
+            if spec1.lane not in ("", spec2.lane):
                 continue
             # check SI distance
             si_distance = index_hamming(spec1.index, spec2.index)
@@ -651,16 +651,14 @@ def transform_simple_line(row, fc_lane_count, project_name=None, dual_indexed=Fa
     """
     valid_row, _ = row_is_simple_data(row)
     if not valid_row:
-        raise ValueError("Invalid data row: %s" % ",".join(row))
+        raise ValueError("Invalid data row: {}".format(",".join(row)))
     dual_index_row, _ = row_is_dual_index_data(row)
     dual_index_10x_si, _ = row_is_10x_dual_index(row)
 
     lanes = cell_expand_lanes(row[0], fc_lane_count)
     if not lanes:
         raise NoFastqDataException(
-            "Invalid data row: {}. The flow cell has {} lanes but lane {} was specified.".format(
-                row, fc_lane_count, row[0]
-            )
+            f"Invalid data row: {row}. The flow cell has {fc_lane_count} lanes but lane {row[0]} was specified."
         )
     rows = []
     for lane in lanes:
@@ -1021,7 +1019,7 @@ def transform_samplesheet(
     else:
         populated_rows = [row for row in csv_rows if any(row)]
         if not rows_are_valid_csv(populated_rows):
-            raise ValueError("Cannot figure out input type: %s" % csv_path)
+            raise ValueError(f"Cannot figure out input type: {csv_path}")
 
         if row_is_simple_header(populated_rows[0]):
             populated_rows = populated_rows[1:]

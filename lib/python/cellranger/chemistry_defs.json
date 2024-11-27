@@ -61,7 +61,7 @@
             }
         ]
     },
-    "SC3Pv3": {
+    "SC3Pv3-polyA": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -69,13 +69,13 @@
                 "offset": 0,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "3M-february-2018"
+                    "name": "3M-february-2018_TRU"
                 }
             }
         ],
-        "description": "Single Cell 3' v3",
+        "description": "Single Cell 3' v3 (polyA)",
         "endedness": "three_prime",
-        "name": "SC3Pv3",
+        "name": "SC3Pv3-polyA",
         "rna": {
             "length": null,
             "offset": 0,
@@ -92,7 +92,7 @@
             }
         ]
     },
-    "SC3Pv4": {
+    "SC3Pv3-CS1": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -100,13 +100,14 @@
                 "offset": 0,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "3M-3pgex-may-2023"
+                    "name": "3M-february-2018_NXT",
+                    "translation": true
                 }
             }
         ],
-        "description": "Single Cell 3' v4",
+        "description": "Single Cell 3' v3 (CS1)",
         "endedness": "three_prime",
-        "name": "SC3Pv4",
+        "name": "SC3Pv3-CS1",
         "rna": {
             "length": null,
             "offset": 0,
@@ -123,7 +124,7 @@
             }
         ]
     },
-    "SC3Pv3-OH": {
+    "SC3Pv4-polyA": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -131,7 +132,70 @@
                 "offset": 0,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "3M-february-2018"
+                    "name": "3M-3pgex-may-2023_TRU"
+                }
+            }
+        ],
+        "description": "Single Cell 3' v4 (polyA)",
+        "endedness": "three_prime",
+        "name": "SC3Pv4-polyA",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SC3Pv4-CS1": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-3pgex-may-2023_NXT",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell 3' v4 (CS1)",
+        "endedness": "three_prime",
+        "name": "SC3Pv4-CS1",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SC3Pv3-polyA-OCM": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-february-2018_TRU"
                 }
             },
             {
@@ -140,13 +204,14 @@
                 "offset": 7,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "overhang"
+                    "name": "overhang",
+                    "translation": true
                 }
             }
         ],
-        "description": "Single Cell 3' v3 OH",
+        "description": "Single Cell 3' v3 (polyA) OCM",
         "endedness": "three_prime",
-        "name": "SC3Pv3-OH",
+        "name": "SC3Pv3-polyA-OCM",
         "rna": {
             "length": null,
             "offset": 0,
@@ -163,7 +228,7 @@
             }
         ]
     },
-    "SC3Pv4-OH": {
+    "SC3Pv3-CS1-OCM": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -171,7 +236,8 @@
                 "offset": 0,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "3M-3pgex-may-2023"
+                    "name": "3M-february-2018_NXT",
+                    "translation": true
                 }
             },
             {
@@ -180,13 +246,14 @@
                 "offset": 7,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "overhang"
+                    "name": "overhang",
+                    "translation": true
                 }
             }
         ],
-        "description": "Single Cell 3' v4 OH",
+        "description": "Single Cell 3' v3 (CS1) OCM",
         "endedness": "three_prime",
-        "name": "SC3Pv4-OH",
+        "name": "SC3Pv3-CS1-OCM",
         "rna": {
             "length": null,
             "offset": 0,
@@ -203,7 +270,7 @@
             }
         ]
     },
-    "SC3Pv3HT": {
+    "SC3Pv4-polyA-OCM": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -211,13 +278,128 @@
                 "offset": 0,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "3M-february-2018"
+                    "name": "3M-3pgex-may-2023_TRU"
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 2,
+                "offset": 7,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "overhang",
+                    "translation": true
                 }
             }
         ],
-        "description": "Single Cell 3' v3 HT",
+        "description": "Single Cell 3' v4 (polyA) OCM",
         "endedness": "three_prime",
-        "name": "SC3Pv3HT",
+        "name": "SC3Pv4-polyA-OCM",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SC3Pv4-CS1-OCM": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-3pgex-may-2023_NXT",
+                    "translation": true
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 2,
+                "offset": 7,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "overhang",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell 3' v4 (CS1) OCM",
+        "endedness": "three_prime",
+        "name": "SC3Pv4-CS1-OCM",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SC3Pv3HT-polyA": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-february-2018_TRU"
+                }
+            }
+        ],
+        "description": "Single Cell 3' v3 HT (polyA)",
+        "endedness": "three_prime",
+        "name": "SC3Pv3HT-polyA",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SC3Pv3HT-CS1": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-february-2018_NXT",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell 3' v3 HT (CS1)",
+        "endedness": "three_prime",
+        "name": "SC3Pv3HT-CS1",
         "rna": {
             "length": null,
             "offset": 0,
@@ -327,6 +509,47 @@
             }
         ]
     },
+    "SC5P-R1-OCM-v3": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-5pgex-jan-2023"
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 2,
+                "offset": 7,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "overhang",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell 5' R1-only OCM v3",
+        "endedness": "five_prime",
+        "name": "SC5P-R1-OCM-v3",
+        "rna": {
+            "length": null,
+            "offset": 43,
+            "read_type": "R1"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
     "SC5P-R2": {
         "barcode": [
             {
@@ -389,7 +612,7 @@
             }
         ]
     },
-    "SC5P-R2-OH": {
+    "SC5P-R2-OCM": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -406,13 +629,14 @@
                 "offset": 7,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "overhang"
+                    "name": "overhang",
+                    "translation": true
                 }
             }
         ],
-        "description": "Single Cell 5' R2-only OH",
+        "description": "Single Cell 5' R2-only OCM",
         "endedness": "five_prime",
-        "name": "SC5P-R2-OH",
+        "name": "SC5P-R2-OCM",
         "rna": {
             "length": null,
             "offset": 0,
@@ -429,7 +653,7 @@
             }
         ]
     },
-    "SC5P-R2-OH-v3": {
+    "SC5P-R2-OCM-v3": {
         "barcode": [
             {
                 "kind": "gel_bead",
@@ -446,13 +670,14 @@
                 "offset": 7,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "overhang"
+                    "name": "overhang",
+                    "translation": true
                 }
             }
         ],
-        "description": "Single Cell 5' R2-only OH v3",
+        "description": "Single Cell 5' R2-only OCM v3",
         "endedness": "five_prime",
-        "name": "SC5P-R2-OH-v3",
+        "name": "SC5P-R2-OCM-v3",
         "rna": {
             "length": null,
             "offset": 0,
@@ -570,6 +795,51 @@
             }
         ]
     },
+    "SC5P-PE-OCM-v3": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-5pgex-jan-2023"
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 2,
+                "offset": 7,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "overhang",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell 5' PE OCM v3",
+        "endedness": "five_prime",
+        "name": "SC5P-PE-OCM-v3",
+        "rna": {
+            "length": null,
+            "offset": 28,
+            "read_type": "R1"
+        },
+        "rna2": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
     "SCVDJ": {
         "barcode": [
             {
@@ -640,6 +910,51 @@
             }
         ]
     },
+    "SCVDJ-v3-OCM": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-5pgex-jan-2023"
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 2,
+                "offset": 7,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "overhang",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell V(D)J OCM v3",
+        "endedness": "five_prime",
+        "name": "SCVDJ-v3-OCM",
+        "rna": {
+            "length": null,
+            "offset": 43,
+            "read_type": "R1"
+        },
+        "rna2": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
     "SCVDJ-R2": {
         "barcode": [
             {
@@ -686,6 +1001,47 @@
         "description": "Single Cell V(D)J R2-only v3",
         "endedness": "five_prime",
         "name": "SCVDJ-R2-v3",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "-",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SCVDJ-R2-OCM-v3": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "3M-5pgex-jan-2023"
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 2,
+                "offset": 7,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "overhang",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Single Cell V(D)J R2-only OCM v3",
+        "endedness": "five_prime",
+        "name": "SCVDJ-R2-OCM-v3",
         "rna": {
             "length": null,
             "offset": 0,
@@ -776,7 +1132,7 @@
                 }
             }
         ],
-        "description": "Fixed RNA Profiling (Singleplex)",
+        "description": "Flex Gene Expression",
         "endedness": "three_prime",
         "name": "SFRP",
         "rna": {
@@ -813,11 +1169,12 @@
                 "offset": 68,
                 "read_type": "R2",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-rna"
+                    "name": "probe-barcodes-fixed-rna-profiling-rna",
+                    "translation": true
                 }
             }
         ],
-        "description": "Fixed RNA Profiling",
+        "description": "Flex Gene Expression",
         "endedness": "three_prime",
         "name": "MFRP-RNA",
         "rna": {
@@ -854,11 +1211,12 @@
                 "offset": 68,
                 "read_type": "R2",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-ab"
+                    "name": "probe-barcodes-fixed-rna-profiling-ab",
+                    "translation": true
                 }
             }
         ],
-        "description": "Fixed RNA Profiling (Antibody)",
+        "description": "Flex Antibody",
         "endedness": "three_prime",
         "name": "MFRP-Ab",
         "rna": {
@@ -895,11 +1253,12 @@
                 "offset": 40,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-rna-r1"
+                    "name": "probe-barcodes-fixed-rna-profiling-rna-r1",
+                    "translation": true
                 }
             }
         ],
-        "description": "Fixed RNA Profiling (probe barcode on R1)",
+        "description": "Flex Gene Expression (probe barcode on R1)",
         "endedness": "three_prime",
         "name": "MFRP-RNA-R1",
         "rna": {
@@ -935,11 +1294,12 @@
                 "offset": 40,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-ab-r1"
+                    "name": "probe-barcodes-fixed-rna-profiling-ab-r1",
+                    "translation": true
                 }
             }
         ],
-        "description": "Fixed RNA Profiling (Antibody, probe barcode on R1)",
+        "description": "Flex Antibody (probe barcode on R1)",
         "endedness": "three_prime",
         "name": "MFRP-Ab-R1",
         "rna": {
@@ -975,7 +1335,8 @@
                 "offset": 40,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-r1-48-uncollapsed"
+                    "name": "probe-barcodes-fixed-rna-profiling-r1-48-uncollapsed",
+                    "translation": true
                 }
             }
         ],
@@ -1015,7 +1376,8 @@
                 "offset": 68,
                 "read_type": "R2",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-47"
+                    "name": "probe-barcodes-fixed-rna-profiling-47",
+                    "translation": true
                 }
             }
         ],
@@ -1056,7 +1418,8 @@
                 "offset": 68,
                 "read_type": "R2",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-uncollapsed"
+                    "name": "probe-barcodes-fixed-rna-profiling-uncollapsed",
+                    "translation": true
                 }
             }
         ],
@@ -1097,11 +1460,12 @@
                 "offset": 49,
                 "read_type": "R2",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-ab"
+                    "name": "probe-barcodes-fixed-rna-profiling-ab",
+                    "translation": true
                 }
             }
         ],
-        "description": "Fixed RNA Profiling (Antibody, probe barcode at R2:50)",
+        "description": "Flex Antibody (probe barcode at R2:50)",
         "endedness": "three_prime",
         "name": "MFRP-Ab-R2pos50",
         "rna": {
@@ -1138,11 +1502,12 @@
                 "offset": 0,
                 "read_type": "R2",
                 "whitelist": {
-                    "name": "probe-barcodes-fixed-rna-profiling-crispr"
+                    "name": "probe-barcodes-fixed-rna-profiling-crispr",
+                    "translation": true
                 }
             }
         ],
-        "description": "Fixed RNA Profiling (CRISPR)",
+        "description": "Flex CRISPR",
         "endedness": "three_prime",
         "name": "MFRP-CRISPR",
         "rna": {
@@ -1325,10 +1690,8 @@
                 "offset": 11,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": null,
                     "part": "bc1",
-                    "slide": "visium_hd_v1",
-                    "translation_whitelist_path": null
+                    "slide": "visium_hd_v1"
                 }
             },
             {
@@ -1337,18 +1700,16 @@
                 "offset": 25,
                 "read_type": "R1",
                 "whitelist": {
-                    "name": null,
                     "part": "bc2",
-                    "slide": "visium_hd_v1",
-                    "translation_whitelist_path": null
+                    "slide": "visium_hd_v1"
                 }
             }
         ],
         "barcode_extraction": {
             "method": "joint_bc1_bc2",
             "params": {
-                "max_offset": 13,
-                "min_offset": 9
+                "max_offset": 12,
+                "min_offset": 8
             }
         },
         "description": "Visium HD v1",
@@ -1398,6 +1759,76 @@
             {
                 "length": 12,
                 "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SFRP-no-trim-R2": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "737K-fixed-rna-profiling"
+                }
+            }
+        ],
+        "description": "SFRP with untrimmed R2",
+        "endedness": "three_prime",
+        "name": "SFRP-no-trim-R2",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "-",
+        "umi": [
+            {
+                "length": 12,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "MFRP-R1-no-trim-R2": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "737K-fixed-rna-profiling"
+                }
+            },
+            {
+                "kind": "right_probe",
+                "length": 8,
+                "offset": 40,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "probe-barcodes-fixed-rna-profiling-rna-r1",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "MFRP with probe bc on R1 and untrimmed R2",
+        "endedness": "three_prime",
+        "name": "MFRP-R1-no-trim-R2",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "-",
+        "umi": [
+            {
+                "length": 12,
                 "offset": 16,
                 "read_type": "R1"
             }

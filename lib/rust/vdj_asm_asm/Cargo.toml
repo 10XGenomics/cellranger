@@ -1,28 +1,42 @@
 [dependencies]
-bio = '1'
-bitflags = '2'
-debruijn = '0.3'
-fxhash = '0.2'
-hostname = '0.3'
-lz4 = '1'
-
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.barcode]
 path = '../barcode'
 
+[dependencies.bio]
+workspace = true
+
+[dependencies.bitflags]
+workspace = true
+
 [dependencies.byteseq]
 path = '../byteseq'
+
+[dependencies.cr_h5]
+path = '../cr_h5'
+
+[dependencies.cr_lib]
+path = '../cr_lib'
 
 [dependencies.cr_types]
 path = '../cr_types'
 
+[dependencies.debruijn]
+workspace = true
+
 [dependencies.fastq_set]
 workspace = true
 
-[dependencies.io_utils]
+[dependencies.fxhash]
 workspace = true
+
+[dependencies.hdf5]
+workspace = true
+
+[dependencies.io_utils]
+path = '../io_utils'
 
 [dependencies.itertools]
 workspace = true
@@ -31,9 +45,12 @@ workspace = true
 path = '../json_report_derive'
 
 [dependencies.kmer_lookup]
-workspace = true
+path = '../kmer_lookup'
 
 [dependencies.libc]
+workspace = true
+
+[dependencies.lz4]
 workspace = true
 
 [dependencies.martian]
@@ -51,9 +68,6 @@ path = '../metric'
 [dependencies.parameters_toml]
 path = '../parameters_toml'
 
-[dependencies.perf_stats]
-workspace = true
-
 [dependencies.rust-htslib]
 workspace = true
 
@@ -64,22 +78,25 @@ workspace = true
 workspace = true
 
 [dependencies.string_utils]
-workspace = true
+path = '../string_utils'
 
 [dependencies.vdj_ann]
-workspace = true
+path = '../vdj_ann'
 
 [dependencies.vdj_asm_utils]
 path = '../vdj_asm_utils'
+
+[dependencies.vdj_filter_barcodes]
+path = '../vdj_filter_barcodes'
 
 [dependencies.vdj_reference]
 path = '../vdj_reference'
 
 [dependencies.vdj_types]
-workspace = true
+path = '../vdj_types'
 
 [dependencies.vector_utils]
-workspace = true
+path = '../vector_utils'
 
 [features]
 default = []

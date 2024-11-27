@@ -5,7 +5,11 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+
 import martian
+from typing_extensions import Self
 
 from cellranger.chemistry import (
     CHEMISTRY_SC3P_LT,
@@ -14,6 +18,11 @@ from cellranger.chemistry import (
     get_primary_chemistry_def,
 )
 from cellranger.version import get_version
+
+CYTASSIST_RUN_NAME_KEY = "cytassistRunName"
+CYTASSIST_SERIAL_KEY = "cytassistInstrumentSerial"
+CYTASSIST_SOFTWARE_VERSION = "cytassistInstrumentSoftwareVersion"
+CYTASSIST_NOT_FOUND_SENTINEL = "Not Found"
 
 
 class SampleProperties:
@@ -32,6 +41,36 @@ class SampleProperties:
             self.version = get_version()
 
 
+@dataclass
+class CytassistRunProperties:
+    cytassist_run_name: str
+    cytassist_instrument_serial: str
+    cytassist_instrument_software_version: str
+
+    @classmethod
+    def from_json(cls, json_path: str | bytes) -> Self:
+        with open(json_path) as f:
+            metadata = json.load(f)
+
+        return cls(
+            cytassist_run_name=(
+                metadata.get(CYTASSIST_RUN_NAME_KEY)
+                if metadata.get(CYTASSIST_RUN_NAME_KEY)
+                else CYTASSIST_NOT_FOUND_SENTINEL
+            ),
+            cytassist_instrument_serial=(
+                metadata.get(CYTASSIST_SERIAL_KEY)
+                if metadata.get(CYTASSIST_SERIAL_KEY)
+                else CYTASSIST_NOT_FOUND_SENTINEL
+            ),
+            cytassist_instrument_software_version=(
+                metadata.get(CYTASSIST_SOFTWARE_VERSION)
+                if metadata.get(CYTASSIST_SOFTWARE_VERSION)
+                else CYTASSIST_NOT_FOUND_SENTINEL
+            ),
+        )
+
+
 # pylint: disable=too-many-instance-attributes
 class CountSampleProperties(SampleProperties):
     """Sample properties for Count, Aggr, Reanalyze, Spatial web summaries."""
@@ -47,12 +86,13 @@ class CountSampleProperties(SampleProperties):
     aligner: str | None
     redundant_loupe_alignment: bool
     loupe_alignment_file: str | None
-    v1_filtered_fbm: str | None
+    v1_pattern_fix: dict | None
     default_layout: bool | None
     override_id: bool | None
     slide_id_mismatch: bool | None
     is_visium_hd: bool | None
     cmdline: str | None
+    itk_error_string: str | None
 
     # pylint: disable=too-many-locals
     def __init__(
@@ -71,12 +111,13 @@ class CountSampleProperties(SampleProperties):
         aligner=None,
         redundant_loupe_alignment=False,
         loupe_alignment_file=None,
-        v1_filtered_fbm=None,
+        v1_pattern_fix=None,
         default_layout=False,
         override_id=False,
         slide_id_mismatch=False,
         is_visium_hd=False,
         cmdline=None,
+        itk_error_string=None,
     ):
         super().__init__(sample_id, sample_desc, version_from_git=version_from_git)
         self.genomes = genomes
@@ -90,12 +131,13 @@ class CountSampleProperties(SampleProperties):
         self.aligner = aligner
         self.redundant_loupe_alignment = redundant_loupe_alignment
         self.loupe_alignment_file = loupe_alignment_file
-        self.v1_filtered_fbm = v1_filtered_fbm
+        self.v1_pattern_fix = v1_pattern_fix
         self.default_layout = default_layout
         self.override_id = override_id
         self.slide_id_mismatch = slide_id_mismatch
         self.is_visium_hd = is_visium_hd
         self.cmdline = cmdline
+        self.itk_error_string = itk_error_string
 
     @property
     def is_targeted(self):
@@ -111,6 +153,7 @@ class ExtendedCountSampleProperties(CountSampleProperties):
 
     reference_path: str
     chemistry_defs: ChemistryDefs
+    cytassist_run_properties: CytassistRunProperties | None
 
     # pylint: disable=too-many-locals
     def __init__(
@@ -132,12 +175,14 @@ class ExtendedCountSampleProperties(CountSampleProperties):
         aligner=None,
         redundant_loupe_alignment=False,
         loupe_alignment_file=None,
-        v1_filtered_fbm=None,
+        v1_pattern_fix=None,
         default_layout=False,
         override_id=False,
         slide_id_mismatch=False,
         is_visium_hd=False,
         cmdline=None,
+        cytassist_run_metrics=None,
+        itk_error_string=None,
     ):
         super().__init__(
             sample_id,
@@ -154,16 +199,21 @@ class ExtendedCountSampleProperties(CountSampleProperties):
             aligner=aligner,
             redundant_loupe_alignment=redundant_loupe_alignment,
             loupe_alignment_file=loupe_alignment_file,
-            v1_filtered_fbm=v1_filtered_fbm,
+            v1_pattern_fix=v1_pattern_fix,
             default_layout=default_layout,
             override_id=override_id,
             slide_id_mismatch=slide_id_mismatch,
             is_visium_hd=is_visium_hd,
             cmdline=cmdline,
+            itk_error_string=itk_error_string,
         )
         self.reference_path = reference_path
         self.chemistry_defs = chemistry_defs
         self.disable_ab_aggregate_detection = disable_ab_aggregate_detection
+        if cytassist_run_metrics:
+            self.cytassist_run_properties = CytassistRunProperties.from_json(cytassist_run_metrics)
+        else:
+            self.cytassist_run_properties = None
 
     def chemistry_description(self) -> str:
         """Return the chemistry description of the primary chemistry."""

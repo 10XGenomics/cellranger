@@ -72,7 +72,7 @@ impl MartianStage for UmapStage {
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
         let mut stage_def = StageDef::new();
-        let (_, ncells) = h5::matrix_shape(&args.matrix_h5)?;
+        let (_nfeatures, ncells, _nnz) = h5::matrix_shape(&args.matrix_h5)?;
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
 
         let threads = match args.implementation {

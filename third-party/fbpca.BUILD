@@ -6,6 +6,7 @@ load(
 load(
     "@tenx_bazel_rules//rules/conda:conda_manifest.bzl",
     "conda_deps",
+    "conda_files",
     "conda_manifest",
 )
 
@@ -29,42 +30,15 @@ license(
     license_text = site_packages + "/LICENSE",
 )
 
-filegroup(
-    name = "conda_package_fbpca_python",
-    srcs = [site_packages + "/fbpca.py"],
+conda_files(
+    name = "files",
+    py_srcs = [site_packages + "/fbpca.py"],
     visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_fbpca_hdrs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_fbpca_libs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_fbpca_solibs",
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-filegroup(
-    name = "conda_package_fbpca_data",
-    srcs = [],
-    visibility = ["@anaconda//:__pkg__"],
-)
-
-exports_files(
-    ["BUILD.bazel"],
-    visibility = ["//visibility:public"],
 )
 
 conda_manifest(
     name = "conda_metadata",
     info_files = ["info/index.json"],
-    manifest = "info/files",
     visibility = ["//visibility:public"],
 )
 

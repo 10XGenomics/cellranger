@@ -72,8 +72,7 @@ def check_output(
     *,
     encoding: None = None,
     **kwargs,
-) -> bytes:
-    ...
+) -> bytes: ...
 
 
 @overload
@@ -82,8 +81,7 @@ def check_output(
     *,
     encoding: str,
     **kwargs,
-) -> str:
-    ...
+) -> str: ...
 
 
 def check_output(
@@ -112,8 +110,7 @@ def Popen(  # pylint: disable=invalid-name
     *,
     encoding: None = None,
     **kwargs,
-) -> subprocess.Popen[bytes]:
-    ...
+) -> subprocess.Popen[bytes]: ...
 
 
 @overload
@@ -122,8 +119,7 @@ def Popen(  # pylint: disable=invalid-name
     *,
     encoding: str,
     **kwargs,
-) -> subprocess.Popen[str]:
-    ...
+) -> subprocess.Popen[str]: ...
 
 
 def Popen(  # pylint: disable=invalid-name
@@ -241,13 +237,11 @@ def _pipeline(
 
 
 @overload
-def _is_file_handle(obj: IO[bytes]) -> Literal[True]:
-    ...
+def _is_file_handle(obj: IO[bytes]) -> Literal[True]: ...
 
 
 @overload
-def _is_file_handle(obj: str | bytes | int) -> Literal[False]:
-    ...
+def _is_file_handle(obj: str | bytes | int) -> Literal[False]: ...
 
 
 def _is_file_handle(obj) -> bool:

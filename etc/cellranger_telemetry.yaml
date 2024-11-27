@@ -1,0 +1,2211 @@
+# yaml-language-server: $schema=../lib/go/telemetry/config/telemetry_schema.json
+---
+config_version: 1
+product: cellranger
+version: "9.0.0"
+
+groups:
+  os_stats:
+    when: command
+  hardware_stats:
+    when: command
+  count_args:
+    when: command
+    subcommands:
+      - count
+  vdj_args:
+    when: command
+    subcommands:
+      - vdj
+  aggr_args:
+    when: command
+    subcommands:
+      - aggr
+  mkref_args:
+    when: command
+    subcommands:
+      - mkref
+      - mkvdjref
+  multi_config:
+    when: command
+    subcommands:
+      - multi
+  failure:
+    when: failure
+    subcommands:
+      - count
+      - multi
+      - vdj
+      - aggr
+      - annotate
+      - reanalyze
+      - mkvdjref
+      - mkfastq
+      - mkref
+  pipeline_success:
+    when: success
+    subcommands:
+      - count
+      - multi
+      - vdj
+      - aggr
+      - annotate
+      - reanalyze
+      - mkvdjref
+      - mkfastq
+      - mkref
+  detected_chemistry:
+    when: success
+    subcommands:
+      - count
+      - multi
+    globs:
+      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
+  library_metrics:
+    when: success
+    subcommands:
+      - count
+      - multi
+      - vdj
+    globs:
+      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
+  library_metrics_vdj:
+    when: success
+    subcommands:
+      - multi
+      - vdj
+    globs:
+      vdj_lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_GEM_WELL_PROCESSOR/VDJ_*_GEM_WELL_PROCESSOR/LIB_VDJ_ANALYZER/SUMMARIZE_VDJ_REPORTS/fork0/files/metrics_summary_json.json"
+
+  sample_metrics:
+    when: success
+    subcommands:
+      - multi
+    globs:
+      sample_metrics: "SC_*/SC_MULTI_CORE/SANITIZE_MAP_CALLS/fork0/files/*_summary.json"
+
+  sample_metrics_vdj:
+    when: success
+    subcommands:
+      - multi
+    globs:
+      vdj_sample_metrics: "SC_*/SC_MULTI_CORE/MULTI_GEM_WELL_PROCESSOR/VDJ_*_GEM_WELL_PROCESSOR/PER_SAMPLE_VDJ_ANALYZER/SUMMARIZE_VDJ_REPORTS/*/files/metrics_summary_json.json"
+
+presets:
+  filesystem:
+    match:
+      - key: wsl
+        exp: >-
+          \b(?:(?:9p)|(?:lxfs))\b
+      - key: local
+        exp: >-
+          \b(?:(?:ext[34])|(?:(?:btr|x|z)fs))\b
+      - exp: "\\bnfs"
+      - exp: "lustre"
+      # Usually means docker
+      - exp: "overlay"
+      - exp: squashfs
+      - exp: panfs
+      - exp: gpfs
+      - exp: beegfs
+      - exp: cifs
+      - exp: ceph
+      - exp: "fat\\b"
+      - exp: "\\bfuse"
+  chemistry:
+    match:
+      - key: auto
+        exp: "(?i)^auto$"
+      - key: custom
+        exp: "(?i)^custom$"
+      - key: threeprime
+        exp: "(?i)^threeprime$"
+      - key: fiveprime
+        exp: "(?i)^fiveprime$"
+      - key: sc3pv1
+        exp: "(?i)^sc3pv1$"
+      - key: sc3pv2
+        exp: "(?i)^sc3pv2$"
+      - key: sc3pv3-polya
+        exp: "(?i)^sc3pv3-polya$"
+      - key: sc3pv3-cs1
+        exp: "(?i)^sc3pv3-cs1$"
+      - key: sc3pv4-polya
+        exp: "(?i)^sc3pv4-polya$"
+      - key: sc3pv4-cs1
+        exp: "(?i)^sc3pv4-cs1$"
+      - key: sc3pv4-polya-ocm
+        exp: "(?i)^sc3pv4-polya-ocm$"
+      - key: sc3pv4-cs1-ocm
+        exp: "(?i)^sc3pv4-cs1-ocm$"
+      - key: sc3pv3lt
+        exp: "(?i)^sc3pv3lt$"
+      - key: sc3pv3ht-polya
+        exp: "(?i)^sc3pv3ht-polya$"
+      - key: sc3pv3ht-cs1
+        exp: "(?i)^sc3pv3ht-cs1$"
+      - key: sc5p-pe
+        exp: "(?i)^sc5p-?pe$"
+      - key: sc5p-pe-v3
+        exp: "(?i)^sc5p-?pe-?v3$"
+      - key: sc5p-pe-ocm-v3
+        exp: "(?i)^sc5p-?pe-?ocm-?v3$"
+      - key: sc5p-r2
+        exp: "(?i)^sc5p-?r2$"
+      - key: sc5p-r2-v3
+        exp: "(?i)^sc5p-?r2-?v3$"
+      - key: sc5p-r2-ocm-v3
+        exp: "(?i)^sc5p-?r2-?ocm-?v3$"
+      - key: sc5pht
+        exp: "(?i)^sc5pht$"
+      - key: sc-fb
+        exp: "(?i)^sc-?fb$"
+      - key: sfrp
+        exp: "(?i)^sfrp$"
+      - key: sfrp-no-trim-r2
+        exp: "(?i)^sfrp-no-trim-r2$"
+      - key: mfrp-rna
+        exp: "(?i)^mfrp-rna$"
+      - key: mfrp-ab
+        exp: "(?i)^mfrp-ab$"
+      - key: mfrp-crispr
+        exp: "(?i)^mfrp-crispr$"
+      - key: mfrp-47
+        exp: "(?i)^mfrp-47$"
+      - key: mfrp-uncollapsed
+        exp: "(?i)^mfrp-uncollapsed$"
+      - key: mfrp-rna-r1
+        exp: "(?i)^mfrp-rna-r1$"
+      - key: mfrp-ab-r1
+        exp: "(?i)^mfrp-ab-r1$"
+      - key: mfrp-ab-r2pos50
+        exp: "(?i)^mfrp-ab-r2pos50$"
+      - key: mfrp-r1-48-uncollapsed
+        exp: "(?i)^mfrp-r1-48-uncollapsed$"
+      - key: mfrp-r1-no-trim-r2
+        exp: "(?i)^mfrp-r1-no-trim-r2$"
+      - key: arc-v1
+        exp: "(?i)^arc-v1$"
+      - key: unknown
+        exp: ".*"
+
+metrics:
+  # OS stats
+
+  - name: event_count
+    groups:
+      - os_stats
+      - hardware_stats
+      - failure
+      - pipeline_success
+    recent_count: os_stats
+    values:
+      exponential:
+        multiple: 2
+        min: 3
+        max: 768
+
+  - name: glibc
+    groups: os_stats
+    special: glibc
+    values:
+      semver_thresholds:
+        - "2.12"
+        - "2.17"
+        - "2.28"
+        - "2.34"
+
+  - name: kernel
+    groups: os_stats
+    special: kernel
+    values:
+      semver_thresholds:
+        - "3.10" # centos/rhel 7
+        - "4.4" # Ubunut 16
+        - "4.15" # Ubuntu 18
+        - "4.18" # rhel 8
+        - "5.4" # Ubuntu 20
+        - "5.14" # rhel 9
+        - "5.15" # Ubuntu 22
+
+  - name: distro
+    groups: os_stats
+    special: distro
+
+  - name: container
+    groups: os_stats
+    special: container
+
+  - name: cgroup_memory_soft_limit
+    groups: os_stats
+    file_content:
+      cgroup: "memory"
+      path:
+        - memory.soft_limit_in_bytes
+        - memory.memsw.soft_limit_in_bytes
+        - memory.high
+      line: "[0-9]+"
+    values:
+      exponential:
+        multiple: 2
+        min: 1073741824
+
+  - name: cgroup_memory_hard_limit
+    groups: os_stats
+    file_content:
+      cgroup: "memory"
+      path:
+        - memory.limit_in_bytes
+        - memory.memsw.limit_in_bytes
+        - memory.max
+      line: "[0-9]+"
+    values:
+      exponential:
+        multiple: 2
+        min: 1073741824
+
+  - name: bin_filesystem
+    filesystem:
+      which: bins
+      property: type
+    groups: os_stats
+    preset: filesystem
+
+  - name: pipestance_filesystem
+    filesystem:
+      which: pipestance
+      property: type
+    groups:
+      - pipeline_success
+      - failure
+    preset: filesystem
+
+  - name: process_ulimit
+    groups: os_stats
+    rlimit:
+      resource: nproc
+    values:
+      thresholds:
+        - 1024
+        - 2048
+        - 65536
+        - 131072
+
+  - name: vmem_ulimit
+    groups: os_stats
+    rlimit:
+      resource: as
+    values:
+      thresholds:
+        - 1024
+        - 2048
+        - 65536
+        - 131072
+
+  - name: transparent_huge_pages
+    groups: os_stats
+    file_content:
+      path: /sys/kernel/mm/transparent_hugepage/enabled
+      line: >-
+        \[(\w+)\]
+    values:
+      match:
+        - exp: always
+        - exp: madvise
+        - exp: never
+
+  # Hardware stats: CPU info
+  - name: cpu_mfg
+    file_content:
+      path: /proc/cpuinfo
+      line: >-
+        vendor_id\s*:\s*(\S*)
+    groups:
+      - hardware_stats
+      - pipeline_success
+    values:
+      match:
+        - exp: "(?i:Intel)"
+        - exp: "(?i:AMD)"
+
+  - name: avx
+    file_content:
+      path: /proc/cpuinfo
+      line: >-
+        flags\s*:\s*(.*)
+    groups: hardware_stats
+    values:
+      match:
+        - exp: "\\bavx512"
+        - exp: "\\bavx2\\b"
+        - exp: "\\bavx\\b"
+
+  - name: processor_count
+    # technically this is vCPU count - 1, because they're numbered from 0.
+    groups:
+      - hardware_stats
+      - pipeline_success
+    file_content:
+      path: /proc/cpuinfo
+      last_line: >-
+        processor\s*:\s*(\d+)
+    values:
+      thresholds:
+        - 7
+        - 15
+        - 23
+        - 31
+        - 47
+        - 65
+        - 95
+        - 127
+
+  - name: socket_count
+    # technically this is socket count - 1, because they're numbered from 0.
+    groups: hardware_stats
+    file_content:
+      path: /proc/cpuinfo
+      last_line: >-
+        physical id\s*:\s*(\d+)
+    values:
+      thresholds:
+        - 0
+        - 1
+        - 3
+  - name: cores_per_socket
+    groups: hardware_stats
+    file_content:
+      path: /proc/cpuinfo
+      line: >-
+        cpu cores\s*:\s*(\d+)
+    values:
+      thresholds:
+        - 4
+        - 8
+        - 12
+        - 16
+        - 24
+        - 32
+
+  # Hardware stats: memory
+  - name: memory
+    groups:
+      - hardware_stats
+      - pipeline_success
+    file_content:
+      path: /proc/meminfo
+      line: >-
+        ^MemTotal:\s*([0-9]+)
+    values:
+      exponential:
+        multiple: 2
+        min: 8388608
+
+  # Failure information
+  - name: failed_stage
+    groups: failure
+    special: failed_stage
+  - name: error
+    groups: ["failure"]
+    file_content:
+      path: _errors
+      stage_relative: true
+      # match the first line that starts with a non-whitespace character
+      line: >-
+        ^\S.+
+    values:
+      match:
+        - exp: >-
+            ^\S+Error:
+          key: python exception
+        - exp: "not queued or running"
+          key: cluster failure
+
+  - name: subcommand
+    groups:
+      - failure
+      - pipeline_success
+    special: subcommand
+
+  # count CLI args
+
+  - name: expect_cells
+    groups: count_args
+    flag: --expect-cells
+    values:
+      float: true
+
+  - name: force_cells
+    groups: count_args
+    flag: --force-cells
+    values:
+      float: true
+
+  - name: create_bam
+    groups: count_args
+    flag: --create-bam
+    values:
+      boolean: true
+
+  - name: no_bam
+    groups: count_args
+    flag: --no-bam
+    values:
+      boolean: true
+
+  - name: nosecondary
+    groups: count_args
+    flag: --nosecondary
+    values:
+      boolean: true
+
+  - name: r1_length
+    groups: count_args
+    flag: --r1-length
+    values:
+      float: true
+
+  - name: r2_length
+    groups: count_args
+    flag: --r2-length
+    values:
+      float: true
+
+  - name: include_introns
+    groups: count_args
+    flag: --include-introns
+    values:
+      boolean: true
+
+  - name: chemistry
+    groups: count_args
+    flag: --chemistry
+    preset: chemistry
+
+  - name: no_libraries
+    groups: count_args
+    flag: --no-libraries
+    values:
+      boolean: true
+
+  - name: check_library_compatibility
+    groups: count_args
+    flag: --check-library-compatibility
+    values:
+      boolean: true
+
+  - name: filter_aggregates
+    groups: count_args
+    flag: --filter-aggregates
+    values:
+      boolean: true
+
+  - name: min-crispr-umi
+    groups: count_args
+    flag: --min-crispr-umi
+    values:
+      float: true
+
+  # vdj CLI args
+
+  - name: denovo
+    groups: vdj_args
+    flag: --denovo
+    values:
+      boolean: true
+
+  - name: skip_clonotyping
+    groups: vdj_args
+    flag: --skip-clonotyping
+    values:
+      boolean: true
+
+  - name: chain
+    groups: vdj_args
+    flag: --chain
+    values:
+      match:
+        - key: auto
+          exp: ^auto$
+        - key: TR
+          exp: ^TR$
+        - key: IG
+          exp: ^IG$
+        - key: TR_GD
+          exp: ^TR_GD$
+
+  # shared mkref args
+
+  - name: memgb
+    groups: mkref_args
+    flag: --memgb
+    values:
+      float: true
+
+  - name: nthreads
+    groups: mkref_args
+    flag: --nthreads
+    values:
+      float: true
+
+  # aggr CLI args
+
+  - name: normalize
+    groups: aggr_args
+    flag: --normalize
+    values:
+      match:
+        - key: mapped
+          exp: ^mapped$
+        - key: none
+          exp: ^none$
+
+  - name: nosecondary
+    groups: aggr_args
+    flag: --normalize
+    values:
+      boolean: true
+
+  - name: min-crispr-umi
+    groups: aggr_args
+    flag: --min-crispr-umi
+    values:
+      float: true
+
+  - name: enable-tsne
+    groups: aggr_args
+    flag: --enable-tsne
+    values:
+      boolean: true
+
+  # multi config CSV in JSON format
+
+  - name: emptydrops_minimum_umis
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - emptydrops_minimum_umis
+    values:
+      float: true
+
+  - name: global_minimum_umis
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - global_minimum_umis
+    values:
+      float: true
+
+  - name: gene_expression_r1_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - r1_length
+    values:
+      float: true
+
+  - name: gene_expression_r2_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - r2_length
+    values:
+      float: true
+
+  - name: chemistry
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - chemistry
+    preset: chemistry
+
+  - name: expect_cells
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - expect_cells
+    values:
+      float: true
+
+  - name: force_cells
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - force_cells
+    values:
+      float: true
+
+  - name: nosecondary
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - nosecondary
+    values:
+      boolean: true
+
+  - name: include_introns
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - include_introns
+    values:
+      boolean: true
+
+  - name: check_library_compatibility
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - check_library_compatibility
+    values:
+      boolean: true
+
+  - name: aligner
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - aligner
+    values:
+      match:
+        - key: hurtle
+          exp: ^hurtle$
+        - key: star
+          exp: ^star$
+
+  - name: create_bam
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - create_bam
+    values:
+      boolean: true
+
+  - name: filter_probes
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - filter_probes
+    values:
+      boolean: true
+
+  - name: filter_high_occupancy_gems
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - filter_high_occupancy_gems
+    values:
+      boolean: true
+
+  - name: min_assignment_confidence
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - min_assignment_confidence
+    values:
+      float: true
+
+  - name: skip_cell_annotation
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - skip_cell_annotation
+    values:
+      boolean: true
+
+  - name: feature_r1_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - feature
+        - r1_length
+    values:
+      float: true
+
+  - name: feature_r2_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - feature
+        - r2_length
+    values:
+      float: true
+
+  - name: filter_aggregates
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - feature
+        - filter_aggregates
+    values:
+      boolean: true
+
+  - name: min_crispr_umi
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - feature
+        - min_crispr_umi
+    values:
+      float: true
+
+  - name: r1_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - r1_length
+    values:
+      float: true
+
+  - name: r2_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - r2_length
+    values:
+      float: true
+
+  - name: multiplet_filter
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - multiplet_filter
+    values:
+      boolean: true
+
+  - name: shared_contig_filter
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - shared_contig_filter
+    values:
+      boolean: true
+
+  - name: umi_baseline_filter
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - umi_baseline_filter
+    values:
+      boolean: true
+
+  - name: min_contig_length
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - min_contig_length
+    values:
+      float: true
+
+  - name: skip_clonotyping
+    groups: multi_config
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - skip_clonotyping
+    values:
+      boolean: true
+
+  # collect for all pipelines on success
+  - name: runtime
+    groups:
+      - pipeline_success
+      - failure
+    special: runtime
+    values:
+      float: true
+
+  - name: core_hours
+    groups:
+      - pipeline_success
+    file_content:
+      path: _perf
+      json_path:
+        - forks
+        - fork_stats
+        - core_hours
+    values:
+      float: true
+
+  - name: utime
+    groups:
+      - pipeline_success
+    file_content:
+      path: _perf
+      json_path:
+        - forks
+        - fork_stats
+        - usertime
+    values:
+      float: true
+
+  - name: disk_hwm
+    groups:
+      - pipeline_success
+    file_content:
+      path: _perf
+      json_path:
+        - maxbytes
+    values:
+      exponential:
+        multiple: 2
+        min: 1
+
+  - name: jobmode
+    groups:
+      - pipeline_success
+      - failure
+    mro_flag: --jobmode
+    values:
+      match:
+        - exp: local
+        - exp: lsf
+        - exp: pbspro
+        - exp: sge
+        - exp: slurm
+        - exp: torque
+
+  # result of chemistry detection at the per-library level
+  - name: GEX_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - Gene Expression
+        - name
+    preset: chemistry
+  - name: ANTIBODY_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - Antibody Capture
+        - name
+    preset: chemistry
+  - name: ANTIGEN_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - Antigen Capture
+        - name
+    preset: chemistry
+  - name: CRISPR_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - CRISPR Guide Capture
+        - name
+    preset: chemistry
+  - name: MULTIPLEXING_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - Multiplexing Capture
+        - name
+    preset: chemistry
+  - name: Custom_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - Custom
+        - name
+    preset: chemistry
+  - name: VDJ_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - VDJ
+        - name
+    preset: chemistry
+  - name: VDJ_B_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - VDJ-B
+        - name
+    preset: chemistry
+  - name: VDJ_T_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - VDJ-T
+        - name
+    preset: chemistry
+  - name: VDJ_T_GD_chemistry
+    groups: detected_chemistry
+    file_content:
+      path: ${lib_metrics}
+      json_path:
+        - chemistry_defs
+        - VDJ-T-GD
+        - name
+    preset: chemistry
+
+  # pipeline metrics
+  - name: chemistry_name
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: chemistry_name
+    preset: chemistry
+  - name: ANTIBODY_bc_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: ANTIBODY_bc_bases_with_q30_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_bc_bases_with_q30_in_gel_bead_frac
+    values:
+      float: true
+  - name: ANTIBODY_bc_bases_with_q30_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_bc_bases_with_q30_in_probe_frac
+    values:
+      float: true
+  - name: ANTIBODY_feature_reads_in_cells
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_feature_reads_in_cells
+    values:
+      float: true
+  - name: ANTIBODY_filtered_bcs_transcriptome_union
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_filtered_bcs_transcriptome_union
+    values:
+      float: true
+  - name: ANTIBODY_frac_feature_reads_usable
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_frac_feature_reads_usable
+    values:
+      float: true
+  - name: ANTIBODY_good_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_good_bc_frac
+    values:
+      float: true
+  - name: ANTIBODY_good_bc_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_good_bc_in_gel_bead_frac
+    values:
+      float: true
+  - name: ANTIBODY_good_bc_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_good_bc_in_probe_frac
+    values:
+      float: true
+  - name: ANTIBODY_good_umi_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_good_umi_frac
+    values:
+      float: true
+  - name: ANTIBODY_multi_cdna_pcr_dupe_reads_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_multi_cdna_pcr_dupe_reads_frac
+    values:
+      float: true
+  - name: ANTIBODY_read_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_read_bases_with_q30_frac
+    values:
+      float: true
+  - name: ANTIBODY_reads_lost_to_aggregate_GEMs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_reads_lost_to_aggregate_GEMs
+    values:
+      float: true
+  - name: ANTIBODY_reads_per_cell
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_reads_per_cell
+    values:
+      float: true
+  - name: ANTIBODY_recognized_feature_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_recognized_feature_bc_frac
+    values:
+      float: true
+  - name: ANTIBODY_total_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_total_read_pairs
+    values:
+      float: true
+  - name: ANTIBODY_umi_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: ANTIBODY_unprocessed_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIBODY_unprocessed_read_pairs
+    values:
+      float: true
+  - name: ANTIGEN_bc_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: ANTIGEN_bc_bases_with_q30_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_bc_bases_with_q30_in_gel_bead_frac
+    values:
+      float: true
+  - name: ANTIGEN_bc_bases_with_q30_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_bc_bases_with_q30_in_probe_frac
+    values:
+      float: true
+  - name: ANTIGEN_feature_reads_in_cells
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_feature_reads_in_cells
+    values:
+      float: true
+  - name: ANTIGEN_good_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_good_bc_frac
+    values:
+      float: true
+  - name: ANTIGEN_good_umi_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_good_umi_frac
+    values:
+      float: true
+  - name: ANTIGEN_multi_cdna_pcr_dupe_reads_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_multi_cdna_pcr_dupe_reads_frac
+    values:
+      float: true
+  - name: ANTIGEN_read_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_read_bases_with_q30_frac
+    values:
+      float: true
+  - name: ANTIGEN_reads_per_cell
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_reads_per_cell
+    values:
+      float: true
+  - name: ANTIGEN_total_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_total_read_pairs
+    values:
+      float: true
+  - name: ANTIGEN_umi_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: ANTIGEN_unprocessed_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: ANTIGEN_unprocessed_read_pairs
+    values:
+      float: true
+  - name: CRISPR_bc_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: CRISPR_bc_bases_with_q30_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_bc_bases_with_q30_in_gel_bead_frac
+    values:
+      float: true
+  - name: CRISPR_bc_bases_with_q30_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_bc_bases_with_q30_in_probe_frac
+    values:
+      float: true
+  - name: CRISPR_feature_bc_extracted_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_feature_bc_extracted_frac
+    values:
+      float: true
+  - name: CRISPR_feature_reads_in_cells
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_feature_reads_in_cells
+    values:
+      float: true
+  - name: CRISPR_frac_feature_reads_usable
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_frac_feature_reads_usable
+    values:
+      float: true
+  - name: CRISPR_good_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_good_bc_frac
+    values:
+      float: true
+  - name: CRISPR_good_bc_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_good_bc_in_gel_bead_frac
+    values:
+      float: true
+  - name: CRISPR_good_bc_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_good_bc_in_probe_frac
+    values:
+      float: true
+  - name: CRISPR_good_umi_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_good_umi_frac
+    values:
+      float: true
+  - name: CRISPR_multi_cdna_pcr_dupe_reads_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_multi_cdna_pcr_dupe_reads_frac
+    values:
+      float: true
+  - name: CRISPR_read_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_read_bases_with_q30_frac
+    values:
+      float: true
+  - name: CRISPR_reads_per_cell
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_reads_per_cell
+    values:
+      float: true
+  - name: CRISPR_recognized_feature_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_recognized_feature_bc_frac
+    values:
+      float: true
+  - name: CRISPR_total_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_total_read_pairs
+    values:
+      float: true
+  - name: CRISPR_umi_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: CRISPR_unprocessed_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_unprocessed_read_pairs
+    values:
+      float: true
+  - name: CRISPR_unrecognized_feature_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: CRISPR_unrecognized_feature_bc_frac
+    values:
+      float: true
+  - name: Custom_bc_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: Custom_bc_bases_with_q30_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_bc_bases_with_q30_in_gel_bead_frac
+    values:
+      float: true
+  - name: Custom_bc_bases_with_q30_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_bc_bases_with_q30_in_probe_frac
+    values:
+      float: true
+  - name: Custom_feature_reads_in_cells
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_feature_reads_in_cells
+    values:
+      float: true
+  - name: Custom_good_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_good_bc_frac
+    values:
+      float: true
+  - name: Custom_good_umi_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_good_umi_frac
+    values:
+      float: true
+  - name: Custom_multi_cdna_pcr_dupe_reads_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_multi_cdna_pcr_dupe_reads_frac
+    values:
+      float: true
+  - name: Custom_read_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_read_bases_with_q30_frac
+    values:
+      float: true
+  - name: Custom_reads_per_cell
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_reads_per_cell
+    values:
+      float: true
+  - name: Custom_total_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_total_read_pairs
+    values:
+      float: true
+  - name: Custom_umi_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: Custom_unprocessed_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: Custom_unprocessed_read_pairs
+    values:
+      float: true
+  - name: MULTIPLEXING_bc_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_bc_bases_with_q30_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_bc_bases_with_q30_in_gel_bead_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_bc_bases_with_q30_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_bc_bases_with_q30_in_probe_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_feature_reads_in_cells
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_feature_reads_in_cells
+    values:
+      float: true
+  - name: MULTIPLEXING_good_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_good_bc_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_good_umi_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_good_umi_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_multi_cdna_pcr_dupe_reads_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_multi_cdna_pcr_dupe_reads_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_read_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_read_bases_with_q30_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_reads_per_cell
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_reads_per_cell
+    values:
+      float: true
+  - name: MULTIPLEXING_total_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_total_read_pairs
+    values:
+      float: true
+  - name: MULTIPLEXING_umi_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: MULTIPLEXING_unprocessed_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: MULTIPLEXING_unprocessed_read_pairs
+    values:
+      float: true
+  - name: bc_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: bc_bases_with_q30_in_gel_bead_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: bc_bases_with_q30_in_gel_bead_frac
+    values:
+      float: true
+  - name: bc_bases_with_q30_in_probe_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: bc_bases_with_q30_in_probe_frac
+    values:
+      float: true
+  - name: filtered_bcs_transcriptome_union
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: filtered_bcs_transcriptome_union
+    values:
+      float: true
+  - name: good_bc_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: good_bc_frac
+    values:
+      float: true
+  - name: good_umi_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: good_umi_frac
+    values:
+      float: true
+  - name: multi_cdna_pcr_dupe_reads_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: multi_cdna_pcr_dupe_reads_frac
+    values:
+      float: true
+  - name: read_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: read_bases_with_q30_frac
+    values:
+      float: true
+  - name: reads_per_cell
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: reads_per_cell
+    values:
+      float: true
+  - name: total_cell_associated_partitions
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: total_cell_associated_partitions
+    values:
+      float: true
+  - name: total_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: total_read_pairs
+    values:
+      float: true
+  - name: umi_bases_with_q30_frac
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: unprocessed_read_pairs
+    groups: library_metrics
+    file_content:
+      path: ${lib_metrics}
+      json_path: unprocessed_read_pairs
+    values:
+      float: true
+
+  # VDJ library metrics
+
+  - name: IGH_vdj_recombinome_mapped_reads_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: IGH_vdj_recombinome_mapped_reads_frac
+    values:
+      float: true
+  - name: IGK_vdj_recombinome_mapped_reads_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: IGK_vdj_recombinome_mapped_reads_frac
+    values:
+      float: true
+  - name: IGL_vdj_recombinome_mapped_reads_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: IGL_vdj_recombinome_mapped_reads_frac
+    values:
+      float: true
+  - name: TRA_vdj_recombinome_mapped_reads_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: TRA_vdj_recombinome_mapped_reads_frac
+    values:
+      float: true
+  - name: TRB_vdj_recombinome_mapped_reads_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: TRB_vdj_recombinome_mapped_reads_frac
+    values:
+      float: true
+  - name: VDJ_bc_bases_with_q30_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: VDJ_bc_bases_with_q30_frac
+    values:
+      float: true
+  - name: VDJ_read_bases_with_q30_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: VDJ_read_bases_with_q30_frac
+    values:
+      float: true
+  - name: VDJ_total_read_pairs
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: VDJ_total_read_pairs
+    values:
+      float: true
+  - name: VDJ_umi_bases_with_q30_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: VDJ_umi_bases_with_q30_frac
+    values:
+      float: true
+  - name: VDJ_unprocessed_read_pairs
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: VDJ_unprocessed_read_pairs
+    values:
+      float: true
+  - name: multi_vdj_recombinome_mapped_reads_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: multi_vdj_recombinome_mapped_reads_frac
+    values:
+      float: true
+  - name: vdj_assemblable_read_pairs_per_filtered_bc
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: vdj_assemblable_read_pairs_per_filtered_bc
+    values:
+      float: true
+  - name: vdj_filtered_bcs
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: vdj_filtered_bcs
+    values:
+      float: true
+  - name: vdj_filtered_bcs_cum_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: vdj_filtered_bcs_cum_frac
+    values:
+      float: true
+  - name: vdj_good_bc_frac
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: vdj_good_bc_frac
+    values:
+      float: true
+  - name: vdj_total_raw_read_pairs_per_filtered_bc
+    groups: library_metrics_vdj
+    file_content:
+      path: ${vdj_lib_metrics}
+      json_path: vdj_total_raw_read_pairs_per_filtered_bc
+    values:
+      float: true
+
+  # Sample-level metrics.
+
+  - name: ANTIBODY_feature_reads_in_cells
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_feature_reads_in_cells
+    values:
+      float: true
+  - name: ANTIBODY_multi_filtered_bcs
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_multi_filtered_bcs
+    values:
+      float: true
+  - name: ANTIBODY_multi_filtered_bcs_median_counts
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_multi_filtered_bcs_median_counts
+    values:
+      float: true
+  - name: ANTIBODY_multi_usable_reads_per_filtered_bc
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_multi_usable_reads_per_filtered_bc
+    values:
+      float: true
+  - name: ANTIBODY_reads_lost_to_aggregate_GEMs
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_reads_lost_to_aggregate_GEMs
+    values:
+      float: true
+  - name: ANTIBODY_recognized_feature_bc_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_recognized_feature_bc_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: ANTIBODY_total_read_pairs_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIBODY_total_read_pairs_in_filtered_barcodes
+    values:
+      float: true
+  - name: ANTIGEN_feature_reads_in_cells
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIGEN_feature_reads_in_cells
+    values:
+      float: true
+  - name: ANTIGEN_multi_filtered_bcs
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIGEN_multi_filtered_bcs
+    values:
+      float: true
+  - name: ANTIGEN_multi_filtered_bcs_median_counts
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIGEN_multi_filtered_bcs_median_counts
+    values:
+      float: true
+  - name: ANTIGEN_multi_usable_reads_per_filtered_bc
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIGEN_multi_usable_reads_per_filtered_bc
+    values:
+      float: true
+  - name: ANTIGEN_total_read_pairs_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: ANTIGEN_total_read_pairs_in_filtered_barcodes
+    values:
+      float: true
+  - name: CRISPR_feature_bc_extracted_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_feature_bc_extracted_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: CRISPR_feature_reads_in_cells
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_feature_reads_in_cells
+    values:
+      float: true
+  - name: CRISPR_frac_cells_with_multiple_protospacer
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_frac_cells_with_multiple_protospacer
+    values:
+      float: true
+  - name: CRISPR_frac_cells_with_protospacer
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_frac_cells_with_protospacer
+    values:
+      float: true
+  - name: CRISPR_multi_filtered_bcs
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_multi_filtered_bcs
+    values:
+      float: true
+  - name: CRISPR_multi_filtered_bcs_median_counts
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_multi_filtered_bcs_median_counts
+    values:
+      float: true
+  - name: CRISPR_multi_usable_reads_per_filtered_bc
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_multi_usable_reads_per_filtered_bc
+    values:
+      float: true
+  - name: CRISPR_recognized_feature_bc_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_recognized_feature_bc_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: CRISPR_total_read_pairs_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_total_read_pairs_in_filtered_barcodes
+    values:
+      float: true
+  - name: CRISPR_unrecognized_feature_bc_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: CRISPR_unrecognized_feature_bc_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: Custom_feature_reads_in_cells
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: Custom_feature_reads_in_cells
+    values:
+      float: true
+  - name: Custom_multi_filtered_bcs
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: Custom_multi_filtered_bcs
+    values:
+      float: true
+  - name: Custom_multi_filtered_bcs_median_counts
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: Custom_multi_filtered_bcs_median_counts
+    values:
+      float: true
+  - name: Custom_multi_usable_reads_per_filtered_bc
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: Custom_multi_usable_reads_per_filtered_bc
+    values:
+      float: true
+  - name: Custom_total_read_pairs_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: Custom_total_read_pairs_in_filtered_barcodes
+    values:
+      float: true
+  - name: estimated_gdna_content
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: estimated_gdna_content
+    values:
+      float: true
+  - name: estimated_gdna_unspliced_threshold
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: estimated_gdna_unspliced_threshold
+    values:
+      float: true
+  - name: filtered_reads_per_filtered_bc
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: filtered_reads_per_filtered_bc
+    values:
+      float: true
+  - name: median_genes_per_singlet
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: median_genes_per_singlet
+    values:
+      float: true
+  - name: median_umi_per_singlet
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: median_umi_per_singlet
+    values:
+      float: true
+  - name: multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac
+    values:
+      float: true
+  - name: multi_transcriptome_conf_mapped_reads_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: multi_transcriptome_conf_mapped_reads_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: multi_transcriptome_half_mapped_reads_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: multi_transcriptome_half_mapped_reads_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: multi_transcriptome_mapped_reads_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: multi_transcriptome_mapped_reads_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: multi_transcriptome_split_mapped_reads_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: multi_transcriptome_split_mapped_reads_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: multi_transcriptome_targeted_conf_mapped_reads_frac_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: multi_transcriptome_targeted_conf_mapped_reads_frac_in_filtered_barcodes
+    values:
+      float: true
+  - name: singlets_assigned_to_other_samples
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: singlets_assigned_to_other_samples
+    values:
+      float: true
+  - name: singlets_assigned_to_this_sample
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: singlets_assigned_to_this_sample
+    values:
+      float: true
+  - name: total_genes_detected
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: total_genes_detected
+    values:
+      float: true
+  - name: total_read_pairs_in_filtered_barcodes
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: total_read_pairs_in_filtered_barcodes
+    values:
+      float: true
+  - name: total_singlets
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: total_singlets
+    values:
+      float: true
+
+  # VDJ sample-level metrics
+
+  - name: IGH_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGH_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: IGH_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGH_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    values:
+      float: true
+  - name: IGK_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGK_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: IGK_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGK_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: IGL_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGL_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    values:
+      float: true
+  - name: IGL_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGL_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: IGL_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: IGL_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    values:
+      float: true
+  - name: TRA_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRA_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: TRA_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRA_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: TRB_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRB_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: TRB_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRB_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: TRD_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRD_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: TRD_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRD_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    values:
+      float: true
+  - name: TRG_vdj_assembly_prod_cdr_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRG_vdj_assembly_prod_cdr_bc_frac
+    values:
+      float: true
+  - name: TRG_vdj_assembly_umis_per_cell_median
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: TRG_vdj_assembly_umis_per_cell_median
+    values:
+      float: true
+  - name: multi_raw_vdj_paired_clonotype_diversity
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: multi_raw_vdj_paired_clonotype_diversity
+    values:
+      float: true
+  - name: multi_vdj_assembly_contig_pair_productive_full_len_bc_count
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: multi_vdj_assembly_contig_pair_productive_full_len_bc_count
+    values:
+      float: true
+  - name: multi_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: multi_vdj_assembly_contig_pair_productive_full_len_bc_frac
+    values:
+      float: true
+  - name: vdj_filtered_bcs
+    groups: sample_metrics_vdj
+    file_content:
+      path: ${vdj_sample_metrics}
+      json_path: vdj_filtered_bcs
+    values:
+      float: true

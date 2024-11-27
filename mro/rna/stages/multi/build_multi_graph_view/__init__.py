@@ -192,6 +192,13 @@ def create_graphviz_digraph(multi_graph: MultiGraph) -> AGraph:
                 color=GraphVizColors.GREY,
                 fillcolor=GraphVizColors.GREY,
             )
+        elif multi_graph.is_hashtag_multiplexed():
+            g_tags.add_node(
+                "Hashtags",
+                style=GraphVizProps.FILLEDSTYLE,
+                color=GraphVizColors.GREY,
+                fillcolor=GraphVizColors.GREY,
+            )
         elif multi_graph.is_rtl_multiplexed():
             g_tags.add_node(
                 "Probe Barcode IDs",
@@ -201,7 +208,7 @@ def create_graphviz_digraph(multi_graph: MultiGraph) -> AGraph:
             )
         elif multi_graph.is_oh_multiplexed():
             g_tags.add_node(
-                "Overhang IDs",
+                "OCM Barcode IDs",
                 style=GraphVizProps.FILLEDSTYLE,
                 color=GraphVizColors.GREY,
                 fillcolor=GraphVizColors.GREY,

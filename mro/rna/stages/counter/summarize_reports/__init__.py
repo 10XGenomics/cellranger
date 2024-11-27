@@ -9,6 +9,8 @@ import shutil
 import cellranger.report as cr_report
 import cellranger.webshim.common as cr_webshim
 import cellranger.websummary.sample_properties as sp
+from cellranger.analysis.singlegenome import TSNE_NAME
+from cellranger.matrix import CountMatrix
 from cellranger.reference_paths import get_reference_genomes
 from cellranger.webshim.constants.shared import PIPELINE_COUNT
 from cellranger.websummary.react_components import ReactComponentEncoder
@@ -40,8 +42,8 @@ stage SUMMARIZE_REPORTS(
     out csv               feature_reference,
     out json              ws_data,
     src py                "stages/counter/summarize_reports",
+) split (
 ) using (
-    mem_gb   = 16,
     volatile = strict,
 ) retain (
     metrics_summary_json,
@@ -49,7 +51,16 @@ stage SUMMARIZE_REPORTS(
 """
 
 
-def main(args, outs):
+def split(args):
+    _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(
+        args.filtered_gene_bc_matrices_h5
+    )
+    mem_gib = 7 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1.0)
+    print(f"{num_barcodes=},{nnz=},{mem_gib=}")
+    return {"chunks": [], "join": {"__mem_gb": mem_gib}}
+
+
+def join(args, outs, _chunk_defs, _chunk_outs):
     id_dict = {"sample_id": args.sample_id, "sample_desc": args.sample_desc}
     cr_report.merge_jsons(args.summaries, outs.metrics_summary_json, [id_dict])
 
@@ -79,7 +90,9 @@ def main(args, outs):
     )
 
     # TODO: Move metrics CSV somewhere else
-    sample_data = cr_webshim.load_sample_data(sample_properties, sample_data_paths)
+    sample_data = cr_webshim.load_sample_data(
+        sample_properties, sample_data_paths, projections=(TSNE_NAME,)
+    )
     cr_webshim.build_metrics_summary_csv(
         outs.metrics_summary_csv, sample_properties, sample_data, PIPELINE_COUNT
     )

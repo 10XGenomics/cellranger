@@ -3,27 +3,33 @@ name = 'cellranger'
 test = false
 
 [dependencies]
-csv = '1'
 dirs = '5'
-hex = '0.4'
-md5 = '0.7'
-sha2 = '0.10'
 shell-escape = '0.1.5'
-tempfile = '3'
 terminal_size = '0.3'
-thiserror = '1'
 tiff = '0.9.1'
+url = '2.5.2'
 
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.clap]
+default-features = true
+features = ['derive', 'wrap_help']
 workspace = true
+
+[dependencies.cloud_utils]
+path = '../cloud_utils'
 
 [dependencies.cr_types]
 path = '../cr_types'
 
+[dependencies.csv]
+workspace = true
+
 [dependencies.fastq_set]
+workspace = true
+
+[dependencies.hex]
 workspace = true
 
 [dependencies.itertools]
@@ -35,19 +41,31 @@ workspace = true
 [dependencies.metric]
 path = '../metric'
 
+[dependencies.multi]
+path = '../multi'
+
 [dependencies.ordered-float]
-features = ['serde']
-version = '3'
+workspace = true
 
 [dependencies.regex]
-default-features = false
-features = ['std', 'perf']
-version = '1'
+workspace = true
 
 [dependencies.serde]
 workspace = true
 
 [dependencies.serde_json]
+workspace = true
+
+[dependencies.sha2]
+workspace = true
+
+[dependencies.slide_design]
+path = '../slide_design'
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.thiserror]
 workspace = true
 
 [dependencies.vdj_reference]

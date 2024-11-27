@@ -2,17 +2,17 @@
 
 use crate::matrix::{gex_umi_counts_per_barcode, H5File};
 use anyhow::Result;
+use cr_lib::parquet_file::{ParquetFile, ParquetWriter, PerBarcodeFilter};
 use enclone_core::barcode_fate::BarcodeFate;
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
-use martian_filetypes::lz4_file::Lz4;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO};
 use metric::{AsMetricPrefix, TxHashMap};
 use plotly::color::Rgba;
-use plotly::common::{Marker, TextPosition, Title};
+use plotly::common::{Marker, TextPosition};
 use plotly::layout::{Axis, AxisType, BarMode, HoverMode};
 use plotly::{Bar, Layout, Scatter};
 use rand::rngs::StdRng;
@@ -27,7 +27,7 @@ use tenx_websummary::components::{HeroMetric, PlotlyChart, TitleWithHelp, WithTi
 use tenx_websummary::{HtmlTemplate, SinglePageHtml};
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_asm_asm::write_ann_csv::ContigAnnotationCsvRow;
-use vdj_asm_utils::filter_log::FilterLogEntry;
+use vdj_filter_barcodes::filter_log::{FilterLogEntry, VdjFilterLogFormat};
 
 struct Cdr3Info {
     cdr3_aa: String,
@@ -208,6 +208,7 @@ pub struct WebSummaryContent {
 pub struct FilterSummary {
     pub html: SinglePageHtml<WebSummaryContent>,
     pub metrics: VdjFilterMetrics,
+    pub per_barcode_filters: Vec<PerBarcodeFilter>,
 }
 
 pub enum Annotations {
@@ -233,9 +234,14 @@ impl Annotations {
         }
     }
     fn _load_enclone_barcode_fate(bc_fate: &Path) -> Result<HashMap<String, BarcodeFate>> {
-        let mut filters: Vec<HashMap<String, BarcodeFate>> = JsonFile::from(bc_fate).read()?;
-        assert_eq!(filters.len(), 1);
-        Ok(filters.pop().unwrap())
+        let filters_vec: Vec<HashMap<String, BarcodeFate>> = JsonFile::from(bc_fate).read()?;
+        let mut filters: HashMap<String, BarcodeFate> = HashMap::new();
+        for map in filters_vec {
+            for (bc, fate) in map {
+                filters.insert(bc, fate);
+            }
+        }
+        Ok(filters)
     }
 
     fn _load_barcode_info_from_json(
@@ -247,7 +253,7 @@ impl Annotations {
         for ann in contig_reader {
             let ann: ContigAnnotation = ann?;
             if ann.is_productive() {
-                let enclone_fate = enclone_filters.get(&ann.barcode).cloned();
+                let enclone_fate = enclone_filters.get(&ann.barcode).copied();
                 let chain_type = ann.chain_type().unwrap();
                 let e = barcode_info.entry(ann.barcode).or_insert(BarcodeInfo {
                     is_cell: ann.is_cell,
@@ -327,9 +333,10 @@ pub fn generate_filter_summary(
     analysis_id: &str,
     description: Option<&str>,
     annotations: Annotations,
-    filter_diagnostics_path_opt: Option<&Lz4<JsonFile<Vec<FilterLogEntry>>>>,
+    filter_diagnostics_path_opt: Option<&VdjFilterLogFormat>,
     raw_matrix_h5: Option<&H5File>,
 ) -> Result<FilterSummary> {
+    // Keys are valid barcodes across the whole library
     let asm_filters = match filter_diagnostics_path_opt {
         Some(filter_diagnostics_path) => {
             let filter_reader = filter_diagnostics_path.lazy_reader()?;
@@ -348,12 +355,27 @@ pub fn generate_filter_summary(
         None => None,
     };
 
+    // Keys are valid barcodes restricted to this sample
     let (barcode_info, enclone_filters) = annotations.load()?;
 
+    let vdj_filters_per_barcode = asm_filters
+        .as_ref()
+        .map_or(Vec::<PerBarcodeFilter>::new(), |asm_filters| {
+            make_vdj_filters_per_barcode(asm_filters, &barcode_info)
+        });
+
+    // Match definition of BarcodeCategory::AsmFilter i.e. barcodes filtered only by the assembler
     let barcodes_per_asm_filter: Option<TxHashMap<_, _>> = asm_filters.as_ref().map(|filters| {
         filters
             .iter()
-            .filter_map(|(bc, f)| barcode_info.contains_key(bc).then_some(f))
+            .filter_map(|(bc, f)| {
+                if let Some(info) = barcode_info.get(bc) {
+                    if info.is_gex_cell.unwrap_or(true) {
+                        return Some(f);
+                    }
+                }
+                None
+            })
             .flatten()
             .counts()
             .into_iter()
@@ -647,6 +669,7 @@ pub fn generate_filter_summary(
                 .collect(),
             unique_cdr3s_per_chain,
         },
+        per_barcode_filters: vdj_filters_per_barcode,
     })
 }
 
@@ -656,8 +679,8 @@ fn make_unique_cdr3s_plot(unique_cdr3s_per_chain: &HashMap<String, i64>) -> Plot
 
     PlotlyChart::with_layout_and_data(
         Layout::new()
-            .x_axis(Axis::new().title(Title::new("Chain")))
-            .y_axis(Axis::new().title(Title::new("Unique CDR3s")))
+            .x_axis(Axis::new().title("Chain"))
+            .y_axis(Axis::new().title("Unique CDR3s"))
             .hover_mode(HoverMode::X),
         vec![Bar::new(chains, unique_cdr3s)],
     )
@@ -703,7 +726,7 @@ fn binned_hist(
     bin_width: f64,
 ) -> (Vec<f64>, Vec<usize>, Vec<String>) {
     let get_index = |value: f64| (value / bin_width).floor() as usize;
-    let get_mid_x = |index: usize| index as f64 * bin_width + bin_width / 2.;
+    let get_mid_x = |index: usize| bin_width * (index as f64 + 0.5);
     let get_umi_range_txt = |index: usize| {
         let start = bin_width * index as f64;
         let end = start + bin_width;
@@ -748,8 +771,8 @@ fn make_umi_histogram(
     };
 
     let layout = Layout::new()
-        .x_axis(Axis::new().title(Title::new("Log10(1+ UMIs)")))
-        .y_axis(Axis::new().title(Title::new("Frequency")))
+        .x_axis(Axis::new().title("Log10(1+ UMIs)"))
+        .y_axis(Axis::new().title("Frequency"))
         .bar_mode(BarMode::Overlay)
         .hover_mode(HoverMode::X);
 
@@ -841,8 +864,8 @@ fn make_contigs_per_barcode_plot(
 
     PlotlyChart::with_layout_and_data(
         Layout::new()
-            .x_axis(Axis::new().title(Title::new("Number of productive contigs")))
-            .y_axis(Axis::new().title(Title::new("Frequency")))
+            .x_axis(Axis::new().title("Number of productive contigs"))
+            .y_axis(Axis::new().title("Frequency"))
             .bar_mode(BarMode::Stack)
             .hover_mode(HoverMode::X),
         data,
@@ -901,15 +924,11 @@ fn make_cdr3_plots(
         Layout::new()
             .x_axis(
                 Axis::new()
-                    .title(Title::new("CDR3 Amino acid"))
+                    .title("CDR3 Amino acid")
                     .tick_values((0..N_CDR3).map(|i| i as f64).collect())
                     .tick_text(top_cdr3s.clone()),
             )
-            .y_axis(
-                Axis::new()
-                    .title(Title::new("UMI Counts"))
-                    .type_(AxisType::Log),
-            ),
+            .y_axis(Axis::new().title("UMI Counts").type_(AxisType::Log)),
         umi_scatters,
     );
 
@@ -956,8 +975,8 @@ fn cdr3_frequency_plot(
         .collect();
     PlotlyChart::with_layout_and_data(
         Layout::new()
-            .x_axis(Axis::new().title(Title::new("CDR3 Amino acid")))
-            .y_axis(Axis::new().title(Title::new("Frequency")))
+            .x_axis(Axis::new().title("CDR3 Amino acid"))
+            .y_axis(Axis::new().title("Frequency"))
             .bar_mode(BarMode::Stack)
             .hover_mode(HoverMode::X),
         frequency_bars,
@@ -998,20 +1017,69 @@ fn make_gex_vdj_umi_scatter(
 
     PlotlyChart::with_layout_and_data(
         Layout::new()
-            .x_axis(
-                Axis::new()
-                    .title(Title::new("VDJ UMIs"))
-                    .type_(AxisType::Log),
-            )
-            .y_axis(
-                Axis::new()
-                    .title(Title::new("GEX UMIs"))
-                    .type_(AxisType::Log),
-            ),
+            .x_axis(Axis::new().title("VDJ UMIs").type_(AxisType::Log))
+            .y_axis(Axis::new().title("GEX UMIs").type_(AxisType::Log)),
         data,
     )
 }
 
+fn make_vdj_filters_per_barcode(
+    asm_filters: &HashMap<String, Vec<&str>>,
+    barcode_info: &HashMap<String, BarcodeInfo>,
+) -> Vec<PerBarcodeFilter> {
+    let mut bc_filters: Vec<PerBarcodeFilter> = Vec::new();
+    for (bc, info) in barcode_info {
+        let mut this_bc = PerBarcodeFilter {
+            barcode: bc.clone(),
+            is_cell: info.is_cell,
+            is_gex_cell: info.is_gex_cell,
+            is_asm_cell: info.is_asm_cell,
+            low_umi: false,
+            no_v_region: false,
+            low_junction_support: false,
+            no_conf_contig: false,
+            low_rpu: false,
+            non_dominant_junction: false,
+            weak_junction: false,
+            chimeric: false,
+            common_clone: false,
+            gel_bead_contamination: false,
+            gel_bead_indel: None,
+            enclone_fate: info.enclone_fate.map(|f| f.label().to_string()),
+            insert_priming: false,
+        };
+        // Evaluate state of per barcode assembly filters
+        if let Some(filters) = asm_filters.get(bc) {
+            // filters scoped at the barcode level
+            this_bc.low_umi = filters.contains(&"LOW_UMI");
+            this_bc.no_v_region = filters.contains(&"NO_V_REGION");
+            this_bc.low_junction_support = filters.contains(&"LOW_JUNCTION_SUPPORT");
+            this_bc.no_conf_contig = filters.contains(&"NO_CONF_CONTIG");
+            this_bc.low_rpu = filters.contains(&"LOW_RPU");
+
+            // filters scoped at contig level and restricted to bcs that passed
+            let was_excluded = this_bc.low_umi
+                || this_bc.no_v_region
+                || this_bc.low_junction_support
+                || this_bc.no_conf_contig
+                || this_bc.low_rpu;
+            if !was_excluded {
+                this_bc.gel_bead_indel = Some(filters.contains(&"GB_INDEL"));
+            }
+
+            // filters scoped across the library level
+            this_bc.non_dominant_junction = filters.contains(&"NON_DOMINANT_JUNCTION");
+            this_bc.weak_junction = filters.contains(&"WEAK_JUNCTION");
+            this_bc.chimeric = filters.contains(&"CHIMERIC");
+            this_bc.common_clone = filters.contains(&"COMMON_CLONE");
+            this_bc.gel_bead_contamination = filters.contains(&"GB_CONTAMINATION");
+            this_bc.insert_priming = filters.contains(&"INSERT_PRIMING");
+        }
+
+        bc_filters.push(this_bc);
+    }
+    bc_filters
+}
 martian_filetype! {HtmlFile, "html"}
 
 #[derive(Clone, Deserialize, MartianStruct)]
@@ -1019,7 +1087,7 @@ pub struct SummarizeVdjFiltersStageInputs {
     sample_id: String,
     sample_description: Option<String>,
     all_contig_annotations: JsonFile<Vec<ContigAnnotation>>,
-    asm_filter_diagnostics: Option<Lz4<JsonFile<Vec<FilterLogEntry>>>>,
+    asm_filter_diagnostics: Option<VdjFilterLogFormat>,
     enclone_barcode_fate: JsonFile<()>,
     raw_matrix_h5: Option<H5File>,
 }
@@ -1028,6 +1096,7 @@ pub struct SummarizeVdjFiltersStageInputs {
 pub struct SummarizeVdjFiltersStageOutputs {
     filter_summary: HtmlFile,
     metrics_summary: JsonFile<VdjFilterMetrics>,
+    per_bc_filters: ParquetFile,
 }
 
 pub struct SummarizeVdjFilters;
@@ -1038,7 +1107,11 @@ impl MartianMain for SummarizeVdjFilters {
     type StageOutputs = SummarizeVdjFiltersStageOutputs;
 
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
-        let FilterSummary { html, metrics } = generate_filter_summary(
+        let FilterSummary {
+            html,
+            metrics,
+            per_barcode_filters,
+        } = generate_filter_summary(
             &args.sample_id,
             args.sample_description.as_deref(),
             Annotations::json(&args.all_contig_annotations, &args.enclone_barcode_fate),
@@ -1056,9 +1129,15 @@ impl MartianMain for SummarizeVdjFilters {
         let metrics_summary: JsonFile<_> = rover.make_path("metrics_summary");
         metrics_summary.write(&metrics)?;
 
+        let per_bc_filter_pq: ParquetFile = rover.make_path("per_bc_filter");
+        let mut pq_writer: ParquetWriter<PerBarcodeFilter> =
+            per_bc_filter_pq.writer(PerBarcodeFilter::ROW_GROUP_SIZE)?;
+        pq_writer.write_all(&per_barcode_filters)?;
+
         Ok(SummarizeVdjFiltersStageOutputs {
             filter_summary: filter_summary_html,
             metrics_summary,
+            per_bc_filters: per_bc_filter_pq,
         })
     }
 }

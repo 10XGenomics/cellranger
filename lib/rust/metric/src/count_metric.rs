@@ -104,7 +104,7 @@ impl JsonReport for CountMetric {
 /// ## Tests
 ///
 /// * prop_test_count_metric_add_and_addassign() - Make sure that the basic operation
-/// is correct for assorted inputs
+///   is correct for assorted inputs
 impl ::std::ops::Add for CountMetric {
     type Output = CountMetric;
     fn add(mut self, other: CountMetric) -> CountMetric {
@@ -119,7 +119,7 @@ impl ::std::ops::Add for CountMetric {
 /// ## Tests
 ///
 /// * prop_test_count_metric_add_and_addassign() - Make sure that the basic operation
-/// is correcto for assorted inputs
+///   is correct for assorted inputs
 impl ::std::ops::AddAssign for CountMetric {
     fn add_assign(&mut self, other: CountMetric) {
         self.merge(other);
@@ -152,7 +152,7 @@ mod tests {
         });
         assert!(merged == CountMetric::from(45));
 
-        let merged: CountMetric = (1..10).map(std::convert::Into::into).sum();
+        let merged: CountMetric = (1..10).map(Into::into).sum();
         assert!(merged == CountMetric::from(45));
     }
 

@@ -23,10 +23,11 @@ stage RUN_DIFFERENTIAL_EXPRESSION_NG(
     in  map[]       cluster_keys,
     out bincode.lz4 diffexp,
 ) using (
+    mem_gb   = 2,
     volatile = strict,
 )
 
-stage RUN_GRAPH_CLUSTERING_NG(
+stage RUN_GRAPH_CLUSTERING(
     in  h5     matrix_h5,
     in  h5     pca_h5,
     in  int    num_neighbors,
@@ -84,7 +85,7 @@ stage RUN_PCA2(
     volatile = strict,
 )
 
-stage RUN_TSNE_NG(
+stage RUN_TSNE(
     in  h5     matrix_h5,
     in  h5     pca_h5,
     in  int    random_seed,
@@ -97,7 +98,7 @@ stage RUN_TSNE_NG(
     in  float  theta,
     out h5     tsne_h5,
     out path   tsne_csv,
-    src comp   "cr_ana martian tsne_stage",
+    src comp   "cr_ana martian run_tsne",
 ) split (
     in  int    tsne_dims,
     in  string feature_type,

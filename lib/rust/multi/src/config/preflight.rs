@@ -7,11 +7,12 @@ use super::{
 use crate::cmo_set::load_default_cmo_set;
 use crate::config::{get_default_overhang_set, libsconst, ChemistrySet, PROBE_BARCODE_ID_GROUPING};
 use anyhow::{bail, ensure, Context, Result};
-use barcode::whitelist::{categorize_multiplexing_barcode_id, MultiplexingBarcodeType};
+use barcode::whitelist::{categorize_rtl_multiplexing_barcode_id, RTLMultiplexingBarcodeType};
 use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryDef, ChemistryName, ChemistrySpecs};
 use cr_types::reference::feature_extraction::FeatureExtractor;
-use cr_types::reference::feature_reference::{BeamMode, FeatureConfig, FeatureReference};
-use cr_types::reference::reference_info::ReferenceInfo;
+use cr_types::reference::feature_reference::{
+    BeamMode, FeatureConfig, FeatureReference, FeatureType,
+};
 use cr_types::{FeatureBarcodeType, LibraryType, VdjChainType};
 use fastq_set::WhichRead;
 use itertools::Itertools;
@@ -174,22 +175,20 @@ pub fn check_libraries(
         );
 
         // Make sure out reference actually contains this feature barcode type.
-        if let Some(ftype) = lib.library_type().feature_barcode_type() {
+        if let Some(feature_type) = lib.library_type().feature_barcode_type() {
             if let Some(fref) = &fref {
-                if !fref.feature_maps.contains_key(
-                    &cr_types::reference::feature_reference::FeatureType::Barcode(ftype),
-                ) {
-                    bail!(
-                        "You declared a library with feature_type = '{}', but there are no features with that feature_type in the feature reference.",
-                        ftype,
-                    );
-                }
+                ensure!(
+                    fref.feature_maps
+                        .contains_key(&FeatureType::Barcode(feature_type)),
+                    "You declared a library with feature_type = '{feature_type}', but \
+                     there are no features with that feature_type in the feature reference.",
+                );
             }
         }
 
         // traditionally, no error is thrown if feature reference is not provided
 
-        match lib.to_sample_def(cfg) {
+        match lib.to_sample_def() {
             Err(_) => bail!("{}", MULTI_HELP),
             Ok(sdef) => sdef.check_fastqs(MULTI_HELP)?,
         }
@@ -237,6 +236,12 @@ pub fn check_libraries(
     if cfg.is_rtl() && !is_pd {
         check_libraries_rtl(cfg)?;
     }
+    if cfg.libraries.has_multiplexing() && cfg.libraries.has_vdj() {
+        ensure!(
+            is_pd,
+            "The combination of VDJ libraries and Multiplexing Capture libraries is not supported."
+        );
+    }
 
     Ok(())
 }
@@ -265,7 +270,9 @@ pub fn check_samples(
     );
 
     // Validate CMO IDs
-    let multiplexing_ids = fref.map_or_else(TxHashSet::default, |x| x.multiplexing_ids());
+    let multiplexing_ids = fref
+        .as_ref()
+        .map_or_else(TxHashSet::default, |x| x.multiplexing_ids());
 
     let invalid_multiplexing_ids = test_reserved_words(&multiplexing_ids);
     ensure!(
@@ -289,6 +296,38 @@ pub fn check_samples(
         );
     }
 
+    // Validate HASHTAG IDs
+    if samples.has_hashtag_ids() {
+        let hashtag_ids: TxHashSet<String> = samples
+            .0
+            .iter()
+            .filter_map(|s| s.sample_barcode_ids(ProbeBarcodeIterationMode::All))
+            .flatten()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let invalid_hashtag_ids = test_reserved_words(&hashtag_ids);
+        ensure!(
+            invalid_hashtag_ids.is_empty(),
+            "Invalid hashtag_ids ('{}') provided, please ensure you are not using the reserved words \
+            'blank', 'multiplet', or 'unassigned'.",
+            invalid_hashtag_ids.join("', '")
+        );
+        let antibody_ids = fref.map_or_else(TxHashSet::default, |x| x.antibody_ids());
+        for sample in &samples.0 {
+            let invalid_entries = get_invalid_id_entries(
+                &antibody_ids,
+                sample.hashtag_ids.iter().flatten().map(String::as_str),
+            );
+            ensure!(
+                invalid_entries.is_empty(),
+                "Unknown hashtag_ids ('{}') provided for sample '{}', please ensure that you are using \
+                IDs that correspond to a valid Antibody Capture feature.",
+                invalid_entries.join("', '"),
+                sample.sample_id
+            );
+        }
+    }
+
     // Validate probe barcode IDs
     if samples.has_probe_barcode_ids() && !is_pd {
         let chemistry_specs: ChemistrySpecs = cfg.chemistry_specs()?;
@@ -306,7 +345,7 @@ pub fn check_samples(
                 }))
                 .barcode_whitelist()
                 .probe()
-                .as_source(true)?
+                .as_source()?
                 .get_ids()
             })
             .flatten_ok()
@@ -386,16 +425,16 @@ fn check_probe_barcode_id_grouping(
     has_ab_lib: bool,
     has_cr_lib: bool,
 ) -> Result<()> {
-    use MultiplexingBarcodeType::{Antibody, Crispr, RTL};
+    use RTLMultiplexingBarcodeType::{Antibody, Crispr, Gene};
 
     let barcode_types: Vec<_> = barcode_ids
         .iter()
         .copied()
-        .map(categorize_multiplexing_barcode_id)
+        .filter_map(categorize_rtl_multiplexing_barcode_id)
         .collect();
     match (has_gex_lib, has_ab_lib, has_cr_lib) {
         (false, false, false) => Ok(()),
-        (true, false, false) => match_one(&barcode_types, RTL),
+        (true, false, false) => match_one(&barcode_types, Gene),
         (false, true, false) => match_one(&barcode_types, Antibody),
         (true, true, false) => match_two(&barcode_types, Antibody),
         (true, false, true) => match_two(&barcode_types, Crispr),
@@ -403,12 +442,12 @@ fn check_probe_barcode_id_grouping(
             // Can match one, two, or three.
             // Order should always be RTL+AB+CR
             [] => bail!("no barcode ID provided"),
-            [RTL] | [RTL, Antibody] | [RTL, Crispr] | [RTL, Antibody, Crispr] => Ok(()),
-            [other_type] => bail!("expected a {RTL} barcode ID, not {other_type}"),
+            [Gene] | [Gene, Antibody] | [Gene, Crispr] | [Gene, Antibody, Crispr] => Ok(()),
+            [other_type] => bail!("expected a {Gene} barcode ID, not {other_type}"),
             anything_else => bail!(
-                "expected either a single {RTL} barcode ID, \
-                 or a pair of {RTL} + {Antibody} or {RTL} + {Crispr} barcode IDs, \
-                 or a triple of {RTL} + {Antibody} + {Crispr} barcode IDs, not {}",
+                "expected either a single {Gene} barcode ID, \
+                 or a pair of {Gene} + {Antibody} or {Gene} + {Crispr} barcode IDs, \
+                 or a triple of {Gene} + {Antibody} + {Crispr} barcode IDs, not {}",
                 anything_else.iter().join(" + "),
             ),
         },
@@ -419,8 +458,8 @@ fn check_probe_barcode_id_grouping(
 
 /// Match a single barcode of the provided type.
 fn match_one(
-    barcode_types: &[MultiplexingBarcodeType],
-    expected: MultiplexingBarcodeType,
+    barcode_types: &[RTLMultiplexingBarcodeType],
+    expected: RTLMultiplexingBarcodeType,
 ) -> Result<()> {
     match barcode_types {
         [] => bail!("no barcode ID provided"),
@@ -435,23 +474,23 @@ fn match_one(
 
 /// Match one or two barcodes; one must be RTL.
 fn match_two(
-    barcode_types: &[MultiplexingBarcodeType],
-    expected: MultiplexingBarcodeType,
+    barcode_types: &[RTLMultiplexingBarcodeType],
+    expected: RTLMultiplexingBarcodeType,
 ) -> Result<()> {
-    use MultiplexingBarcodeType::RTL;
+    use RTLMultiplexingBarcodeType::Gene;
     match barcode_types {
         [] => bail!("no barcode ID provided"),
-        [RTL] => Ok(()),
-        [other_type] => bail!("expected a {RTL} barcode ID, not {other_type}"),
-        [RTL, other] if *other == expected => Ok(()),
+        [Gene] => Ok(()),
+        [other_type] => bail!("expected a {Gene} barcode ID, not {other_type}"),
+        [Gene, other] if *other == expected => Ok(()),
 
-        [other, RTL] if *other == expected => bail!(
-            "when pairing {RTL} and {expected} barcode IDs, \
-             provide the {RTL} barcode ID first"
+        [other, Gene] if *other == expected => bail!(
+            "when pairing {Gene} and {expected} barcode IDs, \
+             provide the {Gene} barcode ID first"
         ),
         anything_else => bail!(
-            "expected either a {RTL} barcode ID or a pair of \
-             {RTL} + {expected} barcode IDs, not {}",
+            "expected either a {Gene} barcode ID or a pair of \
+             {Gene} + {expected} barcode IDs, not {}",
             anything_else.iter().join(" + "),
         ),
     }
@@ -638,15 +677,7 @@ pub fn check_feature_reference<D: Display>(
         );
     }
     let rdr = BufReader::new(File::open(ref_path)?);
-    let fref = FeatureReference::new(
-        &ReferenceInfo::default(),
-        &Transcriptome::dummy(),
-        Some(rdr),
-        None,
-        None,
-        None,
-        feature_config,
-    )?;
+    let fref = FeatureReference::new(&[], None, Some(rdr), None, None, None, None, feature_config)?;
     let fref = Arc::new(fref);
     let _ = FeatureExtractor::new(fref.clone(), None, None)?;
     Ok(fref)
@@ -678,6 +709,7 @@ pub fn build_feature_reference_with_cmos(
                     cfg.antigen_specificity.as_ref(),
                     cfg.functional_map.as_ref(),
                     cfg.libraries.beam_mode(),
+                    cfg.samples.as_ref(),
                 )
                 .as_ref(),
             )
@@ -765,12 +797,6 @@ pub fn check_library_combinations(libraries: &[Library]) -> Result<()> {
         if let Some(vdj_chain_type) = lib.library_type().vdj_chain_type() {
             uniq_vdj_features.insert(vdj_chain_type);
         }
-    }
-    if has_multiplexing && has_vdj {
-        bail!(
-            "[{}] The combination of VDJ libraries and Multiplexing Capture libraries is not supported.",
-            multiconst::LIBRARIES
-        );
     }
     if has_antigen && !(has_gex & has_vdj) {
         bail!(

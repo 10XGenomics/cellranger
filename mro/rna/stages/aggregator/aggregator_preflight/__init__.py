@@ -42,13 +42,13 @@ class AggregatorPreflightStageInputs:
     is_pd: bool
 
 
-def incompat_msg(reason):
+def incompat_msg(reason) -> str:
     return (
-        "The datasets you are trying to aggregate were created with different {reason}s, "
-        "but the 'aggr' command requires identical {reason}s in order to combine datasets. "
-        "Please re-run the original pipeline ('count' or 'multi', as the case may be) with uniform {reason} "
-        "in order to aggregate these data."
-    ).format(reason=reason)
+        f"The datasets you are trying to aggregate were created with different {reason}s, "
+        f"but the 'aggr' command requires identical {reason}s in order to combine datasets. "
+        f"Please re-run the original pipeline ('count' or 'multi', as the case may be) with "
+        f"uniform {reason} in order to aggregate these data."
+    )
 
 
 NORM_MODES = ["mapped", cr_constants.NORM_MODE_NONE]
@@ -101,9 +101,10 @@ def convert_v2_to_v4_if_needed(filename: str, is_pd: bool) -> str:
 
 
 # pylint: disable=too-many-branches,too-many-statements
+# ruff: noqa: PLR0915, PLR0912
 def main(args: AggregatorPreflightStageInputs, _outs: None):
     if args.normalization_mode is not None and args.normalization_mode not in NORM_MODES:
-        martian.exit("Normalization mode must be one of: %s" % ", ".join(NORM_MODES))
+        martian.exit("Normalization mode must be one of: {}".format(", ".join(NORM_MODES)))
 
     global_fasta_hash = None
     global_gtf_hash = None
@@ -136,28 +137,27 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
     for sample in args.sample_defs:
         library_id = sample[cr_constants.AGG_ID_FIELD]
         if len(library_id) == 0:
-            martian.exit("Library ID cannot be empty: %s" % sample)
+            martian.exit(f"Library ID cannot be empty: {sample}")
 
         if not string_is_ascii(library_id):
             martian.exit(
-                "Library ID %s contains unicode characters, only ASCII is allowed." % library_id
+                f"Library ID {library_id} contains unicode characters, only ASCII is allowed."
             )
 
         if cr_constants.AGG_BATCH_FIELD in sample:
             batch_name = sample[cr_constants.AGG_BATCH_FIELD]
             if not string_is_ascii(batch_name):
                 martian.exit(
-                    "Batch ID %s contains unicode characters, only ASCII is allowed." % batch_name
+                    f"Batch ID {batch_name} contains unicode characters, only ASCII is allowed."
                 )
 
         if library_id in libraries_seen:
-            martian.exit("Same library ID is specified on multiple rows: %s" % library_id)
+            martian.exit(f"Same library ID is specified on multiple rows: {library_id}")
         else:
             libraries_seen.add(library_id)
         if not cr_h5.is_hdf5(sample[cr_constants.AGG_H5_FIELD]):
             martian.exit(
-                "Input molecule file is not a valid HDF5 file: %s"
-                % sample[cr_constants.AGG_H5_FIELD]
+                f"Input molecule file is not a valid HDF5 file: {sample[cr_constants.AGG_H5_FIELD]}"
             )
         mol_h5 = sample[cr_constants.AGG_H5_FIELD]
         converted_mol_h5 = convert_v2_to_v4_if_needed(mol_h5, args.is_pd)
@@ -173,9 +173,11 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
             # pre CR 7.0 there was no targeting_method metric and hybrid capture was the only targeting method
             targeting_method = counter.get_metric(
                 TARGETING_METHOD_METRIC,
-                TARGETING_METHOD_HC
-                if any(counter.is_targeted_library(x) for x in library_info)
-                else None,
+                (
+                    TARGETING_METHOD_HC
+                    if any(counter.is_targeted_library(x) for x in library_info)
+                    else None
+                ),
             )
 
             if targeting_method == TARGETING_METHOD_HC:
@@ -196,7 +198,7 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
        Please provide only sample molecule info files from Cellranger Multi (sample_molecule_info.h5) or molecule infos produced by Cellranger Count (molecule_info.h5)."
                 )
 
-            mol_fasta_hash = counter.get_metric("reference_fasta_hash")
+            mol_fasta_hash = counter.get_metric("reference_fasta_hash", "no-transcriptome")
             if global_fasta_hash is None:
                 global_fasta_hash = mol_fasta_hash
             elif global_fasta_hash != mol_fasta_hash:
@@ -226,12 +228,11 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
             chemistry_endedness = counter.get_metric("chemistry_endedness")
             if chemistry_endedness is not None:
                 observed_ends.add(chemistry_endedness)
-            else:
+            elif chemistry_name in SC3P_CHEMISTRY_NAMES:
                 # Pre-cellranger 2.1 or so does not have chemistry_endedness, so infer based on chemistry_name
-                if chemistry_name in SC3P_CHEMISTRY_NAMES:
-                    observed_ends.add(cr_constants.THREE_PRIME)
-                elif chemistry_name in SC5P_CHEMISTRY_NAMES:
-                    observed_ends.add(cr_constants.FIVE_PRIME)
+                observed_ends.add(cr_constants.THREE_PRIME)
+            elif chemistry_name in SC5P_CHEMISTRY_NAMES:
+                observed_ends.add(cr_constants.FIVE_PRIME)
 
             # check analysis parameters
             analysis_parameters = counter.get_metric("analysis_parameters")
@@ -256,7 +257,12 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 martian.exit(
                     "Molecule files provided were produced with different --filter-probes settings. All samples must be run with the same --filter-probes setting."
                 )
-
+            # Agg of Antibody Capture and Gene expression not allowed
+            if {ANTIBODY_LIBRARY_TYPE} in library_types:
+                if {ANTIBODY_LIBRARY_TYPE, GENE_EXPRESSION_LIBRARY_TYPE} in library_types:
+                    martian.exit(
+                        "Aggr with Antibody Capture and Gene Expression + Antibody Capture libraries is not supported."
+                    )
             mol_feature_ref = counter.feature_reference
             assert mol_feature_ref is not None
             if global_feature_ref is None:
@@ -289,13 +295,19 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                     f"Cannot aggregate file because it contains no data: {mol_h5}.\n"
                     f" Please remove this file from the aggregation and try again."
                 )
+            if counter.get_num_filtered_barcodes() == 0:
+                martian.exit(
+                    f"Cannot aggregate file because it contains no cells: {mol_h5}.\n"
+                    f" Please remove this file from the aggregation and try again."
+                )
 
             for lib_key, metrics in (counter.get_metric(cr_mol_counter.LIBRARIES_METRIC)).items():
                 lib_total_reads = metrics[cr_mol_counter.TOTAL_READS_METRIC]
                 if lib_total_reads == 0:
-                    martian.exit(
-                        f"Library {lib_key} has zero reads in file: {mol_h5}\n"
-                        f" Please re-run the `count` pipeline without including this gem group."
+                    lib_type = library_info[int(lib_key)]["library_type"]
+                    martian.log_warn(
+                        f"Library {lib_key} ({lib_type}) has zero reads in file: {mol_h5}\n"
+                        "Barcodes from this library will have zero UMI counts."
                     )
 
             # Track targeting-specific fields
@@ -357,12 +369,6 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 "Aggr must only include samples run using the same target panel or probe set csv file."
             )
 
-    if {ANTIBODY_LIBRARY_TYPE} in library_types:
-        if {ANTIBODY_LIBRARY_TYPE, GENE_EXPRESSION_LIBRARY_TYPE} in library_types:
-            martian.exit(
-                "Aggr with Antibody Capture and Gene Expression + Antibody Capture libraries is not supported."
-            )
-
     # RTL + GEX when the RTL sample has deprecated probes + both have antibody will not work unless they
     # both have the same probe set specified (there is already a check they are the same above)
     if (
@@ -372,10 +378,12 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
         in gex_rtl_feature_compatibility
     ):
         martian.exit(
-            "Aggr of Fixed RNA Profiling and Gene Expression with Feature Barcode requires that all input analyses include the same probe-set. Please rerun the Gene Expression with Feature Barcode analyses with the same probe-set parameter as used for the Fixed RNA Profiling analyses."
+            "Aggr of Flex and Gene Expression with Feature Barcode requires that all input analyses include the same probe-set. Please rerun the Gene Expression with Feature Barcode analyses with the same probe-set parameter as used for the Flex analyses."
         )
 
     if len(observed_ag_control_features) > 1:
         martian.exit(
-            "The datasets you are trying to aggregate have incompatible control feature ids. Please re-run the original multi pipelines with uniform [antigen-specificity] sections."
+            "The datasets you are trying to aggregate have incompatible control "
+            "feature ids. Please re-run the original multi pipelines with uniform "
+            "[antigen-specificity] sections."
         )

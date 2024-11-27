@@ -166,6 +166,7 @@ where
 /// Note: this duplicates the logic in `group_by_processor` above with two differences:
 /// - there is no SpillVec and all objects are in memory
 /// - if a groupby key has a very long list of items to process that list is capped at `max_items`.
+///
 /// The remaining items are processed in a separate group with the same key.
 ///
 /// Iterate over `iterable` of type `Result<T>` returning if any errors are encounterd.

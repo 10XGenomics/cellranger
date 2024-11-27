@@ -25,8 +25,7 @@ class FileHandleCache(Generic[_T_co]):
             [str | bytes | os.PathLike[str] | os.PathLike[bytes], Literal["w", "r", "a"]],
             TextIO,
         ] = ...,
-    ):
-        ...
+    ): ...
 
     @overload
     def __init__(
@@ -36,8 +35,7 @@ class FileHandleCache(Generic[_T_co]):
             [str | bytes | os.PathLike[str] | os.PathLike[bytes], Literal["wb", "rb", "ab"]],
             BinaryIO,
         ] = ...,
-    ):
-        ...
+    ): ...
 
     def __init__(
         self,

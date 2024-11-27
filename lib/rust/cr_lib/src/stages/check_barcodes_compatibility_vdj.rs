@@ -1,7 +1,7 @@
 //! Martian stage CHECK_BARCODES_COMPATIBILITY_VDJ
 
 use super::check_barcodes_compatibility::sample_valid_barcodes;
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use barcode::{BcSegSeq, Whitelist};
 use cr_types::chemistry::{ChemistryDef, ChemistryDefs, ChemistryName};
 use cr_types::sample_def::SampleDef;
@@ -38,16 +38,17 @@ pub struct CheckBarcodesCompatibilityVdj;
 /// Sort barcodes by read count and take the barcodes containing the top CELL_CALLING_THRESH percent
 /// of reads as cells
 fn approx_call_cells(c: &SimpleHistogram<BcSegSeq>) -> TxHashSet<BcSegSeq> {
-    let thresh = c.raw_counts().map(|i| *(i) as f64).sum::<f64>() * CELL_CALLING_THRESH;
-    let mut cells = TxHashSet::default();
-    let mut acc = 0;
-    for (bc, count) in c.distribution().iter().sorted_by_key(|(_, v)| Reverse(*v)) {
-        if (acc as f64) < thresh {
-            cells.insert(*bc);
-        }
-        acc += count.count();
-    }
-    cells
+    let reads_threshold = (CELL_CALLING_THRESH * c.raw_counts().sum::<i64>() as f64).ceil() as u64;
+    let mut total_reads = 0;
+    c.distribution()
+        .iter()
+        .sorted_by_key(|(&barcode, &reads)| (Reverse(reads), barcode))
+        .filter_map(|(&barcode, reads)| {
+            let is_cell = total_reads < reads_threshold;
+            total_reads += reads.count() as u64;
+            is_cell.then_some(barcode)
+        })
+        .collect()
 }
 
 #[make_mro]
@@ -66,12 +67,13 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
         let allowed_gex_chem = [
             ChemistryName::FivePrimePE,
             ChemistryName::FivePrimePEV3,
+            ChemistryName::FivePrimePEOCMV3,
             ChemistryName::FivePrimeR1,
             ChemistryName::FivePrimeR2,
             ChemistryName::FivePrimeHT,
-            ChemistryName::FivePrimeR2OH,
+            ChemistryName::FivePrimeR2OCM,
             ChemistryName::FivePrimeR2V3,
-            ChemistryName::FivePrimeR2OHV3,
+            ChemistryName::FivePrimeR2OCMV3,
             ChemistryName::Custom,
         ];
 
@@ -96,7 +98,7 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
             args.vdj_chemistry_def.barcode_whitelist()
         );
 
-        let wl = Whitelist::construct(gex_chemistry_def.barcode_whitelist(), false)?.gel_bead();
+        let wl = Whitelist::construct(gex_chemistry_def.barcode_whitelist())?.gel_bead();
 
         let mut gex_bc_hist = SimpleHistogram::default();
         let mut vdj_bc_hist = SimpleHistogram::default();
@@ -122,9 +124,11 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
         let similarity: f64 =
             (gex_cells.intersection(&vdj_cells).count() as f64) / (vdj_cells.len() as f64);
 
-        if args.check_library_compatibility && similarity < MIN_SIMILARITY {
-            bail!(
-                "Barcodes from the [{}] library and the [VDJ] library have insufficient overlap. \
+        if args.check_library_compatibility {
+            ensure!(
+                similarity >= MIN_SIMILARITY,
+                "Barcodes from the [{}] library and the [VDJ] library have \
+                 insufficient overlap. \
                  This usually indicates the libraries originated from different cells or samples. \
                  This error can usually be fixed by providing correct FASTQ files from the same \
                  sample. If you are certain the input libraries are matched, you can bypass \
@@ -146,6 +150,7 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
 mod barcode_compatibility_tests {
     use super::*;
     use cr_types::sample_def::FastqMode;
+    use insta::assert_debug_snapshot;
 
     fn gex_chem_map(name: ChemistryName) -> ChemistryDefs {
         [(LibraryType::Gex, ChemistryDef::named(name))]
@@ -195,7 +200,7 @@ mod barcode_compatibility_tests {
                 library_type: Some(LibraryType::VdjAuto),
                 ..Default::default()
             }],
-            count_chemistry_defs: gex_chem_map(ChemistryName::ThreePrimeV3),
+            count_chemistry_defs: gex_chem_map(ChemistryName::ThreePrimeV3PolyA),
             gex_sample_def: vec![SampleDef {
                 library_type: Some(LibraryType::Gex),
                 ..Default::default()
@@ -263,7 +268,7 @@ mod barcode_compatibility_tests {
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
-        insta::assert_debug_snapshot!(outs.unwrap());
+        assert_debug_snapshot!(outs.unwrap());
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
@@ -294,7 +299,7 @@ mod barcode_compatibility_tests {
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
-        insta::assert_debug_snapshot!(outs.unwrap());
+        assert_debug_snapshot!(outs.unwrap());
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
@@ -325,7 +330,7 @@ mod barcode_compatibility_tests {
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
-        insta::assert_debug_snapshot!(outs.unwrap());
+        assert_debug_snapshot!(outs.unwrap());
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
@@ -356,7 +361,7 @@ mod barcode_compatibility_tests {
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
-        insta::assert_debug_snapshot!(outs.unwrap());
+        assert_debug_snapshot!(outs.unwrap());
     }
 
     #[test]

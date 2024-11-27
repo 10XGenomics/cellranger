@@ -18,7 +18,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
     in  map[]                chunks,
     in  path                 reference_path,
     in  CellCalling          cell_calling_config,
-    in  string[]             libraries_to_translate,
     in  float                subsample_rate,
     in  int                  initial_reads,
     in  int                  r1_length,
@@ -46,7 +45,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     in  float                min_assignment_confidence,
     in  string               slide_serial_capture_area,
     in  FeatureConfig        feature_config,
-    in  h5                   v1_filtered_fbm,
+    in  V1PatternFixArgs     v1_pattern_fix,
     out csv                  filtered_barcodes,
     out csv                  aggregate_barcodes,
     out csv                  nonambient_cell_calls,
@@ -92,6 +91,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     out csf[]                counts_bc_order,
     out bool                 no_star_alignments,
     out bi.bincode           barcode_index,
+    out parquet[]            per_read_gap_align,
 )
 {
     call _SLFE_MATRIX_COMPUTER as _MATRIX_COMPUTER(
@@ -102,7 +102,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         is_pd                     = self.is_pd,
         chunks                    = self.chunks,
         reference_path            = self.reference_path,
-        libraries_to_translate    = self.libraries_to_translate,
         subsample_rate            = self.subsample_rate,
         initial_reads             = self.initial_reads,
         r1_length                 = self.r1_length,
@@ -120,7 +119,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
         aligner                   = self.aligner,
         disable_target_umi_filter = self.disable_target_umi_filter,
         feature_config            = self.feature_config,
-        v1_filtered_fbm           = self.v1_filtered_fbm,
+        v1_pattern_fix            = self.v1_pattern_fix,
     )
 
     call FILTER_BARCODES(
@@ -139,8 +138,8 @@ pipeline _BASIC_SC_RNA_COUNTER(
     )
 
     call CHECK_CORRECTION_FACTOR(
-        v1_filtered_fbm = self.v1_filtered_fbm,
-        filtered_fbm    = FILTER_BARCODES.filtered_matrices_h5,
+        v1_pattern_fix = self.v1_pattern_fix,
+        filtered_fbm   = FILTER_BARCODES.filtered_matrices_h5,
     )
 
     call DISABLE_STAGES(
@@ -218,8 +217,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         min_assignment_confidence = self.min_assignment_confidence,
         throughput                = INFER_GEM_WELL_THROUGHPUT.throughput,
         inferred_throughputs      = INFER_GEM_WELL_THROUGHPUT.inferred_throughputs,
-        # default=null is multiplexing, but this enables others e.g. antigen capture
-        library_type              = null,
     ) using (
         disabled = DISABLE_STAGES.disable_assign_tags,
     )
@@ -227,8 +224,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
     # stages/pipelines below here are for multiplexing sliced outputs
     # sample_barcodes is passed on by the _CELLS_REPORTER
     # and was either calculated from tags or is equal to self.force_sample_barcodes
-    # in multi-gem world a couple of these things (BAM writing, metrics) should be completely migrated to MERGE_GEM_WELLS_AND_SLICE_CELLS
-    # but without multi-gem there isn't explicitly a need to run that stage and it does unnecessary things like running Aggr.
 
     call DEMUX_PROBE_BC_MATRIX(
         probe_barcode_counts = _MATRIX_COMPUTER.probe_barcode_counts,
@@ -267,6 +262,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     call COLLATE_METRICS as MULTI_COLLATE_PER_SAMPLE_METRICS(
         per_barcode_metrics = _MATRIX_COMPUTER.per_barcode_metrics_shard,
         reference_path      = self.reference_path,
+        target_set          = self.target_set,
         feature_reference   = _MATRIX_COMPUTER.slfe_feature_reference,
         filtered_barcodes   = FILTER_BARCODES.filtered_barcodes,
         aggregate_barcodes  = FILTER_BARCODES.aggregate_barcodes,
@@ -353,5 +349,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         counts_bc_order               = _MATRIX_COMPUTER.counts_bc_order,
         no_star_alignments            = _MATRIX_COMPUTER.no_star_alignments,
         barcode_index                 = _MATRIX_COMPUTER.barcode_index,
+        per_read_gap_align            = _MATRIX_COMPUTER.per_read_gap_align,
     )
 }

@@ -56,7 +56,7 @@ class IlmnFastqFile:
         elif len(dot_parts) > 2 and dot_parts[-2] == b"fastq":
             name = dot_parts[-3]
         else:
-            raise NameError("%s is not a fastq file" % fullpath)
+            raise NameError(f"{fullpath} is not a fastq file")
 
         all_flds = name.split(b"_")
 
@@ -100,11 +100,11 @@ class BclProcessorFastqFile:
         elif len(dot_parts) > 2 and dot_parts[-2] == b"fastq":
             name = dot_parts[-3]
         else:
-            raise NameError("%s is not a fastq file" % fullpath.decode())
+            raise NameError(f"{fullpath.decode()} is not a fastq file")
 
         name_parts = BCL_PROCESSOR_FILENAME_REGEX.match(name)
         if not name_parts:
-            raise NameError("Not a demux output fastq: %s" % fullpath.decode())
+            raise NameError(f"Not a demux output fastq: {fullpath.decode()}")
         self.read = name_parts.group(1)
         self.index = name_parts.group(2)
         self.lane = int(name_parts.group(3), 10)
@@ -151,15 +151,13 @@ def write_read_pair_fastq(
 @overload
 def read_generator_fastq(
     fastq_file: BinaryIO | BufferedReader | gzip.GzipFile, paired_end: Literal[True] = ...
-) -> Iterator[tuple[bytes, bytes, bytes, bytes, bytes, bytes]]:
-    ...
+) -> Iterator[tuple[bytes, bytes, bytes, bytes, bytes, bytes]]: ...
 
 
 @overload
 def read_generator_fastq(
     fastq_file: BinaryIO | BufferedReader | gzip.GzipFile, paired_end: Literal[False] = False
-) -> Iterator[tuple[bytes, bytes, bytes]]:
-    ...
+) -> Iterator[tuple[bytes, bytes, bytes]]: ...
 
 
 @overload
@@ -167,8 +165,7 @@ def read_generator_fastq(
     fastq_file: BinaryIO | BufferedReader | gzip.GzipFile, paired_end: bool = False
 ) -> (
     Iterator[tuple[bytes, bytes, bytes]] | Iterator[tuple[bytes, bytes, bytes, bytes, bytes, bytes]]
-):
-    ...
+): ...
 
 
 def read_generator_fastq(
@@ -243,13 +240,11 @@ def uninterleave_fastq(
 
 
 @overload
-def get_qvs(qual: None) -> None:
-    ...
+def get_qvs(qual: None) -> None: ...
 
 
 @overload
-def get_qvs(qual: str | bytes) -> numpy.ndarray[int, numpy.dtype[numpy.byte]]:
-    ...
+def get_qvs(qual: str | bytes) -> numpy.ndarray[int, numpy.dtype[numpy.byte]]: ...
 
 
 def get_qvs(qual: str | bytes | None) -> numpy.ndarray[int, numpy.dtype[numpy.byte]] | None:
@@ -260,13 +255,11 @@ def get_qvs(qual: str | bytes | None) -> numpy.ndarray[int, numpy.dtype[numpy.by
 
 
 @overload
-def get_bases_qual(qual: None, cutoff) -> None:
-    ...
+def get_bases_qual(qual: None, cutoff) -> None: ...
 
 
 @overload
-def get_bases_qual(qual: str | bytes, cutoff: int) -> int:
-    ...
+def get_bases_qual(qual: str | bytes, cutoff: int) -> int: ...
 
 
 def get_bases_qual(qual: str | bytes | None, cutoff: int) -> int | None:
@@ -278,13 +271,11 @@ def get_bases_qual(qual: str | bytes | None, cutoff: int) -> int | None:
 
 
 @overload
-def get_min_qual(qual: None) -> None:
-    ...
+def get_min_qual(qual: None) -> None: ...
 
 
 @overload
-def get_min_qual(qual: str | bytes) -> int:
-    ...
+def get_min_qual(qual: str | bytes) -> int: ...
 
 
 def get_min_qual(qual: str | bytes | None) -> int | None:
@@ -295,13 +286,11 @@ def get_min_qual(qual: str | bytes | None) -> int | None:
 
 
 @overload
-def get_expected_errors(qual: None) -> None:
-    ...
+def get_expected_errors(qual: None) -> None: ...
 
 
 @overload
-def get_expected_errors(qual: str | bytes) -> float:
-    ...
+def get_expected_errors(qual: str | bytes) -> float: ...
 
 
 def get_expected_errors(qual: str | bytes | None) -> float | None:
@@ -559,14 +548,12 @@ Refer to the "Specifying Input FASTQs" page at https://support.10xgenomics.com/ 
             if not fastqprefix:
                 samples_list = b"\n".join(samples)
                 raise AmbiguousValueError(
-                    "The --sample argument must be specified if multiple samples were demultiplexed in a run folder.  Options:\n%s"
-                    % samples_list
+                    f"The --sample argument must be specified if multiple samples were demultiplexed in a run folder.  Options:\n{samples_list}"
                 )
             # no overlap case
             elif not set(samples).intersection(fastqprefixes or ()):
                 raise ValueError(
-                    "Samples not detected among demultiplexed FASTQs: %s"
-                    % fastqprefix_outstr.decode()
+                    f"Samples not detected among demultiplexed FASTQs: {fastqprefix_outstr.decode()}"
                 )
             # some overlap; legal fastqprefix case
             else:
@@ -612,10 +599,7 @@ def check_fastq_types_multipath(
             raise ex
         except ValueError as ex:
             sys.stderr.write(
-                "Invalid path/prefix combination: {}, {}\n".format(
-                    path,
-                    fastqprefix.decode() if isinstance(fastqprefix, bytes) else str(fastqprefix),
-                )
+                f"Invalid path/prefix combination: {path}, {fastqprefix.decode() if isinstance(fastqprefix, bytes) else str(fastqprefix)}\n"
             )
             error_messages.add(str(ex))
 
@@ -624,7 +608,7 @@ def check_fastq_types_multipath(
         if len(error_messages) == 1:
             raise ValueError(error_messages.pop())
         else:
-            raise ValueError("FASTQ selection errors:\n%s" % ("\n".join(error_messages)))
+            raise ValueError("FASTQ selection errors:\n{}".format("\n".join(error_messages)))
     elif len(input_modes) > 1:
         raise ValueError(
             "Cannot process FASTQs at same time from different demultiplexing methods."

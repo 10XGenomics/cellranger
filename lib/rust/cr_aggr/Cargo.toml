@@ -3,10 +3,7 @@ name = 'cr_aggr'
 test = false
 
 [dependencies]
-csv = '1'
-docopt = '1'
 path-clean = '1'
-thiserror = '1'
 
 [dependencies.anyhow]
 workspace = true
@@ -23,11 +20,14 @@ path = '../cr_types'
 [dependencies.cr_websummary]
 path = '../cr_websummary'
 
-[dependencies.enclone_proto]
+[dependencies.csv]
 workspace = true
 
-[dependencies.enclone_ranger]
+[dependencies.docopt]
 workspace = true
+
+[dependencies.enclone_proto]
+path = '../enclone_proto'
 
 [dependencies.itertools]
 workspace = true
@@ -56,11 +56,14 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.thiserror]
+workspace = true
+
 [dependencies.umi]
 path = '../umi'
 
 [dependencies.vdj_ann]
-workspace = true
+path = '../vdj_ann'
 
 [dependencies.vdj_asm_asm]
 default-features = false

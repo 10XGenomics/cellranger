@@ -140,14 +140,14 @@ def _get_barcodes_per_tag(config: MultiGraph, args, outs):
     barcodes_per_tag_files = [x for x in args.barcodes_per_tag if x is not None]
     if config.is_multiplexed():
         assert len(barcodes_per_tag_files) <= 1
-        # In case of CMO multiplexing will be restricted to cell barcodes
+        # In case of CMO/HASHTAG multiplexing will be restricted to cell barcodes
         # however, in case of RTL & OH multiplexing will include cell and non-cell barcodes
-        # CMO multiplexing produces nothing if no cells are called
+        # CMO/HASHTAG multiplexing produces nothing if no cells are called
         barcodes_per_tag_file = (
             None if len(barcodes_per_tag_files) == 0 else barcodes_per_tag_files[0]
         )
         barcodes_per_tag = CellsPerFeature.load_from_file(barcodes_per_tag_file)
-        if config.is_cmo_multiplexed():
+        if config.is_cmo_multiplexed() or config.is_hashtag_multiplexed():
             if barcodes_per_tag_file is not None:
                 hardlink_with_fallback(barcodes_per_tag_file, outs.cells_per_tag)
             else:

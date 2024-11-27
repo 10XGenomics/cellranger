@@ -4,6 +4,7 @@ use crate::probe_barcode_matrix::ProbeCounts;
 use crate::stages::collate_metrics::SampleMetrics;
 use crate::stages::parse_multi_config::CellCallingParam;
 use crate::types::FeatureReferenceFormat;
+use crate::utils::estimate_mem::{barcode_mem_gib, get_total_barcodes_detected};
 use crate::BcUmiInfoShardFile;
 use anyhow::Result;
 use barcode::{Barcode, BarcodeContent};
@@ -11,8 +12,9 @@ use cr_h5::molecule_info::MoleculeInfoWriter;
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
 use cr_types::filtered_barcodes::{FilteredBarcodesCsv, FilteredBarcodesCsvRow};
-use cr_types::probe_set::Probe;
+use cr_types::probe_set::{Probe, ProbeSetReferenceMetadata};
 use cr_types::reference::feature_reference::FeatureReference;
+use cr_types::reference::get_reference_genome_names;
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::rna_read::{LibraryInfo, RnaChunk};
 use cr_types::target_panel_summary::{TargetPanelSummary, TargetPanelSummaryFormat};
@@ -31,7 +33,6 @@ use metric::{join_metric_name, CountMetric, JsonReport, PercentMetric, TxHashMap
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use shardio::ShardReader;
-use std::cmp::max;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use strum_macros::IntoStaticStr;
@@ -53,7 +54,7 @@ pub struct WriteMoleculeInfoStageInputs {
     pub chemistry_defs: ChemistryDefs,
     pub gem_well: GemWell,
     pub counts_bc_order: Vec<BcUmiInfoShardFile>,
-    pub reference_path: PathBuf,
+    pub reference_path: Option<PathBuf>,
     pub read_chunks: Vec<RnaChunk>,
     pub feature_reference: FeatureReferenceFormat,
     pub filtered_barcodes: FilteredBarcodesCsv,
@@ -116,17 +117,6 @@ fn calculate_frac_usable_confidently_mapped_reads_on_target(metrics: &Value) -> 
         })
 }
 
-/// Return the number of valid barcodes from a metrics JSON.
-/// An antibody-only analysis has no metric barcodes_detected,
-/// so return the maximum of barcodes_detected and ANTIBODY_barcodes_detected.
-fn get_valid_barcodes(metrics: &HashMap<String, Value>) -> u64 {
-    let gex_barcodes_detected = metrics.get("barcodes_detected").and_then(Value::as_u64);
-    let antibody_barcodes_detected = metrics
-        .get("ANTIBODY_barcodes_detected")
-        .and_then(Value::as_u64);
-    max(gex_barcodes_detected, antibody_barcodes_detected).unwrap()
-}
-
 #[make_mro(volatile = strict)]
 impl MartianStage for WriteMoleculeInfo {
     type StageInputs = WriteMoleculeInfoStageInputs;
@@ -141,17 +131,20 @@ impl MartianStage for WriteMoleculeInfo {
     ) -> Result<StageDef<Self::ChunkInputs>> {
         // Multi uses more memory for sample_barcodes and other data.
         let sample_barcodes_mem_gib = if args.sample_barcodes.is_some() {
-            // For MULTI_WRITE_PER_SAMPLE_MOLECULE_INFO.
-            /// Loading sample_barcodes.json uses this many bytes per valid barcode.
-            const MEM_BYTES_PER_VALID_BARCODE: u64 = 384;
-            let mem_bytes = MEM_BYTES_PER_VALID_BARCODE
-                * get_valid_barcodes(&args.matrix_computer_summary.read()?);
-            1 + mem_bytes / 1024 / 1024 / 1024
+            // For MULTI_WRITE_PER_SAMPLE_MOLECULE_INFO, loading sample_barcodes.json uses this many bytes per valid barcode.
+            let barcodes_count = get_total_barcodes_detected(&args.matrix_computer_summary.read()?);
+            let sample_barcodes_mem_gib = barcode_mem_gib(barcodes_count, 384, 1);
+            println!(
+                "barcode_count={barcodes_count},sample_barcodes_mem_gib={sample_barcodes_mem_gib}"
+            );
+
+            sample_barcodes_mem_gib
         } else {
             // For WRITE_MOLECULE_INFO.
             0
         };
-        let mem_gib = 8 + isize::try_from(sample_barcodes_mem_gib).unwrap();
+        let mem_gib = 12 + sample_barcodes_mem_gib;
+        println!("mem_gib={mem_gib}");
         Ok(StageDef::with_join_resource(Resource::with_mem_gb(mem_gib)))
     }
 
@@ -207,7 +200,18 @@ impl MartianStage for WriteMoleculeInfo {
                 TxHashMap::default()
             };
 
-        let ref_info = ReferenceInfo::from_reference_path(&args.reference_path)?;
+        let ref_info = args
+            .reference_path
+            .as_deref()
+            .map(ReferenceInfo::from_reference_path)
+            .transpose()?;
+        let genomes = get_reference_genome_names(
+            ref_info.as_ref(),
+            target_panel_summary
+                .map(|x| ProbeSetReferenceMetadata::load_from(&x.target_panel_path))
+                .transpose()?
+                .as_ref(),
+        );
 
         let library_filtered_genome_barcodes = args.filtered_barcodes.read()?;
         let library_filtered_barcodes: TxHashSet<&Barcode> = library_filtered_genome_barcodes
@@ -271,7 +275,6 @@ impl MartianStage for WriteMoleculeInfo {
             };
 
             // pass_filter table of molecule_info
-            let genomes: Vec<_> = ref_info.genomes.iter().sorted().cloned().collect();
             let barcode_info_pass_filter = build_barcode_info(
                 &library_filtered_genome_barcodes,
                 &library_info,
@@ -329,7 +332,7 @@ impl MartianStage for WriteMoleculeInfo {
                 per_sample_metrics_json,
                 &visitor.metrics,
                 molecule_info_type,
-                &ref_info,
+                ref_info.as_ref(),
                 target_panel_summary,
             )?;
             writer.write_metrics(&serde_json::to_string(&metrics)?)?;
@@ -505,7 +508,7 @@ fn get_molecule_info_metrics(
     sample_metrics_json: &MetricsFile,
     metrics: &MoleculeInfoMetrics,
     molecule_info_type: MoleculeInfoType,
-    ref_info: &ReferenceInfo,
+    ref_info: Option<&ReferenceInfo>,
     target_panel_summary: Option<&TargetPanelSummary>,
 ) -> Result<Value> {
     let gem_well_summary_map: JMap = args.matrix_computer_summary.read()?;
@@ -515,12 +518,17 @@ fn get_molecule_info_metrics(
         .unwrap()
         .parse()?;
 
-    let mut final_metrics: JMap = ref_info
-        .clone()
-        .into_json_report()
-        .into_iter()
-        .filter(|(k, _)| REFERENCE_METRICS.contains(&k.as_str()))
-        .collect();
+    let mut final_metrics = JMap::default();
+
+    if let Some(ref_info) = ref_info {
+        final_metrics.extend(
+            ref_info
+                .clone()
+                .into_json_report()
+                .into_iter()
+                .filter(|(k, _)| REFERENCE_METRICS.contains(&k.as_str())),
+        );
+    };
 
     final_metrics.insert(
         "cellranger_version".to_string(),

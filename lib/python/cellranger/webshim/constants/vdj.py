@@ -15,7 +15,7 @@ def vdj_gene_pair_format(gene_pair_str):
     if gene_pair_str == lib_constants.MULTI_REFS_PREFIX:
         return ""
     else:
-        return "(%s)" % ", ".join(vdj_utils.get_genes_in_pair(gene_pair_str))
+        return "({})".format(", ".join(vdj_utils.get_genes_in_pair(gene_pair_str)))
 
 
 # NOTE: Q30 metrics are currently shared with count.

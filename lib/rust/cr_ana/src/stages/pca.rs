@@ -57,7 +57,11 @@ impl MartianStage for PcaStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let mem_gib = 3 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil() as isize;
+        let num_pcs = args.num_principal_comps.unwrap_or(PCA_COMPONENTS);
+        let mem_gib = 3
+            + (h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()
+                + h5::estimate_mem_gib_for_pca_outs(&args.matrix_h5, num_pcs)?.ceil())
+                as isize;
         let pca_map = args.pca_map.unwrap_or_default();
 
         Ok(h5::matrix_feature_types(&args.matrix_h5)?
@@ -70,7 +74,7 @@ impl MartianStage for PcaStage {
             .map(|(feature_type, _)| {
                 (
                     Self::ChunkInputs { feature_type },
-                    Resource::with_mem_gb(mem_gib).threads(4),
+                    Resource::with_mem_gb(mem_gib).threads(1),
                 )
             })
             .collect())
@@ -83,7 +87,7 @@ impl MartianStage for PcaStage {
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
+            .num_threads(rover.get_threads())
             .build_global()?;
         let retained = Some(chunk_args.feature_type.to_string());
         let FBM {

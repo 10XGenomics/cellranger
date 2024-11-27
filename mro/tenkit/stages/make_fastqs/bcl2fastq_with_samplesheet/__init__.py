@@ -109,8 +109,8 @@ def run_bcl2fastq(args, outs):
 
     interop_dir = outs.interop_path
 
-    martian.log_info("Running bcl2fastq on run: %s" % args.run_path)
-    martian.log_info("FASTQ output dir: %s" % output_dir)
+    martian.log_info(f"Running bcl2fastq on run: {args.run_path}")
+    martian.log_info(f"FASTQ output dir: {output_dir}")
 
     run_info_xml = os.path.join(args.run_path, "RunInfo.xml")
     read_info = tk_bcl.load_run_info(run_info_xml)[0]
@@ -146,8 +146,8 @@ def run_bcl2fastq(args, outs):
     (major_ver, full_ver) = rta_info.check_bcl2fastq(hostname)
     outs.bcl2fastq_version = full_ver
 
-    martian.log_info("Using bcl2fastq version: %s" % ensure_str(full_ver))
-    martian.log_info("RC'ing i2 read: %s" % str(rta_info.rc_i2))
+    martian.log_info(f"Using bcl2fastq version: {ensure_str(full_ver)}")
+    martian.log_info(f"RC'ing i2 read: {rta_info.rc_i2!s}")
 
     # Restore the LD_LIBRARY_PATH set aside by sourceme.bash/shell10x.
     # Only do this for the environment in which BCL2FASTQ will run.
@@ -193,7 +193,7 @@ def run_bcl2fastq(args, outs):
         cmd += remove_deprecated_args(args.bcl2fastq2_args, major_ver, full_ver)
         outs.bcl2fastq_args = " ".join(cmd)
 
-        martian.log_info("Running bcl2fastq2: %s" % outs.bcl2fastq_args)
+        martian.log_info(f"Running bcl2fastq2: {outs.bcl2fastq_args}")
 
         try:
             ret = tk_proc.call(cmd, env=new_environ)
@@ -207,8 +207,7 @@ def run_bcl2fastq(args, outs):
             enclosing_path = os.path.dirname(os.path.dirname(files_path))
             stderr_path = os.path.join(enclosing_path, b"_stderr")
             martian.exit(
-                "bcl2fastq exited with an error. You may have specified an invalid command-line option. See the full error here:\n%s"
-                % ensure_str(stderr_path)
+                f"bcl2fastq exited with an error. You may have specified an invalid command-line option. See the full error here:\n{ensure_str(stderr_path)}"
             )
         elif ret < 0:
             # subprocess.call returns negative code (on UNIX): bcl2fastq killed by external signal

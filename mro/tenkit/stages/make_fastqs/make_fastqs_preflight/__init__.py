@@ -19,7 +19,6 @@ stage MAKE_FASTQS_PREFLIGHT(
     in path     run_path,
     in path     output_path,
     in path     interop_output_path,
-    in string   barcode_whitelist,
     in bool     check_executables,
     in int      max_bcl2fastq_threads,
     src py      "stages/make_fastqs/make_fastqs_preflight",
@@ -40,14 +39,6 @@ def main(args, outs):
     ok, msg = tk_preflight.check_ld_library_path()
     if not ok:
         martian.exit(msg)
-
-    if args.barcode_whitelist:
-        # split by comma
-        whitelist_candidates = args.barcode_whitelist.split(",")
-        for candidate in whitelist_candidates:
-            tk_preflight.check_barcode_whitelist(candidate)
-    else:
-        martian.exit("Must specify a barcode whitelist or lists.")
 
     if args.check_executables:
         print("Checking bcl2fastq...")

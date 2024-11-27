@@ -1,20 +1,26 @@
 [dependencies]
-csv = '1'
-lazy_static = '1'
-
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.barcode]
 path = '../barcode'
 
+[dependencies.cloud_utils]
+path = '../cloud_utils'
+
 [dependencies.cr_types]
 path = '../cr_types'
+
+[dependencies.csv]
+workspace = true
 
 [dependencies.fastq_set]
 workspace = true
 
 [dependencies.itertools]
+workspace = true
+
+[dependencies.lazy_static]
 workspace = true
 
 [dependencies.martian]
@@ -33,9 +39,7 @@ workspace = true
 workspace = true
 
 [dependencies.regex]
-default-features = false
-features = ['std', 'perf']
-version = '1'
+workspace = true
 
 [dependencies.serde]
 workspace = true

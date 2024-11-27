@@ -294,7 +294,7 @@ pub fn from_h5(group: &Group) -> Result<FeatureReference> {
 }
 
 pub fn encode_ascii_xml(s: &str) -> Cow<'_, str> {
-    if s.chars().all(|c| c.is_ascii()) {
+    if s.is_ascii() {
         return Cow::Borrowed(s);
     }
     let mut t = String::new();
@@ -409,7 +409,7 @@ mod tests {
 
         // read from reference path
         let fr_new = FeatureReference::from_paths(
-            &refdata_path("GRCh38-3.0.0/"),
+            Some(&refdata_path("GRCh38-3.0.0/")),
             None,
             None,
             None,
@@ -443,7 +443,6 @@ mod tests {
     fn gex_abs_features() -> Result<()> {
         test_feature_io(
             "test/feature/pbmc_1k_protein_v3.csv",
-            refdata_path("GRCh38-3.0.0/"),
             Some(
                 showroom_path("pbmc_1k_protein_v3/filtered_feature_bc_matrix.h5")
                     .to_str()
@@ -454,25 +453,12 @@ mod tests {
 
     #[test]
     fn test_extra_cols_csv() -> Result<()> {
-        test_feature_io(
-            "test/feature/extra_commas.csv",
-            refdata_path("GRCh38-3.0.0/"),
-            None,
-        )
+        test_feature_io("test/feature/extra_commas.csv", None)
     }
 
-    fn test_feature_io(
-        feature_csv: impl AsRef<Path>,
-        reference: impl AsRef<Path>,
-        legacy_mat_h5: Option<&str>,
-    ) -> Result<()> {
-        if !refdata_available() {
-            return Ok(());
-        }
-
-        // read from reference path
+    fn test_feature_io(feature_csv: impl AsRef<Path>, legacy_mat_h5: Option<&str>) -> Result<()> {
         let fr_new = FeatureReference::from_paths(
-            reference.as_ref(),
+            None,
             Some(&FeatureReferenceFile::from(feature_csv.as_ref())),
             None,
             None,
@@ -507,11 +493,7 @@ mod tests {
 
     #[test]
     fn gex_featuretest_features() -> Result<()> {
-        test_feature_io(
-            "test/feature/featuretest.csv",
-            refdata_path("GRCh38-3.0.0/"),
-            None,
-        )
+        test_feature_io("test/feature/featuretest.csv", None)
     }
 
     #[test]
@@ -522,7 +504,7 @@ mod tests {
 
         // read from reference path
         let fr_orig = FeatureReference::from_paths(
-            &refdata_path("GRCh38-3.0.0/"),
+            Some(&refdata_path("GRCh38-3.0.0/")),
             Some(&FeatureReferenceFile::from(Path::new(
                 "test/feature/crispr_features.csv",
             ))),

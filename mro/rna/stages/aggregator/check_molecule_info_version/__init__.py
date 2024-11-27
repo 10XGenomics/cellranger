@@ -103,9 +103,9 @@ def join(args, outs, chunk_defs, chunk_outs):
                             for feature in antigen_feature_ref.feature_defs:
                                 if feature.tags[TARGETING_ANTIGEN] == "False":
                                     if feature.tags[MHC_ALLELE] not in antigen_specificity_controls:
-                                        antigen_specificity_controls[
-                                            feature.tags[MHC_ALLELE]
-                                        ] = feature.id
+                                        antigen_specificity_controls[feature.tags[MHC_ALLELE]] = (
+                                            feature.id
+                                        )
                                     else:
                                         # Each separate run has been checked to follow this assert
                                         # and we have checked that all feature references match.
@@ -123,11 +123,10 @@ def join(args, outs, chunk_defs, chunk_outs):
                                         # Each separate run has been checked to follow this assert
                                         # and we have checked that all feature references match.
                                         assert antigen_specificity_controls[NO_ALLELE] == feature.id
+                    elif MHC_ALLELE in antigen_feature_ref.all_tag_keys:
+                        outs.beam_mode = BEAM_T
                     else:
-                        if MHC_ALLELE in antigen_feature_ref.all_tag_keys:
-                            outs.beam_mode = BEAM_T
-                        else:
-                            outs.beam_mode = BEAM_AB
+                        outs.beam_mode = BEAM_AB
     if feature_ref is not None:
         with open(outs.feature_reference, "w") as file_handle:
             feature_ref.to_csv(file_handle)
@@ -142,7 +141,5 @@ def join(args, outs, chunk_defs, chunk_outs):
 
         if ncells > CBC_MAX_NCELLS:
             martian.exit(
-                "You provided {:,} cells in total, but chemistry batch correction only supports up to {:,} cells.".format(
-                    ncells, CBC_MAX_NCELLS
-                )
+                f"You provided {ncells:,} cells in total, but chemistry batch correction only supports up to {CBC_MAX_NCELLS:,} cells."
             )

@@ -274,6 +274,7 @@ impl MartianMain for AirrFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::{assert_ron_snapshot, assert_snapshot};
     use martian_filetypes::FileTypeRead;
 
     #[test]
@@ -287,7 +288,7 @@ mod tests {
         let outs = AirrFilter.test_run(&run_dir, args).unwrap();
         let airr_annotations = outs.airr_annotations.unwrap();
         let tsv_contents: Vec<Rearrangement> = airr_annotations.read().unwrap();
-        insta::assert_ron_snapshot!(tsv_contents);
-        insta::assert_snapshot!(std::fs::read_to_string(&airr_annotations).unwrap());
+        assert_ron_snapshot!(tsv_contents);
+        assert_snapshot!(std::fs::read_to_string(&airr_annotations).unwrap());
     }
 }

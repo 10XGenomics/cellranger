@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"runtime/pprof"
@@ -144,7 +143,7 @@ func parseConfig(inputJsonFile string,
 	isDualIndexed bool) (InputJson, map[string]int, i7i5Lookup) {
 	defer trace.StartRegion(context.Background(), "parseConfig").End()
 	// Parse input JSON
-	bytes, err := ioutil.ReadFile(inputJsonFile)
+	bytes, err := os.ReadFile(inputJsonFile)
 	if err != nil {
 		log.Fatal("ERROR: Unable to read input JSON file: ", err.Error())
 	}
@@ -265,7 +264,7 @@ Options:
 	if err != nil {
 		log.Fatal("ERROR: Failed to serialize summary counts: ", err.Error())
 	}
-	if err := ioutil.WriteFile(outputJsonFile, summaryCountsData, 0644); err != nil {
+	if err := os.WriteFile(outputJsonFile, summaryCountsData, 0644); err != nil {
 		log.Fatal("ERROR: Failed to write summary counts file: ", err.Error())
 	}
 }

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use shardio::ShardReader;
 
 const QUANTILE: f64 = 0.9;
-const NUM_ORDMAG: f64 = 2.0;
+const NUM_ORDMAG: i32 = 2;
 
 /// Set the parameter `umi_read_count_threshold` based on a random sample of barcodes.
 /// Receive UMI counts from a set of barcodes and construct a histogram of the
@@ -73,7 +73,7 @@ impl MartianMain for SetTargetedUmiFilter {
         // Compute RPU threshold using quantile + order of magnitude adjustment
         let threshold = match rpu_histogram.quantiles([QUANTILE]) {
             Some(quantiles) => {
-                let threshold_float = quantiles[0] / (10_f64).powf(NUM_ORDMAG);
+                let threshold_float = quantiles[0] / (10_f64).powi(NUM_ORDMAG);
                 threshold_float.ceil() as u64
             }
             // No counts

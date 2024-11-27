@@ -27,20 +27,18 @@ stage COMBINE_CLUSTERING(
 """
 
 
-def copy_subdirs(src_dir, dest_dir):
-    for subdir in os.listdir(src_dir):
+def hardlink_files_in_dir(src_dir, dest_dir):
+    """Hardlink all files in src_dir to dest_dir."""
+    for filename in os.listdir(src_dir):
         cr_io.hardlink_with_fallback(
-            os.path.join(src_dir, subdir),
-            os.path.join(dest_dir, subdir),
+            os.path.join(src_dir, filename),
+            os.path.join(dest_dir, filename),
         )
 
 
 def main(args, outs):
-    list_of_hdfs = [args.kmeans_h5, args.graphclust_h5]
-    if args.hclust_h5:
-        list_of_hdfs.append(args.hclust_h5)
     analysis_io.combine_h5_files(
-        list_of_hdfs,
+        [x for x in (args.kmeans_h5, args.graphclust_h5, args.hclust_h5) if x is not None],
         outs.clustering_h5,
         [
             analysis_constants.ANALYSIS_H5_KMEANS_GROUP,
@@ -48,9 +46,7 @@ def main(args, outs):
         ],
     )
 
-    csv_path = os.path.join(outs.clustering_csv)
-    os.makedirs(csv_path, exist_ok=True)
-    copy_subdirs(args.kmeans_csv, csv_path)
-    copy_subdirs(args.graphclust_csv, csv_path)
-    if args.hclust_csv:
-        copy_subdirs(args.hclust_csv, csv_path)
+    os.makedirs(outs.clustering_csv, exist_ok=True)
+    for csv_directory in [args.kmeans_csv, args.graphclust_csv, args.hclust_csv]:
+        if csv_directory is not None:
+            hardlink_files_in_dir(csv_directory, outs.clustering_csv)

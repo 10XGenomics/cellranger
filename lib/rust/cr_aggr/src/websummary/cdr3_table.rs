@@ -54,6 +54,7 @@ fn to_named_table(rows: Vec<VdjAggrSharedCdr3Row>, category: &str) -> NamedTable
                 "Total Number of Cells".into(),
             ]),
             rows: rows.into_iter().map(Into::into).collect(),
+            grouping_header: None,
         },
     }
 }

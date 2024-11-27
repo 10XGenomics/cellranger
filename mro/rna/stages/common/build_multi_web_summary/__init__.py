@@ -29,7 +29,7 @@ def main(args, outs):
         with open(web_summary_data) as f:
             web_summary_data = json.load(f)
 
-        contents = """<div data-key="data" data-component="OptionalMultiplexedSummary">"""
+        contents = """<div data-component="OptionalMultiplexedSummary">"""
 
         web_summary_path = martian.make_path(sample + "_web_summary.html")
         with open(web_summary_path, "w") as outfile:

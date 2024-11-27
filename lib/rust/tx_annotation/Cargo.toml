@@ -1,6 +1,4 @@
 [dependencies]
-rand_chacha = '0.3'
-
 [dependencies.anyhow]
 workspace = true
 
@@ -29,6 +27,9 @@ workspace = true
 path = '../metric'
 
 [dependencies.rand]
+workspace = true
+
+[dependencies.rand_chacha]
 workspace = true
 
 [dependencies.rust-htslib]

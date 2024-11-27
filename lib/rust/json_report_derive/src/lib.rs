@@ -69,7 +69,7 @@ use syn::{Attribute, Data, DeriveInput, Fields, Ident};
 ///
 /// # Returns
 /// * a `TokenStream`, which is the Rust code corresponding to the
-/// implementation of the trait
+///   implementation of the trait
 ///
 #[proc_macro_derive(JsonReport, attributes(json_report))]
 pub fn derive_json_report_trait(input: TokenStream) -> TokenStream {
@@ -144,7 +144,7 @@ pub fn derive_json_report_trait(input: TokenStream) -> TokenStream {
     };
 
     // Hand the output tokens back to the compiler.
-    proc_macro::TokenStream::from(expanded)
+    TokenStream::from(expanded)
 }
 
 struct FieldInfo {
@@ -175,7 +175,7 @@ fn collect_struct_fields(data: &Data) -> Vec<FieldInfo> {
                     .named
                     .iter()
                     .filter_map(|x| x.ident.as_ref())
-                    .map(std::string::ToString::to_string)
+                    .map(ToString::to_string)
                     .collect();
 
                 let field_attrs: Vec<(bool, bool, bool)> = fields

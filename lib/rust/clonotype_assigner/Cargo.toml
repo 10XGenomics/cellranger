@@ -1,25 +1,30 @@
 [dependencies]
-bio = '1'
-csv = '1'
-rayon = '1'
-
 [dependencies.amino]
-workspace = true
+path = '../amino'
 
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.bio]
+workspace = true
+
+[dependencies.cr_aggr]
+path = '../cr_aggr'
+
 [dependencies.cr_types]
 path = '../cr_types'
 
-[dependencies.enclone_proto]
+[dependencies.csv]
 workspace = true
+
+[dependencies.enclone_proto]
+path = '../enclone_proto'
 
 [dependencies.enclone_ranger]
-workspace = true
+path = '../enclone_ranger'
 
 [dependencies.io_utils]
-workspace = true
+path = '../io_utils'
 
 [dependencies.martian]
 workspace = true
@@ -33,7 +38,7 @@ workspace = true
 [dependencies.metric]
 path = '../metric'
 
-[dependencies.perf_stats]
+[dependencies.rayon]
 workspace = true
 
 [dependencies.rust-htslib]
@@ -46,22 +51,25 @@ workspace = true
 workspace = true
 
 [dependencies.string_utils]
-workspace = true
+path = '../string_utils'
 
 [dependencies.vdj_ann]
-workspace = true
+path = '../vdj_ann'
 
 [dependencies.vdj_ann_ref]
-workspace = true
+path = '../vdj_ann_ref'
 
 [dependencies.vdj_asm_utils]
 path = '../vdj_asm_utils'
+
+[dependencies.vdj_filter_barcodes]
+path = '../vdj_filter_barcodes'
 
 [dependencies.vdj_reference]
 path = '../vdj_reference'
 
 [dependencies.vector_utils]
-workspace = true
+path = '../vector_utils'
 
 [lib]
 test = false

@@ -63,6 +63,12 @@ pub type FingerprintFile = JsonFormat<_FingerprintFile, Vec<Fingerprint>>;
 
 // End File Types
 
+/// A feature ID.
+pub type FeatureID = String;
+
+/// A feature name.
+pub type FeatureName = String;
+
 /// A genome name.
 #[derive(
     Clone,
@@ -81,6 +87,7 @@ pub type FingerprintFile = JsonFormat<_FingerprintFile, Vec<Fingerprint>>;
 pub struct GenomeName(String);
 
 impl GenomeName {
+    /// Return this genome name as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -118,7 +125,7 @@ pub trait HasSampleIndex {
 
 /// Count of the number of UMIs observed for one feature in one barcode.  Corresponds
 /// to a single entry in the feature x barcode matrix.
-#[derive(Serialize, Deserialize, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
 pub struct FeatureBarcodeCount {
     pub barcode: Barcode,
     pub feature_idx: u32,
@@ -448,11 +455,39 @@ enum_maker! {
 }
 
 enum_maker! {
-    /// Type of multiplexing, CMO or RTL.
-    CellMultiplexingType,
-    (CMO, "CMO"),
+    /// Multiplexing information encoded at the level of reads.
+    ReadLevel,
     (RTL, "RTL"),
     (OH, "OH")
+}
+
+enum_maker! {
+    /// Multiplexing information encoded at the level of cells.
+    CellLevel,
+    (CMO, "CMO"),
+    (Hashtag, "Hashtag")
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum BarcodeMultiplexingType {
+    CellLevel(CellLevel),
+    ReadLevel(ReadLevel),
+}
+
+impl AsMartianPrimaryType for BarcodeMultiplexingType {
+    fn as_martian_primary_type() -> MartianPrimaryType {
+        MartianPrimaryType::Str
+    }
+}
+
+impl fmt::Display for BarcodeMultiplexingType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BarcodeMultiplexingType::CellLevel(cell) => cell.fmt(f),
+            BarcodeMultiplexingType::ReadLevel(read) => read.fmt(f),
+        }
+    }
 }
 
 enum_maker! {
@@ -749,8 +784,8 @@ impl LibraryDef {
 ///   are not tagged
 /// - `Tagged(GemWell, SampleBarcodeID)`: A subset of cells in a gem well
 ///   which are tagged with a CMO with the given feature name
-/// We can assume that no two samples within a multi run can share the same
-/// `Fingerprint`.
+///   We can assume that no two samples within a multi run can share the same
+///   `Fingerprint`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Fingerprint {
     Untagged {
@@ -761,7 +796,7 @@ pub enum Fingerprint {
         tag_name: SampleBarcodeID,
         /// Sample barcodes that were dynamically translated into this tag.
         translated_tag_names: Vec<SampleBarcodeID>,
-        cell_multiplexing_type: CellMultiplexingType,
+        barcode_multiplexing_type: BarcodeMultiplexingType,
     },
 }
 
@@ -774,13 +809,13 @@ impl Fingerprint {
         gem_well: GemWell,
         tag_name: SampleBarcodeID,
         translated_tag_names: Vec<SampleBarcodeID>,
-        cell_multiplexing_type: CellMultiplexingType,
+        barcode_multiplexing_type: BarcodeMultiplexingType,
     ) -> Self {
         Self::Tagged {
             gem_well,
             tag_name,
             translated_tag_names,
-            cell_multiplexing_type,
+            barcode_multiplexing_type,
         }
     }
 
@@ -810,26 +845,31 @@ impl Fingerprint {
         }
     }
 
-    pub fn cell_multiplexing_type(&self) -> Option<CellMultiplexingType> {
-        match *self {
+    pub fn barcode_multiplexing_type(&self) -> Option<BarcodeMultiplexingType> {
+        match self {
             Fingerprint::Untagged { .. } => None,
             Fingerprint::Tagged {
-                cell_multiplexing_type,
+                barcode_multiplexing_type: cell_multiplexing_type,
                 ..
-            } => Some(cell_multiplexing_type),
+            } => Some(*cell_multiplexing_type),
         }
     }
 
     pub fn is_cmo_multiplexed(&self) -> bool {
-        self.cell_multiplexing_type() == Some(CellMultiplexingType::CMO)
+        self.barcode_multiplexing_type() == Some(BarcodeMultiplexingType::CellLevel(CellLevel::CMO))
+    }
+
+    pub fn is_hashtag_multiplexed(&self) -> bool {
+        self.barcode_multiplexing_type()
+            == Some(BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag))
     }
 
     pub fn is_rtl_multiplexed(&self) -> bool {
-        self.cell_multiplexing_type() == Some(CellMultiplexingType::RTL)
+        self.barcode_multiplexing_type() == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL))
     }
 
     pub fn is_overhang_multiplexed(&self) -> bool {
-        self.cell_multiplexing_type() == Some(CellMultiplexingType::OH)
+        self.barcode_multiplexing_type() == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::OH))
     }
 }
 
@@ -847,10 +887,10 @@ pub struct Sample {
 impl Sample {
     /// Returns the cell multiplexing type in use.
     /// Panics if more than one is found, which should be impossible.
-    pub fn cell_multiplexing_type(&self) -> Option<CellMultiplexingType> {
+    pub fn barcode_multiplexing_type(&self) -> Option<BarcodeMultiplexingType> {
         self.fingerprints
             .iter()
-            .map(Fingerprint::cell_multiplexing_type)
+            .map(Fingerprint::barcode_multiplexing_type)
             .dedup()
             .exactly_one()
             .unwrap()
@@ -1045,7 +1085,7 @@ pub struct CrMultiGraph {
 impl CrMultiGraph {
     /// Return true if this analysis is using any form of multiplexing.
     pub fn is_multiplexed(&self) -> bool {
-        self.cell_multiplexing_type().is_some()
+        self.barcode_multiplexing_type().is_some()
     }
 
     /// Return true if one or more libraries is of the specified type.
@@ -1053,14 +1093,52 @@ impl CrMultiGraph {
         self.libraries.iter().any(|lib| lib.library_type == t)
     }
 
+    /// Return an iterator over all the library types in the experiment
+    pub fn library_types(&self) -> impl Iterator<Item = LibraryType> + '_ {
+        self.libraries.iter().map(|lib| lib.library_type)
+    }
+
     /// Return the cell multiplexing type in use, if there is one.
-    pub fn cell_multiplexing_type(&self) -> Option<CellMultiplexingType> {
+    pub fn barcode_multiplexing_type(&self) -> Option<BarcodeMultiplexingType> {
         self.samples
             .iter()
-            .map(Sample::cell_multiplexing_type)
+            .map(Sample::barcode_multiplexing_type)
             .dedup()
             .exactly_one()
             .unwrap()
+    }
+
+    /// Returns if the multiplexing type is read-level or not.
+    pub fn is_read_level_multiplexed(&self) -> bool {
+        matches!(
+            self.barcode_multiplexing_type(),
+            Some(BarcodeMultiplexingType::ReadLevel(_))
+        )
+    }
+
+    /// Returns a map from demux tag name (e.g. OCM barcode ID or probe barcode ID) to sample ID information.
+    pub fn get_tag_name_to_sample_id_map(
+        &self,
+    ) -> anyhow::Result<TxHashMap<&str, (&str, &[String])>> {
+        self.samples
+            .iter()
+            .flat_map(|sample| {
+                sample.fingerprints.iter().map(|fingerprint| {
+                    let Fingerprint::Tagged {
+                        tag_name,
+                        translated_tag_names,
+                        ..
+                    } = fingerprint
+                    else {
+                        bail!("found an untagged fingerprint when creating tag name map: {fingerprint:?}");
+                    };
+                    Ok((
+                        tag_name.as_str(),
+                        (sample.sample_id.as_str(), translated_tag_names.as_slice()),
+                    ))
+                })
+            })
+            .collect()
     }
 }
 
@@ -1280,7 +1358,7 @@ mod py_api_tests {
                 GemWell(1),
                 "CMO500".into(),
                 Vec::default(),
-                CellMultiplexingType::CMO,
+                BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
             ),
         )?;
 
@@ -1291,7 +1369,7 @@ mod py_api_tests {
                 GemWell(2),
                 "CMO500".into(),
                 Vec::default(),
-                CellMultiplexingType::CMO,
+                BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
             ),
         )?;
 
@@ -1302,7 +1380,7 @@ mod py_api_tests {
                 GemWell(1),
                 "CMO501".into(),
                 Vec::default(),
-                CellMultiplexingType::CMO,
+                BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
             ),
         )?;
 
@@ -1313,7 +1391,7 @@ mod py_api_tests {
                 GemWell(2),
                 "CMO501".into(),
                 Vec::default(),
-                CellMultiplexingType::CMO,
+                BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
             ),
         )?;
 

@@ -1,18 +1,20 @@
 [dependencies]
-csv = '1'
-thousands = '0.2'
-
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.cr_types]
 path = '../cr_types'
 
+[dependencies.csv]
+workspace = true
+
 [dependencies.hclust]
-branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs'
+workspace = true
 
 [dependencies.itertools]
+workspace = true
+
+[dependencies.log]
 workspace = true
 
 [dependencies.martian-filetypes]
@@ -25,16 +27,13 @@ path = '../metric'
 workspace = true
 
 [dependencies.ordered-float]
-features = ['serde']
-version = '3'
+workspace = true
 
 [dependencies.plotly]
 workspace = true
 
 [dependencies.regex]
-default-features = false
-features = ['std', 'perf']
-version = '1'
+workspace = true
 
 [dependencies.serde]
 workspace = true
@@ -43,6 +42,16 @@ workspace = true
 workspace = true
 
 [dependencies.statrs]
+workspace = true
+
+[dependencies.tenx-websummary]
+features = ['derive']
+workspace = true
+
+[dependencies.thousands]
+workspace = true
+
+[dependencies.toml]
 workspace = true
 
 [dependencies.websummary_derive]

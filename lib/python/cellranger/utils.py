@@ -67,15 +67,13 @@ def format_barcode_seqs(
 @overload
 def split_barcode_seq(
     barcode: None,
-) -> tuple[None, None]:
-    ...
+) -> tuple[None, None]: ...
 
 
 @overload
 def split_barcode_seq(
     barcode: bytes,
-) -> tuple[bytes, int | None]:
-    ...
+) -> tuple[bytes, int | None]: ...
 
 
 def split_barcode_seq(barcode: bytes | None):

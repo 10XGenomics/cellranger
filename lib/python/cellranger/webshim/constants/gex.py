@@ -468,6 +468,12 @@ CRISPR_SEQUENCING_METRICS = [
         "format": "percent",
     },
     {
+        "name": REPORT_PREFIX_CRISPR + "good_umi_frac",
+        "display_name": DISPLAY_PREFIX_CRISPR + "Valid UMIs",
+        "description": "Fraction of CRISPR library reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
+        "format": "percent",
+    },
+    {
         "name": REPORT_PREFIX_CRISPR + "multi_cdna_pcr_dupe_reads_frac",
         "display_name": DISPLAY_PREFIX_CRISPR + "Sequencing Saturation",
         "description": "The fraction of CRISPR library reads originating from an already-observed UMI. This is a function of library complexity and sequencing depth. More specifically, this is the fraction of confidently mapped, valid cell-barcode, valid UMI reads that had a non-unique (cell-barcode, UMI, CRISPR feature barcode).",
@@ -538,42 +544,32 @@ MULTIPLEXING_APPLICATION_METRICS = [
     {
         "name": REPORT_PREFIX_MULTIPLEXING + "recognized_feature_bc_frac",
         "display_name": DISPLAY_PREFIX_MULTIPLEXING + f"Fraction {MULTIPLEXING_NAME} Reads",
-        "description": "Fraction of {name} library reads with a recognized {name} sequence".format(
-            name=MULTIPLEXING_NAME
-        ),
+        "description": f"Fraction of {MULTIPLEXING_NAME} library reads with a recognized {MULTIPLEXING_NAME} sequence",
         "format": "percent",
     },
     {
         "name": REPORT_PREFIX_MULTIPLEXING + "frac_feature_reads_usable",
         "display_name": DISPLAY_PREFIX_MULTIPLEXING + f"Fraction {MULTIPLEXING_NAME} Reads Usable",
-        "description": "Fraction of {name} library reads with a recognized {name} sequence, a valid UMI, and a cell-associated barcode".format(
-            name=MULTIPLEXING_NAME
-        ),
+        "description": f"Fraction of {MULTIPLEXING_NAME} library reads with a recognized {MULTIPLEXING_NAME} sequence, a valid UMI, and a cell-associated barcode",
         "format": "percent",
     },
     {
         "name": REPORT_PREFIX_MULTIPLEXING + "feature_reads_usable_per_cell",
         "display_name": DISPLAY_PREFIX_MULTIPLEXING + f"{MULTIPLEXING_NAME} Reads Usable per Cell",
-        "description": "Number of {} library guide reads usable divided by the number of cell-associated barcodes".format(
-            MULTIPLEXING_NAME
-        ),
+        "description": f"Number of {MULTIPLEXING_NAME} library guide reads usable divided by the number of cell-associated barcodes",
         "format": "integer",
     },
     {
         "name": REPORT_PREFIX_MULTIPLEXING + "unrecognized_feature_bc_frac",
         "display_name": DISPLAY_PREFIX_MULTIPLEXING
         + f"Fraction {MULTIPLEXING_NAME} Not Recognized",
-        "description": "Among all {name} library reads, the fraction with a {name} sequence that was not recognized".format(
-            name=MULTIPLEXING_NAME
-        ),
+        "description": f"Among all {MULTIPLEXING_NAME} library reads, the fraction with a {MULTIPLEXING_NAME} sequence that was not recognized",
         "format": "percent",
     },
     {
         "name": REPORT_PREFIX_MULTIPLEXING + "feature_reads_in_cells",
         "display_name": DISPLAY_PREFIX_MULTIPLEXING + f"{MULTIPLEXING_NAME} Reads in Cells",
-        "description": "Among {name} library reads with a recognized {name} sequence, a valid UMI, and a valid barcode, the fraction associated with cell-containing partitions".format(
-            name=MULTIPLEXING_NAME
-        ),
+        "description": f"Among {MULTIPLEXING_NAME} library reads with a recognized {MULTIPLEXING_NAME} sequence, a valid UMI, and a valid barcode, the fraction associated with cell-containing partitions",
         "format": "percent",
     },
     {
@@ -646,6 +642,12 @@ ANTIBODY_SEQUENCING_METRICS = [
         "name": REPORT_PREFIX_ANTIBODY + "good_bc_frac",
         "display_name": DISPLAY_PREFIX_ANTIBODY + "Valid Barcodes",
         "description": "Fraction of Antibody library reads with a barcode found in or corrected to one that is found in the whitelist",
+        "format": "percent",
+    },
+    {
+        "name": REPORT_PREFIX_ANTIBODY + "good_umi_frac",
+        "display_name": DISPLAY_PREFIX_ANTIBODY + "Valid UMIs",
+        "description": "Fraction of Antibody library reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
         "format": "percent",
     },
     {
@@ -812,6 +814,13 @@ CUSTOM_FEATURE_SEQUENCING_METRICS = [
         "prefix": "custom_features",
     },
     {
+        "name": "good_umi_frac",
+        "display_name": "%s: Valid UMIs",
+        "description": "Fraction of Custom library reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
+        "format": "percent",
+        "prefix": "custom_features",
+    },
+    {
         "name": "multi_cdna_pcr_dupe_reads_frac",
         "display_name": "%s: Sequencing Saturation",
         "description": "The fraction of Custom library reads originating from an already-observed UMI. This is a function of library complexity and sequencing depth. More specifically, this is the fraction of confidently mapped, valid cell-barcode, valid UMI reads that had a non-unique (cell-barcode, UMI, feature barcode).",
@@ -870,6 +879,7 @@ SEQUENCING_METRICS = [
     PRENORM_READS_METRIC,
     POSTNORM_READS_METRIC,
     GOOD_BCS_METRIC,
+    GOOD_UMIS_METRIC,
     CDNA_DUPE_FRAC_METRIC,
     SEQUENCING_SATURATION_METRIC,
     TARGETED_SEQUENCING_SATURATION_METRIC,
@@ -1273,8 +1283,9 @@ CHARTS = [
         "kwargs_prefixes": ["references"],
         "config": shared.CHARTS_PLOTLY_MOVABLE_CONFIG,
         "name": "median_genes_per_cell",
-        "description": "This plot shows the %s as a function of downsampled sequencing depth in mean reads per cell, up to the observed sequencing depth. The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point."
-        % (GENES_PER_DETECTED_CELL_METRIC["display_name"]),
+        "description": "This plot shows the {} as a function of downsampled sequencing depth in mean reads per cell, up to the observed sequencing depth. The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point.".format(
+            GENES_PER_DETECTED_CELL_METRIC["display_name"]
+        ),
         "function": "plot_subsampled_scatterplot_metric",
     },
 ]
@@ -1313,12 +1324,12 @@ METRIC_ALARMS = [
         "format": GOOD_BCS_METRIC["format"],
         "error": {
             "title": "Low Fraction Valid Barcodes",
-            "message": "Ideal > 75%. This may indicate a quality issue with the Illumina I7 read for Single Cell 3' v1 or the R1 read for Single Cell 3' v2/v3 and Single Cell 5'. Application performance is likely to be affected.",
+            "message": "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance is likely to be affected.",
             "test": "< 0.5",
         },
         "warn": {
             "title": "Low Fraction Valid Barcodes",
-            "message": "Ideal > 75%. This may indicate a quality issue with the Illumina I7 read for Single Cell 3' v1 or the R1 read for Single Cell 3' v2/v3 and Single Cell 5'. Application performance may be affected.",
+            "message": "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance may be affected.",
             "test": "< 0.75",
         },
     },
@@ -1327,12 +1338,12 @@ METRIC_ALARMS = [
         "format": GOOD_UMIS_METRIC["format"],
         "error": {
             "title": "Low Fraction Valid UMIs",
-            "message": "Ideal > 75%. This may indicate a quality issue with the Illumina R2 read for Single Cell 3' v1 or the R1 read for Single Cell 3' v2/v3 and Single Cell 5'. Application performance is likely to be affected.",
+            "message": "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance is likely to be affected.",
             "test": "< 0.5",
         },
         "warn": {
             "title": "Low Fraction Valid UMIs",
-            "message": "Ideal > 75%. This may indicate a quality issue with the Illumina R2 read for Single Cell 3' v1 or the R1 read for Single Cell 3' v2/v3 and Single Cell 5'. Application performance may be affected.",
+            "message": "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance may be affected.",
             "test": "< 0.75",
         },
     },

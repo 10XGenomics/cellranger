@@ -218,6 +218,7 @@ impl MartianStage for SetupVdjAggr {
 mod tests {
     use super::*;
     use crate::process_vdj_proto::make_test_library;
+    use insta::assert_yaml_snapshot;
     use martian_filetypes::FileTypeRead;
     use pretty_assertions::assert_eq;
 
@@ -370,7 +371,7 @@ mod tests {
         let mut settings = insta::Settings::clone_current();
         settings.set_sort_maps(true);
         settings.bind(|| {
-            insta::assert_yaml_snapshot!(&metadata);
+            assert_yaml_snapshot!(&metadata);
         });
 
         Ok(())

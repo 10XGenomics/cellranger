@@ -9,6 +9,7 @@ use crate::gdna_utils::{
 use crate::probe_barcode_matrix::{write_probe_bc_matrix, ProbeCounts};
 use anyhow::Result;
 use cr_types::filtered_barcodes::{read_filtered_barcodes_set, FilteredBarcodesCsv};
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::{BarcodeIndexFormat, CountShardFile, H5File};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -22,8 +23,8 @@ use std::path::PathBuf;
 #[derive(Deserialize, MartianStruct)]
 pub struct CollateProbeMetricsStageInputs {
     pub probe_barcode_counts: Vec<CountShardFile>,
-    pub reference_path: PathBuf,
-    pub probe_set: CsvFile<()>,
+    pub reference_path: Option<PathBuf>,
+    pub probe_set: TargetSetFile,
     pub filtered_barcodes: FilteredBarcodesCsv,
     pub probe_set_name: String,
     pub barcode_index_path: BarcodeIndexFormat,
@@ -53,7 +54,7 @@ impl MartianMain for CollateProbeMetrics {
             &args.probe_barcode_counts,
             &filtered_barcodes,
             &args.probe_set,
-            &args.reference_path,
+            args.reference_path.as_deref(),
         )?;
 
         // Compute gDNA corrected metrics and write them out out to JSON.
@@ -85,7 +86,7 @@ impl MartianMain for CollateProbeMetrics {
         let raw_probe_bc_matrix: H5File = rover.make_path("raw_probe_bc_matrix");
         write_probe_bc_matrix(
             &args.probe_set,
-            &args.reference_path,
+            args.reference_path.as_deref(),
             &args.probe_barcode_counts,
             &raw_probe_bc_matrix,
             &barcode_index,

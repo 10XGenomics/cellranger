@@ -28,12 +28,11 @@ stage REPORT_CONTIGS(
     in  fasta  contigs,
     in  json   annotations,
     in  csv    filter_summary,
-    in  tsv    contig_summary,
     in  tsv    umi_summary,
     in  string prefix,
     out json   summary,
     src py     "stages/vdj/report_contigs",
-) split using (
+) split (
 )
 """
 
@@ -83,30 +82,6 @@ def main(args, outs):
     # Get annotations for each contig
     for annotation in iter(json.load(open(args.annotations))):
         contig_annotations[ensure_binary(annotation["contig_name"])] = annotation
-
-    if (
-        args.contig_summary
-        and os.path.isfile(args.contig_summary)
-        and os.path.getsize(args.contig_summary) > 0
-    ):
-        contig_summary = pd.read_csv(
-            ensure_str(args.contig_summary),
-            header=0,
-            index_col=None,
-            sep="\t",
-            dtype={
-                "component": int,
-                "num_reads": int,
-                "num_pairs": int,
-                "num_umis": int,
-                "umi_list": str,
-            },
-            converters={"barcode": ensure_binary},
-        )
-        contig_summary["barcode"] = contig_summary["barcode"].astype("S")
-        contig_summary = contig_summary.groupby("barcode")
-    else:
-        contig_summary = None
 
     file_size = os.path.getsize(args.umi_summary)
     if args.umi_summary and os.path.isfile(args.umi_summary) and file_size > 0:
@@ -166,17 +141,12 @@ def main(args, outs):
         annotations = [contig_annotations[contig[0]] for contig in contigs]
         reporter.vdj_barcode_contig_cb(barcode, contigs, annotations, reference, prefix)
 
-        if not contig_summary is None and barcode in contig_summary.groups:
-            bc_contig_summary = contig_summary.get_group(barcode)
-        else:
-            bc_contig_summary = None
-
         if not umi_summary is None and barcode in umi_summary.groups:
             bc_umi_summary = umi_summary.get_group(barcode)
         else:
             bc_umi_summary = None
 
-        reporter.vdj_assembly_cb(bc_contig_summary, bc_umi_summary, annotations, reference, prefix)
+        reporter.vdj_assembly_cb(bc_umi_summary, annotations, reference, prefix)
 
     reporter.report_summary_json(outs.summary)
 

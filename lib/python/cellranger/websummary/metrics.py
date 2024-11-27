@@ -167,21 +167,25 @@ class MetricAnnotations:
 
         # alarm ranges are dependent on debug, which indicates internal or customer-facing.
         alert_name_map = {
-            WARNING_THRESHOLD: metric_info.alert_warn_name + alert_name_suffix
-            if metric_info.alert_warn_name
-            else None,
-            ERROR_THRESHOLD: metric_info.alert_error_name + alert_name_suffix
-            if metric_info.alert_error_name
-            else None,
+            WARNING_THRESHOLD: (
+                metric_info.alert_warn_name + alert_name_suffix
+                if metric_info.alert_warn_name
+                else None
+            ),
+            ERROR_THRESHOLD: (
+                metric_info.alert_error_name + alert_name_suffix
+                if metric_info.alert_error_name
+                else None
+            ),
         }
         # This appears under detail when an alert is raised
         alert_detail_map = {
-            WARNING_THRESHOLD: metric_info.alert_warn_detail
-            if debug
-            else metric_info.alert_warn_detail_cs,
-            ERROR_THRESHOLD: metric_info.alert_error_detail
-            if debug
-            else metric_info.alert_error_detail_cs,
+            WARNING_THRESHOLD: (
+                metric_info.alert_warn_detail if debug else metric_info.alert_warn_detail_cs
+            ),
+            ERROR_THRESHOLD: (
+                metric_info.alert_error_detail if debug else metric_info.alert_error_detail_cs
+            ),
         }
         acceptable = metric_info.acceptable if debug else metric_info.acceptable_cs
         targeted = metric_info.targeted if debug else metric_info.targeted_cs
@@ -342,13 +346,6 @@ class SpatialTemplateLigationAggrMetricAnnotations(SpatialAggrMetricAnnotations)
         self._override_metric_settings(file_path)
 
 
-class SpatialTargetedCompareMetricAnnotations(SpatialMetricAnnotations):
-    def __init__(self):
-        super().__init__()
-        file_path = os.path.join(os.path.dirname(__file__), "spatial_targeted_compare_metrics.csv")
-        self._override_metric_settings(file_path)
-
-
 class SpatialTemplateLigationMetricAnnotations(SpatialMetricAnnotations):
     def __init__(self):
         super().__init__()
@@ -384,11 +381,6 @@ class TargetedMetricAnnotations(MetricAnnotations):
         super().__init__()
         file_path = os.path.join(os.path.dirname(__file__), "targeted_metrics.csv")
         self._override_metric_settings(file_path)
-
-
-class TargetedCompareMetricAnnotations(MetricAnnotations):
-    def __init__(self):
-        super().__init__("targeted_compare_metrics.csv")
 
 
 class LTMetricAnnotations(MetricAnnotations):
@@ -563,14 +555,12 @@ class Metric:
             if self.evaluation_function(self.value, self.targeted):
                 return VALID_THRESHOLD
             return WARNING_THRESHOLD
+        elif self.evaluation_function(self.value, self.targeted):
+            return VALID_THRESHOLD
+        elif self.evaluation_function(self.value, self.acceptable):
+            return WARNING_THRESHOLD
         else:
-            # Both set - error/warn depending on which we meet.
-            if self.evaluation_function(self.value, self.targeted):
-                return VALID_THRESHOLD
-            elif self.evaluation_function(self.value, self.acceptable):
-                return WARNING_THRESHOLD
-            else:
-                return ERROR_THRESHOLD
+            return ERROR_THRESHOLD
 
     @property
     def color(self):
@@ -653,12 +643,16 @@ class VDJMetricAnnotations:
         name = name.format(chain=chain)
 
         alert_name_map = {
-            WARNING_THRESHOLD: metric_info.alert_warn_name.format(chain=chain)
-            if metric_info.alert_warn_name
-            else None,
-            ERROR_THRESHOLD: metric_info.alert_error_name.format(chain=chain)
-            if metric_info.alert_error_name
-            else None,
+            WARNING_THRESHOLD: (
+                metric_info.alert_warn_name.format(chain=chain)
+                if metric_info.alert_warn_name
+                else None
+            ),
+            ERROR_THRESHOLD: (
+                metric_info.alert_error_name.format(chain=chain)
+                if metric_info.alert_error_name
+                else None
+            ),
         }
 
         # alarm ranges are dependent on debug, which indicates internal or customer-facing.
@@ -708,11 +702,10 @@ class VDJMetricAnnotations:
                         )
                     else:
                         print(f"{full_key} not found in metrics")
+            elif key in value_dict:
+                output.append(self.gen_metric(key, value_dict[key], debug=debug))
             else:
-                if key in value_dict:
-                    output.append(self.gen_metric(key, value_dict[key], debug=debug))
-                else:
-                    print(f"{key} not found in metrics")
+                print(f"{key} not found in metrics")
         return output
 
     def gen_metric_helptext(self, keys, chain_type=None):
@@ -726,10 +719,9 @@ class VDJMetricAnnotations:
                     for chain in load_chains_from_chain_type(chain_type):
                         full_name = metric_info.full_name.format(chain=chain)
                         output += [[full_name, [metric_info.help_description.format(chain=chain)]]]
-                else:
-                    if metric_info.help_description is not None:
-                        full_name = metric_info.full_name
-                        output += [[full_name, [metric_info.help_description]]]
+                elif metric_info.help_description is not None:
+                    full_name = metric_info.full_name
+                    output += [[full_name, [metric_info.help_description]]]
             else:
                 print(f"{key} not found in registered metrics")
         return output

@@ -70,7 +70,7 @@ use syn::{Data, DeriveInput, Fields, Index};
 ///
 /// # Returns
 /// * a `TokenStream`, which is the Rust code corresponding to the
-/// implementation of the metric trait
+///   implementation of the metric trait
 ///
 #[proc_macro_derive(Metric)]
 pub fn derive_metric_trait(input: TokenStream) -> TokenStream {

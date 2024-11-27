@@ -3,6 +3,7 @@
 use crate::gdna_utils::get_filtered_per_probe_metrics;
 use crate::probe_barcode_matrix::{read_bc_json, write_probe_bc_matrix, ProbeCounts};
 use barcode::Barcode;
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::{BarcodeIndex, CountShardFile, H5File};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
@@ -19,8 +20,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct DemuxProbeBcMatrixStageInputs {
     pub probe_barcode_counts: Vec<CountShardFile>,
-    pub reference_path: PathBuf,
-    pub probe_set: CsvFile<()>,
+    pub reference_path: Option<PathBuf>,
+    pub probe_set: TargetSetFile,
     pub probe_set_name: String,
     pub sample_barcodes: JsonFile<HashMap<String, Vec<String>>>,
     pub sample_cell_barcodes: JsonFile<HashMap<String, Vec<String>>>,
@@ -95,7 +96,7 @@ impl MartianStage for DemuxProbeBcMatrix {
             &args.probe_barcode_counts,
             &sample_cell_bcs,
             &args.probe_set,
-            &args.reference_path,
+            args.reference_path.as_deref(),
         )?;
 
         // Write out sample per probe metrics
@@ -115,7 +116,7 @@ impl MartianStage for DemuxProbeBcMatrix {
         let cell_bc_indicator_vec = bc_index.into_indicator_vec(&sample_cell_bcs);
         write_probe_bc_matrix(
             &args.probe_set,
-            &args.reference_path,
+            args.reference_path.as_deref(),
             &args.probe_barcode_counts,
             &sample_raw_probe_bc_matrix,
             &bc_index,

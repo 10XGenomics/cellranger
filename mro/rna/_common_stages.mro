@@ -44,6 +44,7 @@ stage CELLRANGER_PREFLIGHT(
     in  bool             full_check,
     in  string           chemistry,
     in  map[]            sample_def,
+    in  csv              target_set,
     in  path             reference_path,
     in  csv              feature_reference,
     in  CellCallingParam recovered_cells,
@@ -82,6 +83,7 @@ stage DISABLE_SECONDARY_ANALYSIS(
     in  bool is_spatial,
     in  h5   filtered_matrices_h5,
     in  bool no_secondary_analysis,
+    in  bool is_visium_hd_main_run  "Boolean indicating if this is being called from a main (not-binning) Visium HD run",
     out bool no_secondary_analysis,
     src py   "stages/common/disable_secondary_analysis",
 ) using (
@@ -89,13 +91,15 @@ stage DISABLE_SECONDARY_ANALYSIS(
 )
 
 stage PARSE_TARGET_FEATURES(
-    in  map[]    sample_def,
+    in  string   target_set_name,
+    in  csv      target_set,
     in  path     reference_path,
     in  json     gene_index,
     in  bool     filter_probes,
     in  bool     no_target_umi_filter,
     in  bool     no_bam,
     in  bool     is_pd,
+    in  bool     is_antibody_only,
     out fa       bait_fasta,
     out csv      target_panel,
     out csv      probe_set,
@@ -109,6 +113,5 @@ stage PARSE_TARGET_FEATURES(
     out tps.json target_panel_summary,
     src py       "stages/common/parse_target_features",
 ) using (
-    mem_gb   = 4,
-    volatile = strict,
+    mem_gb = 4,
 )

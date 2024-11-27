@@ -106,23 +106,18 @@ def build_clonotype_maps(filtered_contig_annotations):
     bc_clonotype_map = {}
     bc_exact_subclonotype_map = {}
     with open(filtered_contig_annotations) as csvfile:
-        csvreader = csv.reader(csvfile)
-        seen_header = False
-        for row in csvreader:
-            if not seen_header:
-                assert row[0] == "barcode"
-                assert row[28] == "raw_clonotype_id"
-                assert row[30] == "exact_subclonotype_id"
-                seen_header = True
+        for row in csv.DictReader(csvfile):
+            barcode = row["barcode"]
+            raw_clonotype_id = row["raw_clonotype_id"]
+            exact_subclonotype_id = row["exact_subclonotype_id"]
+            if raw_clonotype_id == "":
                 continue
-            if row[28] is None or row[28] == "":
-                continue
-            elif row[0] in bc_clonotype_map:
-                assert bc_clonotype_map[row[0]] == row[28]
-                assert bc_exact_subclonotype_map[row[0]] == row[30]
+            elif barcode in bc_clonotype_map:
+                assert bc_clonotype_map[barcode] == raw_clonotype_id
+                assert bc_exact_subclonotype_map[barcode] == exact_subclonotype_id
             else:
-                bc_clonotype_map[row[0]] = row[28]
-                bc_exact_subclonotype_map[row[0]] = row[30]
+                bc_clonotype_map[barcode] = raw_clonotype_id
+                bc_exact_subclonotype_map[barcode] = exact_subclonotype_id
     return bc_clonotype_map, bc_exact_subclonotype_map
 
 
@@ -297,8 +292,8 @@ class AntigenAssigner:
         name_fr_ce_w_sg_features = report_prefix + f"frac_{cells_name.value}_with_single_antigen"
         frac_cells_with_single_features = assignment_metadata.frac_singlets
 
-        name_fr_ce_w_mult_features = report_prefix + "frac_{}_with_multiple_antigen".format(
-            cells_name.value
+        name_fr_ce_w_mult_features = (
+            report_prefix + f"frac_{cells_name.value}_with_multiple_antigen"
         )
         frac_cells_multiple_features = assignment_metadata.frac_multiplets
 
@@ -544,7 +539,6 @@ class BarcodeAS:
         # "sample_id",
     )
 
-    # pylint:disable=too-many-arguments
     def __init__(
         self,
         barcode: bytes,
@@ -738,11 +732,11 @@ class CellsPerClonotype:
         """Compute summary metrics on clonotype (or exact_subclonotype) concordance."""
         report_prefix = rna_library.get_library_type_metric_prefix(rna_library.ANTIGEN_LIBRARY_TYPE)
 
-        name_median_concordance_gt9 = report_prefix + "median_concordance_of_{}_size_gt9".format(
-            self.grouped_by.value
+        name_median_concordance_gt9 = (
+            report_prefix + f"median_concordance_of_{self.grouped_by.value}_size_gt9"
         )
-        name_min_concordance_gt9 = report_prefix + "lowest_concordance_of_{}_size_gt9".format(
-            self.grouped_by.value
+        name_min_concordance_gt9 = (
+            report_prefix + f"lowest_concordance_of_{self.grouped_by.value}_size_gt9"
         )
         concordance_gt9 = [
             v.concordance
@@ -762,8 +756,8 @@ class CellsPerClonotype:
             if v.size > 9 and k != "None" and v.canonical_pair
         ]
 
-        name_aggregate_concordance = report_prefix + "aggregate_concordance_of_{}".format(
-            self.grouped_by.value
+        name_aggregate_concordance = (
+            report_prefix + f"aggregate_concordance_of_{self.grouped_by.value}"
         )
 
         name_aggregate_concordance_canonical_pair = (
@@ -783,12 +777,14 @@ class CellsPerClonotype:
         return {
             name_median_concordance_gt9: np.median(concordance_gt9) if concordance_gt9 else np.nan,
             name_min_concordance_gt9: np.min(concordance_gt9) if concordance_gt9 else np.nan,
-            name_median_concordance_gt9_canonical_pair: np.median(concordance_gt9_canonical_pair)
-            if concordance_gt9_canonical_pair
-            else np.nan,
-            name_min_concordance_gt9_canonical_pair: np.min(concordance_gt9_canonical_pair)
-            if concordance_gt9_canonical_pair
-            else np.nan,
+            name_median_concordance_gt9_canonical_pair: (
+                np.median(concordance_gt9_canonical_pair)
+                if concordance_gt9_canonical_pair
+                else np.nan
+            ),
+            name_min_concordance_gt9_canonical_pair: (
+                np.min(concordance_gt9_canonical_pair) if concordance_gt9_canonical_pair else np.nan
+            ),
             name_aggregate_concordance: aggregate_concordance.report(),
             name_aggregate_concordance_canonical_pair: aggregate_concordance_canonical_pair.report(),
         }

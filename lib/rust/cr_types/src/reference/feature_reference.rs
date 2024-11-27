@@ -1,15 +1,16 @@
-use crate::probe_set::is_deprecated_probe;
+use super::probe_set_reference::TargetSetFile;
+use crate::probe_set::{is_deprecated_probe, ProbeSetReferenceMetadata};
+use crate::reference::get_reference_genome_names;
 use crate::reference::reference_info::ReferenceInfo;
-use crate::types::{FeatureBarcodeType, GenomeName};
-use crate::LibraryType;
+use crate::{FeatureBarcodeType, FeatureID, FeatureName, GenomeName, LibraryType};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use csv::{self, StringRecord};
 use fastq_set::read_pair::WhichRead;
-use itertools::{process_results, Itertools};
+use itertools::Itertools;
 use martian::{AsMartianPrimaryType, MartianPrimaryType};
 use martian_derive::{martian_filetype, MartianStruct, MartianType};
-use martian_filetypes::tabular_file::{Csv, CsvFileNoHeader, DelimitedFormat, TableConfig};
-use martian_filetypes::{table_config, LazyFileTypeIO};
+use martian_filetypes::tabular_file::CsvFileNoHeader;
+use martian_filetypes::LazyFileTypeIO;
 use metric::{AsMetricPrefix, TxHashMap, TxHashSet};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -58,24 +59,15 @@ pub struct FeatureConfig {
     pub beam_mode: Option<BeamMode>,
     pub specificity_controls: Option<SpecificityControls>,
     pub functional_map: Option<HashMap<String, String>>,
+    pub hashtag_ids: Option<Vec<String>>,
 }
 
 pub const MHC_ALLELE: &str = "mhc_allele";
 pub const NO_ALLELE: &str = "no_allele";
+pub const HASHTAG: &str = "hashtag";
 
 pub const SC5P_BEAM_SET_A: &str = include_str!("whitelist/SC5P_BEAM_SetA.csv");
 pub const DEFAULT_BEAM_SET: &str = SC5P_BEAM_SET_A;
-
-/*
-/// Gene index TSV row
-#[derive(Debug, Deserialize)]
-struct GeneIndexRow {
-    pub transcript_id: String,
-    pub gene_id: String,
-    pub gene_name: String,
-    pub transcript_length: i64,
-}
-*/
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, MartianType, Display)]
 #[serde(rename_all = "lowercase")]
@@ -104,9 +96,10 @@ impl FromStr for BeamMode {
 
 pub fn load_feature_set<R: Read + AsRef<[u8]>>(reader: R) -> Result<Vec<FeatureDef>> {
     Ok(FeatureReference::new(
-        &ReferenceInfo::default(),
-        &Transcriptome::dummy(),
+        &[],
+        None,
         Some(Cursor::new(reader)),
+        None,
         None,
         None,
         None,
@@ -331,15 +324,13 @@ impl FeatureDef {
             }
         }
 
-        let feature_type =
-            FeatureBarcodeType::from_str(get_col("feature_type")).with_context(|| {
-                format!(
-                    r#"Unknown feature_type: '{}'.
-The 'feature_type' field in the feature reference must be one of {}."#,
-                    get_col("feature_type"),
-                    FeatureBarcodeType::iter().format(", ")
-                )
-            })?;
+        let feature_type_str = get_col("feature_type");
+        let feature_type = FeatureBarcodeType::from_str(feature_type_str).map_err(|_| {
+            anyhow!(
+                "Unknown feature_type '{feature_type_str}' in the feature reference must be one of {}",
+                FeatureBarcodeType::iter().format(", ")
+            )
+        })?;
 
         let read = match WhichRead::from_str(get_col("read")) {
             Ok(WhichRead::R1) => WhichRead::R1,
@@ -430,9 +421,6 @@ Please check that your file is in CSV format and has the required field names."#
     Ok(())
 }
 
-table_config!(TargetSetTable, b',', "csv", true, Some(b'#'));
-pub type TargetSetFile = DelimitedFormat<Vec<String>, Csv, TargetSetTable>;
-
 martian_filetype! { FeatureReferenceFile, "csv" }
 
 impl FeatureReferenceFile {
@@ -476,93 +464,77 @@ impl FeatureReference {
         feature_config: Option<&FeatureConfig>,
     ) -> Result<Self> {
         let rdr = BufReader::new(File::open(path)?);
-        let fref = FeatureReference::new(
-            &ReferenceInfo::default(),
-            &Transcriptome::dummy(),
-            Some(rdr),
-            None,
-            None,
-            None,
-            feature_config,
-        )?;
+        let fref =
+            FeatureReference::new(&[], None, Some(rdr), None, None, None, None, feature_config)?;
         Ok(fref)
     }
 
-    /// Load a feature reference from a gene_index file and a option `feature_reference` csv file.
-    /// The gene_index is extracted from `<reference_path>/pickle/genes.pickle`. There is python code in
-    /// `cellranger/mro/stages/counter/attach_bcs_and_umis/` to create a csv from the pickle, containing rows
-    /// that can be deserialized with the `GeneIndexRow` struct above.
+    /// Read a feature reference from a transcriptome reference, probe set, and feature reference CSV.
     pub fn from_paths(
-        reference_path: &Path,
+        transcriptome_reference_path: Option<&Path>,
         feature_reference: Option<&FeatureReferenceFile>,
         use_feature_types: Option<TxHashSet<FeatureType>>,
         target_set_name: Option<&str>,
         target_set_path: Option<&TargetSetFile>,
         target_features_path: Option<&TargetGeneIndicesFile>,
         feature_config: Option<&FeatureConfig>,
-    ) -> Result<FeatureReference> {
-        let ref_info = ReferenceInfo::from_reference_path(reference_path)?;
-        let txome = Transcriptome::from_reference_path(reference_path)?;
+    ) -> Result<Self> {
+        assert!(
+            transcriptome_reference_path.is_some()
+                || target_set_path.is_some()
+                || feature_reference.is_some()
+        );
 
-        let target_set = if let (Some(name), Some(path)) = (target_set_name, target_features_path) {
-            Some(TargetSet::load(name, path)?)
-        } else {
-            None
-        };
+        let genomes = get_reference_genome_names(
+            transcriptome_reference_path
+                .map(ReferenceInfo::from_reference_path)
+                .transpose()?
+                .as_ref(),
+            target_set_path
+                .map(ProbeSetReferenceMetadata::load_from)
+                .transpose()?
+                .as_ref(),
+        );
 
-        let feature_ref_stream = if let Some(path) = feature_reference {
-            match File::open(path) {
-                Err(error) => panic!("error: {}: {error}", path.display()),
-                Ok(file) => Some(file),
-            }
-        } else {
-            None
-        };
+        let txome = transcriptome_reference_path
+            .map(Transcriptome::from_reference_path)
+            .transpose()?;
 
-        let target_gene_ids = target_set_path
-            .map(Self::read_target_panel_gene_ids)
+        let target_set = target_set_name
+            .zip(target_features_path)
+            .map(|(name, path)| TargetSet::load(name, path))
+            .transpose()?;
+
+        let feature_ref_stream = feature_reference
+            .map(|x| File::open(x).with_context(|| x.display().to_string()))
+            .transpose()?;
+
+        let target_genes_and_included = target_set_path
+            .map(|x| x.read_genes_and_included(transcriptome_reference_path))
             .transpose()?;
 
         FeatureReference::new(
-            &ref_info,
-            &txome,
+            &genomes,
+            txome.as_ref(),
             feature_ref_stream,
             use_feature_types,
+            target_set_name,
             target_set,
-            target_gene_ids.as_deref(),
+            target_genes_and_included.as_deref(),
             feature_config,
         )
     }
 
-    /// Read the target panel CSV file and return a list of gene IDs.
-    fn read_target_panel_gene_ids(target_set: &TargetSetFile) -> Result<Vec<String>> {
-        let headers = target_set
-            .read_headers()?
-            .ok_or_else(|| anyhow!("headers missing in file {}", target_set.display()))?;
-
-        ensure!(
-            headers[0] == "gene_id",
-            "Error: first column of target_set CSV header must be gene_id: {}: {}",
-            headers[0],
-            target_set.display()
-        );
-
-        process_results(
-            target_set
-                .lazy_reader()?
-                .map_ok(|record| record.into_iter().next().unwrap()),
-            |iter| iter.unique().collect(),
-        )
-    }
-
     /// Create a new feature reference. See `from_paths` for details.
+    #[allow(clippy::too_many_arguments)]
     pub fn new<R: Read>(
-        ref_info: &ReferenceInfo,
-        txome: &Transcriptome,
+        genomes: &[GenomeName],
+        txome: Option<&Transcriptome>,
         csv_stream: Option<R>,
         use_feature_types: Option<TxHashSet<FeatureType>>,
+        target_set_name: Option<&str>,
         target_set: Option<TargetSet>,
-        target_gene_ids: Option<&[String]>,
+        target_genes_and_included: Option<&[(FeatureID, FeatureName, bool)]>,
         feature_config: Option<&FeatureConfig>,
     ) -> Result<FeatureReference> {
         fn get_genome_from_str(
@@ -593,7 +565,14 @@ impl FeatureReference {
         let mut fdefs = Vec::new();
         let mut fmaps = HashMap::new();
         let mut cmo_ids = HashMap::new();
-        let mut target_set_indices = target_set.as_ref().map(|x| x.feature_indices().clone());
+        let mut target_set_indices = if let Some(target_set) = &target_set {
+            Some(target_set.feature_indices().clone())
+        } else if target_genes_and_included.is_some() {
+            // target_set is None when txome is None.
+            Some(TxHashSet::default())
+        } else {
+            None
+        };
 
         if use_feature_types
             .as_ref()
@@ -603,8 +582,8 @@ impl FeatureReference {
             fmaps.insert(FeatureType::Gene, HashMap::new());
 
             // Create gene features
-            for gene in &txome.genes {
-                let genome = get_genome_from_str(&gene.id, &ref_info.genomes, false);
+            for gene in txome.map_or([].as_slice(), |txome| txome.genes.as_slice()) {
+                let genome = get_genome_from_str(&gene.id, genomes, false);
                 let num_fdefs = fdefs.len();
                 fdefs.push(FeatureDef {
                     index: num_fdefs,
@@ -618,19 +597,19 @@ impl FeatureReference {
                     tags: HashMap::new(),
                 });
 
-                gene_to_index.insert(gene.to_gene().clone(), num_fdefs);
+                gene_to_index.insert(gene.to_gene(), num_fdefs);
             }
 
             // Create non-gene probe features.
-            if let Some(gene_ids) = target_gene_ids {
-                for gene_id in gene_ids {
-                    if !txome.gene_id_to_idx.contains_key(gene_id) {
-                        let genome = get_genome_from_str(gene_id, &ref_info.genomes, true);
+            if let Some(target_genes_and_included) = target_genes_and_included {
+                for &(ref gene_id, ref gene_name, included) in target_genes_and_included {
+                    if !txome.is_some_and(|x| x.gene_id_to_idx.contains_key(gene_id)) {
+                        let genome = get_genome_from_str(gene_id, genomes, true);
                         let num_fdefs = fdefs.len();
                         fdefs.push(FeatureDef {
                             index: num_fdefs,
                             id: gene_id.clone(),
-                            name: gene_id.clone(),
+                            name: gene_name.clone(),
                             genome,
                             sequence: String::default(),
                             pattern: String::default(),
@@ -641,12 +620,12 @@ impl FeatureReference {
                         gene_to_index.insert(
                             Gene {
                                 id: gene_id.clone(),
-                                name: gene_id.clone(),
+                                name: gene_name.clone(),
                             },
                             num_fdefs,
                         );
                         if let Some(target_set_indices) = &mut target_set_indices {
-                            if !is_deprecated_probe(gene_id) {
+                            if included && !is_deprecated_probe(gene_id) {
                                 target_set_indices.insert(num_fdefs as u32);
                             }
                         }
@@ -692,10 +671,8 @@ impl FeatureReference {
                 };
             }
         }
-        //
 
         let mut all_feature_ids = HashSet::new();
-
         if let Some(csv) = csv_stream {
             let reader = BufReader::new(csv);
             let mut csv_reader = csv::ReaderBuilder::new()
@@ -705,6 +682,8 @@ impl FeatureReference {
             let header = csv_reader.headers()?.clone();
 
             validate_headers(&header)?;
+
+            let hashtag_ids = feature_config.and_then(|f| f.hashtag_ids.clone());
 
             let mut feature_types_seen: HashSet<FeatureType> = HashSet::new();
 
@@ -742,33 +721,39 @@ impl FeatureReference {
                         }
                     }
                 }
+                if fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antibody)
+                    && hashtag_ids.as_ref().is_some_and(|h| h.contains(&fdef.id))
+                {
+                    fdef.add_tag(HASHTAG.to_string(), "True".to_string())?;
+                }
                 if fdef.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antigen) {
                     if let Some(feature_config) = feature_config {
                         if let Some(specificity_controls) = &feature_config.specificity_controls {
                             // Add tags corresponding to control id
                             // First, find allele (if beam-ab, set to None)
-                            let allele = if fdef.tags.get(MHC_ALLELE).is_some() {
-                                if feature_config.beam_mode == Some(BeamMode::BeamAB) {
-                                    bail!(
+                            let allele = match fdef.tags.get(MHC_ALLELE) {
+                                Some(allelle) => {
+                                    if feature_config.beam_mode == Some(BeamMode::BeamAB) {
+                                        bail!(
                                         "Error parsing feature reference: The `mhc_allele` column is invalid for BCR Antigen Capture."
                                     );
-                                }
-                                // Throw an error if feature reference has MHC allele but not multi config csv
-                                if !specificity_controls.has_mhc_allele_column {
-                                    bail!(
+                                    }
+                                    // Throw an error if feature reference has MHC allele but not multi config csv
+                                    if !specificity_controls.has_mhc_allele_column {
+                                        bail!(
                                         "Feature reference CSV contains `{0}` column but `{0}` is not present in the \
                                     [antigen-specificity] section of the multi config CSV.",
                                         MHC_ALLELE
                                     );
+                                    }
+                                    allelle.as_str()
                                 }
-                                fdef.tags[MHC_ALLELE].to_string()
-                            } else {
-                                NO_ALLELE.to_string()
+                                None => NO_ALLELE,
                             };
                             // Check if multi config CSV has correct allele and control feature id pairing
-                            if allele != *NO_ALLELE {
+                            if allele != NO_ALLELE {
                                 for (al, ctrl) in &specificity_controls.control_for_allele {
-                                    if ctrl == &fdef.id && al != &allele {
+                                    if ctrl == &fdef.id && al != allele {
                                         bail!(
                                             "Error parsing feature reference: Feature id {} has MHC allele \
                                         parameter {} which is incompatible with the MHC allele {} in [antigen-specificity] section of \
@@ -784,22 +769,25 @@ impl FeatureReference {
                             if let Some(seen) = seen_this_control_id.get_mut(&fdef.id) {
                                 *seen = true;
                             }
-                            if let Some(seen) = seen_this_mhc_allele.get_mut(&allele) {
+                            if let Some(seen) = seen_this_mhc_allele.get_mut(allele) {
                                 *seen = true;
                             }
 
-                            let control_id = specificity_controls.control_for_allele.get(&allele);
+                            let control_id = specificity_controls.control_for_allele.get(allele);
 
                             if let Some(control_id) = control_id {
                                 // If the control_id for the current feature is equel to the current feature id,
                                 // The current feature is non-targeting.
                                 let is_targeting = if control_id.eq(&fdef.id) {
-                                    "False".to_string()
+                                    "False"
                                 } else {
-                                    "True".to_string()
+                                    "True"
                                 };
 
-                                fdef.add_tag(TARGETING_ANTIGEN.to_string(), is_targeting)?;
+                                fdef.add_tag(
+                                    TARGETING_ANTIGEN.to_string(),
+                                    is_targeting.to_string(),
+                                )?;
                             } else {
                                 // if allele is not present in the specificity_controls, then this allele does not have
                                 // a control.
@@ -822,25 +810,28 @@ impl FeatureReference {
                         fdef.add_tag(TARGETING_ANTIGEN.to_string(), "Null".to_string())?;
                     }
                 }
-                if last_feature_type.is_none() {
-                    last_feature_type = Some(fdef.feature_type);
-                    feature_types_seen.insert(fdef.feature_type);
-                } else if fdef.feature_type != last_feature_type.unwrap()
-                    && feature_types_seen.contains(&fdef.feature_type)
-                {
-                    // If we have switched from the last feature type, but the new feature type is already in the feature types seen,
-                    // it means we have had a block of the new feature type before the block of last feature type:
-                    // Feature ref example:
-                    // Feature type A
-                    // Feature type B
-                    // Feature type B -> last feature type
-                    // Feature type A -> new feature type
-                    bail!(
-                        "Features of the same type must be continous in the feature reference file."
-                    );
-                } else {
-                    last_feature_type = Some(fdef.feature_type);
-                }
+                match last_feature_type {
+                    None => {
+                        feature_types_seen.insert(fdef.feature_type);
+                    }
+                    Some(lft) => {
+                        if fdef.feature_type != lft
+                            && feature_types_seen.contains(&fdef.feature_type)
+                        {
+                            // If we have switched from the last feature type, but the new feature type is already in the feature types seen,
+                            // it means we have had a block of the new feature type before the block of last feature type:
+                            // Feature ref example:
+                            // Feature type A
+                            // Feature type B
+                            // Feature type B -> last feature type
+                            // Feature type A -> new feature type
+                            bail!(
+                                "Features of the same type must be continous in the feature reference file."
+                            );
+                        }
+                    }
+                };
+                last_feature_type = Some(fdef.feature_type);
                 fmaps
                     .entry(fdef.feature_type)
                     .or_insert_with(HashMap::new)
@@ -850,6 +841,14 @@ impl FeatureReference {
 
                 fdefs.push(fdef);
             }
+
+            let duplicate_ids: Vec<_> = fdefs.iter().map(|x| &x.id).duplicates().collect();
+            ensure!(
+                duplicate_ids.is_empty(),
+                "{} duplicate feature ID(s) found in feature reference: {}",
+                duplicate_ids.len(),
+                duplicate_ids.into_iter().format(", ")
+            );
         }
 
         // Validate the content of feature-functional-map in feature_config
@@ -897,7 +896,7 @@ impl FeatureReference {
         }
 
         let updated_target_set = target_set_indices.map(|target_set_indices| {
-            TargetSet::from_indices(target_set.unwrap().name(), target_set_indices)
+            TargetSet::from_indices(target_set_name.unwrap(), target_set_indices)
         });
 
         Ok(FeatureReference {
@@ -975,6 +974,15 @@ impl FeatureReference {
         self.feature_defs
             .iter()
             .filter(|x| x.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing))
+            .map(|x| x.id.clone())
+            .collect()
+    }
+
+    /// Get the set of Antibody feature ids
+    pub fn antibody_ids(&self) -> TxHashSet<String> {
+        self.feature_defs
+            .iter()
+            .filter(|x| x.feature_type == FeatureType::Barcode(FeatureBarcodeType::Antibody))
             .map(|x| x.id.clone())
             .collect()
     }
@@ -1159,6 +1167,7 @@ impl FeatureReference {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_snapshot;
     use std::io::Cursor;
 
     // initialize insta test harness
@@ -1177,9 +1186,10 @@ id,name,read,pattern,sequence,feature_type
 ID1,Name1,R1,^(BC),AAAA,Antigen Capture
 "#;
         let fref = FeatureReference::new(
-            &ReferenceInfo::default(),
-            &Transcriptome::dummy(),
+            &[],
+            None,
             Some(Cursor::new(fdf_csv.as_bytes())),
+            None,
             None,
             None,
             None,
@@ -1187,6 +1197,6 @@ ID1,Name1,R1,^(BC),AAAA,Antigen Capture
         )
         .unwrap();
         let res = fref.check_tenx_beam();
-        insta::assert_display_snapshot!(res.unwrap_err());
+        assert_snapshot!(res.unwrap_err());
     }
 }

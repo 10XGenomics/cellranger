@@ -14,10 +14,10 @@ use crate::assembly_types::{
     ContigSummaryRow, FastqFile, UmiList, UmiSummaryRow,
 };
 use crate::contig_aligner::ContigAligner;
-use anyhow::Result;
+use anyhow::{Error, Result};
 use cr_types::chemistry::ChemistryDef;
 use cr_types::rna_read::RnaRead;
-use cr_types::{LibraryType, MetricsFile};
+use cr_types::LibraryType;
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::Kmer20;
 use debruijn::Mer;
@@ -32,9 +32,8 @@ use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::lz4_file::Lz4;
 use martian_filetypes::tabular_file::{CsvFile, TsvFile, TsvFileNoHeader};
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO, LazyWrite};
-use metric::{JsonReporter, Metric, SerdeFormat, SimpleHistogram};
+use metric::SimpleHistogram;
 use parameters_toml::vdj_max_reads_per_barcode;
-use perf_stats::{available_mem_gb, elapsed, mem_usage_gb, peak_mem_usage_gb, ps_me};
 use rust_htslib::bam;
 use rust_htslib::bam::HeaderView;
 use serde::{Deserialize, Serialize};
@@ -43,13 +42,12 @@ use std::fs::{remove_file, rename, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
 use std::{env, fs};
 use string_utils::{stringme, strme, TextUtils};
 use vdj_ann::annotate::{chain_type, ContigAnnotation, JunctionSupport};
 use vdj_ann::refx::{make_vdj_ref_data_core, RefData};
 use vdj_asm_utils::asm::write_sam_record_simple;
-use vdj_asm_utils::barcode_data::{metrics_json, BarcodeData, BarcodeDataBrief, BarcodeDataSum};
+use vdj_asm_utils::barcode_data::{BarcodeData, BarcodeDataBrief};
 use vdj_asm_utils::constants::{
     ReadType, CHAIN_TYPESX, CLIP, GAP_EXTEND, GAP_OPEN, KMER_LEN_BANDED_ALIGN, MATCH_SCORE,
     MISMATCH_SCORE, OR_CHAIN_TYPES, WINDOW_SIZE_BANDED_ALIGN,
@@ -69,6 +67,9 @@ martian_filetype!(BinFile, "bin");
 
 martian_filetype!(_BarcodeDataBriefFile, "bdf");
 pub type BarcodeDataBriefFile = BinaryFormat<_BarcodeDataBriefFile, Vec<BarcodeDataBrief>>;
+
+martian_filetype!(_BarcodeDataFile, "bd");
+pub type BarcodeDataFile = BinaryFormat<_BarcodeDataFile, Vec<BarcodeData>>;
 
 // martian_filetype!(_ContigAnnFile, "can");
 // impl FileStorage<Vec<ContigAnnotation>> for _ContigAnnFile {}
@@ -193,8 +194,6 @@ where
 // FIND ENRICHMENT PRIMERS
 // =================================================================================
 
-// ◼ This should be run only once, but it's not.
-
 fn enrichment_primers(
     primer_file: Option<&Path>,
     refdata: &RefData,
@@ -291,7 +290,6 @@ fn sam_to_bam(out_bam_file: &Path, sam_header: bam::header::Header, out_sam_file
     // exists in case you're debugging this code, as if it's left around it will crash
     // samtools.
 
-    println!("sorting bam, mem = {:.2}", mem_usage_gb());
     let out_bam_sorted_filename =
         out_bam_filename_str.rev_before("/").to_string() + "/contig_bam_sorted.bam";
     let tmp_filename = out_bam_sorted_filename.clone() + ".tmp.0000.bam";
@@ -320,9 +318,9 @@ pub struct AssemblyStageOutputs {
     pub contig_bam_bai: BamBaiFile,
     pub summary_tsv: TsvFile<ContigSummaryRow>,
     pub umi_summary_tsv: TsvFile<UmiSummaryRow>,
-    pub metrics_summary_json: MetricsFile,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub barcode_brief: BarcodeDataBriefFile,
+    pub barcode_full: BarcodeDataFile,
     pub barcode_support: CsvFile<BarcodeSupport>,
     pub barcodes_in_chunks: Vec<JsonFile<Vec<String>>>,
     pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
@@ -330,7 +328,6 @@ pub struct AssemblyStageOutputs {
     // The outputs below are simply bubbled up to the outs folder
     pub align_info: TxtFile,
     pub unmapped_sample_fastq: FastqFile,
-    pub report: TxtFile,
 }
 
 // =================================================================================
@@ -340,8 +337,8 @@ pub struct AssemblyStageOutputs {
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct AssemblyChunkInputs {
     pub chunk_rna_reads: Lz4<BincodeFile<Vec<RnaRead>>>,
-    pub perf_track: Option<bool>,
     pub chunk_id: usize,
+    pub primers: VdjPrimers,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
@@ -353,10 +350,46 @@ pub struct AssemblyChunkOutputs {
     pub barcodes_in_chunk: JsonFile<Vec<String>>,
     pub align_info: TxtFile,
     pub unmapped_sample_fastq: FastqFile,
-    pub barcode_data: BinFile,
-    pub barcode_data_sum: BinFile,
+    pub barcode_data: BarcodeDataFile,
     pub barcode_data_brief: BinFile,
     pub outs_builder: BincodeFile<Vec<BarcodeSupport>>,
+}
+
+#[derive(Clone, Serialize, Deserialize, MartianStruct)]
+pub struct VdjPrimers {
+    pub inner_primers: Vec<Vec<u8>>,
+    pub outer_primers: Vec<Vec<u8>>,
+}
+
+impl VdjPrimers {
+    pub fn new(
+        ref_path: Option<PathBuf>,
+        primer_file: Option<PathBuf>,
+        receptor: Option<VdjReceptor>,
+    ) -> Result<Self, Error> {
+        let is_tcr = receptor == Some(VdjReceptor::TR) || receptor == Some(VdjReceptor::TRGD);
+        let is_bcr = receptor == Some(VdjReceptor::IG);
+        let mut refdata = RefData::new();
+        if let Some(ref ref_path) = ref_path {
+            let fasta = read_to_string_safe(format!("{}/fasta/regions.fa", ref_path.display()));
+            make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
+        }
+        let mut inner_primersx = Vec::<Vec<u8>>::new();
+        let mut outer_primersx = Vec::<Vec<u8>>::new();
+        enrichment_primers(
+            primer_file.as_deref(),
+            &refdata,
+            is_tcr,
+            is_bcr,
+            &mut inner_primersx,
+            &mut outer_primersx,
+        );
+
+        Ok(VdjPrimers {
+            inner_primers: inner_primersx,
+            outer_primers: outer_primersx,
+        })
+    }
 }
 
 // =================================================================================
@@ -379,6 +412,13 @@ impl MartianStage for Assembly {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
+        // If the customer has not specified primers, we use the
+        // reference sequence to decide if the species is human or mouse.
+        let primers = VdjPrimers::new(
+            args.vdj_reference_path,
+            args.inner_enrichment_primers,
+            args.receptor,
+        )?;
         // Set up chunks.
         // ◼ Join memory highwater mark was 5.4 GB (rounded).
         // ◼ See comments about memory inefficiency in the join step.
@@ -391,8 +431,8 @@ impl MartianStage for Assembly {
                 (
                     AssemblyChunkInputs {
                         chunk_rna_reads,
-                        perf_track: Some(false),
                         chunk_id: i,
+                        primers: primers.clone(),
                     },
                     Resource::with_mem_gb(2),
                 )
@@ -411,21 +451,6 @@ impl MartianStage for Assembly {
         split_args: Self::ChunkInputs,
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
-        // Print some environment info.
-
-        println!("\nstarting vdj_asm_asm, mem = {:.2}", mem_usage_gb());
-        match available_mem_gb() {
-            None => {
-                println!("available mem = unknown");
-            }
-            Some(m) => {
-                println!("available mem = {m:.2} GB");
-            }
-        }
-        if split_args.perf_track == Some(true) {
-            println!("host = {}", hostname::get().unwrap().to_string_lossy());
-        }
-
         // Print the command.
         println!("{}", env::args().collect::<Vec<_>>().join(" "));
 
@@ -439,20 +464,6 @@ impl MartianStage for Assembly {
         let (refdata, refdatax, refdata_full, rkmers_plus_full_20) =
             load_refdata(args.vdj_reference_path.as_deref(), is_tcr, is_bcr);
         let refs = &refdata.refs;
-
-        // Specify inner primers.  If the customer has not specified primers, we use the
-        // reference sequence to decide if the species is human or mouse.
-
-        let mut inner_primersx = Vec::<Vec<u8>>::new();
-        let mut outer_primersx = Vec::<Vec<u8>>::new();
-        enrichment_primers(
-            args.inner_enrichment_primers.as_deref(),
-            &refdata,
-            is_tcr,
-            is_bcr,
-            &mut inner_primersx,
-            &mut outer_primersx,
-        );
 
         // Get filenames and set up writers.
 
@@ -471,13 +482,7 @@ impl MartianStage for Assembly {
 
         // Start of new code to process all barcodes.
 
-        let t = Instant::now();
-        let mut log_opts = LogOpts::new();
-        if split_args.perf_track == Some(true) {
-            log_opts.clock = true;
-            log_opts.mem = true;
-            log_opts.keep_all = true;
-        }
+        let log_opts = LogOpts::default();
 
         // Set up for alignment.
 
@@ -498,8 +503,6 @@ impl MartianStage for Assembly {
             &refdata,
             refdatax,
             refdata_full,
-            inner_primersx,
-            outer_primersx,
             rkmers_plus_full_20,
             is_tcr,
             is_bcr,
@@ -510,12 +513,9 @@ impl MartianStage for Assembly {
 
         // Write barcode data.
 
-        let barcode_data_file = rover.make_path("barcode_data.bin");
-        write_obj(&barcode_data, &barcode_data_file);
-        let barcode_data_sum_file = rover.make_path("barcode_data_sum.bin");
-        let barcode_data_sum = BarcodeDataSum::sum(&barcode_data, &refdata);
+        let barcode_data_file: BarcodeDataFile = rover.make_path("barcode_data");
+        barcode_data_file.write(&barcode_data)?;
         drop(barcode_data);
-        write_obj(&barcode_data_sum, &barcode_data_sum_file);
         let barcode_data_brief_file = rover.make_path("barcode_data_brief.bin");
         write_obj(&barcode_data_brief, &barcode_data_brief_file);
         drop(barcode_data_brief);
@@ -530,28 +530,6 @@ impl MartianStage for Assembly {
         barcodes_in_chunk_file.write(&barcodes)?;
         drop(barcodes);
 
-        // Print.
-
-        println!(
-            "\n▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓\
-             ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓\n"
-        );
-        println!(
-            "{:.3} seconds used processing barcodes, peak mem = {:.2}",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-
-        // See how much memory is in use, for debugging.
-
-        if log_opts.clock {
-            ps_me();
-            println!(
-                "\nexiting main program, mem = {:.2}, peak = {:.2}",
-                mem_usage_gb(),
-                peak_mem_usage_gb()
-            );
-        }
         Ok(AssemblyChunkOutputs {
             contig_bam: out_bam_filename,
             summary_tsv: summary_file,
@@ -561,7 +539,6 @@ impl MartianStage for Assembly {
             align_info: align_info_file,
             unmapped_sample_fastq: unmapped_sample_fastq_file,
             barcode_data: barcode_data_file,
-            barcode_data_sum: barcode_data_sum_file,
             barcode_data_brief: barcode_data_brief_file,
             outs_builder: ob_file,
         })
@@ -578,21 +555,10 @@ impl MartianStage for Assembly {
         chunk_outs: Vec<Self::ChunkOutputs>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
-        // Set up logging.
-
-        let t = Instant::now();
-        let log_opts = LogOpts::new();
-        log_opts.report_perf_stats_now(&t, "upon entering join");
-
         // CELLRANGER-7889: "VDJ" is hardcoded in mro injection of chemistry defs map.
         let chemistry_def = &args.chemistry_defs[&LibraryType::VdjAuto];
 
-        // Get the number of read pairs.  This is from the beginning, before we
-        // throw out non-whitelisted barcodes.
-        let total_read_pairs = args.total_read_pairs as usize;
-
         // Merge summary_tsv and umi_summary_tsv files.
-
         let summary_tsv_file: TsvFile<ContigSummaryRow> = rover.make_path("summary_tsv");
         write_contig_summary_tsv(&summary_tsv_file, &chunk_outs)?;
 
@@ -607,11 +573,6 @@ impl MartianStage for Assembly {
             line_by_line_copy(&mut co.align_info.buf_reader()?, &mut align_info)?;
         }
         drop(align_info);
-
-        // Set up report file.
-
-        let report_file: TxtFile = rover.make_path("report");
-        let mut report = report_file.buf_writer()?;
 
         // Merge unmapped fastq files.
 
@@ -686,14 +647,13 @@ impl MartianStage for Assembly {
         // Merge bam files, then index.
 
         let out_bam_filename: BamFile = rover.make_path("contig_bam.bam");
-        log_opts.report_perf_stats_now(&t, "before merging bam files");
+
         let bams: Vec<_> = chunk_outs.iter().map(|co| co.contig_bam.clone()).collect();
         let contig_bam_bai_filename: BamBaiFile = rover.make_path("contig_bam.bam.bai");
         if !chunk_outs.is_empty() {
             merge_bams(&bams, out_bam_filename.as_ref()).unwrap();
-            log_opts.report_perf_stats_now(&t, "before indexing bam");
+
             index_bam(&out_bam_filename);
-            log_opts.report_perf_stats_now(&t, "after sorting");
         } else {
             out_bam_filename.buf_writer()?;
         }
@@ -703,83 +663,11 @@ impl MartianStage for Assembly {
         let is_tcr =
             args.receptor == Some(VdjReceptor::TR) || args.receptor == Some(VdjReceptor::TRGD);
         let is_bcr = args.receptor == Some(VdjReceptor::IG);
-        let is_gd = Some(args.receptor == Some(VdjReceptor::TRGD));
 
         if let Some(ref ref_path) = args.vdj_reference_path {
             let fasta = read_to_string_safe(format!("{}/fasta/regions.fa", ref_path.display()));
             make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
         }
-
-        // Read in barcode data sum files and merge.  Then generate metrics from
-        // that.
-
-        log_opts.report_perf_stats_now(&t, "before reading barcode data");
-        let mut barcode_data_sum = Vec::<BarcodeDataSum>::new();
-        for co in &chunk_outs {
-            let barcode_data_sum_this: BarcodeDataSum = read_obj(&co.barcode_data_sum);
-            barcode_data_sum.push(barcode_data_sum_this);
-        }
-
-        log_opts.report_perf_stats_now(&t, "after reading");
-        let mut inner_primersx = Vec::<Vec<u8>>::new();
-        let mut outer_primersx = Vec::<Vec<u8>>::new();
-        enrichment_primers(
-            args.inner_enrichment_primers.as_deref(),
-            &refdata,
-            is_tcr,
-            is_bcr,
-            &mut inner_primersx,
-            &mut outer_primersx,
-        );
-        let mut json = Vec::<u8>::new();
-
-        println!("Just before metrics json");
-        let single_end = !chemistry_def.is_paired_end();
-        metrics_json(
-            rover.files_path().to_str().unwrap(),
-            is_tcr,
-            &barcode_data_sum,
-            &mut json,
-            single_end,
-            &refdata,
-            &inner_primersx,
-            &outer_primersx,
-            total_read_pairs,
-            &mut report,
-            is_gd,
-        );
-        println!("Done with metrics json");
-        log_opts.report_perf_stats_now(&t, "after computing json metrics");
-        drop(barcode_data_sum);
-        let metrics_file: MetricsFile = rover.make_path("asm_metrics");
-        let mut metrics_out = metrics_file.buf_writer()?;
-        fwrite!(metrics_out, "{}", strme(&json));
-        drop(metrics_out);
-
-        // Validate json structure of metrics_summary_json.json.
-        println!("Validate json structure");
-        let json2 = read_to_string_safe(&metrics_file);
-        let _: serde_json::Value = serde_json::from_str(&json2).unwrap_or_else(|_| {
-            panic!(
-                "{} is not well-formatted",
-                metrics_file.as_ref().to_str().unwrap()
-            )
-        });
-
-        println!("Validated");
-
-        let metrics_reporter: JsonReporter = metrics_file.read()?;
-        let reference_reporter = if let Some(ref_path) = args.vdj_reference_path {
-            let report: JsonReporter = JsonFile::new(ref_path, "reference").read()?;
-            report.add_prefix("vdj_reference")
-        } else {
-            JsonReporter::default()
-        };
-        let metrics_summary_json = MetricsFile::from_reporter(
-            &rover,
-            "metrics_summary_json",
-            &(metrics_reporter + reference_reporter),
-        )?;
 
         // Merge barcode support files.
         let barcode_support_file: CsvFile<BarcodeSupport> = rover.make_path("barcode_support.csv");
@@ -787,6 +675,9 @@ impl MartianStage for Assembly {
 
         let barcode_data_brief_file: BarcodeDataBriefFile = rover.make_path("barcode_data_brief");
         barcode_data_brief_file.write(&barcode_data_brief)?;
+
+        let barcode_data_full_file: BarcodeDataFile = rover.make_path("barcode_data_full");
+        write_bc_data_full(&barcode_data_full_file, &chunk_outs)?;
 
         let assemblable_reads_per_bc = {
             let path: AsmReadsPerBcFormat = rover.make_path("assemblable_reads_per_bc");
@@ -800,27 +691,24 @@ impl MartianStage for Assembly {
 
         // Return results.
 
-        log_opts.report_perf_stats_now(&t, "before making barcodes_in_chunks");
         let barcodes_in_chunks = chunk_outs
             .iter()
             .map(|co| co.barcodes_in_chunk.clone())
             .collect();
 
-        log_opts.report_perf_stats_now(&t, "join at Ok");
         Ok(AssemblyStageOutputs {
             contig_bam: out_bam_filename,
             contig_bam_bai: contig_bam_bai_filename,
             summary_tsv: summary_tsv_file,
             umi_summary_tsv: umi_summary_tsv_file,
-            metrics_summary_json,
             contig_annotations: contig_annotations_file,
             barcode_brief: barcode_data_brief_file,
+            barcode_full: barcode_data_full_file,
             barcode_support: barcode_support_file,
             barcodes_in_chunks,
             assemblable_reads_per_bc,
             align_info: align_info_file,
             unmapped_sample_fastq: unmapped_sample_fastq_file,
-            report: report_file,
         })
     }
 }
@@ -899,8 +787,6 @@ fn write_simple_sam(
     refdata: &RefData,
     refdatax: RefData,
     refdata_full: RefData,
-    inner_primersx: Vec<Vec<u8>>,
-    outer_primersx: Vec<Vec<u8>>,
     rkmers_plus_full_20: Vec<(Kmer20, i32, i32)>,
     is_tcr: bool,
     is_bcr: bool,
@@ -931,9 +817,10 @@ fn write_simple_sam(
     let contam = FlowcellContam::new();
     let n50_n50_rpu = args.n50_n50_rpu;
     // Compute primer extensions.
-
-    let inner_primer_exts = get_primer_exts(&inner_primersx, refdata);
-    let outer_primer_exts = get_primer_exts(&outer_primersx, refdata);
+    let inner_primersx = &split_args.primers.inner_primers;
+    let outer_primersx = &split_args.primers.outer_primers;
+    let inner_primer_exts = get_primer_exts(inner_primersx, refdata);
+    let outer_primer_exts = get_primer_exts(outer_primersx, refdata);
 
     let mut log = Vec::<u8>::new();
     let mut ann_writer = contig_annotations_file.lazy_writer()?;
@@ -985,8 +872,7 @@ fn write_simple_sam(
     // Scope to force closure of simple_sam_writer2.
 
     {
-        let barcode_counts_full =
-            SimpleHistogram::<String>::from_file(&args.corrected_bc_counts, SerdeFormat::Json);
+        let barcode_counts_full = args.corrected_bc_counts.read()?;
         let mut trimmer = crate::adapter::VdjTrimmer::new(&vdj_adapters);
         let mut simple_sam_writer2 = BufWriter::new(&mut simple_sam_writer);
 
@@ -1016,6 +902,7 @@ fn write_simple_sam(
             let actual_reads = barcode_counts_full.get(&barcode_string);
             let read_data = (barcode_string, read_inner_data, actual_reads);
             barcode_data_this.nreads = read_data.2 as i32;
+            barcode_data_this.nreads_used_for_assembly = this_bc_reads.len() as i32;
             // Assign fraction of reads used for assembly of each barcode
             let max_read_pairs_per_barcode = get_max_reads_per_barcode(chemistry_def);
             barcode_data_this.frac =
@@ -1073,7 +960,7 @@ fn write_simple_sam(
 
             let barcode = read_data.0.clone();
             barcodes.push(barcode.clone());
-            let t = Instant::now();
+
             // if track { println!( "START {}", chbid ); }
             let mut log2 = Vec::<u8>::new();
 
@@ -1084,8 +971,8 @@ fn write_simple_sam(
             );
             fwriteln!(log2, "BARCODE {} = {}\n", chbid, read_data.0);
             fwriteln!(log2, "using {} reads", read_data.1.len());
-            barcode_data_this.barcode = read_data.0.clone();
-            log_opts.report_perf_stats(&mut log2, &t, "before preprocessing reads");
+            barcode_data_this.barcode.clone_from(&read_data.0);
+
             drop(read_data);
 
             let (corrected, umi_sorted_reads) =
@@ -1111,7 +998,7 @@ fn write_simple_sam(
             let mut invalidated_umis = Vec::<Vec<String>>::new();
             let mut barcode_data_brief_this = BarcodeDataBrief::new();
             let mut junction_support = Vec::<Option<JunctionSupport>>::new();
-            barcode_data_brief_this.barcode = barcode.clone();
+            barcode_data_brief_this.barcode.clone_from(&barcode);
             barcode_data_brief_this.read_pairs = barcode_data_this.nreads as u64;
             barcode_data_brief_this.frac_reads_used = barcode_data_this.frac;
             process_barcode(
@@ -1120,8 +1007,8 @@ fn write_simple_sam(
                 is_tcr,
                 is_bcr,
                 is_gd,
-                &inner_primersx,
-                &outer_primersx,
+                inner_primersx,
+                outer_primersx,
                 &inner_primer_exts,
                 &outer_primer_exts,
                 &mut reads,
@@ -1152,14 +1039,13 @@ fn write_simple_sam(
                 log_opts,
                 &heur,
             );
-            log_opts.report_perf_stats(&mut log2, &t, "upon return from process_barcodes");
 
             // Write contigs and annotation for them.
             for i in 0..conx.len() {
                 let tigname = format!("{barcode}_contig_{}", i + 1);
                 // Build annotation.
 
-                let can = ContigAnnotation::from_seq(
+                let mut can = ContigAnnotation::from_seq(
                     &conx[i],
                     &conxq[i],
                     &tigname,
@@ -1171,9 +1057,10 @@ fn write_simple_sam(
                     Some(non_validated_umis[i].clone()),
                     Some(invalidated_umis[i].clone()),
                     false, // determined in ASM_CALL_CELLS stage
-                    is_gd,
                     junction_support[i].as_ref().cloned(),
                 );
+
+                can.sample = Some(args.sample_id.clone());
 
                 // confirm that productive labels assigned to contigs
                 // match up with assembler con and con2 piles.
@@ -1185,7 +1072,6 @@ fn write_simple_sam(
                 // Output as json with four space indentation
                 ann_writer.write_item(&can)?;
             }
-            log_opts.report_perf_stats(&mut log2, &t, "after writing contigs");
 
             // Make a vector showing which umis/reads are assigned to which contigs.
             // By design, each UMI is assigned to at most one contig, and each
@@ -1281,7 +1167,6 @@ fn write_simple_sam(
                 r.flags = flags[i]; // flags
                 readsx.push(r);
             }
-            log_opts.report_perf_stats(&mut log2, &t, "after creating readsx");
 
             // Add to the sam file.  First gather contig names.
             // ◼ The creation of bam headers here is gratuituous, since what
@@ -1365,15 +1250,13 @@ fn write_simple_sam(
             }
             // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
-            log_opts.report_perf_stats(&mut log2, &t, "after simple sam");
-
             // Finish up.
 
             bid += 1;
             barcode_data.push(barcode_data_this);
             barcode_data_brief.push(barcode_data_brief_this);
-            log_opts.report_perf_stats(&mut log2, &t, "after pushing result");
-            if nedges > 0 || log_opts.keep_all {
+
+            if nedges > 0 {
                 log.append(&mut log2);
             }
         }
@@ -1447,6 +1330,19 @@ fn write_bc_support_csv(
         for bc_support in reader {
             let bc_support = bc_support?;
             writer.write_item(&bc_support)?;
+        }
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+fn write_bc_data_full(file: &BarcodeDataFile, chunk_outs: &[AssemblyChunkOutputs]) -> Result<()> {
+    let mut writer = file.lazy_writer()?;
+    for chunk in chunk_outs {
+        let reader = chunk.barcode_data.lazy_reader()?;
+        for bc_data in reader {
+            let bc_data = bc_data?;
+            writer.write_item(&bc_data)?;
         }
     }
     writer.finish()?;

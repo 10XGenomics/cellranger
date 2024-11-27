@@ -24,7 +24,9 @@ class ReadLocation(NamedTuple):
     y: int
 
 
-READ_NAME_REGEX: str = r"^[a-zA-Z0-9\-]+:[a-z0-9\-]+:([a-zA-Z0-9\-]+):([0-9]):([0-9])([0-9])([0-9]+):([0-9]+):([0-9]+)$"
+READ_NAME_REGEX: str = (
+    r"^[a-zA-Z0-9\-]+:[a-z0-9\-]+:([a-zA-Z0-9\-]+):([0-9]):([0-9])([0-9])([0-9]+):([0-9]+):([0-9]+)$"
+)
 
 NUM_READS_TO_ESTIMATE_TILE_EXTENTS: int = 2000
 

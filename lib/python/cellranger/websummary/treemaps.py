@@ -132,20 +132,22 @@ def make_antibody_treemap_plot(ab_matrix, lib_type, subset_features, is_spatial=
             labels=["<b>" + label + "</b>" for label in antibody_label],
             values=ab_frac_values,
             parents=[""] * len(antibody_label),
-            text=list(
-                map(
-                    "<br>".join,
-                    zip(
-                        [
-                            "<b>" + name + barcodes_or_cells + "</b>"
-                            for name in barcodes_per_feature
-                        ],
-                        ["<b>" + name + "</b>" for name in secondary_names],
-                    ),
+            text=(
+                list(
+                    map(
+                        "<br>".join,
+                        zip(
+                            [
+                                "<b>" + name + barcodes_or_cells + "</b>"
+                                for name in barcodes_per_feature
+                            ],
+                            ["<b>" + name + "</b>" for name in secondary_names],
+                        ),
+                    )
                 )
-            )
-            if has_secondary_name
-            else barcodes_per_feature_labs,
+                if has_secondary_name
+                else barcodes_per_feature_labs
+            ),
             marker_colorscale="Blackbody",
             hovertemplate=hover_text,
         )

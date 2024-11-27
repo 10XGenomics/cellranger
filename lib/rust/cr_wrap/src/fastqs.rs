@@ -10,15 +10,17 @@ use metric::TxHashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+pub fn get_target_set_name(target_set_csv: &Option<CliPath>) -> Option<String> {
+    target_set_csv
+        .as_ref()
+        .map(|t| t.file_stem().unwrap().to_string_lossy().into_owned())
+}
+
 macro_rules! impl_get_sample_defs {
     ($name:ident) => {
         impl $name {
             /// Convert the command-line FASTQ finding arguments into SampleDefs
-            pub fn get_sample_defs(
-                &self,
-                library_type: LibraryType,
-                target_panel: Option<&Path>,
-            ) -> Result<Vec<SampleDef>> {
+            pub fn get_sample_defs(&self, library_type: LibraryType) -> Result<Vec<SampleDef>> {
                 let mut sample_defs = Vec::new();
 
                 // Get the FASTQs paths that are compatible with the given bcl2fastq project
@@ -44,10 +46,6 @@ macro_rules! impl_get_sample_defs {
                         r2_length: None,
                         read_path: path,
                         sample_indices: Some(vec!["any".to_string()]),
-                        target_set: target_panel.as_ref().map(|t| t.to_path_buf()),
-                        target_set_name: target_panel
-                            .as_ref()
-                            .map(|t| t.file_stem().unwrap().to_string_lossy().into_owned()),
                         // NOTE: subsampling parameters could be added here
                         subsample_rate: None,
                         sample_names: Some(sample_names.into_iter().collect()),
@@ -165,6 +163,7 @@ pub fn get_fastq_paths(input_paths: &[CliPath], project: Option<&str>) -> Result
 ///root.
 /// - path: The FASTQ input path.
 /// - project: The supplied project field.
+///
 /// Returns the FASTQ path that is legal for a downstream run
 /// Returns Err if the path/project path is illegal
 fn get_bcl2fastq_output_folder(path: &Path) -> Option<PathBuf> {

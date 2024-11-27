@@ -67,17 +67,17 @@ impl ReadVisitor for BarcodeCorrectionVisitor {
         let metrics = InnerBarcodeCorrectionMetrics {
             // This visitor visits only uncorrected invalid barcodes.
             // The barcode is valid now if and only if it was corrected.
-            corrected_bc: read.barcode().is_valid().into(),
+            corrected_bc: read.barcode_is_valid().into(),
             corrected_bc_in: read
-                .segmented_barcode()
+                .segmented_barcode
                 .segments()
                 .map(|seg| {
                     PercentMetric::from(seg.state == BarcodeSegmentState::ValidAfterCorrection)
                 })
                 .into(),
-            good_bc: read.barcode().is_valid().into(),
+            good_bc: read.barcode_is_valid().into(),
             good_bc_in: read
-                .segmented_barcode()
+                .segmented_barcode
                 .segments_valid()
                 .map(PercentMetric::from)
                 .into(),

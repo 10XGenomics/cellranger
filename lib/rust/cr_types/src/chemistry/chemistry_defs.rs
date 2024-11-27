@@ -55,7 +55,7 @@ pub fn normalize_chemistry_def(mut def: ChemistryDef) -> Option<ChemistryDef> {
             // I think this is advantageous because it specifies what you ignore
             // instead of what you include and is thus resilient to adding fields.
             def.name = known_def.name;
-            def.description = known_def.description.clone();
+            def.description.clone_from(&known_def.description);
             def == **known_def
         })
         .exactly_one()

@@ -13,6 +13,7 @@ stage CELLRANGER_PREFLIGHT(
     in  bool             full_check,
     in  string           chemistry,
     in  map[]            sample_def,
+    in  csv              target_set,
     in  path             reference_path,
     in  csv              feature_reference,
     in  CellCallingParam recovered_cells,
@@ -31,11 +32,6 @@ stage CELLRANGER_PREFLIGHT(
 def run_preflight_checks(args):
     cr_preflight.check_os()
 
-    cr_preflight.check_chemistry(
-        args.chemistry,
-        args.sample_def,
-    )
-
     cr_preflight.check_sample_info(
         args.sample_def, args.reference_path, args.full_check, args.feature_reference
     )
@@ -51,7 +47,7 @@ def run_preflight_checks(args):
 
     cr_preflight.check_feature_preflights(args.sample_def, args.feature_reference)
     cr_preflight.check_targeting_preflights(
-        args.sample_def,
+        args.target_set,
         args.reference_path,
         args.feature_reference,
         parse_files=args.full_check,

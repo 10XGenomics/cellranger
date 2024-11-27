@@ -244,10 +244,10 @@ def join(args, outs, _chunk_defs, _chunk_outs):
     # but keep the arg 'call' here because log_info inherently
     # attempts to encode the message... (TODO: should log_info
     # figure out the encoding of the input string)
-    martian.log_info("Running crconverter: %s" % " ".join(call))
+    martian.log_info("Running crconverter: {}".format(" ".join(call)))
     try:
         results = tk_subproc.check_output(unicode_call, stderr=subprocess.STDOUT)
-        martian.log_info("crconverter output: %s" % results)
+        martian.log_info(f"crconverter output: {results}")
     except subprocess.CalledProcessError as e:
         outs.output_for_cloupe = None
-        martian.throw("Could not generate .cloupe file: \n%s" % e.output)
+        martian.throw(f"Could not generate .cloupe file: \n{e.output}")

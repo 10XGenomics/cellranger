@@ -61,11 +61,11 @@ def split(args):
     return {
         "chunks": [
             {
-                "chunk_start": i * num_features_per_chunk,
-                "chunk_end": min(num_features, (i + 1) * num_features_per_chunk),
+                "chunk_start": start,
+                "chunk_end": min(num_features, start + num_features_per_chunk),
                 "__mem_gb": mem_gib,
             }
-            for i in range(num_chunks)
+            for start in range(0, num_features, num_features_per_chunk)
         ],
         "join": {"__mem_gb": mem_gib},
     }

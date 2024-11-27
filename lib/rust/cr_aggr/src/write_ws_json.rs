@@ -171,7 +171,7 @@ impl MartianMain for WriteWsJson {
             .into_iter()
             .take(TOP_N)
             .map(|r| VdjAggrClonotypeRow {
-                id: r.clonotype_id.parse::<ClonotypeId>().unwrap().id,
+                id: ClonotypeId::parse(&r.clonotype_id).unwrap().id,
                 cdr3_aas: r.cdr3s_aa.split(';').map(Into::into).collect(),
                 num_cells: r.frequency,
                 proportion: Percent::Float(r.proportion),

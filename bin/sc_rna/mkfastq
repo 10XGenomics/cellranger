@@ -15,7 +15,6 @@ function implement_read_configuration {
         TENX_UMI_START_INDEX=16
         TENX_UMI_LENGTH=10
         TENX_SI_READ_TYPE=I1
-        WHITELIST_NAME="737K-august-2016,3M-february-2018"
     else
         # 10x barcode in index read, v1 chemistry
         TENX_BC_READ_TYPE=I1
@@ -24,9 +23,7 @@ function implement_read_configuration {
         TENX_UMI_START_INDEX=0
         TENX_UMI_LENGTH=10
         TENX_SI_READ_TYPE=I2
-        WHITELIST_NAME="737K-april-2014_rc"
     fi
-    TENX_BARCODE_WHITELIST=$(python -c 'from sys import argv;import cellranger.barcodes.utils as u;print(u.get_barcode_whitelist_paths(argv[1]))' "$WHITELIST_NAME")
 }
 
 # shellcheck source=../tenkit/_mkfastq

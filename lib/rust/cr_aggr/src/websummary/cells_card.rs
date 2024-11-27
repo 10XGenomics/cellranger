@@ -23,6 +23,7 @@ impl From<VdjAggrCellsTable> for CardWithTable {
                 "Diversity".into(),
             ]),
             rows: src.0.into_iter().map(Into::into).collect(),
+            grouping_header: None,
         };
         let help = TitleWithHelp {
             title: CARD_TITLE.into(),

@@ -8,8 +8,11 @@ stage DISABLE_SECONDARY_ANALYSIS(
     in  bool is_spatial,
     in  h5   filtered_matrices_h5,
     in  bool no_secondary_analysis,
+    in  bool is_visium_hd_main_run  "Boolean indicating if this is being called from a main (not-binning) Visium HD run",
     out bool no_secondary_analysis,
     src py   "stages/common/disable_secondary_analysis",
+) using (
+    volatile = strict,
 )
 """
 
@@ -21,7 +24,7 @@ MAX_BARCODES_FOR_SEC_ANALYSIS_SPATIAL = 1_000_000
 
 
 def main(args, outs):
-    if args.no_secondary_analysis:
+    if args.no_secondary_analysis or args.is_visium_hd_main_run:
         outs.no_secondary_analysis = True
         return
 

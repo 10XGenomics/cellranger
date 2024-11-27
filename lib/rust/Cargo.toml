@@ -15,37 +15,67 @@ opt-level = 3
 split-debuginfo = 'unpacked'
 
 [workspace]
-members = ['barcode', 'barcode_extensions', 'barcodes_folder', 'bazel_utils', 'byteseq', 'clonotype_assigner', 'cr_aggr', 'cr_ana', 'cr_bam', 'cr_h5', 'cr_lib', 'cr_types', 'cr_vdj', 'cr_websummary', 'cr_wrap', 'fast_utils', 'jibes_o3', 'json_report_derive', 'metric', 'metric_derive', 'multi', 'par_proc', 'parameters_toml', 'pyanyhow', 'slide_design', 'stats', 'tenkit2', 'transcriptome', 'tx_annotation', 'umi', 'vdj_asm_asm', 'vdj_asm_utils', 'vdj_proto', 'vdj_reference', 'websummary_build', 'websummary_derive']
+members = ['barcode', 'barcode_extensions', 'barcodes_folder', 'bazel_utils', 'byteseq', 'clonotype_assigner', 'cloud_utils', 'cr_aggr', 'cr_ana', 'cr_bam', 'cr_h5', 'cr_lib', 'cr_types', 'cr_vdj', 'cr_websummary', 'cr_wrap', 'fast_utils', 'jibes_o3', 'json_report_derive', 'metric', 'metric_derive', 'multi', 'multiconfig_converter', 'par_proc', 'parameters_toml', 'pyanyhow', 'slide_design', 'stats', 'tenkit2', 'transcriptome', 'tx_annotation', 'umi', 'vdj_asm_asm', 'vdj_asm_utils', 'vdj_filter_barcodes', 'vdj_proto', 'vdj_reference', 'websummary_build', 'websummary_derive', 'amino', 'enclone', 'enclone_args', 'enclone_core', 'enclone_process', 'enclone_proto', 'enclone_ranger', 'enclone_stuff', 'equiv', 'graph_simple', 'hyperbase', 'io_utils', 'kmer_lookup', 'stats_utils', 'string_utils', 'vdj_ann', 'vdj_ann_ref', 'vdj_types', 'vector_utils']
 resolver = '2'
 
 [workspace.dependencies]
+bincode = '1.1.3'
+bio = '2'
+bio-types = '1'
+bitflags = '2'
+byteorder = '1'
 criterion = '0.5'
+csv = '1'
 ctor = '0.2'
-derive_more = '0.99'
+debruijn = '0.3'
+docopt = '1'
+file_diff = '1'
 flate2 = '1'
+fxhash = '0.2'
+glob = '0.3'
+heck = '0.5'
+hex = '0.4'
+hostname = '0.4'
+indoc = '1'
 itertools = '0.10'
+lazy_static = '1'
 libc = '0.2'
+log = '0.4'
+lz4 = '1'
 ndarray = '0.15'
+ndarray-stats = '0.5'
 nom_locate = '4'
-plotly = '0.8'
+num-traits = '0.2'
+numpy = '0.19'
+parquet_derive = '51'
+permutation = '0.4'
+petgraph = '0.6'
+plotly = '0.9'
+pretty_assertions = '1'
+proc-macro2 = '1'
+proptest = '1'
+prost = '0.13'
+prost-build = '0.13'
+quote = '1'
 rand = '0.8'
+rand_chacha = '0.3'
 rand_distr = '0.4'
 rand_pcg = '0.3'
+rand_xorshift = '0.3'
 rayon = '1'
 serde_json = '1'
-shardio = '0.8'
+sha2 = '0.10'
 statrs = '0.16'
 strum = '0.25'
-strum_macros = '0.25'
-toml = '0.7'
-
-[workspace.dependencies.align_tools]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
-
-[workspace.dependencies.amino]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+strum_macros = '0.26'
+superslice = '1'
+syn = '2'
+tempfile = '3.4'
+thiserror = '1'
+thousands = '0.2'
+toml = '0.8'
+triple_accel = '0.4'
+wyhash = '0.5'
 
 [workspace.dependencies.anyhow]
 features = ['backtrace']
@@ -57,56 +87,49 @@ version = '0.5'
 
 [workspace.dependencies.blas-src]
 branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs.git'
+git = 'https://github.com/10XGenomics/scan-rs'
 
 [workspace.dependencies.clap]
-features = ['derive', 'wrap_help']
+default-features = false
+features = ['std', 'derive']
 version = '4'
 
-[workspace.dependencies.enclone_core]
-branch = 'main'
-git = 'https://github.com/10XGenomics/enclone_ranger'
+[workspace.dependencies.derive_more]
+features = ['add', 'add_assign', 'deref', 'display']
+version = '1.0'
 
-[workspace.dependencies.enclone_proto]
+[workspace.dependencies.diff-exp]
 branch = 'main'
-git = 'https://github.com/10XGenomics/enclone_ranger'
-
-[workspace.dependencies.enclone_ranger]
-branch = 'main'
-git = 'https://github.com/10XGenomics/enclone_ranger'
-
-[workspace.dependencies.equiv]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+git = 'https://github.com/10XGenomics/scan-rs'
 
 [workspace.dependencies.fastq_set]
 branch = 'master'
 git = 'https://github.com/10XGenomics/fastq_set'
 
-[workspace.dependencies.graph_simple]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.geo]
+default-features = false
+version = '0.28'
+
+[workspace.dependencies.geo-types]
+default-features = false
+version = '0.7'
+
+[workspace.dependencies.hclust]
+branch = 'main'
+git = 'https://github.com/10XGenomics/scan-rs'
 
 [workspace.dependencies.hdf5]
 branch = 'conda_nov2021'
 features = ['conda']
-git = 'https://github.com/10XGenomics/hdf5-rust'
+git = 'https://github.com/10XGenomics/hdf5-rust.git'
 
-[workspace.dependencies.hyperbase]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.image]
+default-features = false
+version = '0.25'
 
 [workspace.dependencies.insta]
 features = ['json', 'redactions', 'ron', 'yaml']
 version = '1'
-
-[workspace.dependencies.io_utils]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
-
-[workspace.dependencies.kmer_lookup]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
 
 [workspace.dependencies.martian]
 branch = 'master'
@@ -120,55 +143,65 @@ git = 'https://github.com/martian-lang/martian-rust'
 branch = 'master'
 git = 'https://github.com/martian-lang/martian-rust'
 
+[workspace.dependencies.ndarray-npy]
+default-features = false
+version = '0.8'
+
 [workspace.dependencies.nom]
 default-features = false
 version = '7'
 
-[workspace.dependencies.perf_stats]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.ordered-float]
+features = ['serde']
+version = '>=3, < 5'
+
+[workspace.dependencies.parquet]
+default-features = false
+features = ['zstd', 'json']
+version = '51'
 
 [workspace.dependencies.pyo3]
 features = ['extension-module', 'abi3-py310']
 version = '0.19'
 
+[workspace.dependencies.qd]
+git = 'https://github.com/Barandis/qd'
+
+[workspace.dependencies.regex]
+default-features = false
+features = ['std', 'perf']
+version = '1'
+
 [workspace.dependencies.rust-htslib]
 default-features = false
 features = ['serde_feature', 'libdeflate']
-version = '0.45'
+version = '0.47'
 
 [workspace.dependencies.serde]
 features = ['derive']
 version = '1.0'
 
-[workspace.dependencies.stats_utils]
+[workspace.dependencies.shardio]
 branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+git = 'https://github.com/10XGenomics/rust-shardio'
 
-[workspace.dependencies.string_utils]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.sprs]
+default-features = false
+features = ['multi_thread']
+version = '0.11'
 
-[workspace.dependencies.tables]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.sqz]
+branch = 'main'
+git = 'https://github.com/10XGenomics/scan-rs'
 
 [workspace.dependencies.tenx-websummary]
 branch = 'master'
 git = 'https://github.com/10XGenomics/websummary'
 
-[workspace.dependencies.vdj_ann]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.uuid]
+features = ['v4']
+version = '1'
 
-[workspace.dependencies.vdj_ann_ref]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
-
-[workspace.dependencies.vdj_types]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
-
-[workspace.dependencies.vector_utils]
-branch = 'master'
-git = 'https://github.com/10XGenomics/rust-toolbox'
+[workspace.dependencies.zip]
+default-features = false
+version = '0.6'

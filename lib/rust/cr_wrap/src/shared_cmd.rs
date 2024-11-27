@@ -1,6 +1,7 @@
 use crate::deprecated_os::oscheck;
 use crate::env::PkgEnv;
 use crate::mkref::Mkref;
+use crate::telemetry::{TelemetryCollector, TELEMETRY_BIN_PATH};
 use crate::utils::{external_subcommand, AllArgs};
 use anyhow::Result;
 use clap::{self, Parser};
@@ -33,6 +34,10 @@ pub enum SharedCmd {
     /// Collect Linux system configuration information.
     #[clap(name = "sitecheck")]
     Sitecheck(AllArgs),
+
+    /// Configure and inspect telemetry settings and data
+    #[clap(name = "telemetry")]
+    Telemetry(AllArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -70,12 +75,16 @@ pub enum HiddenCmd {
     OsCheck(AllArgs),
 }
 
-pub fn run_rna_shared(pkg_env: &PkgEnv, args: RnaSharedCmd) -> Result<ExitCode> {
+pub fn run_rna_shared(
+    pkg_env: &PkgEnv,
+    args: RnaSharedCmd,
+    telemetry: &mut TelemetryCollector,
+) -> Result<ExitCode> {
     match args {
         RnaSharedCmd::Mat2csv(args) => pkg_env.run_subcmd("bin/rna/mat2csv", &args),
         RnaSharedCmd::Mkref(mut args) => {
-            args.shared.populate_version(pkg_env.tenx_version);
-            args.execute()
+            args.shared.populate_version(pkg_env);
+            args.execute(telemetry)
         }
         RnaSharedCmd::Mkgtf(args) => pkg_env.run_subcmd("bin/rna/mkgtf", &args),
     }
@@ -85,6 +94,7 @@ pub fn run_shared(pkg_env: &PkgEnv, args: SharedCmd) -> Result<ExitCode> {
     match args {
         SharedCmd::Upload(args) => pkg_env.run_subcmd("bin/tenkit/upload", &args),
         SharedCmd::Sitecheck(args) => pkg_env.run_subcmd("bin/tenkit/sitecheck", &args),
+        SharedCmd::Telemetry(args) => pkg_env.run_subcmd(TELEMETRY_BIN_PATH, &args),
     }
 }
 

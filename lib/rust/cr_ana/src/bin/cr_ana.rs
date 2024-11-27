@@ -73,7 +73,7 @@ fn main() -> Result<()> {
         cr_ana::stages::hierarchical_clustering::HierarchicalClusteringStage,
         cr_ana::stages::pca::PcaStage,
         cr_ana::stages::pca2::Pca2Stage,
-        cr_ana::stages::tsne::TsneStage,
+        cr_ana::stages::tsne::RunTsne,
         cr_ana::stages::umap::UmapStage,
     ];
 

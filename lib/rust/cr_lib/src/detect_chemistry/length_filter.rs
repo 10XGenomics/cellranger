@@ -79,7 +79,9 @@ impl<'a> ChemistryFilter<'a> for LengthFilter<'a> {
         &self,
         mut result: TxHashSet<ChemistryName>,
     ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        use ChemistryName::{FivePrimePE, FivePrimePEV3, FivePrimeR2, FivePrimeR2V3, VdjPE, VdjR2};
+        use ChemistryName::{
+            FivePrimePE, FivePrimePEV3, FivePrimeR2, FivePrimeR2V3, VdjPE, VdjPEV3, VdjR2, VdjR2V3,
+        };
         if result.contains(&FivePrimePE) {
             result.remove(&FivePrimeR2);
         }
@@ -88,6 +90,9 @@ impl<'a> ChemistryFilter<'a> for LengthFilter<'a> {
         }
         if result.contains(&VdjPE) {
             result.remove(&VdjR2);
+        }
+        if result.contains(&VdjPEV3) {
+            result.remove(&VdjR2V3);
         }
         Ok(result)
     }
@@ -136,7 +141,7 @@ impl<'a> LengthFilter<'a> {
         let mut read_length_histograms = TxHashMap::default();
         for rp in read_pairs {
             for &which_read in &WHICH_LEN_READS {
-                let max_len = max_lengths.get(&which_read).unwrap_or(&std::usize::MAX);
+                let max_len = max_lengths.get(&which_read).unwrap_or(&usize::MAX);
                 read_length_histograms
                     .entry(which_read)
                     .or_insert_with(SimpleHistogram::default)

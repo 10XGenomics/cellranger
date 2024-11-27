@@ -57,6 +57,9 @@ GENOME_FEATURE_TAG = "genome"
 DEFAULT_FEATURE_TAGS = [GENOME_FEATURE_TAG]
 RESERVED_TAGS = DEFAULT_FEATURE_TAGS
 
+# Defined here lib/rust/cr_types/src/reference/feature_reference.rs
+HASHTAG_TAG = "hashtag"
+
 
 class FeatureDefException(Exception):
     """Exception type for trying to create a `FeatureReference` with non-distinct IDs."""
@@ -186,11 +189,7 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
         for fdef in self.feature_defs:
             if fdef.id in id_map:
                 this_fd_str = f"ID: {fdef.id}; name: {fdef.name}; type: {fdef.feature_type}"
-                seen_fd_str = "ID: {}; name: {}; type: {}".format(
-                    id_map[fdef.id].id,
-                    id_map[fdef.id].name,
-                    id_map[fdef.id].feature_type,
-                )
+                seen_fd_str = f"ID: {id_map[fdef.id].id}; name: {id_map[fdef.id].name}; type: {id_map[fdef.id].feature_type}"
                 raise FeatureDefException(
                     "Found two feature definitions with the same ID: "
                     f"({this_fd_str}) and ({seen_fd_str}). All feature IDs must be distinct."
@@ -298,13 +297,17 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
                 if sorted_antigen_content_1[i][3] != sorted_antigen_content_2[i][3]:
                     return (
                         False,
-                        "The datasets you are trying to aggregate have incompatible MHC alleles for the same control feature id. Please re-run the original multi pipelines with uniform [antigen-specificity] sections.",
+                        "The datasets you are trying to aggregate have incompatible "
+                        "MHC alleles for the same control feature id. Please re-run the original "
+                        "multi pipelines with uniform [antigen-specificity] sections.",
                     )
                 # check matching control
                 if (sorted_antigen_content_1[i][4] != sorted_antigen_content_2[i][4]) and not is_pd:
                     return (
                         False,
-                        "The datasets you are trying to aggregate have incompatible control feature ids. Please re-run the original multi pipelines with uniform [antigen-specificity] sections.",
+                        "The datasets you are trying to aggregate have incompatible "
+                        "control feature ids. Please re-run the original multi pipelines with "
+                        "uniform [antigen-specificity] sections.",
                     )
 
         return True, None
@@ -320,12 +323,16 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
         compatible_target_sets = ignore_target_set or (
             self.get_target_feature_indices() == other.get_target_feature_indices()
         )
+        # exclude hashtag
+        self_all_tags = [tag for tag in self.all_tag_keys if tag != HASHTAG_TAG]
+        other_all_tags = [tag for tag in other.all_tag_keys if tag != HASHTAG_TAG]
+
         return (
             self.get_feature_types_excluding_deprecated_probes()
             == other.get_feature_types_excluding_deprecated_probes()
             and self.get_feature_ids_excluding_deprecated_probes()
             == other.get_feature_ids_excluding_deprecated_probes()
-            and self.all_tag_keys == other.all_tag_keys
+            and self_all_tags == other_all_tags
             and compatible_target_sets
         )
 
@@ -539,6 +546,26 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
         """
         indices = [i for i, fd in enumerate(self.feature_defs) if fd.feature_type == feature_type]
         return self.select_features(indices)
+
+    def get_feature_indices_by_genome(self, genome: str) -> list[int]:
+        """Returns the indices of features within the FeatureReference with genome.
+
+        Args:
+            genome: Genome name
+        """
+        return [
+            i
+            for i, fd in enumerate(self.feature_defs)
+            if fd.tags.get(GENOME_FEATURE_TAG, "") == genome
+        ]
+
+    def select_features_by_genome(self, genome: str) -> FeatureReference:
+        """Returns all features that match a given genome.
+
+        Args:
+            genome: Genome name
+        """
+        return self.select_features(self.get_feature_indices_by_genome(genome))
 
     def has_feature_type(self, feature_type: str) -> bool:
         """Determines if a feature type is present in the FeatureRef.

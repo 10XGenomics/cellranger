@@ -1,8 +1,11 @@
 [dependencies]
-ndarray-stats = '0.5'
-numpy = '0.19'
-
 [dependencies.ndarray]
+workspace = true
+
+[dependencies.ndarray-stats]
+workspace = true
+
+[dependencies.numpy]
 workspace = true
 
 [dependencies.pyo3]

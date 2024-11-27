@@ -7,7 +7,7 @@ use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::FileTypeRead;
 use ndarray::Array2;
 use ordered_float::OrderedFloat;
-use plotly::common::{ColorBar, ColorScale, ColorScaleElement, Title};
+use plotly::common::{ColorBar, ColorScale, ColorScaleElement};
 use plotly::layout::{Axis, AxisType};
 use plotly::{HeatMap, Layout};
 use serde::{Deserialize, Serialize};
@@ -211,7 +211,7 @@ impl ClonotypeSpecificity {
 
         let x = clonotypes
             .into_iter()
-            .map(|cl| cl.parse::<ClonotypeId>().unwrap().id.to_string())
+            .map(|cl| ClonotypeId::parse(&cl).unwrap().id.to_string())
             .collect();
 
         // Unnecessary duplication here since the text needs to be per z-value
@@ -230,7 +230,7 @@ impl ClonotypeSpecificity {
                 .hover_template(
                     "Clonotype: %{x} (%{text} cells)<br>Antigen: %{y}<br>Median specificity score: %{z}",
                 )
-                .color_bar(ColorBar::new().title(Title::new("Antigen Specificity Score")).outline_width(0))
+                .color_bar(ColorBar::new().title("Antigen Specificity Score").outline_width(0))
                 .color_scale(tenx_blue_colorscale())
                 .name(""),
         )
@@ -249,12 +249,10 @@ impl ClonotypeSpecificity {
                 .x_axis(
                     Axis::new()
                         .fixed_range(false)
-                        .title(Title::new(&format!(
-                            "Clonotype ID ({n_clonotypes} clonotypes)"
-                        )))
+                        .title(format!("Clonotype ID ({n_clonotypes} clonotypes)"))
                         .type_(AxisType::Category),
                 )
-                .y_axis(Axis::new().auto_margin(true).title(Title::new("Antigens"))),
+                .y_axis(Axis::new().auto_margin(true).title("Antigens")),
             vec![data],
         );
 
@@ -331,7 +329,7 @@ mod tests {
                 raw_clonotype_id: Some(
                     ClonotypeId {
                         id: 1,
-                        sample_number: None,
+                        sample_id: None,
                     }
                     .to_string()
                 ),

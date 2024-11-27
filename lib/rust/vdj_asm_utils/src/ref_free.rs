@@ -3,15 +3,11 @@
 
 #![allow(clippy::many_single_char_names)]
 
-use crate::log_opts::LogOpts;
 use graph_simple::GraphSimple;
 use hyperbase::Hyper;
-use perf_stats::elapsed;
 use std::cmp::max;
-use std::io::prelude::*;
 use std::iter::zip;
 use std::mem::swap;
-use std::time::Instant;
 use vector_utils::{
     bin_member, bin_position1_2, count_instances, erase_if, make_freq, next_diff, next_diff1_2,
     next_diff1_3, reverse_sort, unique_sort,
@@ -605,13 +601,13 @@ pub fn branch_clean(x: &mut Hyper, umi_id: &[i32]) {
             if j == yy.len() {
                 break;
             }
-            let k = next_diff1_3(&yy, j as i32);
-            for l in j + 1..k as usize {
+            let k = next_diff1_3(&yy, j);
+            for l in j + 1..k {
                 if yy[j].1 >= 10 * max(1, yy[l].1) {
                     z.push((yy[l].2, yy[l].0));
                 }
             }
-            j = k as usize;
+            j = k;
         }
         z.sort_unstable(); // z = { (branchid, u ) } to kill
         let mut j = 0;
@@ -619,13 +615,13 @@ pub fn branch_clean(x: &mut Hyper, umi_id: &[i32]) {
             if j == z.len() {
                 break;
             }
-            let k = next_diff1_2(&z, j as i32);
-            let us = z[j..k as usize].iter().map(|(_, l)| *l).collect::<Vec<_>>();
+            let k = next_diff1_2(&z, j);
+            let us = z[j..k].iter().map(|(_, l)| *l).collect::<Vec<_>>();
             let b = z[j].0;
             let e = x.h.g.e_from(v, b as usize);
             dels[e].append(&mut us.clone());
             dels[x.inv[e] as usize].append(&mut us.clone());
-            j = k as usize;
+            j = k;
         }
     }
     for e in 0..x.h.g.edge_count() {
@@ -1084,8 +1080,7 @@ pub fn path_clean(x: &mut Hyper, umi_id: &[i32]) {
 // dozen or so samples, and relative to the metrics we used to evaluate them, this
 // was the best choice amongst those tested.
 
-pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32], log: &mut Vec<u8>, log_opts: &LogOpts) {
-    let t = Instant::now();
+pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32]) {
     let verbose = false;
     if verbose {
         printme!(x.h.g.edge_count(), x.checksum());
@@ -1094,13 +1089,6 @@ pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32], log: &mut Vec<u8>, lo
     power_clean(x, umi_id);
 
     comp_clean(x, umi_id);
-    if log_opts.clock {
-        fwriteln!(
-            log,
-            "in simp, {:.1} seconds used after comp_clean",
-            elapsed(&t)
-        );
-    }
 
     if verbose {
         println!("\ncalling simple_simp.1");
@@ -1149,13 +1137,6 @@ pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32], log: &mut Vec<u8>, lo
         printme!(x.h.g.edge_count(), x.checksum());
     }
     solo_clean(x, umi_id);
-    if log_opts.clock {
-        fwriteln!(
-            log,
-            "in simp, {:.1} seconds used after solo_clean",
-            elapsed(&t)
-        );
-    }
 
     simple_simp(x, umi_id, 5, 50);
     simple_simp(x, umi_id, 3, 8);
@@ -1200,13 +1181,6 @@ pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32], log: &mut Vec<u8>, lo
     simple_simp(x, umi_id, 2, 8);
 
     simple_simp_type(x, umi_id);
-    if log_opts.clock {
-        fwriteln!(
-            log,
-            "in simp, {:.1} seconds used after simple_simp_type",
-            elapsed(&t)
-        );
-    }
 
     if verbose {
         println!("\ncalling path_clean");
@@ -1215,13 +1189,6 @@ pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32], log: &mut Vec<u8>, lo
         printme!(x.h.g.edge_count(), x.checksum());
     }
     path_clean(x, umi_id);
-    if log_opts.clock {
-        fwriteln!(
-            log,
-            "in simp, {:.1} seconds used after path_clean",
-            elapsed(&t)
-        );
-    }
 
     if verbose {
         println!("\ncalling pop_bubbles");

@@ -19,8 +19,10 @@ def get_version():
     if that is not found it will attempt to query git for the version.
     """
     # NOTE: this makes assumptions about the directory structure
-    script_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "bin")
-    version_fn = os.path.join(script_dir, "..", ".version")
+    repo_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    script_dir = os.path.join(repo_base_dir, "bin")
+    version_fn = os.path.join(repo_base_dir, ".version")
+
     if os.path.exists(version_fn):
         with open(version_fn) as f:
             output = f.read()

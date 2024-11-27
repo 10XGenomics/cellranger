@@ -130,7 +130,7 @@ impl CountArgs {
                     );
                 }
             };
-            sample_defs.extend(fq.get_sample_defs(l.library_type, None)?);
+            sample_defs.extend(fq.get_sample_defs(l.library_type)?);
         }
         if !seen_atac {
             bail!("Invalid libraries file: missing `Chromatin Accessibility` FASTQ files");

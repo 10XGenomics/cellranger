@@ -6,7 +6,7 @@
 
 files
 """
-
+import math
 import pickle
 
 import martian
@@ -31,7 +31,14 @@ stage POST_PCA(
 
 
 def split(args):
-    return {"chunks": [], "join": {"__mem_gb": args.mem_gb}}
+    mem_needed = math.ceil(3 + args.mem_gb * 0.14)
+    return {
+        "chunks": [],
+        "join": {
+            "__mem_gb": mem_needed,
+            "__vmem_gb": mem_needed + 10,
+        },
+    }
 
 
 def join(args, outs, chunk_defs, chunk_outs):

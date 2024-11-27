@@ -12,9 +12,7 @@ def _get_barcode_length(barcode_def: list[dict[str, str | int]], barcode_kind: s
     return None
 
 
-def get_barcode_locations(
-    barcode_def: list[dict[str, str | int]]
-) -> tuple[
+def get_barcode_locations(barcode_def: list[dict[str, str | int]]) -> tuple[
     tuple[int | None, int | None],
     tuple[int | None, int | None],
     tuple[int | None, int | None],

@@ -36,7 +36,7 @@ def get_bcl2fastq_output_folder(path):
     :raises: ValueError if the path/project path is illegal
     """
     if not os.path.exists(path):
-        raise ValueError("Invalid path: %s" % path)
+        raise ValueError(f"Invalid path: {path}")
 
     link = os.path.join(path, "outs", "fastq_path")
     # check path pointed to pipestance
@@ -74,7 +74,7 @@ def main():
     for path in fastq_paths:
         abs_path = os.path.abspath(os.path.expanduser(path))
         if not os.path.exists(abs_path):
-            sys.stderr.write("Invalid path to --fastqs: %s\n" % abs_path)
+            sys.stderr.write(f"Invalid path to --fastqs: {abs_path}\n")
 
         try:
             fastq_path = get_bcl2fastq_output_folder(abs_path)
@@ -97,21 +97,19 @@ def main():
                 raise ValueError(
                     "The --project argument must be specified if BCLs "
                     "were demultiplexed into multiple project folders. "
-                    "Options:\n%s" % projects_list
+                    f"Options:\n{projects_list}"
                 )
             # project length == 1
             elif len(projects) == 1:
                 output_paths.append(os.path.join(fastq_path, projects[0]))
 
         except ValueError as ex:
-            sys.stderr.write("%s\n" % str(ex))
+            sys.stderr.write(f"{ex!s}\n")
             return 1
 
     # if no paths selected because --project specified, say so
     if args.project and len(fastq_paths) > 0 and len(output_paths) == 0:
-        sys.stderr.write(
-            "Could not find any paths that matched --project value: %s\n" % args.project
-        )
+        sys.stderr.write(f"Could not find any paths that matched --project value: {args.project}\n")
         return 1
 
     # at this point all paths containing either paths to the bcl2fastq root folder

@@ -54,6 +54,7 @@ pub mod aggr;
 pub mod barcode_index;
 pub use barcode_index::*;
 mod bit_encode;
+pub mod cell_annotation;
 pub mod chemistry;
 pub mod clonotype;
 pub mod constants;
@@ -71,6 +72,7 @@ pub mod spill_vec;
 pub mod utils;
 pub use metrics_file::*;
 pub mod filtered_barcodes;
+pub mod mempool;
 pub mod websummary;
 
 #[derive(Debug)]

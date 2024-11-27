@@ -1,15 +1,20 @@
 //! Martian stage RUN_ENCLONE
 
+// // Note: this lint needs to be disabled until https://github.com/martian-lang/martian-rust/pull/497
+// is merged and cellranger is updated.
+#![allow(clippy::needless_update)]
+
 use anyhow::Result;
 use bio::alignment::{Alignment, AlignmentOperation};
 use enclone_proto::proto_io::read_proto;
 use enclone_proto::types::EncloneOutputs;
-use enclone_ranger::main_enclone::main_enclone_ranger;
+use enclone_ranger::main_enclone::{
+    main_enclone_ranger, CellrangerOpt, InputSpec, VdjReceptor as EncloneRangerVdjReceptor,
+};
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::FileTypeWrite;
-use perf_stats::{elapsed, peak_mem_usage_gb};
 use rust_htslib::bam;
 use rust_htslib::bam::index;
 use rust_htslib::bam::record::CigarString;
@@ -21,7 +26,7 @@ use std::process::Command;
 use std::time::Instant;
 use string_utils::TextUtils;
 use vdj_ann::annotate::ContigAnnotation;
-use vdj_asm_utils::filter_log::FilterSwitch;
+use vdj_filter_barcodes::filter_log::FilterSwitch;
 use vdj_reference::VdjReceptor;
 use vector_utils::next_diff;
 
@@ -132,92 +137,52 @@ pub(crate) fn replace_sam_by_indexed_bam(sam_name: &Path) {
 // The allowed mem_gb is based on observed mem 3.59 GB for lena 180517.
 // Note that by using -4, in local mode, this forces this process to use the entire server.
 // This is not necessarily desirable.
-#[make_mro(mem_gb = 5, threads = -4, stage_name = RUN_ENCLONE)]
+#[make_mro(mem_gb = 5, vmem_gb = 12, threads = -4, stage_name = RUN_ENCLONE)]
 impl MartianMain for Assigner {
     type StageInputs = ClonotypeAssignerStageInputs;
     type StageOutputs = ClonotypeAssignerStageOutputs;
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
-        // Set up logging.
-
         let t0 = Instant::now();
 
-        // Cap number of threads.
-        // let nthreads = max(4, min(rover.get_threads(), 96)); // NOTE: This could panic in local mode.
-        let nthreads = min(rover.get_threads(), 96);
-
-        // Call enclone.  We instruct it to generate a binary output file, and print nothing.
-        // Need to bound number of threads used by enclone.
-        let mut argsx = vec!["enclone".to_string()];
         let contig_annotations = args.contig_annotations.as_ref().to_str().unwrap();
 
-        argsx.push(format!(
-            "{}={}",
-            match args.receptor {
-                VdjReceptor::TR => "TCR",
-                VdjReceptor::TRGD => "TCRGD",
-                VdjReceptor::IG => "BCR",
-            },
-            contig_annotations.rev_before("/")
-        ));
-        let fasta_path = args
-            .vdj_reference_path
-            .join("fasta/regions.fa")
-            .to_str()
-            .unwrap()
-            .to_string();
         let enclone_output: ProtoBinFile = rover.make_path("enclone_output");
         let donor_ref_fa: FaFile = rover.make_path("donor_ref");
         let barcode_fate: JsonFile<()> = rover.make_path("barcode_fate");
-        argsx.push("PRE=".to_string());
-        argsx.push(format!("REF={fasta_path}"));
-        argsx.push("NOPRINT".to_string());
-        argsx.push("CELLRANGER".to_string());
-        argsx.push("NOPAGER".to_string());
-        argsx.push("FORCE_EXTERNAL".to_string());
-        argsx.push(format!("MAX_CORES={nthreads}"));
-        argsx.push(format!(
-            "PROTO={}",
-            enclone_output.as_ref().to_str().unwrap()
-        ));
-        argsx.push(format!(
-            "DONOR_REF_FILE={}",
-            donor_ref_fa.as_ref().to_str().unwrap()
-        ));
-        argsx.push(format!(
-            "FATE_FILE={}",
-            barcode_fate.as_ref().to_str().unwrap()
-        ));
-        if args.receptor == VdjReceptor::TRGD {
-            argsx.push("GAMMA_DELTA".to_string());
-        }
 
-        // Option to split clonotypes that have 4 chains or more.
-        // These are most likely false joins due to a shared chain
-        argsx.push("SPLIT_MAX_CHAINS=4".to_string());
+        let mut opt = CellrangerOpt {
+            input: Some(InputSpec::Explicit(
+                match args.receptor {
+                    VdjReceptor::TR => EncloneRangerVdjReceptor::TR,
+                    VdjReceptor::TRGD => EncloneRangerVdjReceptor::TRGD,
+                    VdjReceptor::IG => EncloneRangerVdjReceptor::IG,
+                },
+                contig_annotations.rev_before("/").to_string(),
+            )),
+            refname: args
+                .vdj_reference_path
+                .join("fasta/regions.fa")
+                .to_str()
+                .unwrap()
+                .to_string(),
+            max_cores: Some(min(rover.get_threads(), 96)),
+            proto: enclone_output.to_str().unwrap().to_string(),
+            dref_file: donor_ref_fa.to_str().unwrap().to_string(),
+            fate_file: barcode_fate.to_str().unwrap().to_string(),
+            // Option to split clonotypes that have 4 chains or more.
+            // These are most likely false joins due to a shared chain
+            split_max_chains: 4,
+            ..Default::default()
+        };
 
-        let FilterSwitch {
-            asm_shared_contig: _,
-            enclone_shared_contig,
-            enclone_umi,
-            enclone_multiplet,
-        } = args.filter_switch;
+        args.filter_switch.update_enclone_args(&mut opt.filter);
 
-        // ! because we want the filter to be off when the boolean is false
-        if !enclone_shared_contig {
-            argsx.push("NGRAPH_FILTER".to_string());
-        }
-
-        if !enclone_multiplet {
-            argsx.extend(["NWEAK_CHAINS", "NFOURSIE_KILL", "NDOUBLET", "NSIG"].map(String::from));
-        }
-
-        if !enclone_umi {
-            argsx.extend(["NUMI", "NUMI_RATIO"].map(String::from));
-        }
-
-        println!("Invoking enclone:\n{}", argsx.join(" "));
-        main_enclone_ranger(&argsx).unwrap();
-        println!("used {:.2} seconds up through enclone", elapsed(&t0));
+        println!("Invoking enclone:\n{opt:?}");
+        main_enclone_ranger(opt).unwrap();
+        println!(
+            "used {:.2} seconds up through enclone",
+            t0.elapsed().as_secs_f64()
+        );
 
         // Read back in the enclone output file.
         let enclone_outs: EncloneOutputs = read_proto(&enclone_output)?;
@@ -266,12 +231,6 @@ impl MartianMain for Assigner {
             multi_raw_vdj_paired_clonotype_diversity,
             raw_cdrs_per_bc_histogram,
         })?;
-
-        println!(
-            "used {:.2} seconds total, peak mem = {:.2} GB",
-            elapsed(&t0),
-            peak_mem_usage_gb()
-        );
 
         // Return outputs.
         Ok(ClonotypeAssignerStageOutputs {

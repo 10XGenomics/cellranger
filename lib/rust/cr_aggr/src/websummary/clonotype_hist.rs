@@ -1,5 +1,4 @@
 use crate::websummary::{ChartWithHelp, PlotlyChart, TitleWithHelp};
-use plotly::common::Title;
 use plotly::layout::{Axis, AxisType, BarMode, HoverMode, Margin};
 use plotly::{Bar, Layout};
 use serde::Serialize;
@@ -22,12 +21,8 @@ impl From<ClonotypeHist> for ChartWithHelp {
             .show_legend(true)
             .bar_mode(BarMode::Stack)
             .hover_mode(HoverMode::Closest)
-            .x_axis(
-                Axis::new()
-                    .type_(AxisType::Category)
-                    .title(Title::new(XLABEL)),
-            )
-            .y_axis(Axis::new().title(Title::new(YLABEL)).tick_format(",.2%"))
+            .x_axis(Axis::new().type_(AxisType::Category).title(XLABEL))
+            .y_axis(Axis::new().title(YLABEL).tick_format(",.2%"))
             .margin(Margin::new().left(60).right(40).top(25));
 
         let ids = hist.ids;

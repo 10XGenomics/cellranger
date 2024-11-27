@@ -15,7 +15,6 @@ import numpy as np
 import scipy.sparse as sp_sparse
 
 import cellranger.constants as cr_constants
-import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
 import cellranger.molecule_counter as cr_mol_counter
 import cellranger.rna.library as rna_library
@@ -57,16 +56,15 @@ stage NORMALIZE_DEPTH(
 
 TARGETED_READ_PAIRS_METRIC = "targeted_read_pairs"
 NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK_RUST = 400000000
-# Each barcode is 44 bytes long (matching the definition in lib/rust/barcode)
-MAX_BARCODE_LENGTH = 44
 
 
-def _get_min_rpc_by_lt(library_info: list[dict[str, Any]], usable_rpc: np.ndarray):
-    """Determine lowest depth for each library type."""
-    lt_rpcs = defaultdict(lambda: array.array("d"))
+def _get_non_zero_min_rpc_by_lt(library_info: list[dict[str, Any]], usable_rpc: np.ndarray):
+    """Determine lowest non-zero depth for each library type."""
+    lt_rpcs = {lib[rna_library.LIBRARY_TYPE]: array.array("d") for lib in library_info}
     for lib, rpc in zip(library_info, usable_rpc):
-        lt_rpcs[lib[rna_library.LIBRARY_TYPE]].append(rpc)
-    return {lt: min(rpcs) for lt, rpcs in lt_rpcs.items()}
+        if rpc > 0:
+            lt_rpcs[lib[rna_library.LIBRARY_TYPE]].append(rpc)
+    return {lt: min(rpcs) if len(rpcs) else 0 for lt, rpcs in lt_rpcs.items()}
 
 
 def _adjust_frac_kept(
@@ -138,9 +136,9 @@ def split(args):
 
         cells = mc.get_num_filtered_barcodes_for_libraries(np.arange(0, len(library_info)))
 
-        print("Libraries: %s" % library_info)
-        print("Usable reads: %s" % usable_reads)
-        print("Cells: %s" % cells)
+        print(f"Libraries: {library_info}")
+        print(f"Usable reads: {usable_reads}")
+        print(f"Cells: {cells}")
 
         assert len(library_info) == len(usable_reads)
         usable_reads = np.array(usable_reads, dtype=np.float64)
@@ -152,7 +150,7 @@ def split(args):
         )
 
     # Determine lowest depth for each library type
-    min_rpc_by_lt = _get_min_rpc_by_lt(library_info, usable_rpc)
+    min_rpc_by_lt = _get_non_zero_min_rpc_by_lt(library_info, usable_rpc)
 
     for lib_idx, lib in enumerate(library_info):
         lib_type = lib[rna_library.LIBRARY_TYPE]
@@ -221,9 +219,9 @@ def split(args):
     # Nonetheless, it needs to load the barcodes, which can get large when many samples
     # are being aggregated.
     # WRITE_MATRICES will use the precise nnz counts to make an appropriate mem request.
-    join_mem_gb = max(1 + (num_barcodes * MAX_BARCODE_LENGTH) / 1e9, h5_constants.MIN_MEM_GB)
-    print(f"{num_barcodes=},{join_mem_gb=}")
-    return {"chunks": chunks, "join": {"__mem_gb": join_mem_gb, "__threads": 2}}
+    join_mem_gib = 1 + round(56 * num_barcodes / 1024**3, 1)
+    print(f"{num_barcodes=},{join_mem_gib=}")
+    return {"chunks": chunks, "join": {"__mem_gb": join_mem_gib, "__threads": 2}}
 
 
 def summarize_read_matrix(matrix, library_info, barcode_info, barcode_seqs):
@@ -248,7 +246,7 @@ def summarize_read_matrix(matrix, library_info, barcode_info, barcode_seqs):
                 genome_idx = None
 
             prefix = f"{rna_library.get_library_type_metric_prefix(lib_type)}{genome}"
-            summary["%s_raw_mapped_reads" % prefix] = m.sum()
+            summary[f"{prefix}_raw_mapped_reads"] = m.sum()
 
             filtered_bcs = MoleculeCounter.get_filtered_barcodes(
                 barcode_info,
@@ -258,7 +256,7 @@ def summarize_read_matrix(matrix, library_info, barcode_info, barcode_seqs):
                 library_type=lib_type,
             )
             filtered_m = m.select_barcodes_by_seq(filtered_bcs)
-            summary["%s_flt_mapped_reads" % prefix] = filtered_m.sum()
+            summary[f"{prefix}_flt_mapped_reads"] = filtered_m.sum()
 
     return summary
 
@@ -574,7 +572,7 @@ def join(args, outs, chunk_defs, chunk_outs):
                 genome_idx=genome_idx,
                 library_type=lib_type,
             )
-            summary["%s_filtered_bcs" % prefix] = len(filtered_bcs)
+            summary[f"{prefix}_filtered_bcs"] = len(filtered_bcs)
 
     # Merge read summary metrics
     read_summary = defaultdict(int)
@@ -618,20 +616,28 @@ def join(args, outs, chunk_defs, chunk_outs):
             lib_metrics = mol_metrics[cr_mol_counter.LIBRARIES_METRIC][str(lib_idx)]
             raw_read_pairs = lib_metrics[cr_mol_counter.TOTAL_READS_METRIC]
             mapped_read_pairs = lib_metrics[cr_mol_counter.USABLE_READS_METRIC]
-            ds_read_pairs = lib_metrics[cr_mol_counter.DOWNSAMPLED_READS_METRIC]
+            # Cast string "NaN" to float("NaN")
+            ds_read_pairs = float(lib_metrics[cr_mol_counter.DOWNSAMPLED_READS_METRIC])
             # these metrics are relatively new and might not exist in older versions of molecule info
             feature_reads = lib_metrics.get(cr_mol_counter.FEATURE_READS_METRIC, 0)
-            ds_feature_reads = lib_metrics.get(cr_mol_counter.DOWNSAMPLED_FEATURE_READS_METRIC, 0)
+            ds_feature_reads = float(
+                lib_metrics.get(cr_mol_counter.DOWNSAMPLED_FEATURE_READS_METRIC, 0)
+            )
 
             total_raw_read_pairs[lib_type_idx] += raw_read_pairs
-            total_ds_raw_read_pairs[lib_type_idx] += ds_read_pairs
+            total_ds_raw_read_pairs[lib_type_idx] += (
+                ds_read_pairs if not np.isnan(ds_read_pairs) else 0
+            )
             total_feature_read_pairs[lib_type_idx] += feature_reads
-            total_ds_feature_read_pairs[lib_type_idx] += ds_feature_reads
+            total_ds_feature_read_pairs[lib_type_idx] += (
+                ds_feature_reads if not np.isnan(ds_feature_reads) else 0
+            )
 
             frac_reads_kept = summary["frac_reads_kept"][lib_idx]
-            min_frac_reads_kept[lib_type_idx] = min(
-                min_frac_reads_kept[lib_type_idx], frac_reads_kept
-            )
+            if not frac_reads_kept is None:
+                min_frac_reads_kept[lib_type_idx] = min(
+                    min_frac_reads_kept[lib_type_idx], frac_reads_kept
+                )
 
             pre_norm_raw_rppc = tk_stats.robust_divide(raw_read_pairs, n_cells)
             pre_norm_mapped_rppc = tk_stats.robust_divide(mapped_read_pairs, n_cells)
@@ -696,22 +702,18 @@ def join(args, outs, chunk_defs, chunk_outs):
         p = rna_library.get_library_type_metric_prefix(lib_type)
         summary.update(
             {
-                "%spre_normalization_total_reads" % p: total_raw_read_pairs[lib_type_idx],
-                "%spost_normalization_total_reads" % p: total_ds_raw_read_pairs[lib_type_idx],
-                "%spre_normalization_total_feature_reads"
-                % p: total_feature_read_pairs[lib_type_idx],
-                "%spost_normalization_total_feature_reads"
-                % p: total_ds_feature_read_pairs[lib_type_idx],
-                "%sfiltered_bcs_transcriptome_union" % p: total_cells[lib_type_idx],
-                "%spre_normalization_multi_transcriptome_total_raw_reads_per_filtered_bc"
-                % p: mean_rppc,
-                "%spost_normalization_multi_transcriptome_total_raw_reads_per_filtered_bc"
-                % p: ds_mean_rppc,
-                "%spre_normalization_multi_transcriptome_total_feature_reads_per_filtered_bc"
-                % p: mean_feature_reads_pc,
-                "%spost_normalization_multi_transcriptome_total_feature_reads_per_filtered_bc"
-                % p: ds_mean_feature_reads_pc,
-                "%slowest_frac_reads_kept" % p: min_frac_reads_kept[lib_type_idx],
+                f"{p}pre_normalization_total_reads": total_raw_read_pairs[lib_type_idx],
+                f"{p}post_normalization_total_reads": total_ds_raw_read_pairs[lib_type_idx],
+                f"{p}pre_normalization_total_feature_reads": total_feature_read_pairs[lib_type_idx],
+                f"{p}post_normalization_total_feature_reads": total_ds_feature_read_pairs[
+                    lib_type_idx
+                ],
+                f"{p}filtered_bcs_transcriptome_union": total_cells[lib_type_idx],
+                f"{p}pre_normalization_multi_transcriptome_total_raw_reads_per_filtered_bc": mean_rppc,
+                f"{p}post_normalization_multi_transcriptome_total_raw_reads_per_filtered_bc": ds_mean_rppc,
+                f"{p}pre_normalization_multi_transcriptome_total_feature_reads_per_filtered_bc": mean_feature_reads_pc,
+                f"{p}post_normalization_multi_transcriptome_total_feature_reads_per_filtered_bc": ds_mean_feature_reads_pc,
+                f"{p}lowest_frac_reads_kept": min_frac_reads_kept[lib_type_idx],
             }
         )
 

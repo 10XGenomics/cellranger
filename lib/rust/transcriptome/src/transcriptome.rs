@@ -1,6 +1,6 @@
 use crate::parse_gtf::{parse_gtf_line, validate_gtf_line};
 use crate::Gene;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bio::io::fasta::IndexedReader;
 use bio_types::strand::ReqStrand;
 use flate2::read::MultiGzDecoder;
@@ -127,16 +127,6 @@ impl Transcriptome {
         Transcriptome::from_gtf_path(&path.join("genes/genes.gtf"))
     }
 
-    pub fn dummy() -> Transcriptome {
-        Transcriptome {
-            genes: Vec::new(),
-            gene_id_to_idx: HashMap::new(),
-            transcripts: Vec::new(),
-            transcript_id_to_idx: HashMap::new(),
-            gene_to_transcripts: BTreeMap::new(),
-        }
-    }
-
     /// Check if there are any transcripts with no exons and return Err(<informative message>) if we find any.
     pub fn check_for_transcripts_with_no_exons(&self) -> Result<()> {
         let empty_transcripts: String = self
@@ -185,7 +175,7 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
     let mut transcripts: Vec<Transcript> = Vec::new();
     let mut transcript_id_to_idx: HashMap<String, TranscriptIdx> = HashMap::new();
 
-    let mut genes = Vec::new();
+    let mut genes: Vec<TranscriptomeGene> = Vec::new();
     let mut gene_id_to_idx: HashMap<String, GeneIdx> = HashMap::new();
 
     // To keep track of genes that are added by parsing exons/transcripts but
@@ -231,28 +221,35 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
         if rec.feature_type == b"gene" {
             let id = rec.get_attr("gene_id")?;
             let name = rec.get_attr("gene_name").unwrap_or_else(|_| id.clone());
-            let idx = GeneIdx(genes.len() as u32);
 
-            let gene = TranscriptomeGene {
-                idx,
-                id: id.clone(),
-                name,
-                properties: rec.all_attributes(),
-            };
             // Make sure we don't let duplicates through
-            match gene_id_to_idx.entry(id) {
+            match gene_id_to_idx.entry(id.clone()) {
                 Entry::Occupied(entry) => {
-                    if !genes_not_from_file.remove(entry.key()) {
-                        bail!("Duplicate Gene ID found in GTF: {}", entry.key());
-                    }
-                    // If a `transcript` appears before a `gene`, we generate an entry for that gene
-                    // but we should override that with the actual gene once we observe it.
-                    let idx_int = entry.get().0 as usize;
-                    genes[idx_int] = gene;
+                    // When a `transcript` or `exon` appears before a `gene`, we generate an entry
+                    // for that gene, but overwrite it with the actual gene if it's seen later.
+                    ensure!(
+                        genes_not_from_file.remove(&id),
+                        "Duplicate Gene ID found in GTF: {id}",
+                    );
+                    let idx = *entry.get();
+                    let gene = &mut genes[idx.0 as usize];
+                    assert_eq!(&id, &gene.id);
+                    *gene = TranscriptomeGene {
+                        idx,
+                        id,
+                        name,
+                        properties: rec.all_attributes(),
+                    };
                 }
                 Entry::Vacant(entry) => {
+                    let idx = GeneIdx(genes.len() as u32);
                     entry.insert(idx);
-                    genes.push(gene);
+                    genes.push(TranscriptomeGene {
+                        idx,
+                        id,
+                        name,
+                        properties: rec.all_attributes(),
+                    });
                 }
             }
         } else if rec.feature_type == b"transcript" {
@@ -325,51 +322,50 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
             let exon = Exon { start, end };
             let transcript_id = rec.get_attr("transcript_id")?;
 
-            // the transcript hasn't been declared -- make a  dummy
-            if transcript_id_to_idx.get(&transcript_id).is_none() {
-                let gene_id = rec.get_attr("gene_id")?;
-                let idx = TranscriptIdx(transcripts.len() as u32);
+            let tx_idx = match transcript_id_to_idx.get(&transcript_id) {
+                None => {
+                    // the transcript hasn't been declared -- make a  dummy
+                    let gene_id = rec.get_attr("gene_id")?;
+                    let idx = TranscriptIdx(transcripts.len() as u32);
 
-                // handle a missing gene for this tx
-                if gene_id_to_idx.get(&gene_id).is_none() {
-                    let gene_name = rec
-                        .get_attr("gene_name")
-                        .unwrap_or_else(|_| gene_id.clone());
-                    let new_gene_idx = GeneIdx(genes.len() as u32);
+                    let gene_idx = match gene_id_to_idx.get(&gene_id) {
+                        None => {
+                            // handle a missing gene for this tx
+                            let gene_name = rec
+                                .get_attr("gene_name")
+                                .unwrap_or_else(|_| gene_id.clone());
+                            let new_gene_idx = GeneIdx(genes.len() as u32);
 
-                    let gene = TranscriptomeGene {
-                        idx: new_gene_idx,
-                        id: gene_id.clone(),
-                        name: gene_name,
+                            let gene = TranscriptomeGene {
+                                idx: new_gene_idx,
+                                id: gene_id.clone(),
+                                name: gene_name,
+                                properties: vec![],
+                            };
+                            genes_not_from_file.insert(gene_id.clone());
+                            gene_id_to_idx.insert(gene_id, new_gene_idx);
+                            genes.push(gene);
+                            new_gene_idx
+                        }
+                        Some(idx) => *idx,
+                    };
+
+                    let transcript = Transcript {
+                        idx,
+                        id: transcript_id.clone(),
+                        gene_idx,
+                        chrom: chrom.to_string(),
+                        strand,
+                        exons: vec![],
                         properties: vec![],
                     };
-                    genes_not_from_file.insert(gene_id.clone());
-                    gene_id_to_idx.insert(gene_id.clone(), new_gene_idx);
-                    genes.push(gene);
+
+                    transcript_id_to_idx.insert(transcript_id, idx);
+                    transcripts.push(transcript);
+                    idx
                 }
-
-                let gene_idx = *gene_id_to_idx.get(&gene_id).expect("missing gene");
-
-                let transcript = Transcript {
-                    idx,
-                    id: transcript_id.clone(),
-                    gene_idx,
-                    chrom: chrom.to_string(),
-                    strand,
-                    exons: vec![],
-                    properties: vec![],
-                };
-
-                transcript_id_to_idx.insert(transcript_id.clone(), idx);
-                transcripts.push(transcript);
-            }
-
-            let tx_idx = transcript_id_to_idx.get(&transcript_id).ok_or_else(|| {
-                make_err(&format!(
-                    "this row references transcript_id={transcript_id} but this \
-                     transcript has no preceding 'transcript' row in the GTF"
-                ))
-            })?;
+                Some(idx) => *idx,
+            };
 
             transcripts[tx_idx.0 as usize].exons.push(exon);
         }
@@ -386,7 +382,7 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
         // Tabulate the set of transcripts for each gene
         gene_to_transcripts
             .get_mut(&tx.gene_idx)
-            .with_context(|| format!("transcript {} is missing", tx.id))?
+            .unwrap()
             .push(tx.idx);
     }
 
@@ -442,15 +438,12 @@ NC_000087.8	BestRefSeq	gene	90762409	90766319	.	-	.	gene_id \"G530011O06Rik\"; "
     }
 
     #[test]
-    fn test_missing_transcript() {
+    fn test_exon_before_gene() -> Result<()> {
         let gtf = b"\
-NC_000087.8	BestRefSeq	exon	90765690	90766319	.	-	.	gene_id \"G530011O06Rik\"; transcript_id \"NR_137283.1\";
-NC_000086.8	BestRefSeq	gene	168758039	168761913	.	-	.	gene_id \"G530011O06Rik\";";
-        let txome = Transcriptome::from_reader(BufReader::new(gtf.as_slice()));
-        assert!(txome.is_err());
-        if let Err(err) = txome {
-            assert_eq!(err.to_string(), "transcript NR_137283.1 is missing");
-        }
+NC_000086.8	RefSeq	exon	168758039	168761913	.	-	.	gene_id \"G530011O06Rik\"; transcript_id \"NR_137283.1\";
+NC_000086.8	RefSeq	gene	168758039	168761913	.	-	.	gene_id \"G530011O06Rik\";";
+        Transcriptome::from_reader(BufReader::new(gtf.as_slice()))?;
+        Ok(())
     }
 
     #[test]

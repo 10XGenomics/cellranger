@@ -12,8 +12,6 @@ counts across the entire dataset that is given.
 # pylint: disable=invalid-name
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pandas as pd
 from six import ensure_binary
@@ -48,29 +46,6 @@ else:
 
 _BARCODE = pu.FEATURE_DF_BARCODE_SEQ_COL
 _COUNT = "count"
-
-
-def load_tag_counts_from_matrix(filtered_matrix, library_type=rna_library.ANTIGEN_LIBRARY_TYPE):
-    """Load all the read counts for a multiplexing library.
-
-    Given a filtered matrix H5 file, load all the read counts for the multiplexing library type
-     each cell-associated barcode and return as a data frame following log10 transformation
-    along with a description of the features loaded.
-
-    :param filtered_matrix: A path to a molecule info file or a CountMatrix.
-    :param library_type: string specifying library type
-    :return: A tuple with a Pandas DataFrame and a Dictionary with Feature info.
-    """
-    is_cm = isinstance(filtered_matrix, CountMatrix)
-    if not is_cm and os.path.exists(filtered_matrix):
-        mat = CountMatrix.load_h5_file(filtered_matrix)
-    elif is_cm:
-        mat = filtered_matrix
-    else:
-        raise ReferenceError("Invalid filtered_matrix argument.")
-    # Older feature references have "Multiplexing Tag Capture"
-    cmo_tags = mat.select_features_by_type(library_type)
-    return cmo_tags
 
 
 def get_valid_tags(tag_calls_per_cell_fn):

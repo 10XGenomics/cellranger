@@ -1,39 +1,67 @@
 use anyhow::{bail, Result};
 use cr_types::chemistry::{AutoChemistryName, AutoOrRefinedChemistry, ChemistryName};
 use itertools::Itertools;
+use multi::config::{ChemistryParam, ChemistrySet};
 #[allow(clippy::enum_glob_use)]
 use AutoChemistryName::*;
 #[allow(clippy::enum_glob_use)]
 use AutoOrRefinedChemistry::*;
 #[allow(clippy::enum_glob_use)]
 use ChemistryName::*;
+#[allow(clippy::enum_glob_use)]
+use ChemistryParam::*;
+#[allow(clippy::enum_glob_use)]
+use ChemistrySet::*;
 
-const ALLOWED_COUNT_CHEM_INPUTS: [(AutoOrRefinedChemistry, Option<&str>); 17] = [
-    (Auto(Count), Some("auto detection (default)")),
-    (Auto(ThreePrime), Some("Single Cell 3'")),
-    (Auto(FivePrime), Some("Single Cell 5'")),
-    (Refined(ThreePrimeV1), Some("Single Cell 3'v1")),
-    (Refined(ThreePrimeV2), Some("Single Cell 3'v2")),
-    (Refined(ThreePrimeV3), Some("Single Cell 3'v3")),
-    (Refined(ThreePrimeV3HT), Some("Single Cell 3'v3 HT")),
-    (Refined(ThreePrimeV4), Some("Single Cell 3'v4")),
-    (Refined(FivePrimePE), Some("Single Cell 5' paired end")),
-    (Refined(FivePrimePEV3), Some("Single Cell 5' paired end v3")),
-    (Refined(FivePrimeR2), Some("Single Cell 5' R2-only")),
-    (Refined(FivePrimeR2V3), Some("Single Cell 5' R2-only v3")),
-    (Refined(FivePrimeHT), None),
-    (Refined(FivePrimeR2), None),
+// NOTE: if you add or modify options here, you must update the
+// equivalent matcher in the telemetry configuration.
+const ALLOWED_COUNT_CHEM_INPUTS: [(ChemistryParam, Option<&str>); 17] = [
+    (AutoOrRefined(Auto(Count)), Some("auto detection (default)")),
+    (AutoOrRefined(Auto(ThreePrime)), Some("Single Cell 3'")),
+    (AutoOrRefined(Auto(FivePrime)), Some("Single Cell 5'")),
     (
-        Refined(FeatureBarcodingOnly),
+        AutoOrRefined(Refined(ThreePrimeV1)),
+        Some("Single Cell 3'v1"),
+    ),
+    (
+        AutoOrRefined(Refined(ThreePrimeV2)),
+        Some("Single Cell 3'v2"),
+    ),
+    (Set(ThreePrimeV3), Some("Single Cell 3'v3")),
+    (Set(ThreePrimeV3HT), Some("Single Cell 3'v3 HT")),
+    (Set(ThreePrimeV4), Some("Single Cell 3'v4")),
+    (
+        AutoOrRefined(Refined(FivePrimePE)),
+        Some("Single Cell 5' paired end"),
+    ),
+    (
+        AutoOrRefined(Refined(FivePrimePEV3)),
+        Some("Single Cell 5' paired end v3"),
+    ),
+    (
+        AutoOrRefined(Refined(FivePrimeR2)),
+        Some("Single Cell 5' R2-only"),
+    ),
+    (
+        AutoOrRefined(Refined(FivePrimeR2V3)),
+        Some("Single Cell 5' R2-only v3"),
+    ),
+    (AutoOrRefined(Refined(FivePrimeHT)), None),
+    (AutoOrRefined(Refined(FivePrimeR2)), None),
+    (
+        AutoOrRefined(Refined(FeatureBarcodingOnly)),
         Some("Single Cell Antibody-only 3' v2 or 5'"),
     ),
-    (Refined(SFRP), None),
-    (Refined(ArcV1), Some("GEX portion only of multiome")),
+    (AutoOrRefined(Refined(SFRP)), None),
+    (
+        AutoOrRefined(Refined(ArcV1)),
+        Some("GEX portion only of multiome"),
+    ),
 ];
 
 /// Parse the provided chemistry and validate that it is of an allowed type.
 /// Return a user-facing clap-compatible error message.
-pub fn validate_chemistry(s: &str) -> Result<AutoOrRefinedChemistry> {
+pub fn validate_chemistry(s: &str) -> Result<ChemistryParam> {
     let parse_err = || {
         format!(
             "{s} is an invalid input to `--chemistry`. Supported options are:\n - {}",
@@ -52,7 +80,7 @@ pub fn validate_chemistry(s: &str) -> Result<AutoOrRefinedChemistry> {
     {
         return Ok(chem);
     }
-    if chem.refined() == Some(ThreePrimeV3LT) {
+    if matches!(chem, AutoOrRefined(Refined(ThreePrimeV3LT))) {
         bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
     }
     bail!(parse_err());

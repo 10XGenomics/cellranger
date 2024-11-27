@@ -106,9 +106,11 @@ pipeline SC_VDJ_ASSEMBLER_CS(
             },
         ],
         config       = {
+            disable_annotate:    true,
             disable_count:       true,
             disable_multi:       true,
             disable_multi_count: true,
+            disable_rtl:         true,
             disable_vdj:         false,
         },
     )

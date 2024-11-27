@@ -8,12 +8,14 @@ filetype h5;
 filetype json;
 
 stage CALL_ANTIBODIES(
-    in  h5   filtered_feature_counts_matrix,
-    in  bool is_antibody,
-    in  bool is_spatial,
-    out json antibody_histograms_json,
-    out json antibody_treemap_json,
-    src py   "stages/feature/call_antibodies",
+    in  h5     filtered_feature_counts_matrix,
+    in  bool   is_antibody,
+    in  bool   is_spatial,
+    in  json   multi_graph,
+    in  string sample_id,
+    out json   antibody_histograms_json,
+    out json   antibody_treemap_json,
+    src py     "stages/feature/call_antibodies",
 ) split (
 ) using (
     volatile = strict,

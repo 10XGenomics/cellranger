@@ -21,6 +21,7 @@ import numpy as np
 
 import cellranger.constants as cr_constants
 import cellranger.h5_constants as h5_constants
+from cellranger.targeted.simple_utils import load_target_csv_metadata
 
 if TYPE_CHECKING:
     from pysam import AlignmentFile
@@ -42,9 +43,16 @@ def get_reference_genome_fasta(reference_path: str) -> str:
     return os.path.join(reference_path, cr_constants.REFERENCE_FASTA_PATH)
 
 
-def get_reference_genomes(reference_path: str) -> list[str]:
-    data = _load_reference_metadata_file(reference_path)
-    return data[cr_constants.REFERENCE_GENOMES_KEY]
+def get_reference_genomes(
+    reference_path: str | None, target_set_path: str | None = None
+) -> list[str]:
+    """Return the genome names from the reference transcriptome, or target set, or ["NONE"]."""
+    if reference_path is not None:
+        return _load_reference_metadata_file(reference_path)[cr_constants.REFERENCE_GENOMES_KEY]
+    elif target_set_path is not None:
+        return [load_target_csv_metadata(target_set_path, "probe set")["reference_genome"]]
+    else:
+        return ["NONE"]
 
 
 def is_arc_reference(reference_path: str) -> bool:

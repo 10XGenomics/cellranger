@@ -40,7 +40,7 @@ use serde_json::Value;
 use std::borrow::Borrow;
 use std::collections::{hash_map, HashMap, HashSet};
 use std::fs::File;
-use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 use std::io::{Read, Write};
 use std::iter::FromIterator;
 use std::path::Path;
@@ -57,58 +57,39 @@ pub mod collections;
 pub mod num;
 pub mod option;
 
-/// A default Hasher for some faster hashing scheme (deterministic)
-pub struct TxHasher(AHasher);
+/// A deterministic and fast hasher.
+#[derive(Clone, Copy, Default)]
+pub struct TxHasher;
 
-impl Hasher for TxHasher {
-    #[inline]
-    fn finish(&self) -> u64 {
-        self.0.finish()
+impl TxHasher {
+    fn random_state() -> ahash::RandomState {
+        ahash::RandomState::with_seeds(0, 0, 0, 0)
     }
-    #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.write(bytes);
+
+    /// Return a new hasher.
+    pub fn hasher() -> AHasher {
+        Self::random_state().build_hasher()
     }
-}
 
-impl Default for TxHasher {
-    fn default() -> Self {
-        /// From the ahash crate source.
-        const PI: [u64; 4] = [
-            0x243f_6a88_85a3_08d3,
-            0x1319_8a2e_0370_7344,
-            0xa409_3822_299f_31d0,
-            0x082e_fa98_ec4e_6c89,
-        ];
-
-        /// From the ahash crate source.
-        const PI2: [u64; 4] = [
-            0x4528_21e6_38d0_1377,
-            0xbe54_66cf_34e9_0c6c,
-            0xc0ac_29b7_c97c_50dd,
-            0x3f84_d5b5_b547_0917,
-        ];
-
-        /// Arbitrary seed values.
-        const SEED: [u64; 4] = [
-            PI[0] ^ PI2[0] ^ 0x6c62_272e_07bb_0142,
-            PI[1] ^ PI2[1],
-            PI[2] ^ PI2[2] ^ 0x517c_c1b7_2722_0a95,
-            PI[3] ^ PI2[3],
-        ];
-
-        TxHasher(ahash::RandomState::with_seeds(SEED[0], SEED[1], SEED[2], SEED[3]).build_hasher())
+    /// Calculate the hash of a single value.
+    pub fn hash(x: impl Hash) -> u64 {
+        Self::random_state().hash_one(x)
     }
 }
 
-/// A default BuildHasher using some faster hashing scheme (faster than SipHash)
-type TxBuildHasher = BuildHasherDefault<TxHasher>;
+impl BuildHasher for TxHasher {
+    type Hasher = AHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        Self::hasher()
+    }
+}
 
 /// A default HashMap using some faster hashing scheme
-pub type TxHashMap<K, V> = HashMap<K, V, TxBuildHasher>;
+pub type TxHashMap<K, V> = HashMap<K, V, TxHasher>;
 
 /// A default HashSet using some faster hashing scheme
-pub type TxHashSet<K> = HashSet<K, TxBuildHasher>;
+pub type TxHashSet<K> = HashSet<K, TxHasher>;
 
 /// Create a TxHashSet with the given elements. Similar to a `vec![]`
 #[macro_export]
@@ -121,14 +102,6 @@ macro_rules! set {
         }
     };
     ( $( $x:expr, )* ) => {set!($( $x:expr ),*)};
-}
-
-/// A default hash function for when you need a quick hash
-#[inline]
-pub fn hash64(data: impl Hash) -> u64 {
-    let mut state = TxHasher::default();
-    data.hash(&mut state);
-    state.finish()
 }
 
 /// The string used in a metric name.
@@ -204,9 +177,9 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
     /// # Arguments
     ///
     /// * `filename` - Output will be written to this file. It may be of any type
-    /// which can be interpreted as a `Path`, typically a `String`
+    ///   which can be interpreted as a `Path`, typically a `String`
     /// * `serde_format` - Defines the format for serialization, typically
-    /// `SerdeFormat::Json`
+    ///   `SerdeFormat::Json`
     ///
     /// # Example
     ///
@@ -258,9 +231,9 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
     /// # Arguments
     ///
     /// * `filename` - Read from this file. It may be of any type
-    /// which can be interpreted as a `Path`, typically a `String`
+    ///   which can be interpreted as a `Path`, typically a `String`
     /// * `serde_format` - Defines the format for deserialization, typically
-    /// `SerdeFormat::Json`
+    ///   `SerdeFormat::Json`
     ///
     /// # Example
     ///
@@ -288,9 +261,9 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
     /// # Arguments
     ///
     /// * `filenames` - Read from this set of file. It may be a slice/vector of any type
-    /// which can be interpreted as a `Path`, typically a `String`
+    ///   which can be interpreted as a `Path`, typically a `String`
     /// * `serde_format` - Defines the format for deserialization, typically
-    /// `SerdeFormat::Json` or `SerdeFormat::Binary`
+    ///   `SerdeFormat::Json` or `SerdeFormat::Binary`
     ///
     /// # Example
     /// ```rust
@@ -341,7 +314,7 @@ pub trait Metric: Serialize + for<'de> Deserialize<'de> {
         }
     }
 
-    ///
+    /// Merge metrics from an iterator
     fn from_chunks<I>(chunks: I) -> Self
     where
         I: IntoIterator<Item = Self>,
@@ -395,7 +368,7 @@ pub trait JsonReport {
     ///
     /// # Arguments
     /// * `filename` - Output will be written to this file. It may be of any type
-    /// which can be interpreted as a `Path`, typically a `String`
+    ///   which can be interpreted as a `Path`, typically a `String`
     fn report(&self, filename: &dyn AsRef<Path>) -> Result<(), Error> {
         let reporter = self.to_json_reporter();
         reporter.to_file(filename, SerdeFormat::Json)
@@ -472,6 +445,15 @@ impl JsonReporter {
     pub fn insert(&mut self, key: impl ToString, value: impl Into<Value>) {
         let key_str = key.to_string();
         assert!(!self.hashmap.contains_key(&key_str));
+        self.hashmap.insert(key_str, value.into());
+    }
+
+    /// Insert a new (key, value) pair or update the value if the key already
+    /// exists in the `JsonReporter`. The key could be any type which can be
+    /// casted into a `String` and value can be any type which can be casted
+    /// into `serde_json::Value`
+    pub fn insert_or_update(&mut self, key: impl ToString, value: impl Into<Value>) {
+        let key_str = key.to_string();
         self.hashmap.insert(key_str, value.into());
     }
 
@@ -642,16 +624,17 @@ impl ::std::fmt::Display for JsonReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::hash::Hasher;
 
     #[test]
     fn test_txhasher() {
-        assert_eq!(hash64(1234567890u64), 4951984608975211167);
-        assert_eq!(hash64(b"Hello, world!"), 14765448921690784915);
-        assert_eq!(hash64("Hello, world!"), 16441770738856054944);
+        assert_eq!(TxHasher::hash(1234567890u64), 11377898369596099812);
+        assert_eq!(TxHasher::hash(b"Hello, world!"), 909132802233200014);
+        assert_eq!(TxHasher::hash("Hello, world!"), 1677595690243835615);
 
-        let mut hasher = TxHasher::default();
+        let mut hasher = TxHasher::hasher();
         hasher.write(b"Hello, world!");
-        assert_eq!(hasher.finish(), 16492252547799468407);
+        assert_eq!(hasher.finish(), 17599674632180055185);
     }
 
     #[derive(Default, Serialize, Deserialize, Metric)]

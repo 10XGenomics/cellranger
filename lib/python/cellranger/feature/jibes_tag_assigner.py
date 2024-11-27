@@ -1,4 +1,5 @@
 """A TagAssigner class based on the JIBES model."""
+
 # Copyright (c) 2020 10X Genomics, Inc. All rights reserved.
 
 from __future__ import annotations
@@ -73,7 +74,7 @@ def make_model_results_list(name, samp_id, assigner):
     max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     fitter = assigner.fitter
     metrics = assigner.get_feature_assignment_metrics()
-    report_prefix = rna_library.get_library_type_metric_prefix(assigner.feature_type)
+    report_prefix = assigner.report_prefix
     results += [
         [
             name,
@@ -197,8 +198,7 @@ Contact support@10xgenomics.com for additional help with this error."""
         assert isinstance(next(iter(self.valid_tags)), bytes)
 
         # TODO: Remove dependence on upstream tag_calls file
-        cmo_matrix = jibes.load_tag_counts_from_matrix(matrix, library_type)
-        dense_matrix = cmo_matrix.m.toarray().astype(np.float64).T
+        dense_matrix = self.sub_matrix.m.toarray().astype(np.float64).T
         # With customer data we've occasionally seen barcodes with near 0 counts,
         # we plan to exclude these from fitting and just call them blank with prob = 1
         row_sums = np.sum(dense_matrix, axis=1)
@@ -208,7 +208,7 @@ Contact support@10xgenomics.com for additional help with this error."""
             # Note: The reverse transform is applied inside
             dense_matrix[:, i] = np.log10(dense_matrix[:, i] + 1.0)
 
-        self.all_tags: list[bytes] = [x.id for x in cmo_matrix.feature_ref.feature_defs]
+        self.all_tags: list[bytes] = [x.id for x in self.sub_matrix.feature_ref.feature_defs]
         assert isinstance(self.all_tags[0], bytes)
         self.dropped_tags = set(self.all_tags) - self.valid_tags
         good_indices = [(i, x) for i, x in enumerate(self.all_tags) if x not in self.dropped_tags]
@@ -217,10 +217,10 @@ Contact support@10xgenomics.com for additional help with this error."""
         col_names = [x[1] for x in good_indices]
 
         data = jibes_data.JibesData(
-            dense_matrix[~near_zero_indices, :], col_names, cmo_matrix.bcs[~near_zero_indices]
+            dense_matrix[~near_zero_indices, :], col_names, self.sub_matrix.bcs[~near_zero_indices]
         )
         self.near_zero_data = jibes_data.JibesData(
-            dense_matrix[near_zero_indices, :], col_names, cmo_matrix.bcs[near_zero_indices]
+            dense_matrix[near_zero_indices, :], col_names, self.sub_matrix.bcs[near_zero_indices]
         )
 
         self.fitter = self._load_preliminary_assignments(tag_calls_fn, data, n_gems)
@@ -321,7 +321,7 @@ Contact support@10xgenomics.com for additional help with this error."""
             # as when the data was loaded, so we want to check that it matches still
             bc = self.jibes_assignments[BARCODE_COL][i]
             assert bc == self.fitter.data.barcodes[i], "Dataframe is out of order!"
-            bc_index = self.matrix.bc_to_int(self.jibes_assignments[BARCODE_COL][i])
+            bc_index = self.sub_matrix.bc_to_int(self.jibes_assignments[BARCODE_COL][i])
             if asn in non_singlet_barcodes:
                 non_singlet_barcodes[asn].append(bc_index)
                 if asn == MULTIPLETS_FACTOR_NAME:
@@ -335,15 +335,15 @@ Contact support@10xgenomics.com for additional help with this error."""
 
         blanks = non_singlet_barcodes[BLANK_FACTOR_NAME]
         for bc in self.near_zero_data.barcodes:
-            bc_index = self.matrix.bc_to_int(bc)
+            bc_index = self.sub_matrix.bc_to_int(bc)
             blanks.append(bc_index)
 
         self.non_singlet_barcodes = non_singlet_barcodes
 
         assignments = {}
         for j, c_name in enumerate(col_names):
-            umi_counts = self.matrix.get_subselected_counts(
-                log_transform=False, library_type=self.feature_type, list_feature_ids=[c_name]
+            umi_counts = self.sub_matrix.get_subselected_counts(
+                log_transform=False, list_feature_ids=[c_name]
             )
             assignments[c_name] = cr_fa.FeatureAssignments(
                 indices[j],
@@ -361,7 +361,7 @@ Contact support@10xgenomics.com for additional help with this error."""
         freqs_df = self.compute_assignment_freqs(assignment_metadata.num_cells_without_features)
         assignment_metadata.freq_counts = freqs_df
         umi_thresholds = self._compute_umi_thresholds(
-            self.matrix, self.assignments, multiplexing=True
+            self.sub_matrix, self.assignments, multiplexing=True
         )
         assignment_metadata.umi_thresholds = umi_thresholds
         assignment_metadata.num_cells_blanks = len(self.non_singlet_barcodes[BLANK_FACTOR_NAME])

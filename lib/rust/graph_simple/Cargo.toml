@@ -1,0 +1,16 @@
+[dependencies]
+[dependencies.petgraph]
+workspace = true
+
+[dependencies.vector_utils]
+path = '../vector_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'graph_simple'
+publish = false
+version = '0.1.0'

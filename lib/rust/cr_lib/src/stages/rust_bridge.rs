@@ -62,13 +62,13 @@ pub struct RustBridgeStageOutputs {
     pub gem_groups: Vec<u16>,
     pub barcodes: Vec<JsonFile<()>>,
     pub raw_barcode_counts_json: JsonFile<()>,
-    pub corrected_barcode_counts_json: JsonFile<SimpleHistogram<Barcode>>,
+    pub corrected_barcode_counts_json: JsonFile<SimpleHistogram<String>>,
     pub summary: MetricsFile,
     pub n50_n50_rpu: u32,
     pub processed_read_pairs: u64,
 }
 
-fn iter_range_grouped<'a, T: 'a, S: 'a>(
+fn iter_range_grouped<'a, T, S>(
     reader: &'a ShardReader<T, S>,
     range: &Range<<S as SortKey<T>>::Key>,
 ) -> Result<
@@ -80,9 +80,9 @@ fn iter_range_grouped<'a, T: 'a, S: 'a>(
     anyhow::Error,
 >
 where
-    T: DeserializeOwned,
+    T: 'a + DeserializeOwned,
     <S as SortKey<T>>::Key: Clone + Ord + DeserializeOwned,
-    S: SortKey<T>,
+    S: 'a + SortKey<T>,
 {
     Ok(reader.iter_range(range)?.group_by(|read| {
         read.as_ref()

@@ -1,8 +1,6 @@
 //! # CHECK_BARCODES_COMPATIBILITY
 //!
-//! This stage has two responsibilities:
-//! 1. Check that barcodes from different libraries are compatible
-//! 2. Infer whether libraries need barcode translation.
+//! This stage checks that barcodes from different libraries are compatible.
 //!
 //! ## What is the meaning of compatibility?
 //!
@@ -12,13 +10,6 @@
 //! mix-ups where the GEX library from one gem well could be paired with Ab library which was
 //! processed through a different gem well. This stage checks that the fastqs from different
 //! libraries are compatible.
-//!
-//! ## What is barcode translation?
-//! We use barcode to refer to a unique microfluidic partition or a GEM. In the 3' v3 assay, the gel
-//! bead contains capture sequences that enable capture and priming of feature barcoding targets in
-//! addition to the poly(dT) primer. The poly(dT) primer is attached to the Truseq handle and the
-//! capture sequences are attached to the Nextera handle. See the image below from the 3' v3 user
-//! guide:
 //!
 //! <img src="v3-gel-bead.png" alt="3' v3 gel bead" width="400"/>
 //!
@@ -31,9 +22,10 @@
 //!
 //! However, there are also applications where the Antibody library is captured by polyA
 //! (TotalSeq A, for example). Hence **for 3' v3** if we have GEX + FB, in some cases the barcodes
-//! in the FB library need to be translated whereas in other cases they need not be.
+//! in the FB library need to be translated whereas in other cases they need not be. Chemistry
+//! detection takes care of determining the correct whitelist for each library.
 //!
-//! ## How do we check for compatibility & infer translation?
+//! ## How do we check for compatibility?
 //!
 //! If all the libraries came from the same set of cells, we expect to see a similar distribution of
 //! the number of reads associated with each barcode. Conversely, if they came from different set of
@@ -41,38 +33,38 @@
 //! the number of common cell associated barcodes that you get by chance between two gem wells is
 //! very small for the cell loads we operate in). We compute the similarity using:
 //! 1. Sample upto 1 million reads for each library and create a histogram of the number of reads
-//! associated with each valid barcode.
+//!    associated with each valid barcode.
 //! 2. Compute a modified [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity) of
-//! the histogram of each library with the histogram of the gene expression library. Before applying
-//! the similarity measure, we first cap each count to a threshold value to reduces the impact of
-//! very high count outliers.
+//!    the histogram of each library with the histogram of the gene expression library. Before applying
+//!    the similarity measure, we first cap each count to a threshold value to reduces the impact of
+//!    very high count outliers.
 //!     - If translation is available (`3' v3`), we compute similarity using the translated barcode.
-//! If the similarity is improved, we flag the library for translation.
+//!       If the similarity is improved, we flag the library for translation.
 //! 3. The libraries are compatible if their modified cosine similarity is at least `0.1` (empirical
-//! threshold).
+//!    threshold).
 //!
 //! ## NOTES
 //! - No compatibility check is performed if we have only a single library. With the current
-//! whitelist setup, we can't know if a 3' v3 Antibody only sample will need to be translated or
-//! not. In order to do this correctly, we need to define a canonical whitelist instead of a mixed
-//! one containing both Truseq and Nextera barcodes. We made a deliberate choice to enable
-//! translation by default for 3' v3 antibody only samples. This is not the "correct" thing to do
-//! TotalSeqA. A consequence of this is that the cellranger output for TotalSeqA Antibody only 3' v3
-//! will **not be barcode compatible** with a GEX only run from the same gem well.
+//!   whitelist setup, we can't know if a 3' v3 Antibody only sample will need to be translated or
+//!   not. In order to do this correctly, we need to define a canonical whitelist instead of a mixed
+//!   one containing both Truseq and Nextera barcodes. We made a deliberate choice to enable
+//!   translation by default for 3' v3 antibody only samples. This is not the "correct" thing to do
+//!   TotalSeqA. A consequence of this is that the cellranger output for TotalSeqA Antibody only 3' v3
+//!   will **not be barcode compatible** with a GEX only run from the same gem well.
 //! - There needs to be a GEX library if there are >1 library types.
 
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use barcode::{BarcodeConstruct, BcSegSeq, Whitelist};
-use cr_types::chemistry::{ChemistryDefs, ChemistryName};
+use cr_types::chemistry::ChemistryDefs;
 use cr_types::sample_def::SampleDef;
 use cr_types::LibraryType;
 use fastq_set::filenames::FindFastqs;
 use fastq_set::read_pair::{ReadPart, RpRange};
 use fastq_set::read_pair_iter::ReadPairIter;
-use itertools::Itertools;
+use itertools::{process_results, Itertools};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
-use metric::{set, Metric, SimpleHistogram, TxHashMap, TxHashSet};
+use metric::{Metric, SimpleHistogram, TxHashMap, TxHashSet};
 use parameters_toml::min_barcode_similarity;
 use serde::{Deserialize, Serialize};
 
@@ -86,11 +78,8 @@ pub struct CheckBarcodesCompatibilityStageInputs {
     pub check_library_compatibility: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize, MartianStruct, PartialEq, Eq)]
-#[cfg_attr(test, derive(Debug))]
-pub struct CheckBarcodesCompatibilityStageOutputs {
-    pub libraries_to_translate: TxHashSet<LibraryType>,
-}
+#[derive(Debug, Clone, Serialize, Deserialize, MartianStruct, PartialEq, Eq)]
+pub struct CheckBarcodesCompatibilityStageOutputs {}
 
 // This is our stage struct
 pub struct CheckBarcodesCompatibility;
@@ -100,23 +89,23 @@ pub(crate) fn sample_valid_barcodes(
     barcode_range: RpRange,
     wl: &Whitelist,
 ) -> Result<SimpleHistogram<BcSegSeq>> {
-    let mut histogram = SimpleHistogram::default();
-    let mut num_reads = 0;
-    for fastq in sample_def.get_fastq_def()?.find_fastqs()? {
-        for read_pair in ReadPairIter::from_fastq_files(&fastq)? {
-            if let Some(seq) = read_pair?.get_range(barcode_range, ReadPart::Seq) {
-                // NOTE: This is robust to a single N cycle
-                if let Some(bc_in_wl) = wl.match_to_whitelist(BcSegSeq::from_bytes(seq)) {
-                    histogram.observe_owned(bc_in_wl);
-                }
-                num_reads += 1;
-            }
-            if num_reads >= MAX_READS_BARCODE_COMPATIBILITY {
-                return Ok(histogram);
-            }
-        }
-    }
-    Ok(histogram)
+    let barcode_iter = sample_def
+        .get_fastq_def()?
+        .find_fastqs()?
+        .into_iter()
+        .map(|fastq| ReadPairIter::from_fastq_files(&fastq))
+        .flatten_ok()
+        .map(|x| x?)
+        .filter_map_ok(|read| {
+            read.get_range(barcode_range, ReadPart::Seq)
+                .map(BcSegSeq::from_bytes)
+        })
+        .take(MAX_READS_BARCODE_COMPATIBILITY)
+        .filter_map_ok(|seq| wl.match_to_whitelist(seq, true));
+
+    Ok(process_results(barcode_iter, |iter| {
+        SimpleHistogram::from_iter_owned(iter)
+    })?)
 }
 
 /// Calculate the robust cosine similarity of two barcode lists.
@@ -170,30 +159,13 @@ impl MartianMain for CheckBarcodesCompatibility {
             .values()
             .any(|x| matches!(x.barcode_whitelist(), BarcodeConstruct::Segmented(_)))
         {
-            return Ok(CheckBarcodesCompatibilityStageOutputs {
-                libraries_to_translate: TxHashSet::default(),
-            });
+            return Ok(CheckBarcodesCompatibilityStageOutputs {});
         }
 
         // -----------------------------------------------------------------------------------------
         // Trivial case when we don't have more than 1 library type
         if unique_lib_types.len() < 2 {
-            let chemistry_def = args.chemistry_defs.values().exactly_one().unwrap();
-            // We are making a choice to "translate" 3' v3 antibody only libraries by default. This
-            // is not be the correct thing to do if the input is TotalSeqA, but we do it anyway,
-            // because we do not have a notion of a "canonical" whitelist and we can only get one of
-            // TotalSeqA or TotalSeqB correct until we fix that.
-            let libraries_to_translate = if (chemistry_def.name == ChemistryName::ThreePrimeV3
-                || chemistry_def.name == ChemistryName::ThreePrimeV3LT)
-                && unique_lib_types.contains(&LibraryType::Antibody)
-            {
-                set![LibraryType::Antibody]
-            } else {
-                set![]
-            };
-            return Ok(CheckBarcodesCompatibilityStageOutputs {
-                libraries_to_translate,
-            });
+            return Ok(CheckBarcodesCompatibilityStageOutputs {});
         }
 
         // -----------------------------------------------------------------------------------------
@@ -201,22 +173,16 @@ impl MartianMain for CheckBarcodesCompatibility {
         // possibly be relaxed in the future
         ensure!(unique_lib_types.contains(&LibraryType::Gex), MISSING_GEX);
 
-        // Assert that all the chemistries have a matching gel bead whitelist.
-        let gb_whitelist_spec = args
-            .chemistry_defs
-            .values()
-            .map(|chem| chem.barcode_whitelist().gel_bead())
-            .unique()
-            .exactly_one()
-            .unwrap();
-
         // -----------------------------------------------------------------------------------------
         // Compute gel bead barcode histogram per library type
-
-        let whitelist = gb_whitelist_spec.as_source(false)?.as_whitelist()?;
         let mut per_lib_bc_histogram = TxHashMap::default();
         for sdef in &args.sample_def {
             let chem = &args.chemistry_defs[&sdef.library_type.unwrap()];
+            let whitelist = chem
+                .barcode_whitelist()
+                .gel_bead()
+                .as_source()?
+                .as_whitelist()?;
             let this_hist =
                 sample_valid_barcodes(sdef, chem.barcode_range().gel_bead(), &whitelist)?;
             per_lib_bc_histogram
@@ -228,25 +194,11 @@ impl MartianMain for CheckBarcodesCompatibility {
         let gex_hist = per_lib_bc_histogram.remove(&LibraryType::Gex).unwrap(); // This is guaranteed to succeed due to the check above
 
         // -----------------------------------------------------------------------------------------
-        // Check similarity with the GEX library and infer if we need translation.
-        let translation_map = match gb_whitelist_spec.as_source(true) {
-            Ok(source) => Some(source.as_translation()?),
-            Err(_) => None,
-        };
-        let mut libraries_to_translate = set![];
+        // Check similarity with the GEX library.
         let min_barcode_similarity = *min_barcode_similarity()?;
         for (lib_type, this_hist) in per_lib_bc_histogram {
-            let mut similarity = robust_cosine_similarity(&gex_hist, &this_hist);
-            println!("Without translation: {lib_type} - {similarity:?}");
-            if let Some(ref translate) = translation_map {
-                let trans_similarity =
-                    robust_cosine_similarity(&gex_hist, &this_hist.map_key(|key| translate[&key]));
-                println!("With translation   : {lib_type} - {trans_similarity:?}");
-                if trans_similarity > similarity {
-                    libraries_to_translate.insert(lib_type);
-                    similarity = trans_similarity;
-                }
-            }
+            let similarity = robust_cosine_similarity(&gex_hist, &this_hist);
+            println!("Similarity to GEX: {lib_type} - {similarity:?}");
             if args.check_library_compatibility {
                 ensure!(
                     similarity >= min_barcode_similarity,
@@ -255,17 +207,16 @@ impl MartianMain for CheckBarcodesCompatibility {
             }
         }
 
-        Ok(CheckBarcodesCompatibilityStageOutputs {
-            libraries_to_translate,
-        })
+        Ok(CheckBarcodesCompatibilityStageOutputs {})
     }
 }
 
 const MISSING_GEX: &str = "Gene expression data is required if there are multiple library types.";
 
-fn incompatible_message(lib_0_type: LibraryType, lib_1_type: LibraryType) -> String {
-    format!(
-        "Barcodes from the [{lib_0_type}] library and the [{lib_1_type}] library have insufficient overlap. \
+fn incompatible_message(lib_0_type: LibraryType, lib_1_type: LibraryType) -> anyhow::Error {
+    anyhow!(
+        "Barcodes from the [{lib_0_type}] library and the [{lib_1_type}] library have \
+         insufficient overlap. \
          This usually indicates the libraries originated from different cells or samples. \
          This error can usually be fixed by providing correct FASTQ files from the same \
          sample. If you are certain the input libraries are matched, you can bypass \
@@ -301,59 +252,32 @@ mod barcode_compatibility_tests {
     #[test]
     fn test_single_lib_type() {
         let args = inputs(
-            ChemistryName::ThreePrimeV3,
+            ChemistryName::ThreePrimeV3PolyA,
             vec![SampleDef {
                 library_type: Some(LibraryType::Gex),
                 ..Default::default()
             }],
         );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![]);
-    }
-
-    #[test]
-    fn test_ab_only_3pv3() {
-        // By default we will translate the Antibody library in 3' v3. This is not the correct
-        // thing to do for TotalSeqA, but we prefer TotalSeqB.
-        let args = inputs(
-            ChemistryName::ThreePrimeV3,
-            vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path:
-                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                        .into(),
-                sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                lanes: Some(vec![4]),
-                library_type: Some(LibraryType::Antibody),
-                ..Default::default()
-            }],
-        );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![LibraryType::Antibody]);
-    }
-
-    #[test]
-    fn test_5p_ab_only() {
-        let args = inputs(
-            ChemistryName::FivePrimeR2,
-            vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_antibody"
-                    .into(),
-                sample_names: Some(vec!["vdj_v1_hs_pbmc2_antibody".into()]),
-                library_type: Some(LibraryType::Antibody),
-                ..Default::default()
-            }],
-        );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![]);
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_ab_and_gex_3pv3() {
-        let args = inputs(
-            ChemistryName::ThreePrimeV3,
-            vec![
+        let chems: ChemistryDefs = [
+            (
+                LibraryType::Gex,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA),
+            ),
+            (
+                LibraryType::Antibody,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3CS1),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let args = CheckBarcodesCompatibilityStageInputs {
+            chemistry_defs: chems,
+            sample_def: vec![
                 SampleDef {
                     fastq_mode: FastqMode::ILMN_BCL2FASTQ,
                     read_path:
@@ -374,16 +298,28 @@ mod barcode_compatibility_tests {
                     ..Default::default()
                 },
             ],
-        );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![LibraryType::Antibody]);
+            check_library_compatibility: true,
+        };
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_crispr_and_gex_3pv3() {
-        let args = inputs(
-            ChemistryName::ThreePrimeV3,
-            vec![
+        let chems: ChemistryDefs = [
+            (
+                LibraryType::Gex,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA),
+            ),
+            (
+                LibraryType::Crispr,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3CS1),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let args = CheckBarcodesCompatibilityStageInputs {
+            chemistry_defs: chems,
+            sample_def: vec![
                 SampleDef {
                     fastq_mode: FastqMode::ILMN_BCL2FASTQ,
                     read_path:
@@ -402,18 +338,30 @@ mod barcode_compatibility_tests {
                     ..Default::default()
                 },
             ],
-        );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![LibraryType::Crispr]);
+            check_library_compatibility: true,
+        };
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_incompatible() {
         // Antibody from pbmc_1k_protein_v3
         // GEX from CR-300-01
-        let args = inputs(
-            ChemistryName::ThreePrimeV3,
-            vec![
+        let chems: ChemistryDefs = [
+            (
+                LibraryType::Gex,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA),
+            ),
+            (
+                LibraryType::Antibody,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3CS1),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let args = CheckBarcodesCompatibilityStageInputs {
+            chemistry_defs: chems,
+            sample_def: vec![
                 SampleDef {
                     fastq_mode: FastqMode::ILMN_BCL2FASTQ,
                     read_path:
@@ -433,9 +381,10 @@ mod barcode_compatibility_tests {
                     ..Default::default()
                 },
             ],
-        );
+            check_library_compatibility: true,
+        };
         assert_eq!(
-            incompatible_message(LibraryType::Gex, LibraryType::Antibody),
+            incompatible_message(LibraryType::Gex, LibraryType::Antibody).to_string(),
             CheckBarcodesCompatibility
                 .test_run_tmpdir(args)
                 .unwrap_err()
@@ -444,10 +393,10 @@ mod barcode_compatibility_tests {
     }
 
     #[test]
-    fn test_incompatible_override() -> Result<()> {
+    fn test_incompatible_override() {
         // Same as test_incompatible but ensure it works with override
         let mut args = inputs(
-            ChemistryName::ThreePrimeV3,
+            ChemistryName::ThreePrimeV3PolyA,
             vec![
                 SampleDef {
                     fastq_mode: FastqMode::ILMN_BCL2FASTQ,
@@ -471,13 +420,12 @@ mod barcode_compatibility_tests {
         );
         args.check_library_compatibility = false;
         CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        Ok(())
     }
 
     #[test]
     fn test_missing_gex() {
         let args = inputs(
-            ChemistryName::ThreePrimeV3,
+            ChemistryName::ThreePrimeV3PolyA,
             vec![
                 SampleDef {
                     library_type: Some(LibraryType::Antibody),
@@ -490,8 +438,8 @@ mod barcode_compatibility_tests {
             ],
         );
         assert_eq!(
-            MISSING_GEX.to_string(),
-            CheckBarcodesCompatibility
+            MISSING_GEX,
+            &CheckBarcodesCompatibility
                 .test_run_tmpdir(args)
                 .unwrap_err()
                 .to_string(),
@@ -508,19 +456,19 @@ mod barcode_compatibility_tests {
         c2.observe_by_owned(BcSegSeq::from_bytes(b"AA"), 5);
         c2.observe_by_owned(BcSegSeq::from_bytes(b"AG"), 10);
 
-        assert!((robust_cosine_similarity(&c1, &c2) - 0.5f64).abs() < 10f64 * std::f64::EPSILON);
+        assert!((robust_cosine_similarity(&c1, &c2) - 0.5f64).abs() < 10f64 * f64::EPSILON);
 
         let mut c3 = SimpleHistogram::default();
         c3.observe_by_owned(BcSegSeq::from_bytes(b"AC"), 5);
         c3.observe_by_owned(BcSegSeq::from_bytes(b"AG"), 10);
 
-        assert!((robust_cosine_similarity(&c1, &c3) - 0.5f64).abs() < 10f64 * std::f64::EPSILON);
+        assert!((robust_cosine_similarity(&c1, &c3) - 0.5f64).abs() < 10f64 * f64::EPSILON);
     }
 
     #[test]
     fn test_3pv3_total_seq_a() {
         let args = inputs(
-            ChemistryName::ThreePrimeV3,
+            ChemistryName::ThreePrimeV3PolyA,
             vec![
                 SampleDef {
                     fastq_mode: FastqMode::BCL_PROCESSOR,
@@ -538,8 +486,7 @@ mod barcode_compatibility_tests {
                 },
             ],
         );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![]);
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
@@ -563,8 +510,7 @@ mod barcode_compatibility_tests {
                 },
             ],
         );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![]);
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
@@ -591,16 +537,27 @@ mod barcode_compatibility_tests {
                 },
             ],
         );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![]);
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_cycle_failure() {
         // In this test, the first base of R1 is N in the antibody fastq
-        let args = inputs(
-            ChemistryName::ThreePrimeV3,
-            vec![
+        let chems: ChemistryDefs = [
+            (
+                LibraryType::Gex,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA),
+            ),
+            (
+                LibraryType::Antibody,
+                ChemistryDef::named(ChemistryName::ThreePrimeV3CS1),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let args = CheckBarcodesCompatibilityStageInputs {
+            chemistry_defs: chems,
+            sample_def: vec![
                 SampleDef {
                     fastq_mode: FastqMode::BCL_PROCESSOR,
                     library_type: Some(LibraryType::Antibody),
@@ -617,8 +574,8 @@ mod barcode_compatibility_tests {
                     ..Default::default()
                 },
             ],
-        );
-        let outs = CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
-        assert_eq!(outs.libraries_to_translate, set![LibraryType::Antibody]);
+            check_library_compatibility: true,
+        };
+        CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 }

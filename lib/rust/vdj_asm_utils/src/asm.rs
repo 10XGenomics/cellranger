@@ -23,14 +23,14 @@ pub fn write_sam_record_simple(
 
     let mut tigname = "*".to_string();
     if x.tid() >= 0 {
-        tigname = tignames[x.tid() as usize].clone();
+        tigname.clone_from(&tignames[x.tid() as usize]);
     }
 
     // Set mate reference sequence name field.
 
     let mut mtid = "*".to_string();
     if x.tid() != x.mtid() {
-        mtid = tignames[x.mtid() as usize].clone();
+        mtid.clone_from(&tignames[x.mtid() as usize]);
     } else if mate_mapped {
         mtid = "=".to_string();
     }

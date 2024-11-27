@@ -2,13 +2,14 @@
 
 use crate::env;
 use crate::types::FeatureReferenceFormat;
+use crate::utils::estimate_mem::{barcode_mem_gib, get_total_barcodes_detected};
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
 use cr_types::types::{BarcodeIndexFormat, FeatureBarcodeCount};
-use cr_types::{BarcodeThenFeatureOrder, CountShardFile};
-use martian::{MartianFileType, MartianMain, MartianRover};
+use cr_types::{BarcodeThenFeatureOrder, CountShardFile, MetricsFile};
+use martian::{MartianFileType, MartianRover, MartianStage, MartianVoid, Resource, StageDef};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::gzip_file::Gzip;
 use martian_filetypes::tabular_file::TsvFileNoHeader;
@@ -126,23 +127,53 @@ impl MtxWriter {
 pub struct WriteMatrixMarket;
 
 #[derive(Deserialize, Clone, MartianStruct)]
-pub struct StageInputs {
+pub struct WriteMatrixMarketStageInputs {
     pub counts: Vec<CountShardFile>,
     pub feature_reference: FeatureReferenceFormat,
     pub barcode_index: BarcodeIndexFormat,
+    pub barcode_correction_summary: MetricsFile,
 }
 
 #[derive(Serialize, Deserialize, Clone, MartianStruct)]
-pub struct StageOutputs {
+pub struct WriteMatrixMarketStageOutputs {
     pub feature_bc_matrix: PathBuf,
 }
 
-#[make_mro(mem_gb = 7, volatile = strict)]
-impl MartianMain for WriteMatrixMarket {
-    type StageInputs = StageInputs;
-    type StageOutputs = StageOutputs;
+#[make_mro(volatile = strict)]
+impl MartianStage for WriteMatrixMarket {
+    type StageInputs = WriteMatrixMarketStageInputs;
+    type StageOutputs = WriteMatrixMarketStageOutputs;
+    type ChunkInputs = MartianVoid;
+    type ChunkOutputs = MartianVoid;
 
-    fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
+    fn split(
+        &self,
+        args: Self::StageInputs,
+        _rover: MartianRover,
+    ) -> Result<StageDef<Self::ChunkInputs>> {
+        let barcodes_count = get_total_barcodes_detected(&args.barcode_correction_summary.read()?);
+        // bytes_per_barcode and offset_gib are empirically determined.
+        let mem_gib = barcode_mem_gib(barcodes_count, 220, 2);
+        println!("barcode_count={barcodes_count},mem_gib={mem_gib}");
+        Ok(StageDef::with_join_resource(Resource::with_mem_gb(mem_gib)))
+    }
+
+    fn main(
+        &self,
+        _args: Self::StageInputs,
+        _chunk_args: MartianVoid,
+        _rover: MartianRover,
+    ) -> Result<Self::ChunkOutputs> {
+        unreachable!()
+    }
+
+    fn join(
+        &self,
+        args: Self::StageInputs,
+        _chunk_defs: Vec<MartianVoid>,
+        _chunk_outs: Vec<MartianVoid>,
+        rover: MartianRover,
+    ) -> Result<Self::StageOutputs> {
         let barcode_index = args.barcode_index.read()?;
         let feature_bc_matrix: PathBuf = rover.make_path("raw_feature_bc_matrix");
         let mtx_writer = MtxWriter::new(&feature_bc_matrix)?;
@@ -152,6 +183,6 @@ impl MartianMain for WriteMatrixMarket {
             &barcode_index,
             &rover.pipelines_version(),
         )?;
-        Ok(StageOutputs { feature_bc_matrix })
+        Ok(Self::StageOutputs { feature_bc_matrix })
     }
 }

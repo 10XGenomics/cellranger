@@ -1,23 +1,30 @@
 [dependencies]
-byteorder = '1'
-prost = '0.11'
-prost-build = '0.11'
-sha2 = '0.10'
-
 [dependencies.anyhow]
 workspace = true
 
-[dependencies.enclone_proto]
+[dependencies.byteorder]
 workspace = true
 
+[dependencies.enclone_proto]
+path = '../enclone_proto'
+
 [dependencies.itertools]
+workspace = true
+
+[dependencies.prost]
+workspace = true
+
+[dependencies.prost-build]
 workspace = true
 
 [dependencies.serde_json]
 workspace = true
 
-[dependencies.vdj_ann]
+[dependencies.sha2]
 workspace = true
+
+[dependencies.vdj_ann]
+path = '../vdj_ann'
 
 [dependencies.vdj_asm_utils]
 default-features = false
@@ -27,7 +34,7 @@ path = '../vdj_asm_utils'
 path = '../vdj_reference'
 
 [dependencies.vdj_types]
-workspace = true
+path = '../vdj_types'
 
 [lib]
 test = false

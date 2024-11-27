@@ -7,7 +7,6 @@ pub mod merge_molecules;
 pub mod create_antigen_clonotype_clustermap;
 pub mod parse_aggr_csv;
 pub mod process_vdj_proto;
-pub mod run_enclone_aggr;
 pub mod setup_vdj_aggr;
 pub mod websummary;
 pub mod write_aggr_ann;

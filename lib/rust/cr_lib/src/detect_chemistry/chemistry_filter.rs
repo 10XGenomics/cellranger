@@ -118,7 +118,13 @@ impl DetectChemistryUnit {
 
         let mut read_sampler = ReservoirSampler::new(detect_chemistry_sample_reads, RANDOM_SEED);
         for fastq in &self.fastqs {
-            for read_pair in ReadPairIter::from_fastq_files(fastq)? {
+            let read_pair_iter = ReadPairIter::from_fastq_files(fastq)?;
+            if read_pair_iter.get_is_single_ended() {
+                println!("{self} is a single-end library!");
+            } else {
+                println!("{self} is a paired-end library!");
+            }
+            for read_pair in read_pair_iter {
                 read_sampler.add(read_pair?);
                 if read_sampler.num_items_seen() >= detect_chemistry_total_reads {
                     return Ok(read_sampler.done());
@@ -128,14 +134,15 @@ impl DetectChemistryUnit {
         Ok(read_sampler.done())
     }
 
-    pub fn check_read_identity(&self) -> Result<Vec<(u64, u64)>> {
+    pub fn check_read_identity(&self) -> Result<Vec<(&InputFastqs, (u64, u64))>> {
         const MAX_READ_PAIRS: usize = 100;
         let mut result = vec![];
         for fastq in &self.fastqs {
             let read_pairs: Vec<_> = ReadPairIter::from_fastq_files(fastq)?
                 .take(MAX_READ_PAIRS)
                 .try_collect()?;
-            result.push(check_read_identity(self, read_pairs.as_slice())?);
+            let (r1_hash, r2_hash) = check_read_identity(self, read_pairs.as_slice())?;
+            result.push((fastq, (r1_hash, r2_hash)));
         }
         Ok(result)
     }

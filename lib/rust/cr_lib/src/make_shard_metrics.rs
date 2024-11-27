@@ -1,12 +1,11 @@
 use crate::barcode_sort::ReadVisitor;
+use crate::SequencingMetrics;
 use anyhow::Result;
 use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, BcSegSeq};
 use cr_types::chemistry::ChemistryDef;
 use cr_types::reference::feature_extraction::FeatureExtractor;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::{RnaChunk, RnaRead};
-use cr_websummary::multi::tables::SequencingMetricsRow;
-use cr_websummary::PercentF1;
 use fastq_set::metric_utils::{PatternCheck, ILLUMINA_QUAL_OFFSET};
 use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
 use json_report_derive::JsonReport;
@@ -87,6 +86,10 @@ pub struct MakeShardMetrics {
     /// Total read pairs per library
     #[json_report(skip)]
     total_read_pairs_per_library: TxHashMap<u16, i64>,
+
+    /// Fraction of outstanding unknown feature barcode sequences
+    #[json_report(block)]
+    unknown_feature_bcs: Option<TxHashMap<String, f64>>,
 }
 
 impl MakeShardMetrics {
@@ -106,26 +109,44 @@ impl MakeShardMetrics {
         metrics
     }
 
-    pub fn sequencing_metrics_row(&self, fastq_id: String) -> SequencingMetricsRow {
+    pub fn sequencing_metrics_for_fastq(&self, fastq_id: String) -> SequencingMetrics {
         // Only populate muli-part barcode metrics if both GEM and probe barcode are present
         let (q30_gem, q30_probe) = match self.bc_bases_with_q30_in.inner() {
-            Some(BarcodeConstruct::GelBeadAndProbe(c)) => (
-                Some(PercentF1::from(c.gel_bead)),
-                Some(PercentF1::from(c.probe)),
-            ),
+            Some(BarcodeConstruct::GelBeadAndProbe(c)) => (Some(c.gel_bead), Some(c.probe)),
             _ => (None, None),
         };
 
-        SequencingMetricsRow {
-            fastq_id: Some(fastq_id),
-            number_of_reads: Some(self.sequenced_reads.count() as usize),
-            q30_barcode: Some(self.bc_bases_with_q30.into()),
+        SequencingMetrics {
+            fastq_id,
+            number_of_reads: self.sequenced_reads.count() as usize,
+            q30_barcode: self.bc_bases_with_q30,
             q30_gem_barcode: q30_gem,
             q30_probe_barcode: q30_probe,
-            q30_umi: Some(self.umi_bases_with_q30.into()),
-            q30_read1: Some(self.read_bases_with_q30.into()),
-            unprocessed_reads: Some(self.unprocessed_read_pairs as usize),
-            q30_read2: self.read2_bases_with_q30.map(Into::into),
+            q30_umi: self.umi_bases_with_q30,
+            q30_read1: self.read_bases_with_q30,
+            unprocessed_reads: self.unprocessed_read_pairs as usize,
+            q30_read2: self.read2_bases_with_q30,
+        }
+    }
+
+    pub fn report_unknown_fbc(
+        &mut self,
+        library_id: u16,
+        hist: SimpleHistogram<String>,
+        min_frac: f64,
+    ) {
+        // Report unknown feature barcode sequences that represent a non-trivial fraction of reads per library.
+        if let Some(total_read_pairs) = self.total_read_pairs_per_library.get(&library_id) {
+            for (seq, read_count) in &hist {
+                let frac_reads: f64 = read_count.count() as f64 / *total_read_pairs as f64;
+                if frac_reads >= min_frac {
+                    self.unknown_feature_bcs
+                        .get_or_insert_with(Default::default)
+                        .insert(seq.clone(), frac_reads);
+                }
+            }
+        } else {
+            eprintln!("No total read pairs data available for library: {library_id}");
         }
     }
 }
@@ -135,6 +156,7 @@ pub struct MakeShardHistograms {
     pub(crate) valid_bc_counts: SimpleHistogram<Barcode>,
     pub(crate) valid_bc_segment_counts: BarcodeConstruct<SimpleHistogram<BcSegSeq>>,
     pub(crate) r1_lengths: SimpleHistogram<usize>,
+    pub(crate) unknown_feature_bcs: SimpleHistogram<String>,
 }
 
 impl MakeShardHistograms {
@@ -143,6 +165,7 @@ impl MakeShardHistograms {
             valid_bc_counts: SimpleHistogram::default(),
             r1_lengths: SimpleHistogram::default(),
             valid_bc_segment_counts: barcode_construct.map(|()| SimpleHistogram::default()),
+            unknown_feature_bcs: SimpleHistogram::default(),
         }
     }
 
@@ -159,9 +182,11 @@ impl MakeShardHistograms {
             valid_bc_counts,
             valid_bc_segment_counts,
             r1_lengths,
+            unknown_feature_bcs,
         } = other;
         self.valid_bc_counts.merge(valid_bc_counts);
         self.r1_lengths.merge(r1_lengths);
+        self.unknown_feature_bcs.merge(unknown_feature_bcs);
         self.valid_bc_segment_counts
             .as_mut_ref()
             .zip(valid_bc_segment_counts)
@@ -169,14 +194,14 @@ impl MakeShardHistograms {
             .for_each(|(this, that)| this.merge(that));
     }
     fn observe(&mut self, rna_read: &RnaRead) {
-        if rna_read.barcode().is_valid() {
+        if rna_read.barcode_is_valid() {
             self.valid_bc_counts.observe_owned(rna_read.barcode());
         }
         if let Some(r1) = rna_read.read.get(WhichRead::R1, ReadPart::Seq) {
             self.r1_lengths.observe(&r1.len());
         }
         rna_read
-            .segmented_barcode()
+            .segmented_barcode
             .segments()
             .zip(self.valid_bc_segment_counts.as_mut_ref())
             .iter()
@@ -319,7 +344,7 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
                 .sseq()
                 .has_polyt_suffix(UMI_POLYT_SUFFIX_LENGTH)
                 .into(),
-            miss_whitelist_barcode_property: (!rna_read.barcode().is_valid()).into(),
+            miss_whitelist_barcode_property: (!rna_read.barcode_is_valid()).into(),
             sequenced_reads: 1.into(),
             vdj_total_read_pairs: i64::from(rna_read.library_type.is_vdj()),
             total_read_pairs_per_library: std::iter::once((
@@ -327,6 +352,7 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
                 1,
             ))
             .collect(),
+            unknown_feature_bcs: Default::default(),
 
             unprocessed_read_pairs: 0,
         };
@@ -341,6 +367,11 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
         {
             if res.ids.len() == 1 {
                 self.feature_counts[res.ids[0].0] += 1;
+            } else {
+                let raw_feature_bc = String::from_utf8(res.barcode).unwrap();
+                self.histograms
+                    .unknown_feature_bcs
+                    .observe_owned(raw_feature_bc);
             }
         }
 

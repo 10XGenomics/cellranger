@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use martian::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Create a directory within the rover, run the given stage in
 /// that directory and return the stage outputs
@@ -21,12 +21,6 @@ where
     std::fs::create_dir(&run_dir)?;
     let outs = stage.test_run(&run_dir, args)?;
     Ok(outs)
-}
-
-/// A trait to copy files within self to the specified folder and
-/// return `Self` containing the updated paths.
-pub trait CopyInto: Sized {
-    fn copy_into(self, folder: &Path) -> Result<Self>;
 }
 
 /*

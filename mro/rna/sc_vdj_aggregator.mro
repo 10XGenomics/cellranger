@@ -58,6 +58,8 @@ pipeline ANTIGEN_AGGR(
         aggregate_barcodes = null,
         is_antibody        = false,
         is_spatial         = false,
+        multi_graph        = null,
+        sample_id          = null,
     ) using (
         disabled = self.disable_antigen_aggr,
     )
@@ -96,7 +98,10 @@ pipeline SC_VDJ_AGGREGATOR(
     in  map<string>        antigen_specificity_controls,
     in  bool               disable_antigen_aggr,
     in  bool               disable_count_aggr,
+    in  bool               mix_donors,
+    in  FilterSwitch       filter_switch,
     out pb                 enclone_output,
+    out json               barcode_fate,
     out string             receptor,
     out csv                clonotypes,
     out fa                 donor_ref_fa,
@@ -109,6 +114,7 @@ pipeline SC_VDJ_AGGREGATOR(
     out AntigenAggrResults antigen_analysis,
     out json               antigen_aggr_web_summary_data,
     out tsv                airr_rearrangement,
+    out html               filter_summary,
 )
 {
     call PROCESS_VDJ_PROTO(
@@ -123,6 +129,8 @@ pipeline SC_VDJ_AGGREGATOR(
     )
 
     call RUN_ENCLONE_AGGR(
+        mix_donors            = self.mix_donors,
+        filter_switch         = self.filter_switch,
         contig_ann_json_files = SETUP_VDJ_AGGR.contig_ann_json_files,
         enclone_input_csv     = SETUP_VDJ_AGGR.enclone_input_csv,
         enclone_gem_well_meta = SETUP_VDJ_AGGR.enclone_gem_well_meta,
@@ -130,24 +138,24 @@ pipeline SC_VDJ_AGGREGATOR(
     )
 
     call WRITE_CONSENSUS_TXT(
-        sample_number  = null,
+        sample_id      = null,
         enclone_output = RUN_ENCLONE_AGGR.enclone_output,
     )
 
     call WRITE_CLONOTYPE_OUTS(
-        sample_number  = null,
+        sample_id      = null,
         receptor       = PROCESS_VDJ_PROTO.receptor,
         enclone_output = RUN_ENCLONE_AGGR.enclone_output,
     )
 
     call FILL_CLONOTYPE_INFO(
-        sample_number      = null,
+        sample_id          = null,
         contig_annotations = SETUP_VDJ_AGGR.combined_ann_json,
         enclone_output     = RUN_ENCLONE_AGGR.enclone_output,
     )
 
     call WRITE_CONCAT_REF_OUTS(
-        sample_number               = null,
+        sample_id                   = null,
         all_contig_annotations_json = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
         enclone_output              = RUN_ENCLONE_AGGR.enclone_output,
     )
@@ -198,6 +206,15 @@ pipeline SC_VDJ_AGGREGATOR(
         diversity_chart = CALCULATE_CLONOTYPE_DIVERSITY.plotly_diversity_chart,
     )
 
+    call SUMMARIZE_VDJ_FILTERS(
+        sample_id              = self.sample_id,
+        sample_description     = self.sample_desc,
+        all_contig_annotations = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
+        asm_filter_diagnostics = null,
+        enclone_barcode_fate   = RUN_ENCLONE_AGGR.barcode_fate,
+        raw_matrix_h5          = null,
+    )
+
     call VLOUPE_PREPROCESS(
         pipestance_type              = "SC_VDJ_AGGREGATOR",
         sample_id                    = self.sample_id,
@@ -213,6 +230,7 @@ pipeline SC_VDJ_AGGREGATOR(
 
     return (
         enclone_output                = RUN_ENCLONE_AGGR.enclone_output,
+        barcode_fate                  = RUN_ENCLONE_AGGR.barcode_fate,
         receptor                      = PROCESS_VDJ_PROTO.receptor,
         clonotypes                    = WRITE_CLONOTYPE_OUTS.clonotypes_csv,
         donor_ref_fa                  = RUN_ENCLONE_AGGR.donor_ref_fa,
@@ -225,5 +243,6 @@ pipeline SC_VDJ_AGGREGATOR(
         vloupe                        = VLOUPE_PREPROCESS.output_for_vloupe,
         antigen_analysis              = ANTIGEN_AGGR.antigen_analysis,
         airr_rearrangement            = CREATE_AIRR_TSV.airr_annotations,
+        filter_summary                = SUMMARIZE_VDJ_FILTERS.filter_summary,
     )
 }

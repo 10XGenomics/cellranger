@@ -52,7 +52,7 @@ index fa47d89ebc..364bffbb9a 100644
 +    return """
 +alias(
 +    name = "_python3_include",
-+    actual = "@conda_package_python//:conda_package_python_hdrs",
++    actual = "@conda_package_python//:hdrs",
 +)
 +"""
  

@@ -1,45 +1,22 @@
-use crate::{CardWithMetric, ChartWithHelp, PlotlyChart, RawChartWithHelp, TitleWithHelp};
-use anyhow::Result;
+use crate::{ChartWithHelp, PlotlyChart, RawChartWithHelp, TitleWithHelp};
 use cr_types::TargetingMethod;
-use csv::Reader;
-use itertools::Itertools;
 use metric::{TxHashMap, TxHashSet};
-use plotly::common::{Anchor, DashType, Line, Marker, Mode, Orientation, Title};
-use plotly::layout::{Axis, HoverMode, Legend, Margin, Shape, ShapeLine, ShapeType};
+use plotly::common::{Anchor, Line, Mode};
+use plotly::layout::{Axis, HoverMode, Legend, Margin};
 use plotly::traces::Scatter;
 use plotly::Layout;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
-use std::path::Path;
 
 // CONSTANTS / LABELS
-const SATURATION_LINE: f64 = 0.9;
-const ON_TARGET_COLOR: &str = "#0071D9";
-const ON_TARGET_LABEL: &str = "Targeted";
-const OFF_TARGET_COLOR: &str = "#555555";
-const OFF_TARGET_LABEL: &str = "Non-Targeted";
-
-const TARGETED_ENRICHMENT_PLOT_TITLE: &str = "Reads vs UMIs per Gene by Targeting Status";
-const TARGETED_ENRICHMENT_PLOT_X_LABEL: &str = "UMIs per gene, log10";
-const TARGETED_ENRICHMENT_PLOT_Y_LABEL: &str = "Reads per gene, log10";
-const TARGETED_ENRICHMENT_PLOT_HELP_TEXT: &str = "This plot shows the number of reads per gene (log10) in cell-associated barcodes as a function of the number of UMIs per gene (log10) in cell-associated barcodes, with genes colored by whether or not they were targeted. The yellow line represents the optimal threshold (specifically, its y-intercept = log10(Reads per UMI threshold)) in a mixture model that classifies genes into two classes based on Reads per UMI values. If sequencing saturation is low, this line will not be shown. Ideally, targeted genes will lie above the dotted line while non-targeted genes will be below it.";
-const TARGETED_ENRICHMENT_PLOT_SEPARATION_BOUNDARY_COLOR: &str = "#E6B72B";
-
-const CMO_JIBES_BIPLOT_TITLE: &str = "Biplots of CMO Count";
-const CMO_JIBES_BIPLOT_HELP_TEXT: &str = "The plot shows the relationships between Cell Multiplexing Oligo (CMO) UMI counts for cells. Each point is a cell and the X and Y axes are UMI counts for a given CMO in the log10 scale. The CMOs on the axes can be changed with the selector. The cells which are not confidently assigned to CMO Tags are indicated. The number of cells has been downsampled to a maximum count of 100,000.";
-
-const CMO_TAGS_ON_TSNE_PLOT_HELP_TEXT: &str = "Shown here are the CMO tag assignments for each cell-barcode. The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm over multiplexing features. In this space, pairs of cells that are close to each other have more similar Multiplexing Capture profiles than cells that are distant from each other. The display is limited to a random subset of cells.";
-const CMO_TAGS_ON_TSNE_PLOT_TITLE: &str = "t-SNE Projection of Cells by CMO";
 
 const BARCODE_RANK_PLOT_TITLE: &str = "Barcode Rank Plot";
 const BARCODE_RANK_PLOT_HELP_TEXT: &str = "The plot shows filtered UMI counts mapped to each GEM barcode. Barcode-cell associations can be determined by UMI count or expression profile, or removed by Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering steps. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. When present, Gene Expression data is used to identify these barcode populations. The color of the graph is based on the local density of barcodes that are cell-associated in these regions. Hovering over the plot displays the total number and percentage of barcodes in that region called as cells along with the number of UMI counts for those barcodes and barcode rank, ordered in descending order of UMI counts.";
 
 const SEQUENCING_SATURATION_PLOT_X_LABEL: &str = "Mean Reads per Cell";
 const SEQUENCING_SATURATION_PLOT_Y_LABEL: &str = "Sequencing Saturation";
-const SEQUENCING_SATURATION_PLOT_ONTARGET_LABEL: &str = "Targeted";
-const SEQUENCING_SATURATION_PLOT_OFFTARGET_LABEL: &str = "Non-Targeted";
-const LIBRARY_SEQUENCING_SATURATION_PLOT_HELP_TEXT: &str = "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per cell), up to the observed sequencing depth. Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted mRNA transcripts (or ligation products in the context of Fixed RNA Profiling libraries) have been sequenced. The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. The dotted line is drawn at a value reasonably approximating the saturation point.";
+const LIBRARY_SEQUENCING_SATURATION_PLOT_HELP_TEXT: &str = "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per cell), up to the observed sequencing depth. Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted mRNA transcripts (or ligation products in the context of Flex libraries) have been sequenced. The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point.";
 
 const MEDIAN_GENES_PLOT_X_LABEL: &str = "Mean Reads per Cell";
 const MEDIAN_GENES_PLOT_Y_LABEL: &str = "Median Genes per Cell";
@@ -53,8 +30,8 @@ pub fn standard_layout(x_label: &str, y_label: &str) -> Layout {
         .margin(Margin::new().left(70).right(65).top(30).bottom(70))
         .show_legend(true)
         .hover_mode(HoverMode::Closest)
-        .x_axis(Axis::new().title(Title::new(x_label)))
-        .y_axis(Axis::new().title(Title::new(y_label)))
+        .x_axis(Axis::new().title(x_label))
+        .y_axis(Axis::new().title(y_label))
         .legend(
             Legend::new()
                 .y_anchor(Anchor::Bottom)
@@ -65,51 +42,40 @@ pub fn standard_layout(x_label: &str, y_label: &str) -> Layout {
         )
 }
 
-pub fn sequencing_saturation_layout(x_label: &str, y_label: &str, x_max: f64) -> Layout {
-    standard_layout(x_label, y_label)
-        .y_axis(Axis::new().title(Title::new(y_label)).range(vec![0.0, 1.0]))
-        .shapes(vec![Shape::new()
-            .shape_type(ShapeType::Line)
-            .x0(0)
-            .y0(SATURATION_LINE)
-            .x1(x_max)
-            .y1(SATURATION_LINE)
-            .line(
-                ShapeLine::new()
-                    .color("#999999")
-                    .width(4.0)
-                    .dash(DashType::Dot),
-            )])
+pub fn sequencing_saturation_layout(x_label: &str, y_label: &str) -> Layout {
+    standard_layout(x_label, y_label).y_axis(Axis::new().title(y_label).range(vec![0.0, 1.0]))
 }
 
-pub fn format_jibes_biplots(plot: &Value) -> RawChartWithHelp {
+pub fn format_jibes_biplots(plot: &Value, feature: &str) -> RawChartWithHelp {
     RawChartWithHelp {
         plot: plot.clone(),
         help: TitleWithHelp {
-            help: CMO_JIBES_BIPLOT_HELP_TEXT.to_string(),
-            title: CMO_JIBES_BIPLOT_TITLE.to_string(),
+            title: format!("Biplots of {feature} UMI Counts"),
+            help: format!("The plot shows the relationships between {feature} UMI counts for cells. Each point is a cell and the X and Y axes are UMI counts for a given {feature} in the log10 scale. The {feature}s on the axes can be changed with the selector. The cells which are not confidently assigned to {feature}s are indicated. The number of cells has been downsampled to a maximum count of 100,000."),
         },
     }
 }
 
-pub fn format_umi_on_tsne_plot(plot: &Value, library_type: &str, title: &str) -> RawChartWithHelp {
+pub fn format_umi_on_umap_plot(plot: &Value, library_type: &str, title: &str) -> RawChartWithHelp {
     RawChartWithHelp {
         plot: plot.clone(),
         help: TitleWithHelp {
             help: format!(
-                "Shown here are the total {library_type} UMI counts for each cell-barcode. The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm over the {library_type} features. In this space, pairs of cells that are close to each other have more similar {library_type} profiles than cells that are distant from each other. The display is limited to a random subset of cells."
+                "Shown here are the total {library_type} UMI counts for each cell-barcode. The axes correspond to the 2-dimensional embedding produced by the UMAP algorithm over the {library_type} features. In this space, pairs of cells that are close to each other have more similar {library_type} profiles than cells that are distant from each other. The display is limited to a random subset of cells."
             ),
             title: title.to_string(),
         },
     }
 }
 
-pub fn format_tags_on_tsne_plot(plot: &Value) -> RawChartWithHelp {
+pub fn format_tags_on_umap_plot(plot: &Value, library_type: &str) -> RawChartWithHelp {
     RawChartWithHelp {
         plot: plot.clone(),
         help: TitleWithHelp {
-            help: CMO_TAGS_ON_TSNE_PLOT_HELP_TEXT.to_string(),
-            title: CMO_TAGS_ON_TSNE_PLOT_TITLE.to_string(),
+            help: format!(
+                "Shown here are the tag assignments for each cell-barcode. The axes correspond to the 2-dimensional embedding produced by the UMAP algorithm over {library_type} features. In this space, pairs of cells that are close to each other have more similar {library_type} profiles than cells that are distant from each other. The display is limited to a random subset of cells."
+            ),
+            title: "UMAP Projection of Cells Colored by Tag Assignment".to_string(),
         },
     }
 }
@@ -119,9 +85,9 @@ pub fn format_histogram(plot: &Value, feature: &str) -> RawChartWithHelp {
         plot: plot.clone(),
         help: TitleWithHelp {
             help: format!(
-                "Histogram of {feature} counts per cell, for each {feature}.  The X-axis is the UMI counts in the log scale, while the Y-axis is the number of cells."
+                "Histogram of {feature} UMI counts per cell, for each {feature}.  The X-axis is the UMI counts in the log scale, while the Y-axis is the number of cells."
             ),
-            title: format!("Histogram of {feature} Count"),
+            title: format!("Histogram of {feature} UMI Counts"),
         },
     }
 }
@@ -168,13 +134,8 @@ pub enum PlotType {
 // TODO: Get rid of this and create a simple deserializeable data structure representing this data inside subsample.py and pass that forward
 pub fn library_sequencing_saturation_plot_from_metrics(
     metrics: &TxHashMap<String, Value>,
-    is_targeted: bool,
 ) -> ChartWithHelp {
-    let (re_untargeted, re_ontarget, re_offtarget) = (
-        r"^multi_raw_rpc_(\d+)_subsampled_duplication_frac$",
-        r"^multi_raw_rpc_(\d+)_subsampled_duplication_frac_ontarget$",
-        r"^multi_raw_rpc_(\d+)_subsampled_duplication_frac_offtarget$",
-    );
+    let re = r"^multi_raw_rpc_(\d+)_subsampled_duplication_frac$";
     let get_xy_data = |re: Regex| -> (Vec<f64>, Vec<f64>) {
         let mut xy_data: Vec<(f64, f64)> = vec![(0.0, 0.0)];
         xy_data.extend(
@@ -199,55 +160,21 @@ pub fn library_sequencing_saturation_plot_from_metrics(
 
     let help_text = LIBRARY_SEQUENCING_SATURATION_PLOT_HELP_TEXT;
 
-    if is_targeted {
-        let re_ontarget = Regex::new(re_ontarget).unwrap();
-        let (x_data_ontarget, y_data_ontarget) = get_xy_data(re_ontarget);
-        let re_offtarget = Regex::new(re_offtarget).unwrap();
-        let (x_data_offtarget, y_data_offtarget) = get_xy_data(re_offtarget);
-        let layout = sequencing_saturation_layout(
-            SEQUENCING_SATURATION_PLOT_X_LABEL,
-            SEQUENCING_SATURATION_PLOT_Y_LABEL,
-            *x_data_ontarget.last().unwrap_or(&0.),
-        );
-        let data = vec![
-            Scatter::new(x_data_ontarget, y_data_ontarget)
-                .name(SEQUENCING_SATURATION_PLOT_ONTARGET_LABEL)
-                .mode(Mode::Lines)
-                .fill_color(ON_TARGET_COLOR)
-                .marker(Marker::new().color(ON_TARGET_COLOR))
-                .line(Line::new().width(3.0)),
-            Scatter::new(x_data_offtarget, y_data_offtarget)
-                .name(SEQUENCING_SATURATION_PLOT_OFFTARGET_LABEL)
-                .mode(Mode::Lines)
-                .fill_color(OFF_TARGET_COLOR)
-                .marker(Marker::new().color(OFF_TARGET_COLOR))
-                .line(Line::new().width(3.0)),
-        ];
-        ChartWithHelp {
-            plot: PlotlyChart::with_layout_and_data(layout.show_legend(true), data),
-            help: TitleWithHelp {
-                help: help_text.to_string(),
-                title: SEQUENCING_SATURATION_PLOT_Y_LABEL.to_string(),
-            },
-        }
-    } else {
-        let re_untargeted = Regex::new(re_untargeted).unwrap();
-        let (x_data_untargeted, y_data_untargeted) = get_xy_data(re_untargeted);
-        let layout = sequencing_saturation_layout(
-            SEQUENCING_SATURATION_PLOT_X_LABEL,
-            SEQUENCING_SATURATION_PLOT_Y_LABEL,
-            *x_data_untargeted.last().unwrap_or(&0.),
-        );
-        let data = vec![Scatter::new(x_data_untargeted, y_data_untargeted)
-            .mode(Mode::Lines)
-            .line(Line::new().width(3.0))];
-        ChartWithHelp {
-            plot: PlotlyChart::with_layout_and_data(layout.show_legend(false), data),
-            help: TitleWithHelp {
-                help: help_text.to_string(),
-                title: SEQUENCING_SATURATION_PLOT_Y_LABEL.to_string(),
-            },
-        }
+    let re = Regex::new(re).unwrap();
+    let (x_data, y_data) = get_xy_data(re);
+    let layout = sequencing_saturation_layout(
+        SEQUENCING_SATURATION_PLOT_X_LABEL,
+        SEQUENCING_SATURATION_PLOT_Y_LABEL,
+    );
+    let data = vec![Scatter::new(x_data, y_data)
+        .mode(Mode::Lines)
+        .line(Line::new().width(3.0))];
+    ChartWithHelp {
+        plot: PlotlyChart::with_layout_and_data(layout.show_legend(false), data),
+        help: TitleWithHelp {
+            help: help_text.to_string(),
+            title: SEQUENCING_SATURATION_PLOT_Y_LABEL.to_string(),
+        },
     }
 }
 
@@ -383,130 +310,6 @@ impl From<PythonBool> for bool {
             PythonBool::True => true,
         }
     }
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-struct TargetedPerFeatureMetricsRow {
-    feature_type: String,
-    feature_id: String,
-    feature_name: String,
-    feature_idx: usize,
-    num_umis: usize,
-    num_reads: usize,
-    num_umis_cells: usize,
-    num_reads_cells: usize,
-    dup_frac: f64,
-    dup_frac_cells: f64,
-    is_targeted: PythonBool,
-    mean_reads_per_umi: Option<f64>,
-    mean_reads_per_umi_log10: Option<f64>,
-    mean_reads_per_umi_cells: Option<f64>,
-    mean_reads_per_umi_cells_log10: Option<f64>,
-    enriched_rpu: Option<PythonBool>,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TargetedEnrichmentTableAndPlot {
-    pub plot: PlotlyChart,
-    pub gene_targeting_table: CardWithMetric,
-}
-
-// Rust implementation of the reads_per_umi_plot in analysis_tab.py
-// does NOT support spatial whatsoever
-pub fn targeted_enrichment_plot(
-    per_feature_metrics_csv: Option<&Path>,
-    log_rpu_threshold: Option<f64>, // from the metrics json
-) -> Result<Option<ChartWithHelp>> {
-    let mut rdr = match per_feature_metrics_csv {
-        Some(csv) => Reader::from_path(csv)?,
-        None => return Ok(None),
-    };
-    // get the rows records of per-feature-metrics CSV
-    let per_feature_metrics: Vec<TargetedPerFeatureMetricsRow> = rdr.deserialize().try_collect()?;
-
-    let (targeted_per_feature_metrics_subset, untargeted_per_feature_metrics_subset) =
-        per_feature_metrics
-            .iter()
-            .filter(|&x| x.num_reads_cells > 0)
-            .partition::<Vec<&TargetedPerFeatureMetricsRow>, _>(|x| bool::from(x.is_targeted));
-    let groups = [
-        (
-            OFF_TARGET_LABEL.to_string(),
-            untargeted_per_feature_metrics_subset,
-            OFF_TARGET_COLOR.to_string(),
-        ),
-        (
-            ON_TARGET_LABEL.to_string(),
-            targeted_per_feature_metrics_subset,
-            ON_TARGET_COLOR.to_string(),
-        ),
-    ];
-    let mut data = Vec::with_capacity(groups.len() + 1);
-    for (name, per_feature_metrics_subset, color) in groups {
-        // remove totally overlapping points
-        let per_feature_metrics_subset_deduped: Vec<&TargetedPerFeatureMetricsRow> =
-            per_feature_metrics_subset
-                .into_iter()
-                .unique_by(|x| (x.num_umis_cells, x.num_reads_cells))
-                .collect();
-
-        let gene_name_labels: Vec<String> = per_feature_metrics_subset_deduped
-            .iter()
-            .map(|x| format!("Gene: {}", x.feature_name))
-            .collect();
-        let x: Vec<f64> = per_feature_metrics_subset_deduped
-            .iter()
-            .map(|x| (x.num_umis_cells as f64).log10())
-            .collect();
-        let y: Vec<f64> = per_feature_metrics_subset_deduped
-            .iter()
-            .map(|x| (x.num_reads_cells as f64).log10())
-            .collect();
-
-        data.push(
-            Scatter::new(x, y)
-                .name(name)
-                .mode(Mode::Markers)
-                .fill_color(ON_TARGET_COLOR)
-                .marker(Marker::new().color(color).size(5).opacity(0.5))
-                .hover_text_array(gene_name_labels),
-        );
-    }
-    // plot separation boundary on top, if it was determined
-    if let Some(b) = log_rpu_threshold {
-        let a = 1.0;
-        let x0 = 0.0;
-        let x1 = (per_feature_metrics
-            .into_iter()
-            .map(|x| x.num_umis_cells)
-            .max()
-            .unwrap() as f64
-            + 1.0)
-            .log10();
-
-        data.push(
-            Scatter::new(vec![x0, x1], vec![x0 * a + b, x1 * a + b])
-                .name(format!("Reads per UMI threshold {:.2}", 10.0_f64.powf(b)))
-                .mode(Mode::Lines)
-                .fill_color(OFF_TARGET_COLOR)
-                .marker(Marker::new().color(TARGETED_ENRICHMENT_PLOT_SEPARATION_BOUNDARY_COLOR))
-                .line(Line::new().width(3.0)),
-        );
-    }
-
-    let layout = Layout::new()
-        .x_axis(Axis::new().title(Title::new(TARGETED_ENRICHMENT_PLOT_X_LABEL)))
-        .y_axis(Axis::new().title(Title::new(TARGETED_ENRICHMENT_PLOT_Y_LABEL)))
-        .legend(Legend::new().orientation(Orientation::Horizontal).y(-0.2))
-        .hover_mode(HoverMode::Closest);
-
-    Ok(Some(ChartWithHelp {
-        plot: PlotlyChart::with_layout_and_data(layout, data),
-        help: TitleWithHelp {
-            help: TARGETED_ENRICHMENT_PLOT_HELP_TEXT.to_string(),
-            title: TARGETED_ENRICHMENT_PLOT_TITLE.to_string(),
-        },
-    }))
 }
 
 #[cfg(test)]

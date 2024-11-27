@@ -1,0 +1,11 @@
+[dependencies]
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'stats_utils'
+publish = false
+version = '0.1.0'

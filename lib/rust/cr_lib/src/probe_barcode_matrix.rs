@@ -5,8 +5,9 @@ use barcode::Barcode;
 use cr_h5::count_matrix::{write_barcodes_column, MAT_H5_BUF_SZ};
 use cr_h5::feature_reference_io::{make_fixed_ascii, write_target_set_group, FA_LEN};
 use cr_h5::{extend_dataset, make_column_ds, write_column_ds};
-use cr_types::probe_set::{is_deprecated_probe, Probe, ProbeRegion, ProbeSetReference};
+use cr_types::probe_set::{is_deprecated_probe, Probe, ProbeRegion, ProbeSetReference, ProbeType};
 use cr_types::reference::feature_reference::TargetSet;
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::{BarcodeIndex, CountShardFile, ProbeBarcodeCount};
 use hdf5::types::FixedAscii;
 use hdf5::{File, Group};
@@ -40,6 +41,10 @@ pub struct ProbeCounts {
     pub umis_in_all_barcodes: usize,
     pub umis_in_filtered_barcodes: usize,
     pub pass_filter: bool,
+    pub probe_type: ProbeType,
+    pub ref_sequence_name: String,
+    pub ref_sequence_pos: Option<usize>,
+    pub cigar_string: String,
 }
 
 impl ProbeCounts {
@@ -71,6 +76,10 @@ impl From<ProbeCounts> for Probe {
             },
             included: probe.included,
             region: probe.region,
+            probe_type: probe.probe_type,
+            ref_sequence_name: probe.ref_sequence_name,
+            ref_sequence_pos: probe.ref_sequence_pos,
+            cigar_string: probe.cigar_string,
         }
     }
 }
@@ -273,8 +282,8 @@ fn write_probe_matrix_h5_helper(
 /// filtered_probes_set is a Set of the probe_ids of probes that are filtered
 /// Uses a barcode index of barcodes to include in the H5 matrix
 pub fn write_probe_bc_matrix(
-    probe_set_path: &Path,
-    reference_path: &Path,
+    probe_set_path: &TargetSetFile,
+    reference_path: Option<&Path>,
     probe_barcode_path: &[CountShardFile],
     h5_path: &Path,
     bc_index: &BarcodeIndex,

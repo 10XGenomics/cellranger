@@ -13,6 +13,8 @@ stage RUN_KMEANS(
 ) split (
     in  int    n_clusters,
     in  string library,
+    in  int    which_pca,
 ) using (
+    mem_gb   = 3,
     volatile = strict,
 )

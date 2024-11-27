@@ -46,7 +46,7 @@ def infer_throughput_from_rankplot_gradient(counts_per_bc: list[int]) -> str:
         recovered_cells=None,
         infer_throughput=True,
     )
-    if outs[0] == [] or not outs[0].any():  # usually indicates atypical rank plots (low depth)
+    if not outs[0].size or not outs[0].any():  # usually indicates atypical rank plots (low depth)
         return None, MT_THROUGHPUT
 
     slope_bc_idx = FIRST_BC_IDX_ON_RANKPLOT + outs[0][-1]

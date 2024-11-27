@@ -5,7 +5,7 @@ pipeline CLONOTYPE_ASSIGNER(
     in  json         contig_annotations,
     in  string       receptor,
     in  FilterSwitch filter_switch,
-    in  int          sample_number,
+    in  string       sample_id,
     out json         contig_annotations_json,
     out csv          clonotypes_csv,
     out fasta        consensus_fasta,
@@ -33,25 +33,25 @@ pipeline CLONOTYPE_ASSIGNER(
     )
 
     call FILL_CLONOTYPE_INFO(
-        sample_number      = self.sample_number,
+        sample_id          = self.sample_id,
         contig_annotations = self.contig_annotations,
         enclone_output     = RUN_ENCLONE.enclone_output,
     )
 
     call WRITE_CONCAT_REF_OUTS(
-        sample_number               = self.sample_number,
+        sample_id                   = self.sample_id,
         all_contig_annotations_json = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
         enclone_output              = RUN_ENCLONE.enclone_output,
     )
 
     call WRITE_CONSENSUS_BAM(
-        sample_number               = self.sample_number,
+        sample_id                   = self.sample_id,
         all_contig_annotations_json = FILL_CLONOTYPE_INFO.all_contig_annotations_json,
         enclone_output              = RUN_ENCLONE.enclone_output,
     )
 
     call WRITE_CONSENSUS_TXT(
-        sample_number  = self.sample_number,
+        sample_id      = self.sample_id,
         enclone_output = RUN_ENCLONE.enclone_output,
     )
 
@@ -62,7 +62,7 @@ pipeline CLONOTYPE_ASSIGNER(
     )
 
     call WRITE_CLONOTYPE_OUTS(
-        sample_number  = self.sample_number,
+        sample_id      = self.sample_id,
         enclone_output = RUN_ENCLONE.enclone_output,
         receptor       = self.receptor,
     )

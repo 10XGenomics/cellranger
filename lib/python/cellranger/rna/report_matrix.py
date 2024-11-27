@@ -147,26 +147,24 @@ def _report_genome_agnostic_metrics(
 
     # Deviation from cell load
     if recovered_cells is None:
-        d["%s_filtered_bcs_difference_from_recovered_cells" % rna_library.MULTI_REFS_PREFIX] = 0
+        d[f"{rna_library.MULTI_REFS_PREFIX}_filtered_bcs_difference_from_recovered_cells"] = 0
         d[
-            "%s_filtered_bcs_relative_difference_from_recovered_cells"
-            % rna_library.MULTI_REFS_PREFIX
+            f"{rna_library.MULTI_REFS_PREFIX}_filtered_bcs_relative_difference_from_recovered_cells"
         ] = 0
     else:
-        d["%s_filtered_bcs_difference_from_recovered_cells" % rna_library.MULTI_REFS_PREFIX] = int(
+        d[f"{rna_library.MULTI_REFS_PREFIX}_filtered_bcs_difference_from_recovered_cells"] = int(
             n_cell_bcs_union
         ) - int(recovered_cells)
         d[
-            "%s_filtered_bcs_relative_difference_from_recovered_cells"
-            % rna_library.MULTI_REFS_PREFIX
+            f"{rna_library.MULTI_REFS_PREFIX}_filtered_bcs_relative_difference_from_recovered_cells"
         ] = tk_stats.robust_divide(n_cell_bcs_union - recovered_cells, recovered_cells)
 
     # Duplicate these metrics across genomes for backwards-compat
     for genome in genomes:
-        d["%s_total_raw_reads_per_filtered_bc" % genome] = tk_stats.robust_divide(
+        d[f"{genome}_total_raw_reads_per_filtered_bc"] = tk_stats.robust_divide(
             total_reads, n_cell_bcs_union
         )
-        d["%s_total_conf_mapped_reads_per_filtered_bc" % genome] = tk_stats.robust_divide(
+        d[f"{genome}_total_conf_mapped_reads_per_filtered_bc"] = tk_stats.robust_divide(
             total_conf_mapped_reads, n_cell_bcs_union
         )
 
@@ -198,12 +196,7 @@ def _report_genome_agnostic_metrics(
     total_conf_mapped_barcoded_reads = 0
 
     for genome in genome_matrices:
-        h5_key = "{}_{}_{}_{}_reads".format(
-            library_prefix,
-            genome,
-            cr_constants.TRANSCRIPTOME_REGION,
-            cr_constants.CONF_MAPPED_BC_READ_TYPE,
-        )
+        h5_key = f"{library_prefix}_{genome}_{cr_constants.TRANSCRIPTOME_REGION}_{cr_constants.CONF_MAPPED_BC_READ_TYPE}_reads"
         cmb_reads = barcode_summary_h5[h5_key][:]
         total_conf_mapped_reads_in_cells += cmb_reads[bc_summary_cell_bc_indices].sum()
         if sample_bc_indices is not None:
@@ -238,18 +231,18 @@ def _report_genome_agnostic_metrics(
         usable_reads += (filtered_bc_h5_row * np.array(barcode_summary_h5[h5_key])).sum()
 
     # Fraction reads usable
-    d[
-        "%s_transcriptome_usable_reads_frac" % rna_library.MULTI_REFS_PREFIX
-    ] = tk_stats.robust_divide(usable_reads, total_reads)
+    d[f"{rna_library.MULTI_REFS_PREFIX}_transcriptome_usable_reads_frac"] = tk_stats.robust_divide(
+        usable_reads, total_reads
+    )
     # Create a feature barcoding dual whose name makes sense
     d["frac_feature_reads_usable"] = tk_stats.robust_divide(usable_reads, total_reads)
 
     # Usable reads
-    d["%s_usable_reads" % rna_library.MULTI_REFS_PREFIX] = usable_reads
+    d[f"{rna_library.MULTI_REFS_PREFIX}_usable_reads"] = usable_reads
 
     # Usable reads per cell
     reads_usable_per_cell = tk_stats.robust_divide(usable_reads, n_cell_bcs_union)
-    d["%s_usable_reads_per_filtered_bc" % rna_library.MULTI_REFS_PREFIX] = reads_usable_per_cell
+    d[f"{rna_library.MULTI_REFS_PREFIX}_usable_reads_per_filtered_bc"] = reads_usable_per_cell
     # Create a feature barcoding dual whose name makes sense
     d["feature_reads_usable_per_cell"] = reads_usable_per_cell
 
@@ -259,9 +252,9 @@ def _report_genome_agnostic_metrics(
     filtered_shape = filtered_mat.get_shape()
     total_entries = filtered_shape[0] * filtered_shape[1]
     print(total_entries, total_nonzero_entries, filtered_shape)
-    d[
-        "%s_filtered_gene_bc_matrix_density" % rna_library.MULTI_REFS_PREFIX
-    ] = tk_stats.robust_divide(total_nonzero_entries, total_entries)
+    d[f"{rna_library.MULTI_REFS_PREFIX}_filtered_gene_bc_matrix_density"] = tk_stats.robust_divide(
+        total_nonzero_entries, total_entries
+    )
 
     return d
 
@@ -327,13 +320,13 @@ def _report(
     unique_genes_per_bc = filtered_mat.count_ge(axis=0, threshold=cr_constants.MIN_COUNTS_PER_GENE)
     unique_genes_stats = _summarize_per_barcode(unique_genes_per_bc)
     for stat, value in unique_genes_stats.items():
-        d["filtered_bcs_%s_unique_genes_detected" % stat] = value
+        d[f"filtered_bcs_{stat}_unique_genes_detected"] = value
 
     # Counts per bc
     counts_per_bc = filtered_mat.sum(axis=0)
     counts_per_bc_stats = _summarize_per_barcode(counts_per_bc)
     for stat, value in counts_per_bc_stats.items():
-        d["filtered_bcs_%s_counts" % stat] = value
+        d[f"filtered_bcs_{stat}_counts"] = value
 
     # Cumulative fraction of counts going to top bcs
     filt_total_umis = filtered_mat.sum()
@@ -353,17 +346,17 @@ def _report(
     else:
         n_reads = 0
         n_deduped_reads = 0
-    d[
-        "filtered_bcs_%s_dupe_reads_frac" % cr_constants.CDNA_PCR_DUPE_TYPE
-    ] = 1 - tk_stats.robust_divide(n_deduped_reads, n_reads)
+    d[f"filtered_bcs_{cr_constants.CDNA_PCR_DUPE_TYPE}_dupe_reads_frac"] = (
+        1 - tk_stats.robust_divide(n_deduped_reads, n_reads)
+    )
 
     # Reads per top bc for the various read types (computed over top bcs)
     for read_type in MATRIX_REPORT_READ_TYPES:
         # Compute (n_reads)/(n_bcs) over all bcs and over top bcs
-        per_bc_metric = "filtered_bcs_%s_reads_per_filtered_bc" % read_type
+        per_bc_metric = f"filtered_bcs_{read_type}_reads_per_filtered_bc"
 
         # Cumulative fraction of reads going to top bcs
-        frac_metric = "filtered_bcs_%s_reads_cum_frac" % read_type
+        frac_metric = f"filtered_bcs_{read_type}_reads_cum_frac"
 
         if read_type in MATRIX_USE_MATRIX_FOR_READ_TYPE:
             n_reads = filt_total_umis

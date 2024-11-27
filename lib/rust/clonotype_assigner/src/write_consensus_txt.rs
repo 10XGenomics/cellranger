@@ -2,7 +2,7 @@
 
 use crate::assigner::ProtoBinFile;
 use crate::write_concat_ref_outs::{FastaFaiFile, FastaFile};
-use amino::aa_seq;
+use amino::nucleotide_to_aminoacid_sequence;
 use anyhow::Result;
 use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
@@ -65,7 +65,7 @@ pub struct ConsensusAnnotationCsvRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteConsensusTxtStageInputs {
-    pub sample_number: Option<usize>,
+    pub sample_id: Option<String>,
     pub enclone_output: ProtoBinFile,
 }
 
@@ -116,7 +116,7 @@ impl MartianMain for WriteConsensusTxt {
 
                 let clonotype_id = ClonotypeId {
                     id: i + 1,
-                    sample_number: args.sample_number,
+                    sample_id: args.sample_id.as_deref(),
                 };
                 let row = ConsensusAnnotationCsvRow {
                     clonotype_id: clonotype_id.to_string(),
@@ -143,7 +143,7 @@ impl MartianMain for WriteConsensusTxt {
                     cdr2_nt: cdr2_region.as_ref().map(|r| &r.nt_seq).cloned(),
                     fwr3: fwr3_region.as_ref().map(|r| &r.aa_seq).cloned(),
                     fwr3_nt: fwr3_region.as_ref().map(|r| &r.nt_seq).cloned(),
-                    cdr3: stringme(&aa_seq(&cdr3_nt, 0)),
+                    cdr3: stringme(&nucleotide_to_aminoacid_sequence(&cdr3_nt, 0)),
                     cdr3_nt: stringme(&cdr3_nt),
                     fwr4: fwr4_region.as_ref().map(|r| &r.aa_seq).cloned(),
                     fwr4_nt: fwr4_region.as_ref().map(|r| &r.nt_seq).cloned(),
@@ -184,7 +184,7 @@ impl MartianMain for WriteConsensusTxt {
         for (i, clonotype) in enclone_outs.clonotypes.iter().enumerate() {
             let clonotype_id = ClonotypeId {
                 id: i + 1,
-                sample_number: args.sample_number,
+                sample_id: args.sample_id.as_deref(),
             };
             for (j, chain) in clonotype.chains.iter().enumerate() {
                 let record_name = clonotype_id.consensus_name(j + 1);

@@ -50,6 +50,7 @@ struct AnalyzerInputs(
     string umap_metric,
     int    force_cells,
     bool   skip_multigenome_analysis,
+    bool   enable_tsne,
 )
 
 struct AnalyzerOutputs(
@@ -57,4 +58,5 @@ struct AnalyzerOutputs(
     path analysis_csv,
     h5   cloupe_matrix_h5,
     json summary,
+    bool skip_tsne,
 )

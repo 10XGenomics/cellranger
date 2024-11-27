@@ -434,10 +434,6 @@ fi
 ##############################
 # Check environment variables
 #
-if [ -z "$TENX_BARCODE_WHITELIST" ]; then
-    echo "TENX_BARCODE_WHITELIST environment variable must be set by enclosing script."
-    exit 1
-fi
 
 if [ -z "$TENX_BC_READ_TYPE" ]; then
     echo "TENX_BC_READ_TYPE environment variable must be set by enclosing script."
@@ -585,7 +581,6 @@ call MAKE_FASTQS_CS(
     specs                 = $specs,
     project               = $project,
     bases_mask            = $bcl2fastq_use_bases_mask,
-    barcode_whitelist     = "$TENX_BARCODE_WHITELIST",
     bcl2fastq1_args       = $bcl2fastq1_opts,
     bcl2fastq2_args       = $bcl2fastq2_opts,
     bc_read_type          = "$TENX_BC_READ_TYPE",

@@ -1,4 +1,6 @@
+use crate::env::PkgEnv;
 use crate::mrp_args::MrpArgs;
+use crate::telemetry::TelemetryCollector;
 use crate::utils::{validate_ascii_identifier, CliPath};
 use crate::{execute_to_status, make_mro, IntoExitCode};
 use anyhow::{bail, ensure, Result};
@@ -6,7 +8,7 @@ use clap::{self, value_parser, Parser};
 use cr_types::reference::reference_info::MULTI_GENOME_SEPARATOR;
 use serde::Serialize;
 use std::fs;
-use std::path::Path;
+use std::path::{self, Path};
 use std::process::ExitCode;
 
 #[derive(Parser, Debug, Clone, Serialize)]
@@ -37,15 +39,15 @@ pub struct MkrefShared {
 impl MkrefShared {
     /// Set mkref_version to "x.y.z". `version_description` is of the form
     /// product-x.y.z or yyyy.mmdd.z or yyyy.mmdd.z-n-hash.
-    pub fn populate_version(&mut self, version: &str) {
-        self.mkref_version = if version.matches('-').count() == 1 {
+    pub fn populate_version(&mut self, pkg_env: &PkgEnv) {
+        let version = if pkg_env.tenx_version.matches('-').count() == 1 {
             // product-x.y.z
-            version.split_once('-').unwrap().1
+            pkg_env.tenx_version.split_once('-').unwrap().1
         } else {
             // yyyy.mmdd.z or yyyy.mmdd.z-n-hash
-            version
-        }
-        .to_string();
+            &pkg_env.tenx_version
+        };
+        self.mkref_version = format!("{0}-{1}", pkg_env.tenx_product, version);
     }
 }
 
@@ -80,7 +82,7 @@ impl Mkref {
     /// Execute the mkref tool as a martian pipeline.
     /// If successful, rename the outs folder into the current directory and delete the rest of
     /// the pipestance folder.
-    pub fn execute(&self) -> Result<ExitCode> {
+    pub fn execute(&self, telemetry: &mut TelemetryCollector) -> Result<ExitCode> {
         ensure!(
             self.genome_names.len() == self.fasta_files.len(),
             "provided {} genome names but {} FASTA files",
@@ -108,16 +110,27 @@ impl Mkref {
         }
 
         let mro = make_mro("MAKE_REFERENCE", self, "rna/make_reference.mro")?;
-        let exit_status =
-            execute_to_status(&pipestance_name, &mro, &self.shared.mrp, self.shared.dry)?;
+        let exit_status = execute_to_status(
+            &pipestance_name,
+            &mro,
+            &self.shared.mrp,
+            self.shared.dry,
+            telemetry,
+        )?;
         if !exit_status.success() {
             return Ok(exit_status.into_exit_code());
         }
 
         move_outputs(&pipestance_name, &self.shared.mrp, &output_dir_name)?;
 
+        let abs_path = path::absolute(&output_dir_name)?;
+        let abs_path_str = abs_path.to_string_lossy();
         println!(
             ">>> Reference successfully created! <<<\n\
+            \n\
+            Reference location:\n\
+            {abs_path_str}\n\
+            \n\
              You can now specify this reference on the command line:\n\
              cellranger count --transcriptome={output_dir_name} ..."
         );
@@ -161,7 +174,7 @@ impl Mkvdjref {
     /// Execute the mkref tool as a martian pipeline.
     /// If successful, rename the outs folder into the current directory and delete the rest of
     /// the pipestance folder.
-    pub fn execute(&self) -> Result<ExitCode> {
+    pub fn execute(&self, telemetry: &mut TelemetryCollector) -> Result<ExitCode> {
         let output_dir_name = &self.genome_name;
         let pipestance_name = format!("mkvdjref_{output_dir_name}");
 
@@ -203,8 +216,13 @@ impl Mkvdjref {
         }
 
         let mro = make_mro("MAKE_VDJ_REFERENCE", self, "rna/make_vdj_reference.mro")?;
-        let exit_status =
-            execute_to_status(&pipestance_name, &mro, &self.shared.mrp, self.shared.dry)?;
+        let exit_status = execute_to_status(
+            &pipestance_name,
+            &mro,
+            &self.shared.mrp,
+            self.shared.dry,
+            telemetry,
+        )?;
         if !exit_status.success() {
             return Ok(exit_status.into_exit_code());
         }
@@ -234,9 +252,9 @@ fn move_outputs(pipestance_name: &str, args: &MrpArgs, output_ref_dir_name: &str
                 continue;
             }
             if item.file_type()?.is_dir() {
-                fs::remove_dir_all(&item.path())?;
+                fs::remove_dir_all(item.path())?;
             } else {
-                fs::remove_file(&item.path())?;
+                fs::remove_file(item.path())?;
             }
         }
         // Now lift the contents of the reference folder up into the user-

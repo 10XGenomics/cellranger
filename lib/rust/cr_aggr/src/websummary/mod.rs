@@ -34,6 +34,7 @@ impl From<VdjAggrPipelineInfo> for GenericTable {
                 TableRow::two_col("Number of Donors", info.num_donors),
                 TableRow::two_col("Number of Origins", info.num_origins),
             ],
+            grouping_header: None,
         }
     }
 }
@@ -253,8 +254,8 @@ mod tests {
     fn test_pretty_metric() {
         assert_eq!(PrettyMetric::integer(100).0, "100");
         assert_eq!(PrettyMetric::integer(1000).0, "1,000");
-        assert_eq!(PrettyMetric::percent(0.10).0, "10.00%");
-        assert_eq!(PrettyMetric::percent(0.114567).0, "11.46%");
+        assert_eq!(PrettyMetric::percent(0.10).0, "10.0%");
+        assert_eq!(PrettyMetric::percent(0.114567).0, "11.5%");
         assert_eq!(PrettyMetric::decimal(0.114567).0, "0.11");
         assert_eq!(PrettyMetric::decimal(11.4567).0, "11.46");
         assert_eq!(PrettyMetric::decimal(10011.4567).0, "10,011.46");

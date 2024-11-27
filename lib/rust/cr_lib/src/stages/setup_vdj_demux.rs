@@ -2,7 +2,7 @@
 
 use crate::{GexMatrices, SampleMatrices};
 use anyhow::{Context, Result};
-use cr_types::{CrMultiGraph, FingerprintFile};
+use cr_types::{BarcodeMultiplexingType, CrMultiGraph, FingerprintFile};
 use martian::prelude::*;
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::json_file::JsonFile;
@@ -19,7 +19,6 @@ pub struct SetupVDJDemuxStageInputs {
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct VdjDemuxSampleInfo {
     pub sample_id: String,
-    pub sample_number: usize,
     pub gex_matrices: Option<GexMatrices>,
     pub fingerprint: Option<FingerprintFile>,
 }
@@ -30,6 +29,7 @@ pub struct SetupVDJDemuxStageOutputs {
     pub is_not_multi: bool,
     pub has_antigen: bool,
     pub per_sample_info: Option<HashMap<String, VdjDemuxSampleInfo>>,
+    pub multiplexing_method: Option<BarcodeMultiplexingType>,
 }
 
 pub struct SetupVDJDemux;
@@ -47,6 +47,7 @@ impl MartianMain for SetupVDJDemux {
                     is_not_multi: true,
                     has_antigen: false,
                     per_sample_info: None,
+                    multiplexing_method: None,
                 });
             }
         };
@@ -55,9 +56,9 @@ impl MartianMain for SetupVDJDemux {
             cr_types::FeatureBarcodeType::Antigen,
         ));
         let mut per_sample_info = HashMap::new();
-        for (sample_number, sample) in multi_graph.samples.into_iter().enumerate() {
+        for sample in &multi_graph.samples {
             let fingerprint = sample
-                .cell_multiplexing_type()
+                .barcode_multiplexing_type()
                 .map(|_| {
                     rover
                         .make_path::<FingerprintFile>(format!("{}_fingerprint", sample.sample_id))
@@ -67,19 +68,20 @@ impl MartianMain for SetupVDJDemux {
             per_sample_info.insert(
                 sample.sample_id.clone(),
                 VdjDemuxSampleInfo {
-                    sample_id: sample.sample_id,
-                    sample_number,
+                    sample_id: sample.sample_id.clone(),
                     gex_matrices: None,
                     fingerprint,
                 },
             );
         }
 
+        let read_level_multiplexing = multi_graph.is_read_level_multiplexed();
+
         if let Some(multi_matrices) = args.multi_matrices {
             for sample_matrices in multi_matrices {
                 let sample_id = sample_matrices.sample.to_string();
                 per_sample_info.get_mut(&sample_id).unwrap().gex_matrices = Some(
-                    GexMatrices::from(sample_matrices)
+                    GexMatrices::from_sample_matrices(sample_matrices, read_level_multiplexing)
                         .hardlink(&rover) // Hardlink to play nice with Martian
                         .context("Error hard linking SampleMatrices")?,
                 );
@@ -91,6 +93,7 @@ impl MartianMain for SetupVDJDemux {
             is_not_multi: false,
             has_antigen,
             per_sample_info: Some(per_sample_info),
+            multiplexing_method: multi_graph.barcode_multiplexing_type(),
         })
     }
 }

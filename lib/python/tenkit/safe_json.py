@@ -17,6 +17,7 @@ import dataclasses
 import json
 import math
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from pathlib import PurePath
 from typing import IO, Any, TypeVar
 
 import numpy as np
@@ -61,11 +62,15 @@ def _sanitize_key(k: Any) -> str:
         return str(k)
 
 
-def _sanitize_scalar(data: bytes | float | np.integer | np.floating) -> None | str | int | float:
+def _sanitize_scalar(
+    data: bytes | PurePath | float | np.integer | np.floating,
+) -> None | str | int | float:
     if isinstance(data, str | int | bool):
         return data
     elif isinstance(data, bytes):
         return data.decode()
+    elif isinstance(data, PurePath):
+        return str(data)
     elif isinstance(data, np.integer):
         return int(data)
     elif isinstance(data, float | np.floating):
@@ -128,7 +133,7 @@ def json_sanitize(data) -> None | dict[str, Any] | int | str | float | list[Any]
         # Don't construct a new object if we don't have to.
         return data
     # This really doesn't make me happy. How many cases we we have to test?
-    if isinstance(data, bytes | float | np.floating | np.integer):
+    if isinstance(data, bytes | PurePath | float | np.floating | np.integer):
         return _sanitize_scalar(data)
     elif (dict_items := _dict_items(data)) is not None:
         return {_sanitize_key(k): json_sanitize(value) for k, value in dict_items}
@@ -273,7 +278,7 @@ def _make_iterencode(
     def _iterencode(obj: Any, depth: int) -> Generator[str, None, None]:
         if obj is None or (_is_safe(obj) if not indent else isinstance(obj, (str, int, bool))):
             yield from enc(obj, depth)
-        elif isinstance(obj, (bytes, float, float64, integer)):
+        elif isinstance(obj, bytes | PurePath | float | float64 | integer):
             yield from enc(_sanitize_scalar(obj), depth)
         elif (dict_items := _dict_items(obj)) is not None:
             yield from _iterencode_dict(dict_items, depth)
@@ -302,7 +307,7 @@ class NumpyAwareJSONEncoder(json.JSONEncoder):
         """
         if _is_safe(o):
             return o
-        elif isinstance(o, bytes | float | np.floating | np.integer):
+        elif isinstance(o, bytes | PurePath | float | np.floating | np.integer):
             return _sanitize_scalar(o)
         if isinstance(o, np.ndarray):
             if o.ndim >= 1:
@@ -336,12 +341,16 @@ class NumpyAwareJSONEncoder(json.JSONEncoder):
             json.encoder.c_make_encoder(
                 {} if self.check_circular else None,
                 self.default,
-                json.encoder.c_encode_basestring_ascii
-                if self.ensure_ascii
-                else json.encoder.c_encode_basestring,
-                indent := self.indent
-                if self.indent is None or isinstance(self.indent, str)
-                else " " * self.indent,
+                (
+                    json.encoder.c_encode_basestring_ascii
+                    if self.ensure_ascii
+                    else json.encoder.c_encode_basestring
+                ),
+                indent := (
+                    self.indent
+                    if self.indent is None or isinstance(self.indent, str)
+                    else " " * self.indent
+                ),
                 self.key_separator,
                 self.item_separator,
                 self.sort_keys,

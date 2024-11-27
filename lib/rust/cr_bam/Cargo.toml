@@ -1,9 +1,9 @@
 [dependencies]
-bitflags = '2'
-wyhash = '0.5'
-
 [dependencies.barcode]
 path = '../barcode'
+
+[dependencies.bitflags]
+workspace = true
 
 [dependencies.rust-htslib]
 workspace = true
@@ -13,6 +13,9 @@ workspace = true
 
 [dependencies.umi]
 path = '../umi'
+
+[dependencies.wyhash]
+workspace = true
 
 [lib]
 test = false

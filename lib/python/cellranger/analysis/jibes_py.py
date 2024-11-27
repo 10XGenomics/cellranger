@@ -150,7 +150,7 @@ class JibesEMPy:  # pylint: disable=too-many-instance-attributes
         # pylint: disable=invalid-name
         self.data_full, self.X_full = self._reshape_for_regression()
         self.posterior = None
-        self.LL = np.NINF
+        self.LL = -np.inf
         self.converged = False
         self.iterations = 0
 

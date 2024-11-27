@@ -8,10 +8,10 @@ use crate::contigs::make_contigs;
 use crate::heuristics::Heuristics;
 use crate::hops::FlowcellContam;
 use crate::log_opts::LogOpts;
-use crate::print_hyper::print_with_annotations;
 use crate::ref_free::{simplify_without_ref, uber_strong_paths, umis2};
-use align_tools::{affine_align, complexity};
 use amino::{have_start, have_stop};
+use bio_edit::alignment::Alignment;
+use bio_edit::alignment::AlignmentOperation::{Del, Ins, Subst};
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::{Kmer12, Kmer20};
 use debruijn::{Kmer, Mer, Vmer};
@@ -20,23 +20,22 @@ use hyperbase::Hyper;
 use itertools::{izip, Itertools};
 use kmer_lookup::{make_kmer_lookup_20_single, match_12};
 use stats_utils::percent_ratio;
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::iter::zip;
 use std::mem::swap;
-use std::time::Instant;
 use string_utils::{abbrev_list, stringme, TextUtils};
 use superslice::Ext;
-use tenkit2::io::print_compressed;
 use tenkit2::pack_dna::{pack_bases_16x, reverse_complement, unpack_bases_10};
+use vdj_ann::align::affine_align;
 use vdj_ann::annotate::{
     annotate_seq, annotate_seq_core, chain_type, get_cdr3, get_cdr3_using_ann, print_annotations,
     print_cdr3, print_cdr3_using_ann, print_some_annotations, print_start_codon_positions,
-    ContigAnnotation, JunctionSupport,
+    Annotation, ContigAnnotation, JunctionSupport,
 };
 use vdj_ann::refx::RefData;
-use vdj_ann::transcript::is_valid;
+use vdj_ann::transcript::ContigStatus;
 use vector_utils::{
     bin_member, intersection, lower_bound1_3, meet_size, next_diff, position, unique_sort,
     upper_bound1_3,
@@ -75,43 +74,11 @@ fn pop_bubbles_using_reference(x: &mut Hyper, umi_id: &[i32], refdata: &RefData)
             unique_sort(&mut u1);
             unique_sort(&mut u2);
             let (nu1, nu2) = (u1.len(), u2.len());
-            let mut ann1 = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(
-                x.h.g.edge_obj(e1 as u32),
-                refdata,
-                &mut ann1,
-                false,
-                false,
-                false,
-            );
-            let mut ann2 = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(
-                x.h.g.edge_obj(e2 as u32),
-                refdata,
-                &mut ann2,
-                false,
-                false,
-                false,
-            );
+            let ann1 = annotate_seq(x.h.g.edge_obj(e1 as u32), refdata, false, false, false);
+            let ann2 = annotate_seq(x.h.g.edge_obj(e2 as u32), refdata, false, false, false);
             let (re1, re2) = (x.inv[e1], x.inv[e2]);
-            let mut ann1rc = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(
-                x.h.g.edge_obj(re1),
-                refdata,
-                &mut ann1rc,
-                false,
-                false,
-                false,
-            );
-            let mut ann2rc = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(
-                x.h.g.edge_obj(re2),
-                refdata,
-                &mut ann2rc,
-                false,
-                false,
-                false,
-            );
+            let ann1rc = annotate_seq(x.h.g.edge_obj(re1), refdata, false, false, false);
+            let ann2rc = annotate_seq(x.h.g.edge_obj(re2), refdata, false, false, false);
             let a1 = ann1.len() + ann1rc.len() > 0;
             let a2 = ann2.len() + ann2rc.len() > 0;
             let k1 = x.h.kmers(e1 as u32) as i32;
@@ -336,7 +303,7 @@ fn print_contig_info(
     good: bool,
     id: usize,
     tig: &DnaString,
-    ann: &[(i32, i32, i32, i32, i32)],
+    ann: &[Annotation],
     jsupp: &(i32, i32),
     validated_umis: &[String],
     non_validated_umis: &[String],
@@ -358,12 +325,6 @@ fn print_contig_info(
     let rheaders = &refdata.rheaders;
     let rkmers_plus = &refdata.rkmers_plus;
     fwriteln!(log, "\nTIG {}[bases={}]", id + 1, tig.len());
-    if log_opts.print_seq {
-        fwriteln!(log, "{}", tig.to_string());
-    }
-    if log_opts.print_qual {
-        print_compressed(log, tigq);
-    }
     let verbose = false;
     if good {
         print_some_annotations(refdata, ann, log, verbose);
@@ -380,14 +341,13 @@ fn print_contig_info(
 
     // Print CDR3 locations.
 
-    let mut cdr3 = Vec::<(usize, Vec<u8>, usize, usize)>::new();
-    if !free {
+    let cdr3 = if !free {
         print_cdr3_using_ann(tig, refdata, ann, log);
-        get_cdr3_using_ann(tig, refdata, ann, &mut cdr3);
+        get_cdr3_using_ann(tig, refdata, ann)
     } else {
         print_cdr3(&tig.slice(0, tig.len()), log);
-        get_cdr3(&tig.slice(0, tig.len()), &mut cdr3);
-    }
+        get_cdr3(&tig.slice(0, tig.len()))
+    };
     if good && cdr3.is_empty() {
         fwriteln!(log, "warning: contig labeled good but has no cdr3");
     }
@@ -412,7 +372,7 @@ fn print_contig_info(
 
     let (mut vs, mut js) = (Vec::<usize>::new(), Vec::<usize>::new());
     for i in ann {
-        let t = i.2 as usize;
+        let t = i.ref_id as usize;
         let h = &rheaders[t];
         if h.contains("UTR") {
             continue;
@@ -448,36 +408,39 @@ fn print_contig_info(
     let mut split_v = false;
     for i in 0..ann.len() {
         if i + 1 < ann.len()
-            && rheaders[ann[i].2 as usize].contains("V-REGION")
-            && ann[i].2 == ann[i + 1].2
+            && rheaders[ann[i].ref_id as usize].contains("V-REGION")
+            && ann[i].ref_id == ann[i + 1].ref_id
         {
-            if ann[i].0 + ann[i].1 == ann[i + 1].0
-                && ann[i].3 + ann[i].1 < ann[i + 1].3
-                && ann[i + 1].3 - ann[i].1 - ann[i].3 <= 27
-                && (ann[i + 1].3 - ann[i].1 - ann[i].3) % 3 == 0
+            if ann[i].tig_start + ann[i].match_len == ann[i + 1].tig_start
+                && ann[i].ref_start + ann[i].match_len < ann[i + 1].ref_start
+                && ann[i + 1].ref_start - ann[i].match_len - ann[i].ref_start <= 27
+                && (ann[i + 1].ref_start - ann[i].match_len - ann[i].ref_start) % 3 == 0
             {
                 split_v = true;
                 fwriteln!(
                     log,
                     "see deletion of {} bases at pos {} on {}",
-                    ann[i + 1].3 - ann[i].1 - ann[i].3,
-                    ann[i].1 + ann[i].3,
-                    rheaders[ann[i].2 as usize]
+                    ann[i + 1].ref_start - ann[i].match_len - ann[i].ref_start,
+                    ann[i].match_len + ann[i].ref_start,
+                    rheaders[ann[i].ref_id as usize]
                 );
             }
-            if ann[i].3 + ann[i].1 == ann[i + 1].3
-                && ann[i].1 + ann[i].0 < ann[i + 1].0
-                && ann[i + 1].0 - ann[i].0 - ann[i].1 <= 27
-                && (ann[i + 1].0 - ann[i].0 - ann[i].1) % 3 == 0
+            if ann[i].ref_start + ann[i].match_len == ann[i + 1].ref_start
+                && ann[i].match_len + ann[i].tig_start < ann[i + 1].tig_start
+                && ann[i + 1].tig_start - ann[i].tig_start - ann[i].match_len <= 27
+                && (ann[i + 1].tig_start - ann[i].tig_start - ann[i].match_len) % 3 == 0
             {
                 split_v = true;
                 fwriteln!(
                     log,
                     "see insertion of {} at pos {} on {}",
-                    tig.slice((ann[i].0 + ann[i].1) as usize, ann[i + 1].0 as usize)
-                        .to_string(),
-                    ann[i + 1].3,
-                    rheaders[ann[i].2 as usize]
+                    tig.slice(
+                        (ann[i].tig_start + ann[i].match_len) as usize,
+                        ann[i + 1].tig_start as usize
+                    )
+                    .to_string(),
+                    ann[i + 1].ref_start,
+                    rheaders[ann[i].ref_id as usize]
                 );
             }
         }
@@ -489,18 +452,18 @@ fn print_contig_info(
     let mut split_u = false;
     for i in 0..ann.len() {
         if i + 1 < ann.len()
-            && rheaders[ann[i].2 as usize].contains("UTR")
-            && ann[i].2 == ann[i + 1].2
+            && rheaders[ann[i].ref_id as usize].contains("UTR")
+            && ann[i].ref_id == ann[i + 1].ref_id
         {
-            if ann[i].0 + ann[i].1 == ann[i + 1].0
-                && ann[i].3 + ann[i].1 < ann[i + 1].3
-                && ann[i + 1].3 - ann[i].1 - ann[i].3 == 1
+            if ann[i].tig_start + ann[i].match_len == ann[i + 1].tig_start
+                && ann[i].ref_start + ann[i].match_len < ann[i + 1].ref_start
+                && ann[i + 1].ref_start - ann[i].match_len - ann[i].ref_start == 1
             {
                 split_u = true;
             }
-            if ann[i].3 + ann[i].1 == ann[i + 1].3
-                && ann[i].1 + ann[i].0 < ann[i + 1].0
-                && ann[i + 1].0 - ann[i].0 - ann[i].1 == 1
+            if ann[i].ref_start + ann[i].match_len == ann[i + 1].ref_start
+                && ann[i].match_len + ann[i].tig_start < ann[i + 1].tig_start
+                && ann[i + 1].tig_start - ann[i].tig_start - ann[i].match_len == 1
             {
                 split_u = true;
             }
@@ -514,7 +477,7 @@ fn print_contig_info(
         let mut j = Vec::<String>::new();
         let mut c = Vec::<String>::new();
         for i in ann {
-            let t = i.2 as usize;
+            let t = i.ref_id as usize;
             let name = rheaders[t].after("|").between("|", "|");
             if rheaders[t].contains("UTR") {
                 u.push(name.to_string());
@@ -593,6 +556,7 @@ fn print_contig_info(
             Some(invalidated_umis.to_vec()),
             is_cell,
             good,
+            ContigStatus::default(),
             junction_support,
         );
         json.print(log);
@@ -651,8 +615,6 @@ pub fn process_barcode(
     let gd_mode = is_gd.unwrap_or(false);
     // Unpack refdata.
 
-    let t = Instant::now();
-    log_opts.report_perf_stats(log, &t, "upon entering process_barcode");
     let rheaders = &refdata.rheaders;
     let rheaders_full = &refdata_full.rheaders;
 
@@ -741,7 +703,7 @@ pub fn process_barcode(
                 if s.len() >= n {
                     for p in (0..s.len() - n + 1).rev() {
                         if s[p..p + n] == rc_inner_primers_bytes[j][0..n] {
-                            s = s[0..p + n].to_owned();
+                            s.truncate(p + n);
                             trimmed = true;
                             break 'outer;
                         }
@@ -753,7 +715,8 @@ pub fn process_barcode(
                 let b = DnaString::from_acgt_bytes(&s);
                 let s = b.rc().to_string();
                 reads[i] = DnaString::from_dna_string(&s);
-                quals[i] = quals[i][trim..quals[i].len()].to_owned();
+                quals[i].drain(..trim);
+                quals[i].shrink_to_fit();
             }
         }
     }
@@ -786,29 +749,31 @@ pub fn process_barcode(
         }
 
         barcode_data.primer_sample_count += 1;
-        let s = read.to_ascii_vec();
+        let read_ascii = read.to_ascii_vec();
         let mut trimmed = false;
-        'outerx: for j in 0..inner_primers.len() {
-            let n = inner_primers[j].len();
-            if s.len() >= n {
-                let p = s.len() - n;
-                if s[p..p + n] == rc_inner_primers_bytes[j][0..n] {
+        'outerx: for inner_primer_idx in 0..inner_primers.len() {
+            let primer_len = inner_primers[inner_primer_idx].len();
+            if read_ascii.len() >= primer_len {
+                // check if revcomp primer matches end of read
+                let primer_read_pos = read_ascii.len() - primer_len;
+                if read_ascii[primer_read_pos..read_ascii.len()]
+                    == rc_inner_primers_bytes[inner_primer_idx]
+                {
                     trimmed = true;
-                    barcode_data.inner_hit[j] += 1;
-                    if p + n >= PRIMER_EXT_LEN {
-                        let mut min_mis = 1000000;
-                        for l in 0..inner_primer_exts[j].len() {
-                            let x = &inner_primer_exts[j][l];
-                            let mut mis = 0;
-                            for m in 0..PRIMER_EXT_LEN {
-                                if s[p + n - m - 1] != x[PRIMER_EXT_LEN - m - 1] {
-                                    mis += 1;
-                                }
-                            }
-                            min_mis = min(min_mis, mis);
-                        }
-                        if min_mis <= MAX_MIS {
-                            barcode_data.inner_hit_good[j] += 1;
+                    barcode_data.inner_hit[inner_primer_idx] += 1;
+                    if primer_read_pos + primer_len >= PRIMER_EXT_LEN {
+                        let min_missmatches = inner_primer_exts[inner_primer_idx]
+                            .iter()
+                            .map(|c_region_ext| {
+                                read_ascii[read_ascii.len() - PRIMER_EXT_LEN..read_ascii.len()]
+                                    .iter()
+                                    .zip(c_region_ext.iter())
+                                    .map(|(nt_read, nt_ext)| if nt_read != nt_ext { 1 } else { 0 })
+                                    .sum::<usize>()
+                            })
+                            .min();
+                        if min_missmatches <= Some(MAX_MIS) {
+                            barcode_data.inner_hit_good[inner_primer_idx] += 1;
                         }
                     }
                     break 'outerx;
@@ -816,26 +781,36 @@ pub fn process_barcode(
             }
         }
         if !trimmed {
-            'outerx2: for j in 0..outer_primers.len() {
-                let n = outer_primers[j].len();
-                if s.len() >= n {
-                    let p = s.len() - n;
-                    if s[p..p + n] == rc_outer_primers_bytes[j][0..n] {
-                        barcode_data.outer_hit[j] += 1;
-                        if p + n >= PRIMER_EXT_LEN {
-                            let mut min_mis = 1000000;
-                            for l in 0..outer_primer_exts[j].len() {
-                                let x = &outer_primer_exts[j][l];
-                                let mut mis = 0;
-                                for m in 0..PRIMER_EXT_LEN {
-                                    if s[p + n - m - 1] != x[PRIMER_EXT_LEN - m - 1] {
-                                        mis += 1;
-                                    }
-                                }
-                                min_mis = min(min_mis, mis);
-                            }
-                            if min_mis <= MAX_MIS {
-                                barcode_data.outer_hit_good[j] += 1;
+            'outerx2: for outer_primer_idx in 0..outer_primers.len() {
+                let primer_len = outer_primers[outer_primer_idx].len();
+                if read_ascii.len() >= primer_len {
+                    // check if revcomp primer matches end of read
+                    let primer_read_pos = read_ascii.len() - primer_len;
+                    if read_ascii[primer_read_pos..read_ascii.len()]
+                        == rc_outer_primers_bytes[outer_primer_idx]
+                    {
+                        barcode_data.outer_hit[outer_primer_idx] += 1;
+                        if primer_read_pos + primer_len >= PRIMER_EXT_LEN {
+                            let min_missmatches = outer_primer_exts[outer_primer_idx]
+                                .iter()
+                                .map(|c_region_ext| {
+                                    read_ascii[read_ascii.len() - PRIMER_EXT_LEN..read_ascii.len()]
+                                        .iter()
+                                        .zip(c_region_ext.iter())
+                                        .map(
+                                            |(nt_read, nt_ext)| {
+                                                if nt_read != nt_ext {
+                                                    1
+                                                } else {
+                                                    0
+                                                }
+                                            },
+                                        )
+                                        .sum::<usize>()
+                                })
+                                .min();
+                            if min_missmatches <= Some(MAX_MIS) {
+                                barcode_data.outer_hit_good[outer_primer_idx] += 1;
                             }
                         }
                         break 'outerx2;
@@ -858,16 +833,13 @@ pub fn process_barcode(
 
     // Build the graph.
 
-    log_opts.report_perf_stats(log, &t, "before building graph");
     let mut x: Hyper = Hyper::new();
     x.build_from_reads(20, reads);
     let edges_initial = x.h.g.edge_count();
-    log_opts.report_perf_stats(log, &t, "after building graph");
 
     // Simplify the graph without using the reference.
 
-    let _t = Instant::now();
-    simplify_without_ref(&mut x, umi_id, log, log_opts);
+    simplify_without_ref(&mut x, umi_id);
 
     // Simplify the graph using the reference.  First we pop bubbles, then we
     // kill certain branches that arise from alternate splicing e.g. hopping from
@@ -876,15 +848,14 @@ pub fn process_barcode(
     if !heur.free {
         let mut dels = Vec::<u32>::new();
         pop_bubbles_using_reference(&mut x, umi_id, refdata);
-        let mut ann = vec![Vec::<(i32, i32, i32, i32, i32)>::new(); x.h.g.edge_count()];
-        for (e, anne) in ann.iter_mut().enumerate() {
-            annotate_seq(x.h.g.edge_obj(e as u32), refdata, anne, false, false, false);
-        }
+        let ann: Vec<_> = (0..x.h.g.edge_count())
+            .map(|e| annotate_seq(x.h.g.edge_obj(e as u32), refdata, false, false, false))
+            .collect();
         for (e1, (anne1, xids1)) in zip(&ann, &x.ids).take(x.h.g.edge_count()).enumerate() {
             if anne1.is_empty() {
                 continue;
             }
-            let t1 = anne1[anne1.len() - 1].2 as usize;
+            let t1 = anne1[anne1.len() - 1].ref_id as usize;
             if !rheaders[t1].contains("V-REGION") {
                 continue;
             }
@@ -904,7 +875,7 @@ pub fn process_barcode(
                 if anne2.is_empty() {
                     continue;
                 }
-                let t2 = anne2[0].2 as usize;
+                let t2 = anne2[0].ref_id as usize;
                 if !rheaders[t2].contains("V-REGION") {
                     continue;
                 }
@@ -933,7 +904,7 @@ pub fn process_barcode(
         }
         x.kill_edges(&dels);
     }
-    log_opts.report_perf_stats(log, &t, "after simplifying graph");
+
     fwriteln!(
         log,
         "graph has {} edges initially, {} edges after simplification",
@@ -1064,22 +1035,14 @@ pub fn process_barcode(
     let mut tr = vec![Vec::<u32>::default(); 8];
     if !heur.free {
         for e in 0..x.h.g.edge_count() {
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(
-                x.h.g.edge_obj(e as u32),
-                refdata,
-                &mut ann,
-                false,
-                false,
-                false,
-            );
+            let ann = annotate_seq(x.h.g.edge_obj(e as u32), refdata, false, false, false);
             // [ av, bv,
             //   gv, dv,
             //   aj, bj,
             //   gj, dj ]
             let mut is_tr = [false; 8];
             for i in 0..ann.len() {
-                let h = &rheaders[ann[i].2 as usize];
+                let h = &rheaders[ann[i].ref_id as usize];
                 if h.contains("TRAV") {
                     is_tr[0] = true;
                 }
@@ -1257,10 +1220,10 @@ pub fn process_barcode(
         let c = x.cat(p);
         let mut anns = 0;
         if !heur.free {
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&c, refdata, &mut ann, false, false, false);
-            for i in &ann {
-                let h = &refdata.rheaders[i.2 as usize];
+            let ann = annotate_seq(&c, refdata, false, false, false);
+            anns += ann.len();
+            for i in ann {
+                let h = &refdata.rheaders[i.ref_id as usize];
                 // ◼: Should just look for V region, and below too.
                 if h.contains("TRAV")
                     || h.contains("TRBV")
@@ -1271,12 +1234,12 @@ pub fn process_barcode(
                     have_v = true;
                 }
             }
-            anns += ann.len();
+
             let crc = c.rc();
-            annotate_seq(&crc, refdata, &mut ann, false, false, false);
+            let ann = annotate_seq(&crc, refdata, false, false, false);
             anns += ann.len();
             for i in ann {
-                let h = &rheaders[i.2 as usize];
+                let h = &rheaders[i.ref_id as usize];
                 if h.contains("TRAV")
                     || h.contains("TRBV")
                     || h.contains("IGHV")
@@ -1398,19 +1361,18 @@ pub fn process_barcode(
 
     if !refdata.refs.is_empty() {
         let chain_types_list = CHAIN_TYPES.to_vec();
-        let mut ann_memory = HashMap::<Vec<i32>, Vec<(i32, i32, i32, i32, i32)>>::new();
+        let mut ann_memory = HashMap::<Vec<i32>, Vec<Annotation>>::new();
         for j in &strong {
             let p = &j.1;
             // Can't use entry.or_insert_with here because we don't want to
             // clone p unnecessarily.
             if !ann_memory.contains_key(p) {
-                let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
                 let c = x.cat(p);
-                annotate_seq(&c, refdata_full, &mut ann, false, false, false);
+                let ann = annotate_seq(&c, refdata_full, false, false, false);
                 ann_memory.insert(p.clone(), ann);
             };
             for i in &ann_memory[p] {
-                let h = &rheaders_full[i.2 as usize];
+                let h = &rheaders_full[i.ref_id as usize];
                 let mut chain_types = Vec::<i8>::with_capacity(7);
                 if h.contains("TRAV") || h.contains("TRAJ") {
                     chain_types.push(position(&chain_types_list, &"TRA") as i8);
@@ -1465,26 +1427,14 @@ pub fn process_barcode(
 
     // Print final graph.
 
-    log_opts.report_perf_stats(log, &t, "after printing final graph");
-    if !log_opts.ngraph {
-        fwriteln!(log, "\nFINAL GRAPH\n");
-        fwriteln!(
-            log,
-            "edges = {}, checksum = {}",
-            x.h.g.edge_count(),
-            x.checksum()
-        );
-        print_with_annotations(
-            heur.free,
-            &x,
-            reads,
-            umi_id,
-            refdata,
-            log_opts.show_supp,
-            log_opts.print_seq_edges,
-            log,
-        );
-    }
+    fwriteln!(log, "\nFINAL GRAPH\n");
+    fwriteln!(
+        log,
+        "edges = {}, checksum = {}",
+        x.h.g.edge_count(),
+        x.checksum()
+    );
+
     fwriteln!(
         log,
         "\n==========================================================\
@@ -1496,7 +1446,7 @@ pub fn process_barcode(
 
     let mut con = Vec::<DnaString>::new(); // good contigs
     let mut con2 = Vec::<DnaString>::new(); // reject contigs
-    log_opts.report_perf_stats(log, &t, "before making contigs");
+
     let mut jsupp = Vec::<(i32, i32)>::new(); // (umis, reads) supporting junction seqs of good contigs
 
     make_contigs(
@@ -1526,7 +1476,7 @@ pub fn process_barcode(
         log,
         log_opts,
     );
-    log_opts.report_perf_stats(log, &t, "after making contigs");
+
     conx.extend(con.iter().cloned());
     conx.extend(con2.iter().cloned());
     productive.extend(vec![true; con.len()]); // good contigs == productive contigs (non-denovo mode)
@@ -1539,7 +1489,9 @@ pub fn process_barcode(
     }));
     junction_support.extend(vec![None; con2.len()]);
     barcode_data_brief.ncontigs = conx.len();
-    barcode_data_brief.xucounts = barcode_data.xucounts.clone();
+    barcode_data_brief
+        .xucounts
+        .clone_from(&barcode_data.xucounts);
     barcode_data_brief.total_ucounts = barcode_data.total_ucounts;
 
     // Compute primer hits to good contigs.
@@ -1572,18 +1524,20 @@ pub fn process_barcode(
     }
 
     // Report good contigs.
-    let mut ann_all = Vec::<Vec<(i32, i32, i32, i32, i32)>>::new();
-    for b in &con {
-        let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-        if refdata.refs.is_empty() {
-            ann_all.push(ann.clone());
-        } else {
+    let ann_all: Vec<_> = con
+        .iter()
+        .map(|b| {
+            if refdata.refs.is_empty() {
+                return Vec::new();
+            }
             // ◼ There must be a duplicate computation in make_contigs.
-            annotate_seq_core(b, refdata, &mut ann, true, false, true, log, false);
-            ann_all.push(ann.clone());
-            barcode_data.good_refseqs.extend(ann.iter().map(|a| a.2));
-        }
-    }
+            let ann = annotate_seq_core(b, refdata, true, false, true, log, false);
+            barcode_data
+                .good_refseqs
+                .extend(ann.iter().map(|a| a.ref_id));
+            ann
+        })
+        .collect();
     if !con.is_empty() && !log_opts.ngood {
         fwriteln!(log, "\nGOOD CONTIGS");
         for j in 0..con.len() {
@@ -1634,8 +1588,7 @@ pub fn process_barcode(
         for j in 0..con2.len() {
             let tigname = format!("{}_{}", barcode_data.barcode, con.len() + j + 1);
             let js = (0, 0);
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq_core(&con2[j], refdata, &mut ann, true, false, true, log, false);
+            let ann = annotate_seq_core(&con2[j], refdata, true, false, true, log, false);
             print_contig_info(
                 &tigname,
                 label,
@@ -1664,18 +1617,14 @@ pub fn process_barcode(
             // Check for long unannotated regions and note special case.
 
             if !heur.free {
-                let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-                annotate_seq(&con2[j], refdata, &mut ann, true, false, true);
-                // assert!(is_gd.unwrap_or(false)); -> is_gd == true
-                is_valid(&con2[j], refdata, &ann, true, log, is_gd);
-                annotate_seq(&con2[j], refdatax, &mut ann, true, false, true);
-                if !ann.is_empty() && ann[0].0 >= 200 {
+                let ann = annotate_seq(&con2[j], refdatax, true, false, true);
+                if !ann.is_empty() && ann[0].tig_start >= 200 {
                     fwriteln!(log, "note long unannotated region");
                 }
                 if ann.len() == 1 {
-                    let t = ann[0].2;
+                    let t = ann[0].ref_id;
                     if refdatax.rheaders[t as usize].contains("segment preceding TRBD1 exon 1") {
-                        let start = (ann[0].0 + ann[0].1) as usize;
+                        let start = (ann[0].tig_start + ann[0].match_len) as usize;
                         let n = 20;
                         if start + n <= con2[j].len() {
                             let s = con2[j].slice(start, start + n).to_string();
@@ -1688,6 +1637,27 @@ pub fn process_barcode(
     }
 
     // Finish up logging.
+}
 
-    log_opts.report_perf_stats(log, &t, "after reporting rejects");
+// Define the complexity of an alignment to be its number of mismatches plus
+// its number of indel operations, where an indel is a deletion or insertion of
+// an arbitrary number of bases.  Ignores clips.
+
+pub fn complexity(a: &Alignment) -> usize {
+    let ops = &a.operations;
+    let (mut comp, mut i) = (0, 0);
+    while i < ops.len() {
+        if ops[i] == Del || ops[i] == Ins {
+            let mut j = i + 1;
+            while j < ops.len() && ops[j] == ops[i] {
+                j += 1;
+            }
+            comp += 1;
+            i = j - 1;
+        } else if ops[i] == Subst {
+            comp += 1;
+        }
+        i += 1;
+    }
+    comp
 }

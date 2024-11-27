@@ -1,6 +1,4 @@
-//!
-//! A module to check that R1 != R2 (detect accidental duplication of fastqs)
-//!
+//! Detect accidental duplication of FASTQ files.
 
 use super::chemistry_filter::DetectChemistryUnit;
 use anyhow::{bail, Result};
@@ -8,6 +6,7 @@ use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
 use metric::{TxHashMap, TxHasher};
 use std::collections::hash_map::Entry;
 use std::hash::Hasher;
+use std::path::Path;
 
 pub(crate) fn check_read_identity(
     unit: &DetectChemistryUnit,
@@ -15,8 +14,8 @@ pub(crate) fn check_read_identity(
 ) -> Result<(u64, u64)> {
     use ReadPart::{Header, Qual, Seq};
     use WhichRead::{R1, R2};
-    let mut r1_hasher = TxHasher::default();
-    let mut r2_hasher = TxHasher::default();
+    let mut r1_hasher = TxHasher::hasher();
+    let mut r2_hasher = TxHasher::hasher();
     for read_pair in read_pairs {
         let _ = read_pair.get(R1, Header).map(|x| r1_hasher.write(x));
         let _ = read_pair.get(R1, Seq).map(|x| r1_hasher.write(x));
@@ -44,15 +43,33 @@ pub(crate) fn check_read_identity(
 }
 
 pub(crate) fn check_fastq_identity(units: &[DetectChemistryUnit]) -> Result<()> {
+    fn format_unit_fastq(
+        unit: &DetectChemistryUnit,
+        fastq: &fastq_set::read_pair_iter::InputFastqs,
+    ) -> String {
+        format!(
+            "{}\"{}\"",
+            match unit.group {
+                Some(ref g) => format!("{g} in "),
+                None => String::new(),
+            },
+            Path::new(&fastq.r1).parent().unwrap().display(),
+        )
+    }
     let mut hashes = TxHashMap::default();
     for unit in units {
-        for pair_hash in unit.check_read_identity()? {
+        for (fastq, pair_hash) in unit.check_read_identity()? {
             match hashes.entry(pair_hash) {
-                Entry::Occupied(o) => {
-                    bail!("Duplicate FASTQs found between {} and {}", unit, o.get());
-                }
                 Entry::Vacant(v) => {
-                    v.insert(unit);
+                    v.insert((unit, fastq));
+                }
+                Entry::Occupied(o) => {
+                    let (o_unit, o_fastq) = o.get();
+                    bail!(
+                        "duplicate FASTQs found between {} and {}",
+                        format_unit_fastq(unit, fastq),
+                        format_unit_fastq(o_unit, o_fastq),
+                    );
                 }
             }
         }

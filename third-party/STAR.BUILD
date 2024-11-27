@@ -34,6 +34,7 @@ cc_binary(
     ],
     copts = [
         "-Wno-literal-conversion",
+        "-Wno-vla-cxx-extension",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -173,7 +174,9 @@ cc_library(
         "-Wno-unused-function",
         "-Wno-unused-private-field",
         "-Wno-unqualified-std-cast-call",
+        "-Wno-deprecated-declarations",
         "-Wno-deprecated-register",
+        "-Wno-vla-cxx-extension",
     ],
     includes = [
         "source",
@@ -233,6 +236,7 @@ cc_library(
     copts = [
         "-DSAMTOOLS=1",
         "-Wno-misleading-indentation",
+        "-Wno-single-bit-bitfield-constant-conversion",
         "-Wno-unused-but-set-variable",
         "-Wno-unused-function",
         "-Wno-unused-variable",

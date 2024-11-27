@@ -1,6 +1,8 @@
 [dependencies]
-num-traits = '0.2'
 rand_xoshiro = '0.6'
+
+[dependencies.num-traits]
+workspace = true
 
 [dependencies.rand]
 workspace = true

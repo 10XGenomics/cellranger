@@ -35,6 +35,7 @@ pipeline SC_RNA_ANALYZER(
         is_visium_hd    = self.analyzer_inputs.is_visium_hd,
         is_pd           = self.analyzer_inputs.is_pd,
         get_peak_matrix = false,
+        enable_tsne     = self.analyzer_inputs.enable_tsne,
         *               = ANALYZER_PREFLIGHT,
     ) using (
         volatile = true,
@@ -94,7 +95,7 @@ pipeline SC_RNA_ANALYZER(
         volatile = true,
     )
 
-    call RUN_GRAPH_CLUSTERING_NG as RUN_GRAPH_CLUSTERING(
+    call RUN_GRAPH_CLUSTERING(
         matrix_h5           = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         pca_h5              = RUN_PCA.pca_h5,
         num_neighbors       = self.analyzer_inputs.graphclust_neighbors,
@@ -139,7 +140,7 @@ pipeline SC_RNA_ANALYZER(
         volatile = true,
     )
 
-    call RUN_TSNE_NG as RUN_TSNE(
+    call RUN_TSNE(
         matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         pca_h5          = RUN_PCA.pca_h5,
         random_seed     = self.analyzer_inputs.random_seed,
@@ -199,6 +200,8 @@ pipeline SC_RNA_ANALYZER(
         aggregate_barcodes = self.aggregate_barcodes,
         is_antibody        = true,
         is_spatial         = self.analyzer_inputs.is_spatial,
+        multi_graph        = null,
+        sample_id          = null,
     ) using (
         disabled = PREPROCESS_MATRIX.skip_antibody_analysis,
     )
@@ -208,6 +211,8 @@ pipeline SC_RNA_ANALYZER(
         aggregate_barcodes = self.aggregate_barcodes,
         is_antibody        = false,
         is_spatial         = self.analyzer_inputs.is_spatial,
+        multi_graph        = null,
+        sample_id          = null,
     ) using (
         disabled = PREPROCESS_MATRIX.skip_antigen_analysis,
     )
@@ -220,6 +225,7 @@ pipeline SC_RNA_ANALYZER(
             analysis:         SUMMARIZE_ANALYSIS.analysis,
             analysis_csv:     SUMMARIZE_ANALYSIS.analysis_csv,
             cloupe_matrix_h5: PREPROCESS_MATRIX.cloupe_matrix_h5,
+            skip_tsne:        PREPROCESS_MATRIX.skip_tsne,
             summary:          SUMMARIZE_ANALYSIS.summary,
         },
     )

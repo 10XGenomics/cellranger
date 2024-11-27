@@ -67,6 +67,7 @@ pipeline SC_RNA_REANALYZER_CS(
             cbc_realign_panorama:       PARSE_PARAM_CSV.cbc_realign_panorama,
             cbc_sigma:                  PARSE_PARAM_CSV.cbc_sigma,
             chemistry_batch_correction: SETUP_SAMPLES.chemistry_batch_correction,
+            enable_tsne:                true,
             exclude_genes:              self.exclude_genes_csv,
             filtered_matrices_h5:       self.filtered_matrices_h5,
             force_cells:                self.force_cells,

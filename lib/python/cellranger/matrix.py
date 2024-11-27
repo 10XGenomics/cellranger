@@ -7,8 +7,10 @@ from __future__ import annotations
 import copy
 import os.path
 import pathlib
+import shutil
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
+from io import BufferedIOBase
 from typing import Any, TypeVar, overload
 
 import h5py as h5
@@ -103,6 +105,20 @@ def _ensure_types_match(
     return subset
 
 
+def _save_extra_attrs(
+    file: h5.File, extra_attrs: None | (Mapping[str | bytes, str | bytes | Iterable[str | bytes]])
+) -> None:
+    """Set optional top level attributes."""
+    if extra_attrs:
+        for k, v in extra_attrs.items():
+            cr_h5.set_hdf5_attr(file, k, v)
+
+
+def _save_sw_version(file: h5.File, sw_version: None | str | bytes) -> None:
+    if sw_version:
+        file.attrs[SOFTWARE_H5_VERSION_KEY] = sw_version
+
+
 class CountMatrixView:
     """Supports summing a sliced CountMatrix w/o copying the whole thing."""
 
@@ -150,12 +166,10 @@ class CountMatrixView:
         return cr_sparse.sum_masked(self.matrix.m, self.feature_mask, self.bc_mask, axis=axis)
 
     @overload
-    def count_ge(self, axis: None, threshold: int) -> np.uint64:
-        ...
+    def count_ge(self, axis: None, threshold: int) -> np.uint64: ...
 
     @overload
-    def count_ge(self, axis: int, threshold: int) -> np.ndarray[int, np.dtype[np.uint64]]:
-        ...
+    def count_ge(self, axis: int, threshold: int) -> np.ndarray[int, np.dtype[np.uint64]]: ...
 
     def count_ge(
         self, axis: int | None, threshold: int
@@ -477,8 +491,12 @@ class CountMatrix:
         return self.m[i, j]
 
     def merge(self, other: CountMatrix) -> None:
-        """Merge this matrix with another CountMatrix."""
+        """Merge this matrix with another CountMatrix.
+
+        Works by addition, dimensions must be the same.
+        """
         assert self.features_dim == other.features_dim
+        # Also requires nrows to be the same
         self.m += other.m
 
     def sort_indices(self) -> None:
@@ -497,13 +515,8 @@ class CountMatrix:
             f.attrs[h5_constants.H5_FILETYPE_KEY] = MATRIX_H5_FILETYPE
             f.attrs[MATRIX_H5_VERSION_KEY] = MATRIX_H5_VERSION
             # set the software version key only if it is supplied
-            if sw_version:
-                f.attrs[SOFTWARE_H5_VERSION_KEY] = sw_version
-
-            # Set optional top-level attributes
-            if extra_attrs:
-                for k, v in extra_attrs.items():
-                    cr_h5.set_hdf5_attr(f, k, v)
+            _save_sw_version(f, sw_version)
+            _save_extra_attrs(f, extra_attrs)
 
             group = f.create_group(MATRIX)
             self.save_h5_group(group)
@@ -542,13 +555,7 @@ class CountMatrix:
     @staticmethod
     def load_dims_from_h5(filename) -> tuple[int, int, int]:
         """Load the matrix shape from an HDF5 file."""
-        filename = ensure_binary(filename)
-        h5_version = CountMatrix.get_format_version_from_h5(filename)
-        if h5_version == 1:
-            return CountMatrix._load_dims_from_legacy_v1_h5(filename)
-        else:
-            with h5.File(filename, "r") as f:
-                return CountMatrix.load_dims(f[MATRIX])
+        return CountMatrix.load_dims_from_h5_file_handle(ensure_binary(filename))
 
     @staticmethod
     def _load_dims_from_legacy_v1_h5_handle(f: h5.File) -> tuple[int, int, int]:
@@ -613,8 +620,57 @@ class CountMatrix:
         ceil: bool = True,
     ) -> float:
         """Estimate memory usage from an HDF5 file."""
-        _, num_bcs, nonzero_entries = CountMatrix.load_dims_from_h5(filename)
+        return CountMatrix.get_mem_gb_from_matrix_h5_file_handle(
+            ensure_binary(filename), scale, ceil
+        )
+
+    @staticmethod
+    def get_mem_gb_from_matrix_h5_file_handle(
+        file_handle: str | bytes | BufferedIOBase,
+        scale: float = h5_constants.MATRIX_MEM_GB_MULTIPLIER,
+        ceil: bool = True,
+    ) -> float:
+        """Estimate memory usage from an HDF5 file."""
+        _, num_bcs, nonzero_entries = CountMatrix.load_dims_from_h5_file_handle(file_handle)
         return CountMatrix.get_mem_gb_from_matrix_dim(num_bcs, nonzero_entries, scale, ceil)
+
+    @staticmethod
+    def load_dims_from_h5_file_handle(
+        file_handle: str | bytes | BufferedIOBase,
+    ) -> tuple[int, int, int]:
+        """Load the matrix shape from an HDF5 file."""
+        with h5.File(file_handle, "r") as f:
+            h5_version = CountMatrix._get_format_version_from_handle(f)
+            if h5_version == 1:
+                return CountMatrix._load_dims_from_legacy_v1_h5_handle(f)
+            else:
+                return CountMatrix.load_dims(f[MATRIX])
+
+    @staticmethod
+    def load_bcs_from_h5_file_handle(file_handle) -> list[bytes]:
+        """Load just the barcode sequences from an HDF5 file hadle."""
+        with h5.File(file_handle, "r") as f:
+            h5_version = CountMatrix._get_format_version_from_handle(f)
+            if h5_version == 1:
+                return CountMatrix._load_bcs_from_legacy_v1_h5_file_handle(f)
+            else:
+                return CountMatrix.load_bcs_from_h5_group(f[MATRIX])
+
+    @staticmethod
+    def _load_indptr_from_matrix_group(group: h5.Group):
+        return group[h5_constants.H5_MATRIX_INDPTR_ATTR][:]
+
+    @staticmethod
+    def load_indptr_from_file(filename):
+        fn, version = CountMatrix._validate_h5_file(filename)
+        if version < MATRIX_H5_VERSION:
+            raise ValueError(
+                "Matrix HDF5 file format version (%d) is an older version that is no longer supported."
+                % version
+            )
+        with h5.File(fn, "r") as f:
+            mat_group = f[MATRIX]
+            return CountMatrix._load_indptr_from_matrix_group(mat_group)
 
     @classmethod
     def load(cls, group: h5.Group) -> CountMatrix:
@@ -625,7 +681,7 @@ class CountMatrix:
         shape = group[h5_constants.H5_MATRIX_SHAPE_ATTR][:]
         data = group[h5_constants.H5_MATRIX_DATA_ATTR][:]
         indices = group[h5_constants.H5_MATRIX_INDICES_ATTR][:]
-        indptr = group[h5_constants.H5_MATRIX_INDPTR_ATTR][:]
+        indptr = CountMatrix._load_indptr_from_matrix_group(group)
 
         # Check to make sure indptr increases monotonically (to catch overflow bugs)
         assert np.all(np.diff(indptr) >= 0)
@@ -689,12 +745,17 @@ class CountMatrix:
     def _load_bcs_from_legacy_v1_h5(filename) -> list[bytes]:
         """Load just the barcode sequences from a legacy h5py.File (format version 1)."""
         with h5.File(ensure_binary(filename), "r") as f:
-            genomes = f.keys()
-            barcodes: set[bytes] = set()
-            for genome in genomes:
-                group = f[genome]
-                barcodes.update(group["barcodes"])
-            return list(barcodes)
+            return CountMatrix._load_bcs_from_legacy_v1_h5_file_handle(f)
+
+    @staticmethod
+    def _load_bcs_from_legacy_v1_h5_file_handle(file_handle) -> list[bytes]:
+        """Load just the barcode sequences from a legacy h5py.File (format version 1)."""
+        genomes = file_handle.keys()
+        barcodes: set[bytes] = set()
+        for genome in genomes:
+            group = file_handle[genome]
+            barcodes.update(group["barcodes"])
+        return list(barcodes)
 
     @staticmethod
     def load_bcs_from_h5_file(filename) -> list[bytes]:
@@ -939,6 +1000,14 @@ class CountMatrix:
                 indices.append(feature.index)
         return self.select_features(indices)
 
+    def select_features_by_type_and_tag(self, feature_type: str, tag_type: str) -> CountMatrix:
+        """Select the subset of features with a particular feature type (e.g. "Antibody Capture") and tag (e.g. "Hashtag")."""
+        indices = []
+        for feature in self.feature_ref.feature_defs:
+            if feature.feature_type == feature_type and tag_type in feature.tags:
+                indices.append(feature.index)
+        return self.select_features(indices)
+
     def get_feature_ids_by_type(self, feature_type: str) -> list[bytes]:
         """Return a list of feature ids of a particular feature type (e.g. "Gene Expression")."""
         return self.feature_ref.get_feature_ids_by_type(feature_type)
@@ -1023,7 +1092,7 @@ class CountMatrix:
 
     def get_mean_and_var_per_feature(
         self,
-    ) -> tuple[np.ndarray[int, np.dtype[np.float_]], np.ndarray[int, np.dtype[np.float_]]]:
+    ) -> tuple[np.ndarray[int, np.dtype[np.float64]], np.ndarray[int, np.dtype[np.float64]]]:
         """Calculate the mean and variance on the sparse matrix efficiently.
 
         :return: a tuple with numpy arrays for mean and var
@@ -1165,23 +1234,11 @@ class CountMatrix:
             return CountMatrix._get_format_version_from_handle(f)
 
     @staticmethod
-    def load_h5_file(filename, col_start: int | None = None, col_end: int | None = None):
-        """Load a matrix H5 file, optionally subsetting down to a particular range of columns if requests.
-
-        Args:
-            filename: The name of the H5 file
-            col_start: (Optional) The column to select
-            col_end: (Optional) End of column select range
-
-        Returns:
-            Instance of a CountMatrix
-
-        """
+    def _validate_h5_file(filename):
         if isinstance(filename, pathlib.PosixPath):
             fn = filename
         else:
             fn = ensure_binary(filename)
-
         with h5.File(fn, "r") as f:
             if (
                 h5_constants.H5_FILETYPE_KEY not in f.attrs
@@ -1194,12 +1251,33 @@ class CountMatrix:
                     "Matrix HDF5 file format version (%d) is a newer version that is not supported by this version of the software."
                     % version
                 )
+            if version >= MATRIX_H5_VERSION and MATRIX not in f.keys():
+                raise ValueError('Could not find the "matrix" group inside the matrix HDF5 file.')
+        return fn, version
+
+    @staticmethod
+    def load_h5_file(filename, col_start: int | None = None, col_end: int | None = None):
+        """Load a matrix H5 file, optionally subsetting down to a particular range of columns if requests.
+
+        Args:
+            filename: The name of the H5 file
+            col_start: (Optional) The column to select
+            col_end: (Optional) End of column select range
+
+        Returns:
+            Instance of a CountMatrix
+
+        """
+        fn, version = CountMatrix._validate_h5_file(filename)
+
+        with h5.File(fn, "r") as f:
             if version < MATRIX_H5_VERSION:
+                if col_start is not None or col_end is not None:
+                    raise ValueError(
+                        "Subsetting columns when loading legacy H5 files is not supported."
+                    )
                 # raise ValueError('Matrix HDF5 file format version (%d) is an older version that is no longer supported.' % version)
                 return CountMatrix.from_legacy_v1_h5(f)
-
-            if MATRIX not in f.keys():
-                raise ValueError('Could not find the "matrix" group inside the matrix HDF5 file.')
             if col_start is not None or col_end is not None:
                 if col_start is None or col_end is None:
                     raise ValueError("Both or neither argument col_start/col_end must be provided.")
@@ -1316,17 +1394,102 @@ class CountMatrix:
         return number_of_overflow_entries
 
 
-def merge_matrices(h5_filenames):
+def merge_matrices(h5_filenames: list[str]) -> CountMatrix | None:
+    """Merge multiple matrices into a single matrix."""
     matrix = None
     for h5_filename in h5_filenames:
         if matrix is None:
             matrix = CountMatrix.load_h5_file(h5_filename)
         else:
-            other = CountMatrix.load_h5_file(h5_filename)
-            matrix.merge(other)
+            matrix.merge(CountMatrix.load_h5_file(h5_filename))
     if matrix is not None:
         matrix.tocsc()
     return matrix
+
+
+def create_merged_matrix_from_col_concat(
+    in_h5_filenames, out_h5_filename, extra_attrs=None, sw_version=None
+):
+    """Merge several h5 files into one larger matrix file.
+
+    An efficient method for doing column concatenation of H5 files.  Assumes the input files all have the same
+    features/barcodes in their matrix, and that each only contains a non-overlapping subset of the columns.  Strategy
+    is to append the column data directly, rather than merging arbitrary non-distinct columns (As is done in
+    merge_matrices).
+
+    Args:
+        in_h5_filenames: A list of filenames to column distinct sets of a larger matrix
+        out_h5_filename: The desired output filename
+        extra_attrs: Similar to the argument to save_h5_file
+        sw_version: A version of the software to add into the attributes.
+
+    Returns:
+        Nothing
+    """
+    # Quick sanity check that the dimensions are the same (and hope that implies barcodes/features are the same)
+    # Dimensions are tuple of row/column/nnz
+    dimensions = [CountMatrix.load_dims_from_h5(f) for f in in_h5_filenames]
+    total_nnz = sum(x[2] for x in dimensions)
+    assert np.all(
+        x[0] == dimensions[0][0] for x in dimensions
+    ), "Not all row dimensions were the same"
+    assert np.all(
+        x[1] == dimensions[0][1] for x in dimensions
+    ), "Not all col dimensions were the same"
+
+    # Load the indptrs and figure out which columns each file has
+    fn_start_ends = []
+    for fn in in_h5_filenames:
+        indptr = CountMatrix.load_indptr_from_file(fn)
+        col_spans = indptr[1:] - indptr[:-1]
+        active_cols = np.nonzero(col_spans)
+        # TODO: Double pass a bit annoying here, get min/max at once
+        start = np.min(active_cols)
+        end = np.max(active_cols)
+        fn_start_ends.append((fn, start, end))
+    fn_start_ends.sort(key=lambda x: x[1])
+    # Now check they don't overlap and that we have independent blocks of cols
+    last_end = -1
+    last_start = -1
+    for _, start, end in fn_start_ends:
+        if start < last_end or end <= last_end or start < last_start:
+            raise ValueError("H5 files to be concatenated were not unique sets of columns")
+        last_end = end
+        last_start = start
+
+    # Columnwise concatenate into a new file
+    start_file = fn_start_ends[0][0]
+    shutil.copyfile(start_file, out_h5_filename)
+    to_append = (h5_constants.H5_MATRIX_DATA_ATTR, h5_constants.H5_MATRIX_INDICES_ATTR)
+    with h5.File(out_h5_filename, "a") as outfile:
+        if sw_version:
+            _save_sw_version(outfile, sw_version)
+        if extra_attrs:
+            _save_extra_attrs(outfile, extra_attrs)
+        matrix = outfile[MATRIX]
+        ind_ptr = CountMatrix._load_indptr_from_matrix_group(matrix).astype(np.uint64)
+        end = len(matrix[to_append[0]])
+        # Resize everything to expected total size
+        for dset_name in to_append:
+            dset = matrix[dset_name]
+            dset.resize((total_nnz,))
+        # Now append new data to this
+        for small_file, s_start, s_end in fn_start_ends[1:]:
+            new_mat = CountMatrix.load_h5_file(small_file)
+            start = end
+            end = len(new_mat.m.data) + end
+            matrix[h5_constants.H5_MATRIX_DATA_ATTR][start:end] = new_mat.m.data
+            matrix[h5_constants.H5_MATRIX_INDICES_ATTR][start:end] = new_mat.m.indices
+            # Update the column index as well, by adding an offset to account for the data we're appending.
+            cur_indptr = new_mat.m.indptr.astype(np.uint64)
+            cur_indptr += start
+            num_entries_before = (  # suspect is zero most of the time as we grouped by columns
+                ind_ptr[s_end + 1] - ind_ptr[s_end]
+            )
+            assert num_entries_before == 0, "Data was not cleanly separated into distinct columns"
+            ind_ptr[s_start:] = cur_indptr[s_start:]  # +num_entries_before
+            del new_mat
+        matrix[h5_constants.H5_MATRIX_INDPTR_ATTR][:] = ind_ptr
 
 
 def make_matrix_attrs_count(sample_id, gem_groups, chemistry):

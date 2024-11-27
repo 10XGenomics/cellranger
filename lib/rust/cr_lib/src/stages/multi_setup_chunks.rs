@@ -23,12 +23,11 @@ pub struct MultiSetupChunksStageInputs {
 #[derive(Clone, Serialize, Deserialize, MartianStruct, PartialEq)]
 pub struct MultiSetupChunksStageOutputs {
     pub chunks: Vec<RnaChunk>,
-    /// Gel Bead barcode whitelist or the spot barcode in Visium
-    pub barcode_whitelist: Option<String>,
+    /// Gel Bead barcode whitelist(s) or the spot barcode in Visium
+    pub barcode_whitelists: Vec<String>,
     pub visium_hd_slide_name: Option<String>,
 }
 
-// This is our stage struct
 pub struct MultiSetupChunks;
 
 #[make_mro]
@@ -94,7 +93,7 @@ impl MartianMain for MultiSetupChunks {
             })
             .collect();
 
-        let barcode_whitelist = args
+        let barcode_whitelists = args
             .chemistry_defs
             .values()
             .filter_map(|x| {
@@ -102,10 +101,9 @@ impl MartianMain for MultiSetupChunks {
                     .option_gel_bead()
                     .and_then(WhitelistSpec::whitelist_name)
             })
-            .dedup()
-            .at_most_one()
-            .unwrap()
-            .map(String::from);
+            .unique()
+            .map(String::from)
+            .collect();
 
         let visium_hd_slide_name = args
             .chemistry_defs
@@ -119,31 +117,8 @@ impl MartianMain for MultiSetupChunks {
 
         Ok(MultiSetupChunksStageOutputs {
             chunks,
-            barcode_whitelist,
+            barcode_whitelists,
             visium_hd_slide_name,
         })
-    }
-}
-
-#[cfg(test)]
-#[cfg(feature = "slow_tests")]
-mod tests {
-    use super::*;
-    use insta::assert_ron_snapshot;
-    use martian_filetypes::json_file::JsonFile;
-    use martian_filetypes::FileTypeRead;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn test_setup_chunks_outs() -> Result<()> {
-        let data: BTreeMap<String, MultiSetupChunksStageInputs> =
-            JsonFile::from("test/setup_chunks_sample_defs.json").read()?;
-        let total_items = data.len();
-        for (i, (sample, args)) in data.into_iter().enumerate() {
-            println!("({}/{}) Sample: {}", i, total_items, sample);
-            let outs = MultiSetupChunks.test_run_tmpdir(args)?;
-            assert_ron_snapshot!(sample, outs);
-        }
-        Ok(())
     }
 }

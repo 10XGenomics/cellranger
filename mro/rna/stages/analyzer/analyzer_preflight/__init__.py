@@ -79,7 +79,7 @@ def main(args, outs):
         return
 
     if not (args.filtered_matrices_h5 and os.path.exists(args.filtered_matrices_h5)):
-        martian.exit("Filtered matrix does not exist: %s" % args.filtered_matrices_h5)
+        martian.exit(f"Filtered matrix does not exist: {args.filtered_matrices_h5}")
 
     flt_matrix_dims = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_matrices_h5)
     flt_genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices_h5)
@@ -262,8 +262,7 @@ def main(args, outs):
 
     if not os.access(args.filtered_matrices_h5, os.R_OK):
         martian.exit(
-            "Filtered matrix file is not readable, please check file permissions: %s"
-            % args.filtered_matrices_h5
+            f"Filtered matrix file is not readable, please check file permissions: {args.filtered_matrices_h5}"
         )
 
     outs.skip = False
@@ -288,5 +287,5 @@ def validate_csv(csv_file, entry_type, entry_colname):
             )
         counts = sum(1 for line in f)  # count remaining lines
     if counts == 0:
-        martian.exit("Specified %s file must contain at least one entry." % entry_type)
+        martian.exit(f"Specified {entry_type} file must contain at least one entry.")
     return counts

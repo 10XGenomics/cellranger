@@ -22,6 +22,7 @@ use std::collections::HashMap;
 pub struct CallTagsOHStageInputs {
     pub chemistry_defs: ChemistryDefs,
     pub raw_feature_bc_matrix: CountMatrixFile,
+    pub filtered_feature_bc_matrix: CountMatrixFile,
 }
 
 /// The Martian stage outputs.
@@ -43,6 +44,9 @@ pub struct CallTagsOHMetrics {
 
     /// The number of valid barcodes per overhang
     valid_barcodes_per_overhang: TxHashMap<BarcodeId, i64>,
+
+    /// The number of filtered barcodes per overhang.
+    filtered_barcodes_per_overhang: TxHashMap<BarcodeId, i64>,
 }
 
 impl CallTagsOHMetrics {
@@ -50,15 +54,21 @@ impl CallTagsOHMetrics {
     fn new(
         umi_per_overhang: TxHashMap<BarcodeId, i64>,
         barcodes_per_overhang: TxHashMap<BarcodeId, Vec<String>>,
+        filtered_barcodes_per_overhang: TxHashMap<BarcodeId, Vec<String>>,
     ) -> Self {
         let valid_barcodes_per_overhang = barcodes_per_overhang
             .iter()
             .map(|(overhang_id, gel_bead_barcodes)| (*overhang_id, gel_bead_barcodes.len() as i64))
             .collect();
-
+        // Get the number of filtered barcodes per overhang from the list of filtered barcodes per overhang.
+        let filtered_barcodes_per_overhang = filtered_barcodes_per_overhang
+            .iter()
+            .map(|(overhang_id, gel_bead_barcodes)| (*overhang_id, gel_bead_barcodes.len() as i64))
+            .collect();
         Self {
             umi_per_overhang,
             valid_barcodes_per_overhang,
+            filtered_barcodes_per_overhang,
         }
     }
 }
@@ -96,7 +106,7 @@ impl MartianMain for CallTagsOH {
 
         let whitelist_sources: Vec<_> = overhang_barcodes
             .into_values()
-            .map(|x| x.whitelist().as_source(true))
+            .map(|x| x.whitelist().as_source())
             .try_collect()?;
 
         // TODO(CELLRANGER-7847): Factor out duplicated seq_to_id code
@@ -113,6 +123,14 @@ impl MartianMain for CallTagsOH {
             &overhang_seq_to_id,
             &overhang_range,
         )?;
+
+        let filtered_matrix = args.filtered_feature_bc_matrix.read()?;
+        let filtered_barcodes_per_overhang = get_barcodes_per_multiplexing_identifier(
+            &filtered_matrix,
+            &overhang_seq_to_id,
+            &overhang_range,
+        )?;
+
         let barcodes_per_tag_file: JsonFile<_> = rover.make_path("barcodes_per_tag");
         barcodes_per_tag_file.write(&barcodes_per_overhang)?;
 
@@ -124,9 +142,11 @@ impl MartianMain for CallTagsOH {
         );
 
         let summary: JsonFile<_> = rover.make_path("summary");
+
         summary.write(&CallTagsOHMetrics::new(
             umi_per_overhang,
             barcodes_per_overhang,
+            filtered_barcodes_per_overhang,
         ))?;
 
         Ok(Self::StageOutputs {

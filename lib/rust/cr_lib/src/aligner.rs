@@ -3,6 +3,7 @@ use crate::stages::align_and_count;
 use crate::types::AnnSpillFormat;
 use anyhow::Result;
 use barcode::{Barcode, BarcodeContent};
+use cr_types::chemistry::ChemistryDefsExt;
 use cr_types::constants::ILLUMINA_QUAL_OFFSET;
 use cr_types::probe_set::ProbeSetReference;
 use cr_types::reference::feature_extraction::{FeatureData, FeatureExtractor};
@@ -210,13 +211,12 @@ impl TrimResults {
     }
 }
 
-///
 #[derive(Clone)]
 pub struct Aligner {
     aligner: Option<StarAligner>,
     extractor: Arc<FeatureExtractor>,
     reference: Arc<FeatureReference>,
-    annotator: Arc<ReadAnnotator>,
+    annotator: Option<Arc<ReadAnnotator>>,
     target_panel_reference: Option<Arc<ProbeSetReference>>,
     read_chunks: Vec<RnaChunk>,
     filter_umis: bool,
@@ -243,6 +243,10 @@ fn barcode_seeded_rng(barcode: Barcode) -> ChaCha20Rng {
             let seed = ((index.row as u64) << 32) + index.col as u64;
             ChaCha20Rng::seed_from_u64(seed)
         }
+        BarcodeContent::CellName(cell_id) => {
+            let seed = cell_id.id as u64;
+            ChaCha20Rng::seed_from_u64(seed)
+        }
     }
 }
 
@@ -252,7 +256,7 @@ impl Aligner {
         aligner: Option<StarAligner>,
         reference: FeatureReference,
         feature_dist: Vec<f64>,
-        annotator: ReadAnnotator,
+        annotator: Option<ReadAnnotator>,
         read_chunks: Vec<RnaChunk>,
         spill_folder: PathBuf,
         targeted_umi_min_read_count: Option<u64>,
@@ -265,7 +269,7 @@ impl Aligner {
             aligner,
             extractor: Arc::new(extractor),
             reference,
-            annotator: Arc::new(annotator),
+            annotator: annotator.map(Arc::new),
             read_chunks,
             filter_umis: true,
             spill_folder,
@@ -305,6 +309,7 @@ impl Aligner {
             annotations.push(ann)?;
         }
 
+        let chemistry_name = args.chemistry_defs.primary().name;
         let dup_marker: HashMap<_, _> = dup_builder
             .into_iter()
             .map(|(library_type, builder)| {
@@ -312,7 +317,9 @@ impl Aligner {
                     library_type,
                     builder.build(
                         self.filter_umis,
-                        match library_type.is_fb_type(FeatureBarcodeType::Multiplexing) {
+                        match library_type.is_fb_type(FeatureBarcodeType::Multiplexing)
+                            && !(chemistry_name.is_sc_3p_v4() || chemistry_name.is_sc_5p_v3())
+                        {
                             true => UmiCorrection::Disable,
                             false => UmiCorrection::Enable,
                         },
@@ -346,7 +353,7 @@ impl Aligner {
         let qual = read.r1_qual();
         let panel_ref = self.target_panel_reference.as_ref().unwrap();
         let mapped_probe = panel_ref.align_probe_read(seq);
-        let recs = if args.no_bam {
+        let recs = if args.no_bam || args.reference_path.is_none() {
             let mut record = Aligner::new_unmapped_records(&read).0;
             if let (true, Some(lhs), Some(rhs)) = (
                 args.is_pd,
@@ -414,6 +421,8 @@ impl Aligner {
                     matched_tso: trim_results.matched_tso(),
                     ..self
                         .annotator
+                        .as_ref()
+                        .unwrap()
                         .annotate_read_pe(read, recs1, recs2, umi_info)
                 }
             }
@@ -454,7 +463,11 @@ impl Aligner {
                 // Annotate the alignments.
                 ReadAnnotations {
                     matched_tso: trim_results.matched_tso(),
-                    ..self.annotator.annotate_read_se(read, read_recs, umi_info)
+                    ..self
+                        .annotator
+                        .as_ref()
+                        .unwrap()
+                        .annotate_read_se(read, read_recs, umi_info)
                 }
             }
         }
@@ -670,7 +683,7 @@ impl<'a> Iterator for AnnotationIter<'a> {
         match self.store.next() {
             Some(Ok(mut ann)) => {
                 assert!(ann.dup_info.is_none());
-                ann.dup_info = if ann.read.barcode().is_valid() {
+                ann.dup_info = if ann.read.barcode_is_valid() {
                     self.dup_marker
                         .get_mut(&ann.read.library_type)
                         .unwrap()
@@ -734,6 +747,7 @@ mod tests {
         let qual = b"ABCDEFGHI";
 
         let mut recs = vec![Record::new()];
+        recs[0].unset_flags();
         recs[0].set(
             b"123",
             Some(&CigarString(vec![Cigar::SoftClip(1), Cigar::Match(2)])),
@@ -754,7 +768,7 @@ mod tests {
                 Cigar::Match(2),
                 Cigar::SoftClip(4)
             ])
-            .into_view(0)
+            .into_view(-1)
         );
 
         recs[0].set(
@@ -776,7 +790,7 @@ mod tests {
                 Cigar::Match(2),
                 Cigar::SoftClip(3)
             ])
-            .into_view(0)
+            .into_view(-1)
         );
     }
 }

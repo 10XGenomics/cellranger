@@ -1,13 +1,14 @@
 use crate::config::csv::CsvParser;
 use crate::config::parse::{Parse, ParseCtx};
 use crate::config::scsv::{plain_csv, Section, Span, XtraData};
-use crate::config::{multiconst, Ident, MultiConfigCsv};
+use crate::config::{multiconst, samplesconst, Ident, MultiConfigCsv};
 use anyhow::{anyhow, bail, Context, Result};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use metric::{TxHashMap, TxHashSet};
 use nom_locate::LocatedSpan;
 use std::convert::TryFrom;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -38,9 +39,9 @@ impl FromStr for Barcode {
     }
 }
 
-impl ToString for Barcode {
-    fn to_string(&self) -> String {
-        format!("{}-{}", self.0 .0, self.0 .1)
+impl Display for Barcode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}-{}", self.0 .0, self.0 .1)
     }
 }
 
@@ -60,15 +61,15 @@ impl SampleAssignment {
     }
 }
 
-impl ToString for SampleAssignment {
-    fn to_string(&self) -> String {
+impl Display for SampleAssignment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use SampleAssignment::{Blank, Multiplet, Sample, SampleTag, Unassigned};
         match self {
-            Sample(sample_id) => sample_id.clone(),
-            SampleTag(sample_id, _) => sample_id.clone(),
-            Blank => "Blank".to_string(),
-            Multiplet => "Multiplet".to_string(),
-            Unassigned => "Unassigned".to_string(),
+            Sample(sample_id) => f.write_str(sample_id),
+            SampleTag(sample_id, _) => f.write_str(sample_id),
+            Blank => f.write_str("Blank"),
+            Multiplet => f.write_str("Multiplet"),
+            Unassigned => f.write_str("Unassigned"),
         }
     }
 }
@@ -244,21 +245,30 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
 
     fn try_from((sec, cfg): (&Section<'a, String>, &MultiConfigCsv)) -> Result<Self> {
         use hdrs::{ASSIGNMENT, BARCODE, OPT_HDRS, REQ_HDRS, SAMPLE_ID};
-        let cmo_sample_map = cfg
-            .samples
-            .as_ref()
-            .ok_or_else(
-                #[cold]
-                || {
-                    anyhow!(
-                        "[{}] barcode-sample-assignment provided but no samples defined in [{}]",
-                        multiconst::GENE_EXPRESSION,
-                        multiconst::SAMPLES,
-                    )
-                },
-            )?
-            .get_cmo_sample_map();
-        let samples: TxHashSet<_> = cmo_sample_map.values().cloned().collect();
+
+        let samples = cfg.samples.as_ref().ok_or_else(
+            #[cold]
+            || {
+                anyhow!(
+                    "[{}] barcode-sample-assignment provided but no samples defined in [{}]",
+                    multiconst::GENE_EXPRESSION,
+                    multiconst::SAMPLES,
+                )
+            },
+        )?;
+        let (sample_map, sample_barcode_id) =
+            match (samples.has_cmo_ids(), samples.has_hashtag_ids()) {
+                (true, false) => (samples.get_cmo_sample_map(), samplesconst::CMO_IDS),
+                (false, true) => (samples.get_hashtag_sample_map(), samplesconst::HASHTAG_IDS),
+                (_, _) => bail!(
+                "[{}] barcode-sample-assignment requires samples definition in [{}] to use the mutually exclusive {} or {}",
+                multiconst::GENE_EXPRESSION,
+                multiconst::SAMPLES,
+                samplesconst::CMO_IDS,
+                samplesconst::HASHTAG_IDS
+            ),
+        };
+        let samples: TxHashSet<_> = sample_map.values().cloned().collect();
         let parser = CsvParser::new(sec.clone(), REQ_HDRS, OPT_HDRS)?;
         let mut rows = vec![];
         let hdr = &sec.name;
@@ -313,17 +323,18 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                         "multiplet" => SampleAssignment::Multiplet,
                         "unassigned" => SampleAssignment::Unassigned,
                         _ => {
-                            let sample_id = cmo_sample_map
+                            let sample_id = sample_map
                                 .get(&assignment)
                                 .ok_or_else(
                                     #[cold]
                                     || {
                                         anyhow!(
-                                           "invalid {} on row {}, cmo_id {} not found in [samples]",
-                                           ASSIGNMENT,
-                                           row + 1,
-                                           assignment
-                                       )
+                                            "invalid {} on row {}, {} {} not found in [samples]",
+                                            ASSIGNMENT,
+                                            row + 1,
+                                            sample_barcode_id,
+                                            assignment
+                                        )
                                     },
                                 )?
                                 .clone();
@@ -361,7 +372,7 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
         Ok(SampleAssignmentCsv {
             rows,
             samples,
-            cmo_sample_map,
+            cmo_sample_map: sample_map,
         })
     }
 }

@@ -7,7 +7,7 @@ Section: [gene-expression]
         Required, Fixed RNA profiling only. Probe set CSV file, declaring probe
         constructs and associated barcodes.
     filter-probes <true|false>
-        Optional, Fixed RNA Profiling only. Include all non-deprecated probes
+        Optional, Flex only. Include all non-deprecated probes
         listed in the probe set reference CSV file. Probes that are predicted
         to have off-target activity to homologous genes are excluded from
         analysis by default. Setting filter-probes to false will result in UMI
@@ -36,6 +36,9 @@ Section: [gene-expression]
     force-cells <int>
         Optional. Force pipeline to use this number of cells, bypassing cell
         detection. Default: detect cells using EmptyDrops.
+    emptydrops-minimum-umis <int>
+        Optional. Minimum number of UMIS per barcode to consider after the initial cell calling.
+        Default: 500.
     no-secondary <true|false>
         Optional. Disable secondary analysis, e.g. clustering. Default: false.
     create-bam <true|false>
@@ -54,14 +57,30 @@ Section: [gene-expression]
         Default: true.
     min-assignment-confidence <float>
         Optional. The minimum estimated likelihood to call a sample as tagged
-        with a Cell Multiplexing Oligo instead of "Unassigned". Default: 0.9.
-        Introduced in Cell Ranger 6.0.2.
+        with a Cell Multiplexing Oligo (CMO) instead of "Unassigned". Users may
+        wish to tolerate a higher rate of mis-assignment in order to obtain more
+        singlets to include in their analysis, or a lower rate of mis-assignment
+        at the cost of obtaining fewer singlets. By default, this value is 0.9.
+        Contact support@10xgenomics.com for further advice.
     cmo-set <path>
-        Optional, Cell Multiplexing only. CMO set CSV file, declaring CMO
-        constructs and associated barcodes.
+        Optional. The default CMO reference IDs are built into the Cell Ranger
+        software and do not need to be specified. However, this option can be
+        used to specify the path to a custom CMO set CSV file, declaring CMO
+        constructs and associated barcodes. See CMO Reference section for
+        details.
     barcode-sample-assignment <path>
-        Optional, Cell Multiplexing only. Path to a barcode-sample assignment
-        CSV file that specifies the barcodes that belong to each sample.
+        Optional. Absolute path to a barcode-sample assignment CSV file that
+        specifies the barcodes that belong to each sample. Also applicable to
+        cell hashing with Antibody Capture.
+    tenx-cloud-token-path <path>
+        Optional. The path to the 10x Cloud Analysis user token used to enable cell
+        annotation. If not provided, will default to the location stored
+        through cellranger cloud auth setup.
+    cell-annotation-model <string>
+        Optional. Valid model names can be viewed by running
+        `cellranger cloud annotation models` or on the 10x Genomics Support site
+        (https://www.10xgenomics.com/support). If "auto", uses the default model
+        for the species. If not provided, does not run cell annotation.
 
 Section: [feature]
 
@@ -77,7 +96,7 @@ Section: [feature]
         this length before analysis. Default: do not trim Read 2.
     min-crispr-umi <int>
         Optional. Minimum CRISPR UMI threshold. Default: 3.
-        
+
 Section: [vdj]
 
     reference <path>
@@ -93,4 +112,3 @@ Section: [vdj]
     r2-length <int>
         Optional. Hard trim the input Read 2 of VDJ libraries to this length
         before analysis. Default: do not trim Read 2.
-

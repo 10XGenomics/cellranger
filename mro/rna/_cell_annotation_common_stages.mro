@@ -1,0 +1,49 @@
+filetype csv;
+filetype h5;
+filetype json.gz;
+filetype json;
+filetype cloupe;
+
+struct CellTypeResults(
+    csv     cell_types,
+    json.gz results,
+    json    metadata,
+    float   frac_returned_bcs,
+    string  model_used,
+    bool    skip_downstream,
+)
+
+stage CELL_ANNOTATION_PREFLIGHT(
+    in  bool   is_cr_annotate,
+    in  bool   is_multi,
+    in  string tenx_cloud_token_path,
+    in  string cell_annotation_model,
+    in  path   reference_path,
+    in  string cas_track_name,
+    in  bool   skip_cell_annotation,
+    in  h5     cr_annotate_filtered_matrix,
+    in  cloupe cr_annotate_sample_cloupe,
+    src py     "stages/cas_cell_typing/cell_annotation_preflight",
+) using (
+    mem_gb   = 8,
+    volatile = strict,
+)
+
+stage CALL_CLOUD_CELL_TYPES(
+    in  string          sample_id,
+    in  string          sample_desc,
+    in  h5              filtered_matrix,
+    in  string          cell_annotation_model,
+    in  file            tenx_cloud_token_path,
+    in  string          pipestance_type,
+    in  bool            override_num_bc_limit,
+    in  cloupe          sample_cloupe,
+    out CellTypeResults cell_type_results,
+    out bool            cas_success,
+    out bool            disable_cas_ws,
+    out bool            disable_summarize,
+    out json            summary,
+    src py              "stages/cas_cell_typing/call_cloud_cell_types",
+) split (
+) using (
+)

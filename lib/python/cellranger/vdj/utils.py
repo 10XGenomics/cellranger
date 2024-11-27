@@ -78,7 +78,7 @@ def write_csv_row(row, f):
     for i, v in enumerate(row):
         if "," in v:
             raise ValueError("Failed write to csv file: Column %d contains commas" % i)
-    f.write("%s\n" % ",".join(row))
+    f.write("{}\n".format(",".join(row)))
 
 
 def format_clonotype_id(clonotype_index, inferred):
@@ -128,7 +128,7 @@ def get_json_obj_iter(f):
                     brace_count = 1
                 elif brace_count == 1 and c == "}":
                     brace_count = 0
-                elif c == "{" or c == "}":
+                elif c in ("{", "}"):
                     brace_count += 1 if c == "{" else -1
             if brace_count != 0 or len(x) > 0:
                 x += c

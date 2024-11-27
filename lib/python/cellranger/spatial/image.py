@@ -14,7 +14,7 @@ import tempfile
 from PIL import Image, ImageOps
 
 
-def _base64_encode_image(filename, fmt="jpg"):
+def _base64_encode_image(filename, fmt="jpeg"):
     """Opens a file using PIL and returns it encoded as a base64 string.
 
     :param filename:
@@ -26,8 +26,13 @@ def _base64_encode_image(filename, fmt="jpg"):
     return f"data:image/{fmt};base64," + encoded_string
 
 
-def base64_encode_png(fname):
-    return _base64_encode_image(fname, fmt="png")
+def base64_encode_image(fname):
+    """base64 encode image."""
+    _, fmt = os.path.splitext(fname)
+    fmt = fmt.removeprefix(".")
+    if fmt == "jpg":
+        fmt = "jpeg"
+    return _base64_encode_image(fname, fmt=fmt)
 
 
 class WebImage:
@@ -60,7 +65,7 @@ class WebImage:
                 ImageOps.grayscale(img).save(img_bytes, format="PNG")
                 image_show = img_bytes.getvalue()
         encoded_string = base64.b64encode(image_show).decode("utf-8")
-        return f"data:image/jpg;base64,{encoded_string}"
+        return f"data:image/png;base64,{encoded_string}"
 
     def resize_and_encode_image(self, new_width=None, new_height=None):
         """:param new_width: New image height.

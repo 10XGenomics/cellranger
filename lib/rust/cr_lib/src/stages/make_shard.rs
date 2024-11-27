@@ -1,7 +1,7 @@
 //! Martian stage MAKE_SHARD
 
 use crate::barcode_correction_metrics::{BarcodeCorrectionMetrics, BarcodeCorrectionMetricsFormat};
-use crate::barcode_sort::BarcodeSortWorkflow;
+use crate::barcode_sort::execute_barcode_sort_with_visitor;
 use crate::make_shard_metrics::{MakeShardHistograms, MakeShardMetrics, MakeShardVisitor};
 use crate::types::{FeatureReferenceFormat, ReadPrefixCountFile, ReadShardFile, UmiCountFile};
 use crate::SequencingMetricsFormat;
@@ -10,14 +10,13 @@ use barcode::Whitelist;
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
 use cr_types::reference::feature_reference::{
     FeatureConfig, FeatureReference, FeatureReferenceFile, FeatureType, TargetGeneIndicesFile,
-    TargetSetFile,
 };
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::rna_read::RnaChunk;
 use cr_types::types::{
     BcCountFormat, BcSegmentCountFormat, FeatureBarcodeType, GemWell, LibraryType,
 };
 use cr_types::{FeatureCountFormat, MetricsFile};
-use cr_websummary::multi::tables::SequencingMetricsTable;
 use fastq_set::read_pair::WhichRead;
 use itertools::{zip_eq, Itertools};
 use martian::prelude::*;
@@ -29,6 +28,10 @@ use multi::config::multiconst;
 use parameters_toml::umi_min_read_length;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+// Report up to 50 unknown feature barcode sequences which occupies at least 0.1% library reads
+const MAX_UNKNOWN_FBC_TO_REPORT: usize = 50;
+const MIN_FRAC_READS_UNKNOWN_FBC: f64 = 0.001;
 
 martian_filetype!(MakeShardMetricsFile, "msm");
 
@@ -49,7 +52,6 @@ pub struct MakeShardStageInputs {
     pub target_features: Option<TargetGeneIndicesFile>,
     pub target_set: Option<TargetSetFile>,
     pub target_set_name: Option<String>,
-    pub libraries_to_translate: TxHashSet<LibraryType>,
     pub feature_config: Option<FeatureConfig>,
 }
 
@@ -93,7 +95,7 @@ pub struct MakeShardStageOutputs {
 /// Read the FASTQ files and extract the barcode and UMI sequences.
 pub struct MakeShard;
 
-#[make_mro(volatile = strict)]
+#[make_mro(mem_gb = 2, volatile = strict)]
 impl MartianStage for MakeShard {
     type StageInputs = MakeShardStageInputs;
     type StageOutputs = MakeShardStageOutputs;
@@ -133,24 +135,24 @@ impl MartianStage for MakeShard {
             None
         };
 
-        let feature_reference = args
-            .reference_path
-            .as_ref()
-            .map(|reference_path| -> Result<_> {
-                let fref_file: FeatureReferenceFormat = rover.make_path("feature_reference");
-                let fref = FeatureReference::from_paths(
-                    reference_path,
-                    args.feature_reference_path.as_ref(),
-                    use_feature_types,
-                    args.target_set_name.as_deref(),
-                    args.target_set.as_ref(),
-                    args.target_features.as_ref(),
-                    args.feature_config.as_ref(),
-                )?;
-                fref_file.write(&fref)?;
-                Ok(fref_file)
-            })
-            .transpose()?;
+        let feature_reference = if args.reference_path.is_some()
+            || args.target_set.is_some()
+            || args.feature_reference_path.is_some()
+        {
+            let feature_reference: FeatureReferenceFormat = rover.make_path("feature_reference");
+            feature_reference.write(&FeatureReference::from_paths(
+                args.reference_path.as_deref(),
+                args.feature_reference_path.as_ref(),
+                use_feature_types,
+                args.target_set_name.as_deref(),
+                args.target_set.as_ref(),
+                args.target_features.as_ref(),
+                args.feature_config.as_ref(),
+            )?)?;
+            Some(feature_reference)
+        } else {
+            None
+        };
 
         Ok((0..args.read_chunks.len())
             .map(|chunk_id| {
@@ -159,7 +161,7 @@ impl MartianStage for MakeShard {
                         chunk_id,
                         feature_reference: feature_reference.clone(),
                     },
-                    Resource::with_mem_gb(4).threads(2),
+                    Resource::with_mem_gb(4).threads(4),
                 )
             })
             .collect::<StageDef<_>>()
@@ -215,17 +217,6 @@ impl MartianStage for MakeShard {
         let chunk_summary: BinaryFormat<_, _> = rover.make_path("chunk_summary");
         let chunk_hist: BinaryFormat<_, _> = rover.make_path("chunk_hist");
 
-        let mut bc_sort: BarcodeSortWorkflow = BarcodeSortWorkflow::new(
-            rna_chunk.clone(),
-            valid_shard.as_ref(),
-            invalid_shard.as_ref(),
-            Whitelist::construct(
-                rna_chunk.chemistry.barcode_whitelist(),
-                args.libraries_to_translate
-                    .contains(&rna_chunk.library_type()),
-            )?,
-        )?;
-
         let initial_read_pairs = args.initial_read_pairs.map(|i| {
             let frac = i as f64 / args.read_chunks.len() as f64;
             let lwr = (frac * id as f64).round() as usize;
@@ -233,7 +224,14 @@ impl MartianStage for MakeShard {
             upr - lwr
         });
 
-        bc_sort.execute_workflow_with_visitor(initial_read_pairs, &mut visitor)?;
+        let metrics = execute_barcode_sort_with_visitor(
+            rna_chunk.clone(),
+            valid_shard.to_path_buf(),
+            invalid_shard.to_path_buf(),
+            Whitelist::construct(rna_chunk.chemistry.barcode_whitelist())?,
+            initial_read_pairs,
+            &mut visitor,
+        )?;
         feature_counts.write(&visitor.feature_counts)?;
         chunk_summary.write(visitor.metrics())?;
         chunk_hist.write(visitor.histograms())?;
@@ -242,10 +240,8 @@ impl MartianStage for MakeShard {
         // - MAKE_SHARD counts the reads with a valid barcode, that is, all segments are valid.
         // - BARCODE_CORRECTION counts the reads with an invalid barcode, that is, any segment is invalid.
         // Counting which individual segments are valid/invalid here in MAKE_SHARD would double count the reads with any invalid segment.
-        let num_valid_barcodes = bc_sort.num_valid_items();
-        let num_valid_barcode_segments = bc_sort
-            .num_valid_segments()
-            .map(|_x| num_valid_barcodes.into());
+        let num_valid_barcodes = metrics.valid_items;
+        let num_valid_barcode_segments = metrics.valid_items_in.map(|_x| num_valid_barcodes.into());
         let bc_correct_summary: BarcodeCorrectionMetricsFormat =
             rover.make_path("bc_correct_summary");
         bc_correct_summary.write(&BarcodeCorrectionMetrics::with_valid(
@@ -254,7 +250,7 @@ impl MartianStage for MakeShard {
             num_valid_barcode_segments,
         ))?;
 
-        let total_read_pairs = bc_sort.num_valid_items() + bc_sort.num_invalid_items();
+        let total_read_pairs = metrics.valid_items + metrics.invalid_items;
 
         ensure!(
             total_read_pairs > 0,
@@ -303,6 +299,7 @@ impl MartianStage for MakeShard {
         let mut per_lib_per_fastq_id_metrics: TxHashMap<_, TxHashMap<_, MakeShardMetrics>> =
             TxHashMap::default();
         let mut per_lib_hist = TxHashMap::default();
+
         for (read_chunk, chunk_out) in zip_eq(&args.read_chunks, &chunk_outs) {
             let library_type = read_chunk.library_type();
             let barcode_construct = read_chunk.chemistry.barcode_construct().map(|_| ());
@@ -322,18 +319,43 @@ impl MartianStage for MakeShard {
                 .merge(hist);
         }
 
+        let top_unknown_fbc_seqs: Vec<(_, SimpleHistogram<String>)> = per_lib_hist
+            .iter()
+            .map(|(&k, v)| {
+                (
+                    k,
+                    v.unknown_feature_bcs
+                        .top_n(MAX_UNKNOWN_FBC_TO_REPORT)
+                        .clone(),
+                )
+            })
+            .collect();
+
         let mut per_lib_seq_metrics = TxHashMap::default();
         let mut per_lib_metrics = TxHashMap::default();
-        for (library_type, per_fastq_id_metrics) in per_lib_per_fastq_id_metrics {
+        for (library_id, (library_type, per_fastq_id_metrics)) in
+            (0_u16..).zip(per_lib_per_fastq_id_metrics.into_iter())
+        {
             let mut lib_metrics = MakeShardMetrics::default();
             let mut seq_metrics_rows = Vec::new();
             for (fastq_id, metrics) in per_fastq_id_metrics {
-                seq_metrics_rows
-                    .push(metrics.sequencing_metrics_row(fastq_id.cloned().unwrap_or_default()));
+                seq_metrics_rows.push(
+                    metrics.sequencing_metrics_for_fastq(fastq_id.cloned().unwrap_or_default()),
+                );
                 lib_metrics.merge(metrics);
+                if let Some((_, feature_bc_hist)) = top_unknown_fbc_seqs
+                    .iter()
+                    .find(|(lib_type, _)| *lib_type == library_type)
+                {
+                    lib_metrics.report_unknown_fbc(
+                        library_id,
+                        feature_bc_hist.clone(),
+                        MIN_FRAC_READS_UNKNOWN_FBC,
+                    );
+                }
             }
             per_lib_metrics.insert(library_type, lib_metrics);
-            per_lib_seq_metrics.insert(library_type, SequencingMetricsTable(seq_metrics_rows));
+            per_lib_seq_metrics.insert(library_type, seq_metrics_rows);
         }
 
         let sequencing_metrics_file: SequencingMetricsFormat =
@@ -403,13 +425,13 @@ impl MartianStage for MakeShard {
                 max = r1_max_length,
                 tbl = per_lib_hist
                     .keys()
-                    .map(|key| match *key {
+                    .map(|&key| match key {
                         LibraryType::Gex => multiconst::GENE_EXPRESSION,
                         LibraryType::Vdj(_) => multiconst::VDJ,
                         LibraryType::FeatureBarcodes(_) => multiconst::FEATURE,
                         LibraryType::Atac => unreachable!(),
                     })
-                    .join("], ["),
+                    .format("], ["),
             );
         }
 
@@ -431,7 +453,8 @@ impl MartianStage for MakeShard {
 
         let summary = JsonReporter::from(("cellranger_version", rover.pipelines_version()))
             + per_lib_reporter
-            + args.chemistry_defs.primary().to_json_reporter();
+            + args.chemistry_defs.primary().to_json_reporter()
+            + JsonReporter::from(("chemistry_defs", args.chemistry_defs.to_value()));
 
         let feature_reference = chunk_defs.first().and_then(|x| x.feature_reference.clone());
 

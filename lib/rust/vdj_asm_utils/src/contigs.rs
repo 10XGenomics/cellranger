@@ -8,7 +8,6 @@ use self::equiv::EquivRel;
 use self::graph_simple::GraphSimple;
 use self::hyperbase::Hyper;
 use self::kmer_lookup::make_kmer_lookup_20_single;
-use self::perf_stats::{elapsed, peak_mem_usage_gb};
 use crate::barcode_data::BarcodeData;
 use crate::constants::UmiType;
 use crate::heuristics::Heuristics;
@@ -23,16 +22,15 @@ use itertools::Itertools;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::time::Instant;
 use string_utils::stringme;
-use vdj_ann::annotate::{annotate_seq, get_cdr3};
+use vdj_ann::annotate::{annotate_seq, get_cdr3, Annotation};
 use vdj_ann::refx::RefData;
-use vdj_ann::transcript::{is_valid, junction_seq, junction_supp, junction_supp_core};
+use vdj_ann::transcript::{is_productive_contig, junction_seq, junction_supp, junction_supp_core};
 use vector_utils::{
     bin_member, bin_position, contains, erase_if, lower_bound1_3, next_diff, next_diff1_2,
     next_diff1_3, next_diff1_6, reverse_sort, sort_sync2, unique_sort, upper_bound1_3, VecUtils,
 };
-use {equiv, graph_simple, hyperbase, kmer_lookup, perf_stats};
+use {equiv, graph_simple, hyperbase, kmer_lookup};
 
 // Given a vector x of length N > n, return n randomly selected elements, and sort the resulting
 // vector.  This is deterministic and will not change when crates are updated.
@@ -98,7 +96,6 @@ pub fn make_contigs(
     let gd_mode = is_gd.unwrap_or(false);
     // Unpack refdata.
 
-    let t = Instant::now();
     let refs_full = &refdata_full.refs;
     let rheaders_full = &refdata_full.rheaders;
     let rheaders = &refdata.rheaders;
@@ -342,15 +339,7 @@ pub fn make_contigs(
 
     let min_contig_length: usize = min_contig_length.unwrap_or(300);
     let mut strong = Vec::<(i32, Vec<i32>)>::new();
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds before making strong paths, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
+
     uber_strong_paths(x, umi_id, &mut strong);
     let mut alt_strong = Vec::<Vec<i32>>::new();
     alt_strong_paths(x, umi_id, &mut alt_strong);
@@ -398,15 +387,7 @@ pub fn make_contigs(
             fwriteln!(log, "strong: {}", strong[i].1.iter().format(","));
         }
     }
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds after making strong paths, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
+
     con.clear();
     con2.clear();
     let mut conp = Vec::<Vec<i32>>::new();
@@ -424,8 +405,7 @@ pub fn make_contigs(
             }
         }
         if !ok {
-            let mut cdr3 = Vec::<(usize, Vec<u8>, usize, usize)>::new();
-            get_cdr3(&c.slice(0, c.len()), &mut cdr3);
+            let cdr3 = get_cdr3(&c.slice(0, c.len()));
             if !cdr3.is_empty() {
                 ok = true;
             }
@@ -451,10 +431,10 @@ pub fn make_contigs(
     conp.clear();
     let mut i = 0;
     while i < cc.len() {
-        let j = next_diff1_2(&cc, i as i32);
+        let j = next_diff1_2(&cc, i);
         con.push(cc[i].0.clone());
         conp.push(cc[i].1.clone());
-        i = j as usize;
+        i = j;
     }
 
     // Trim stuff before a UTR.  Also trim stuff after constant regions, which
@@ -463,17 +443,16 @@ pub fn make_contigs(
 
     if !heur.free {
         for j in 0..con.len() {
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&con[j], refdata, &mut ann, true, false, false);
+            let ann = annotate_seq(&con[j], refdata, true, false, false);
             if !ann.is_empty() {
                 let (mut start, mut stop) = (0, con[j].len());
                 let l = ann.len() - 1;
-                let (t1, t2) = (ann[0].2 as usize, ann[l].2 as usize);
+                let (t1, t2) = (ann[0].ref_id as usize, ann[l].ref_id as usize);
                 if refdata.segtype[t1] == "U" {
-                    start = ann[0].0 as usize;
+                    start = ann[0].tig_start as usize;
                 }
                 if refdata.segtype[t2] == "C" {
-                    stop = ann[l].0 as usize + ann[l].1 as usize;
+                    stop = ann[l].tig_start as usize + ann[l].match_len as usize;
                 }
                 if start > 0 || stop < con[j].len() {
                     con[j] = con[j].slice(start, stop).to_owned();
@@ -518,25 +497,15 @@ pub fn make_contigs(
             }
         }
     }
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds after trimming, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
 
     // Delete contigs having only C annotations.  Also test for V annotation.
     if !heur.free {
         let mut to_delete = vec![false; con.len()];
         for i in 0..con.len() {
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&con[i], refdata, &mut ann, true, false, false);
+            let ann = annotate_seq(&con[i], refdata, true, false, false);
             let mut c_only = true;
             for a in ann {
-                let t = a.2 as usize;
+                let t = a.ref_id as usize;
                 if !refdata.is_c(t) {
                     c_only = false;
                 }
@@ -692,15 +661,6 @@ pub fn make_contigs(
             }
         }
     }
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds after indel fixing, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
 
     // Filter out contigs that are now too short.
 
@@ -712,32 +672,21 @@ pub fn make_contigs(
     }
     erase_if(con, &to_delete);
     erase_if(&mut conp, &to_delete);
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds after deleting shorts, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
 
     // Move invalid contigs to the reject pile.
 
     let mut to_delete: Vec<bool> = vec![false; con.len()];
-    let mut ann_all = Vec::<Vec<(i32, i32, i32, i32, i32)>>::new();
+    let mut ann_all = Vec::<Vec<Annotation>>::new();
     for i in 0..con.len() {
         let mut good = true;
         if !heur.free {
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&con[i], refdata, &mut ann, true, false, true);
-            if !is_valid(&con[i], refdata, &ann, false, log, is_gd) {
+            let ann = annotate_seq(&con[i], refdata, true, false, true);
+            if !is_productive_contig(&con[i], refdata, &ann).0 {
                 good = false;
             }
             ann_all.push(ann);
         } else {
-            let mut cdr3 = Vec::<(usize, Vec<u8>, usize, usize)>::new();
-            get_cdr3(&con[i].slice(0, con[i].len()), &mut cdr3);
+            let cdr3 = get_cdr3(&con[i].slice(0, con[i].len()));
             if cdr3.is_empty() {
                 good = false;
             }
@@ -770,15 +719,6 @@ pub fn make_contigs(
     //
     // ◼ There is another assignment of UMIs below, independent of this.
 
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds before computing umis, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
     let mut conps = conp.clone();
     for i in 0..conps.len() {
         unique_sort(&mut conps[i]);
@@ -801,20 +741,11 @@ pub fn make_contigs(
             i = k;
         }
     }
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds after making umi_contig, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
-    }
     umi_mcount_contig.sort_unstable();
     let mut umis = vec![0; con.len()];
     let mut i = 0;
     while i < umi_mcount_contig.len() {
-        let j = next_diff1_3(&umi_mcount_contig, i as i32) as usize;
+        let j = next_diff1_3(&umi_mcount_contig, i);
         for k in i..j {
             if umi_mcount_contig[k].1 > umi_mcount_contig[i].1 {
                 break;
@@ -822,15 +753,6 @@ pub fn make_contigs(
             umis[umi_mcount_contig[k].2 as usize] += 1;
         }
         i = j;
-    }
-    if log_opts.clock || log_opts.mem {
-        fwriteln!(
-            log,
-            "used {:.1} seconds after computing umis, \
-             peak mem = {:.2} GB",
-            elapsed(&t),
-            peak_mem_usage_gb()
-        );
     }
 
     /*
@@ -847,11 +769,11 @@ pub fn make_contigs(
     if !heur.free {
         for u in 0..con.len() {
             for m in 0..ann_all[u].len() {
-                let t = ann_all[u][m].2 as usize;
+                let t = ann_all[u][m].ref_id as usize;
                 const EXCLUDE: usize = 15;
                 let r = &refdata.refs[t];
-                let start = ann_all[u][m].0 as usize;
-                if refdata.is_v(t) && ann_all[u][m].3 == 0 && r.len() >= EXCLUDE {
+                let start = ann_all[u][m].tig_start as usize;
+                if refdata.is_v(t) && ann_all[u][m].ref_start == 0 && r.len() >= EXCLUDE {
                     let mut mis = 0;
                     for z in 0..r.len() - EXCLUDE {
                         if start + z >= con[u].len() || con[u].get(start + z) != r.get(z) {
@@ -871,13 +793,15 @@ pub fn make_contigs(
     for j in 0..con.len() {
         let mut jseq = DnaString::new();
         if !heur.free {
-            junction_seq(&con[j], refdata, &ann_all[j], &mut jseq, is_gd);
+            junction_seq(&con[j], refdata, &ann_all[j], &mut jseq);
         } else {
-            let mut cdr3 = Vec::<(usize, Vec<u8>, usize, usize)>::new();
-            get_cdr3(&con[j].slice(0, con[j].len()), &mut cdr3);
+            let cdr3 = get_cdr3(&con[j].slice(0, con[j].len()));
             if cdr3.solo() {
                 jseq = con[j]
-                    .slice(cdr3[0].0, cdr3[0].0 + 3 * cdr3[0].1.len())
+                    .slice(
+                        cdr3[0].start_position_on_contig,
+                        cdr3[0].start_position_on_contig + 3 * cdr3[0].aa_seq.len(),
+                    )
                     .to_owned();
             }
         }
@@ -888,35 +812,33 @@ pub fn make_contigs(
     // by <= 2 mismatches.
 
     const MAX_JUNCTION_MISMATCHES: usize = 2;
-    let mut eq: EquivRel = EquivRel::new(jseqs.len() as i32);
+    let mut eq: EquivRel = EquivRel::new(jseqs.len() as u32);
     for i1 in 0..jseqs.len() {
         for i2 in i1 + 1..jseqs.len() {
-            if eq.class_id(i1 as i32) != eq.class_id(i2 as i32)
-                && jseqs[i1].0.len() == jseqs[i2].0.len()
-            {
+            if eq.set_id(i1) != eq.set_id(i2) && jseqs[i1].0.len() == jseqs[i2].0.len() {
                 let diffs = ndiffs(&jseqs[i1].0, &jseqs[i2].0);
                 if diffs <= MAX_JUNCTION_MISMATCHES {
-                    eq.join(i1 as i32, i2 as i32);
+                    eq.join(i1, i2);
                 }
             }
         }
     }
 
-    // Rework jseqs, replacing junction sequence by its class id.
+    // Rework jseqs, replacing junction sequence by its set id.
 
-    let mut jseqs2 = Vec::<(i32, bool, usize, i32, usize, usize)>::new();
+    let mut jseqs2 = Vec::<(usize, bool, usize, i32, usize, usize)>::new();
     for i in 0..jseqs.len() {
         let mut have_c = false;
         if !heur.free {
             for j in 0..ann_all[i].len() {
-                let t = ann_all[i][j].2 as usize;
+                let t = ann_all[i][j].ref_id as usize;
                 if refdata.is_c(t) {
                     have_c = true;
                 }
             }
         }
         jseqs2.push((
-            eq.class_id(i as i32),
+            eq.set_id(i),
             !have_c,
             jseqs[i].1,
             jseqs[i].2,
@@ -936,14 +858,12 @@ pub fn make_contigs(
     //
     // ◼ In the denovo case, it seems like we should be using the cdr3 calculation
     // ◼ that uses annotation.
-    let mut reps = Vec::<i32>::new();
-    eq.orbit_reps(&mut reps);
     let mut conx = Vec::<DnaString>::new();
     let mut conpx = Vec::<Vec<i32>>::new();
-    let mut ann_allx = Vec::<Vec<(i32, i32, i32, i32, i32)>>::new();
+    let mut ann_allx = Vec::<Vec<Annotation>>::new();
     let mut i = 0;
     while i < jseqs2.len() {
-        let j = next_diff1_6(&jseqs2, i as i32) as usize;
+        let j = next_diff1_6(&jseqs2, i);
         if jseqs2[i].5 > 0 {
             conx.push(con[jseqs2[i].4].clone());
             conpx.push(conp[jseqs2[i].4].clone());
@@ -975,19 +895,28 @@ pub fn make_contigs(
         let mut all = Vec::<(i32, i32, usize)>::new();
         for j in 0..con.len() {
             let mut jseq_long = DnaString::new();
-            let mut cdr3 = Vec::<(usize, Vec<u8>, usize, usize)>::new();
-            get_cdr3(&con[j].slice(0, con[j].len()), &mut cdr3);
+            let cdr3 = get_cdr3(&con[j].slice(0, con[j].len()));
             if cdr3.solo() {
                 let jseq = con[j]
-                    .slice(cdr3[0].0, cdr3[0].0 + 3 * cdr3[0].1.len())
+                    .slice(
+                        cdr3[0].start_position_on_contig,
+                        cdr3[0].start_position_on_contig + 3 * cdr3[0].aa_seq.len(),
+                    )
                     .to_owned();
                 if jseq.len() > 100 {
                     jseq_long = jseq.clone();
                 } else {
                     let ext = 100 - jseq.len();
-                    let start = if ext <= cdr3[0].0 { cdr3[0].0 - ext } else { 0 };
+                    let start = if ext <= cdr3[0].start_position_on_contig {
+                        cdr3[0].start_position_on_contig - ext
+                    } else {
+                        0
+                    };
                     jseq_long = con[j]
-                        .slice(start, cdr3[0].0 + 3 * cdr3[0].1.len())
+                        .slice(
+                            start,
+                            cdr3[0].start_position_on_contig + 3 * cdr3[0].aa_seq.len(),
+                        )
                         .to_owned();
                 }
             }
@@ -1034,21 +963,19 @@ pub fn make_contigs(
                 refdata,
                 &ann_all[j],
                 &mut jsupp_this,
-                is_gd,
             );
             jsupp.push(jsupp_this);
             let mut jseq = DnaString::new();
-            junction_seq(&con[j], refdata, &ann_all[j], &mut jseq, is_gd);
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&con[j], refdata, &mut ann, true, false, false);
+            junction_seq(&con[j], refdata, &ann_all[j], &mut jseq);
+            let ann = annotate_seq(&con[j], refdata, true, false, false);
             let mut this_is_tra = false;
             for a in ann {
                 // This definition of is_tra makes absolutely no sense, since
                 // IG heavy chains have a D segment.  But it may be harmless.
                 // Heavy chains do seem to have less UMI support than light chains.
-                if rheaders[a.2 as usize].contains("TRAJ")
-                    || (rheaders[a.2 as usize].contains("TRGJ") && gd_mode)
-                    || rheaders[a.2 as usize].contains("IGHJ")
+                if rheaders[a.ref_id as usize].contains("TRAJ")
+                    || (rheaders[a.ref_id as usize].contains("TRGJ") && gd_mode)
+                    || rheaders[a.ref_id as usize].contains("IGHJ")
                 {
                     this_is_tra = true;
                 }
@@ -1140,9 +1067,9 @@ pub fn make_contigs(
     }
     let mut i = 0;
     while i < zkmers_plus.len() {
-        let j = next_diff1_3(&zkmers_plus, i as i32);
-        for k1 in i..j as usize {
-            for k2 in k1 + 1..j as usize {
+        let j = next_diff1_3(&zkmers_plus, i);
+        for k1 in i..j {
+            for k2 in k1 + 1..j {
                 let (t1, t2) = (zkmers_plus[k1].1, zkmers_plus[k2].1);
                 if t1 != t2 {
                     share[t1 as usize][t2 as usize] += 1;
@@ -1150,7 +1077,7 @@ pub fn make_contigs(
                 }
             }
         }
-        i = j as usize;
+        i = j;
     }
     const MIN_COV: f64 = 0.75;
     for t1 in 0..con2.len() {
@@ -1173,11 +1100,10 @@ pub fn make_contigs(
         let mut ann_kmers2 = vec![0; con2.len()];
         let mut ann2s = Vec::<Vec<bool>>::new();
         for i in 0..con2.len() {
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&con2[i], refdata, &mut ann, false, false, false);
+            let ann = annotate_seq(&con2[i], refdata, false, false, false);
             let mut ann2 = vec![false; con2[i].len() - x.h.k as usize + 1];
             for j in 0..ann.len() {
-                let (start, len) = (ann[j].0 as usize, ann[j].1 as usize);
+                let (start, len) = (ann[j].tig_start as usize, ann[j].match_len as usize);
                 if start + len >= x.h.k as usize {
                     let stop = start + len - x.h.k as usize + 1;
                     for l in start..stop {
@@ -1202,7 +1128,7 @@ pub fn make_contigs(
         let mut share = vec![vec![0_i32; con12.len()]; con12.len()];
         let mut i = 0;
         while i < wkmers_plus.len() {
-            let j = next_diff1_3(&wkmers_plus, i as i32) as usize;
+            let j = next_diff1_3(&wkmers_plus, i);
             for k1 in i..j {
                 for k2 in k1 + 1..j {
                     let t1 = wkmers_plus[k1].1;
@@ -1421,21 +1347,20 @@ pub fn make_contigs(
                 conx[t].slice(0, 10).to_string(),
             );
             contig_count += 1;
-            let mut ann = Vec::<(i32, i32, i32, i32, i32)>::new();
-            annotate_seq(&conx[t], refdata, &mut ann, true, false, true);
+            let ann = annotate_seq(&conx[t], refdata, true, false, true);
             let mut vstart = None;
             let mut jstop = None;
             for i in 0..ann.len() {
-                let u = ann[i].2;
+                let u = ann[i].ref_id;
                 if refdata.is_v(u as usize) {
-                    vstart = Some(ann[i].0);
+                    vstart = Some(ann[i].tig_start);
                     break;
                 }
             }
             for i in (0..ann.len()).rev() {
-                let u = ann[i].2;
+                let u = ann[i].ref_id;
                 if refdata.is_j(u as usize) {
-                    jstop = Some(ann[i].0 + ann[i].1);
+                    jstop = Some(ann[i].tig_start + ann[i].match_len);
                     break;
                 }
             }

@@ -1,4 +1,4 @@
-//! t-SNE stage code
+//! Martian stage RUN_TSNE
 
 use crate::io::{csv, h5};
 use crate::types::{EmbeddingResult, EmbeddingType, H5File};
@@ -55,10 +55,10 @@ pub struct TsneChunkOutputs {
     tsne_csv: PathBuf,
 }
 
-pub struct TsneStage;
+pub struct RunTsne;
 
-#[make_mro(stage_name = RUN_TSNE_NG, volatile = strict)]
-impl MartianStage for TsneStage {
+#[make_mro(volatile = strict)]
+impl MartianStage for RunTsne {
     type StageInputs = TsneStageInputs;
     type StageOutputs = TsneStageOutputs;
     type ChunkInputs = TsneChunkInputs;
@@ -69,9 +69,8 @@ impl MartianStage for TsneStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let (_, ncells) = h5::matrix_shape(&args.matrix_h5)?;
+        let (_nfeatures, ncells, _nnz) = h5::matrix_shape(&args.matrix_h5)?;
         let ncells_mem_gib = (8e-6 * ncells as f64).ceil() as isize;
-
         let matrix_mem_gib =
             (0.5 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?).ceil() as isize;
 
@@ -111,7 +110,7 @@ impl MartianStage for TsneStage {
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
+            .num_threads(rover.get_threads())
             .build_global()?;
         let mut tsne = BarnesHutTSNE::default();
         tsne.seed = args.random_seed.or(RANDOM_SEED);

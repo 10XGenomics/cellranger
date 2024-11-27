@@ -9,7 +9,7 @@ use cr_types::{aggr, LibraryInfo};
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{make_mro, martian_filetype, MartianStruct};
-use metric::JsonReporter;
+use metric::{JsonReporter, TxHashSet};
 use ndarray::s;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,10 +72,6 @@ impl MartianStage for MergeMolecules {
         // In the worst case (when no barcodes are trimmed) that's the sum of
         // the length of all barcodes.
         // set up a lower bound on the allocation
-        // TODO Even thought memory consumption should be dominated by merged barcodes
-        // length there are extra allocations happening (probably in HDF5) which are leading to
-        // increased memory consumption. Failed analysis worked with ~2GB, bumping minimum to
-        // 3 GB to play safe.
         // From CELLRANGER-5358: analysing QA runs for aggr show that 2.1x the barcode mem
         // is sufficient for the join stage.
         let bc_mem_sum: usize = bc_mem.iter().sum();
@@ -265,15 +261,14 @@ impl MartianStage for MergeMolecules {
             lib_idx_maps.push(lib_idx_map);
             metrics.push(out_metrics);
 
-            MoleculeInfoReader::read_gem_groups(&in_h5)?
-                .into_iter()
-                .unique()
-                .for_each(|x| {
-                    gem_group_barcode_ranges.insert(
-                        gg_map[x as usize].to_string(),
-                        vec![barcode_idx_offset as u64, barcode_idx_end as u64],
-                    );
-                });
+            let unique_gem_groups: TxHashSet<_> =
+                MoleculeInfoReader::iter_gem_groups(&in_h5)?.collect::<Result<_>>()?;
+            for x in unique_gem_groups {
+                gem_group_barcode_ranges.insert(
+                    gg_map[x as usize].to_string(),
+                    vec![barcode_idx_offset as u64, barcode_idx_end as u64],
+                );
+            }
 
             gg_maps.push(gg_map);
 

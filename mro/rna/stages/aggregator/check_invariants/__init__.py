@@ -49,7 +49,7 @@ def split(args):
         + 1
     )  # 1 for buffer for storing invariant data
     join_args = {
-        "__mem_gb": int(max(matrix_mem_gb, h5_constants.MIN_MEM_GB, mol_info_mem_gb)),
+        "__mem_gb": 12 + int(0.8 * max(matrix_mem_gb, h5_constants.MIN_MEM_GB, mol_info_mem_gb)),
     }
     return {"chunks": [], "join": join_args}
 
@@ -196,13 +196,12 @@ def join(args, outs, chunk_defs, chunk_outs):
                 pass
             else:
                 martian.exit(exit_message)
-        else:
-            if np.any(input_feature_counts[lib_gg] < output_feature_counts[lib_gg]):
-                martian.log_info(
-                    "Feature(s) in library {}, GEM group {} have higher UMI counts "
-                    "in aggregated output compared to inputs".format(lib_gg[0], lib_gg[1])
-                )
-                martian.exit(exit_message)
+        elif np.any(input_feature_counts[lib_gg] < output_feature_counts[lib_gg]):
+            martian.log_info(
+                f"Feature(s) in library {lib_gg[0]}, GEM group {lib_gg[1]} have higher UMI counts "
+                "in aggregated output compared to inputs"
+            )
+            martian.exit(exit_message)
 
     summary = {
         "genomes_present": list(input_genomes),

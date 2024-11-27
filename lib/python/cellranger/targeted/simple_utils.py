@@ -9,6 +9,7 @@ For things which might be needed in things like preflights.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from six import ensure_binary, ensure_str
@@ -37,7 +38,7 @@ def parse_bool(astring: str):
 
 
 def parse_target_csv(
-    filename: str | bytes,
+    filename: Path | str | bytes,
     ref_gene_index: GeneIndex | NewGeneIndex | None = None,
     gene_name_to_id: dict[bytes, bytes] | None = None,
     filter_probes: bool = True,
@@ -88,7 +89,7 @@ def parse_target_csv(
 
     check_target_csv_metadata(filename, descriptive_name, required_metadata, conflicting_metadata)
 
-    valid_bases = b"ATGCN"
+    valid_bases = b"ATGCN-"  # "-" used as separator between probe halves (and if present gap)
     min_bait_length = 1
 
     # Track set of unique gene IDs and gene_id, bait_sequence tuples
@@ -155,9 +156,7 @@ def parse_target_csv(
         included = parse_bool(included_string)
         if included is None:
             raise ValueError(
-                'The column "included" must be "true" or "false" and saw "{}"'.format(
-                    ensure_str(included_string)
-                )
+                f'The column "included" must be "true" or "false" and saw "{ensure_str(included_string)}"'
             )
         gene_included[gene_id] = gene_included.get(gene_id, True) and included
 
@@ -177,7 +176,11 @@ def parse_target_csv(
                 raise cr_csv_utils.CSVParseException(msg)
 
         bait_probe_seq = entry.get("bait_seq", None) or entry.get("probe_seq", None)
-        if bait_probe_seq is not None and targeting_method == TARGETING_METHOD_TL:
+        if (
+            bait_probe_seq is not None
+            and targeting_method == TARGETING_METHOD_TL
+            and float(method_info.file_version) < 3.0
+        ):
             if last_seq_length is None:
                 last_seq_length = len(bait_probe_seq)
             elif last_seq_length != len(bait_probe_seq):
@@ -265,6 +268,8 @@ def get_target_panel_or_probe_set_file_format_spec(targeting_method, file_versio
         valid_cols.extend(["probe_seq", "probe_id", "included"])
         if float(file_version) >= 2.0:  # region introduced in 2.0
             valid_cols.append("region")
+        if float(file_version) >= 3.0:  # gene_name introduced in 3.0
+            valid_cols.append("gene_name")
         required_cols.extend(["probe_seq", "probe_id"])
         conflicting_metadata.update(
             {TARGETING_METHOD_HC_FILE_FORMAT: TARGETING_METHOD_TL_FILE_FORMAT}
@@ -273,7 +278,7 @@ def get_target_panel_or_probe_set_file_format_spec(targeting_method, file_versio
     return valid_cols, required_cols, required_metadata, conflicting_metadata
 
 
-def load_target_csv_metadata(filename, descriptive_name):
+def load_target_csv_metadata(filename: str, descriptive_name: str) -> dict[str, str]:
     """Return a dictionary of metadata fields contained in header of target panel CSV file.
 
     Args:
@@ -290,9 +295,7 @@ def load_target_csv_metadata(filename, descriptive_name):
             k_v_pair = row.strip("#").split("=")
             if len(k_v_pair) != 2:
                 raise cr_csv_utils.CSVParseException(
-                    'Invalid metadata format detected in {} file: "{}". Must follow "#field=value" format.'.format(
-                        descriptive_name, row
-                    )
+                    f'Invalid metadata format detected in {descriptive_name} file: "{row}". Must follow "#field=value" format.'
                 )
             k, v = k_v_pair
             k, v = k.strip(), v.strip()
@@ -343,9 +346,9 @@ def check_target_csv_metadata(
                 f'The "{field1}" metadata field in the {descriptive_name} CSV file header conflicts with the "{field2}" metadata field. Please check the {descriptive_name} csv file.'
             )
 
-    if float(method_info.file_version) > 2.0:
+    if float(method_info.file_version) > 3.0:
         raise cr_csv_utils.CSVParseException(
-            f'The {descriptive_name} file {filename} contains an unknown {method_info.file_format_tag}: "{method_info.file_version}". Must be 2.0 or less.'
+            f'The {descriptive_name} file {filename} contains an unknown {method_info.file_format_tag}: "{method_info.file_version}". Must be 3.0 or less.'
         )
     return float(method_info.file_version)
 

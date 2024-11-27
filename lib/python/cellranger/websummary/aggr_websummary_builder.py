@@ -9,13 +9,18 @@ import numpy as np
 import cellranger.rna.library as rna_library
 import cellranger.websummary.sample_properties as wsp
 from cellranger import utils as cr_util
-from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+from cellranger.analysis.singlegenome import (
+    PROJECTION_TITLE,
+    TSNE_NAME,
+    Projection,
+    SingleGenomeAnalysis,
+)
 from cellranger.targeted.targeted_constants import TARGETING_METHOD_TL
 from cellranger.webshim.common import load_sample_data
 from cellranger.webshim.constants.shared import CELLRANGER_COMMAND_NAME, PIPELINE_AGGR
 from cellranger.websummary import plotly_tools as pltly
-from cellranger.websummary.analysis_tab_core import TSNE_LAYOUT_CONFIG
-from cellranger.websummary.helpers import get_tsne_key
+from cellranger.websummary.analysis_tab_core import projection_layout_config
+from cellranger.websummary.helpers import get_projection_key
 from cellranger.websummary.metrics import (
     MetricAnnotations,
     SpatialAggrMetricAnnotations,
@@ -33,8 +38,8 @@ from cellranger.websummary.spatial_utils import SPATIAL_COMMAND_NAME
 from cellranger.websummary.web_summary_builder import build_web_summary_html_sc_and_aggr
 
 
-def library_on_tsne_plot(sample_data, gg_id_to_name):
-    """Get the tSNE colored by batch; only makes sense in aggregataions."""
+def library_on_projection_plot(sample_data, gg_id_to_name, *, projection: Projection):
+    """Get the tSNE/UMAP colored by batch; only makes sense in aggregataions."""
     if sample_data is None:
         return None
 
@@ -48,10 +53,15 @@ def library_on_tsne_plot(sample_data, gg_id_to_name):
 
     library_types = analysis.matrix.get_library_types()
     if rna_library.GENE_EXPRESSION_LIBRARY_TYPE in library_types:
-        key = get_tsne_key(rna_library.GENE_EXPRESSION_LIBRARY_TYPE, 2)
+        key = get_projection_key(rna_library.GENE_EXPRESSION_LIBRARY_TYPE, 2)
     elif rna_library.ANTIBODY_LIBRARY_TYPE in library_types:
-        key = get_tsne_key(rna_library.ANTIBODY_LIBRARY_TYPE, 2)
-    tsne_coordinates = analysis.get_tsne(key=key).transformed_tsne_matrix
+        key = get_projection_key(rna_library.ANTIBODY_LIBRARY_TYPE, 2)
+
+    if projection == TSNE_NAME:
+        projection_coordinates = analysis.get_tsne(key=key).transformed_tsne_matrix
+    else:
+        projection_coordinates = analysis.get_umap(key=key).transformed_umap_matrix
+    layout = projection_layout_config(projection=projection).copy()
 
     data = []
     for library in gg_id_to_name.values():
@@ -65,22 +75,21 @@ def library_on_tsne_plot(sample_data, gg_id_to_name):
             data.append(
                 {
                     "name": name + f" ({len(indices)})",
-                    "x": round_floats_in_list(list(tsne_coordinates[indices, 0])),
-                    "y": round_floats_in_list(list(tsne_coordinates[indices, 1])),
+                    "x": round_floats_in_list(list(projection_coordinates[indices, 0])),
+                    "y": round_floats_in_list(list(projection_coordinates[indices, 1])),
                     "indices": list(indices),
                     "type": "scattergl",
                     "mode": "markers",
                     "marker": {"opacity": 0.6, "size": 4},
                 }
             )
-    layout = TSNE_LAYOUT_CONFIG.copy()
     assert "title" not in layout
-    batch_tsne_plot = {
+    batch_projection_plot = {
         "config": pltly.PLOT_CONFIG,
         "layout": layout,
         "data": data,
     }
-    return batch_tsne_plot
+    return batch_projection_plot
 
 
 def build_web_summary_html_aggr(
@@ -88,6 +97,7 @@ def build_web_summary_html_aggr(
     sample_properties,
     gg_id_to_name_map,
     sample_data_paths,
+    projection: Projection,
     sample_defs=None,
 ):
     """Build a web summary file for an AGGR Run.
@@ -97,13 +107,14 @@ def build_web_summary_html_aggr(
         sample_properties: Instance of AggrCountSampleProperties
         gg_id_to_name_map: dictionary to map gem group ids in barcode to library names
         sample_data_paths: Instance of SampleDataPaths
+        projection: Projection used in websummary (TSNE_NAME or UMAP_NAME)
         sample_defs: Map of sample defs passed in from PARSE_CSV
 
     Returns:
         None
     """
     web_sum_data = build_web_summary_data_aggr(
-        sample_properties, gg_id_to_name_map, sample_data_paths, sample_defs
+        sample_properties, gg_id_to_name_map, sample_data_paths, projection, sample_defs
     )
 
     write_html_file(filename, web_sum_data)
@@ -113,6 +124,7 @@ def build_web_summary_data_aggr(
     sample_properties,
     gg_id_to_name_map,
     sample_data_paths,
+    projection: Projection,
     sample_defs=None,
 ):
     """Build a web summary file for an AGGR Run.
@@ -121,6 +133,7 @@ def build_web_summary_data_aggr(
         sample_properties: Instance of AggrCountSampleProperties
         gg_id_to_name_map: dictionary to map gem group ids in barcode to library names
         sample_data_paths: Instance of SampleDataPaths
+        projection: Tuple including all available projections
         sample_defs: Map of sample defs from PARSE_CSV
 
     Returns:
@@ -128,7 +141,12 @@ def build_web_summary_data_aggr(
     """
     assert isinstance(sample_properties, wsp.AggrCountSampleProperties)
     # add metadata info that will be needed to draw batch tsne and determine targeting method
-    sample_data = load_sample_data(sample_properties, sample_data_paths)
+
+    sample_data = load_sample_data(
+        sample_properties,
+        sample_data_paths,
+        (projection,),
+    )
     if sample_properties.is_spatial:
         command = SPATIAL_COMMAND_NAME
         if sample_properties.is_targeted:
@@ -154,14 +172,19 @@ def build_web_summary_data_aggr(
         PIPELINE_AGGR,
         metadata,
         command,
-        sample_defs,
+        projection=projection,
+        sample_defs=sample_defs,
     )
 
-    tsne_plot = library_on_tsne_plot(sample_data, gg_id_to_name_map)
-    if tsne_plot:
-        web_sum_data.summary_tab["aggr_batch_tsne"] = PlotWithHeader(
-            "t-SNE Projection Colored by Sample ID",
-            tsne_plot,
+    clustering_plot = library_on_projection_plot(
+        sample_data, gg_id_to_name_map, projection=projection
+    )
+    clustering_plot_title = f"{PROJECTION_TITLE[projection]} Projection Colored by Sample ID"
+
+    if clustering_plot:
+        web_sum_data.summary_tab["aggr_batch_projection"] = PlotWithHeader(
+            clustering_plot_title,
+            clustering_plot,
             help_text="Number of cells for each sample is provided in parentheses.",
         )
 

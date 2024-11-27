@@ -36,6 +36,7 @@ pipeline SC_RNA_AGGREGATOR(
     in  string      product_type,
     in  bool        is_pd,
     in  int         min_crispr_umi_threshold,
+    in  bool        enable_tsne,
     out h5          raw_gene_bc_matrices_h5,
     out h5          filtered_gene_bc_matrices_h5,
     out path        filtered_gene_bc_matrices_mex,
@@ -126,6 +127,7 @@ pipeline SC_RNA_AGGREGATOR(
             cbc_realign_panorama:       self.cbc_realign_panorama,
             cbc_sigma:                  self.cbc_sigma,
             chemistry_batch_correction: SETUP_SAMPLES.chemistry_batch_correction,
+            enable_tsne:                self.enable_tsne,
             exclude_genes:              null,
             filtered_matrices_h5:       WRITE_MATRICES.filtered_matrix_h5,
             force_cells:                null,
@@ -176,6 +178,7 @@ pipeline SC_RNA_AGGREGATOR(
         crispr_analysis_metrics  = _CRISPR_ANALYZER.crispr_analysis_metrics,
         product_type             = self.product_type,
         sample_defs              = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
+        skip_tsne                = SC_RNA_ANALYZER.common_analyzer.skip_tsne,
     )
 
     call CHECK_INVARIANTS(

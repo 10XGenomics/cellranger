@@ -70,9 +70,7 @@ class GtfParseError(Exception):
 
     def __init__(self, filename, msg):
         super().__init__(
-            "Error while parsing GTF file {}\n{}\n\nPlease fix your GTF and start again.".format(
-                filename, msg
-            )
+            f"Error while parsing GTF file {filename}\n{msg}\n\nPlease fix your GTF and start again."
         )
 
 
@@ -142,8 +140,8 @@ class NewGtfParser:
                         contigs = sorted(list(contig_lengths.keys()))
                         raise GtfParseError(
                             filename,
-                            "Invalid contig name encountered on GTF line {}: {}. The FASTA file "
-                            "has contigs:\n{}".format(i + 1, row[0], contigs),
+                            f"Invalid contig name encountered on GTF line {i + 1}: {row[0]}. The FASTA file "
+                            f"has contigs:\n{contigs}",
                         )
 
                     max_len = contig_lengths[row[0]]
@@ -378,16 +376,15 @@ class NewGtfParser:
             elif value.isdigit():
                 # unquoted integer
                 value = int(value)
-            else:
+            elif '"' in key or '"' in value:
                 # Leave it mostly as is (technically not against the GTF format,
                 # at least as per http://mblab.wustl.edu/GTF22.html)
                 # but make sure we don't have any quotes in the value, this will bjork the rust parser
-                if '"' in key or '"' in value:
-                    raise GtfParseError(
-                        filename,
-                        "Error parsing GTF at line %d.  Parsed attribute had a quote in the middle of a value.  Please ensure quotes are only used to encapsulate attribute values.\n Bad Attribute Value = %s"
-                        % (line_number, value),
-                    )
+                raise GtfParseError(
+                    filename,
+                    "Error parsing GTF at line %d.  Parsed attribute had a quote in the middle of a value.  Please ensure quotes are only used to encapsulate attribute values.\n Bad Attribute Value = %s"
+                    % (line_number, value),
+                )
 
             if '"' in key:
                 raise GtfParseError(
@@ -523,7 +520,7 @@ class FastaParser:
         elif strand == cr_constants.REVERSE_STRAND:
             return tk_seq.get_rev_comp(seq)
         else:
-            raise Exception("Invalid strand: %s" % strand)
+            raise Exception(f"Invalid strand: {strand}")
 
     def get_transcript_gc_content(self, transcript_obj: Transcript) -> float:
         pattern = re.compile(b"[cCgG]")

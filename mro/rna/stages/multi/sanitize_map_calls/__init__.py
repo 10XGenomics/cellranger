@@ -14,7 +14,7 @@ stage SANITIZE_MAP_CALLS(
     in  map<path>         in_rna_analysis,
     in  map<cloupe>       in_cloupe_file,
     in  map<json>         in_metrics_summary,
-    in  map<json>         in_sample_tsne_plots,
+    in  map<json>         in_sample_projection_plots,
     in  map<json>         in_sample_barcode_rank_plots,
     in  map<json>         in_sample_treemap_plots,
     in  map<VDJ_ANALYZER> in_vdj_t_analyzer,
@@ -24,7 +24,7 @@ stage SANITIZE_MAP_CALLS(
     out map<path>         rna_analysis,
     out map<cloupe>       cloupe_file,
     out map<json>         metrics_summary,
-    out map<json>         sample_tsne_plots,
+    out map<json>         sample_projection_plots,
     out map<json>         sample_barcode_rank_plots,
     out map<json>         sample_treemap_plots,
     out map<VDJ_ANALYZER> vdj_t_analyzer,
@@ -32,8 +32,9 @@ stage SANITIZE_MAP_CALLS(
     out map<VDJ_ANALYZER> vdj_b_analyzer,
     src py                "stages/multi/sanitize_map_calls",
 ) using (
-    volatile = strict,
-)
+    volatile = false,
+) retain (
+    metrics_summary,
 """
 
 
@@ -102,9 +103,10 @@ class VdjReport:
         self.productive_cell_barcodes = None
         self.filter_summary = None
         self.filter_metrics = None
-        self.contig_summary = None
+        self.per_bc_filters = None
         self.umi_summary = None
         self.barcode_brief = None
+        self.report = None
 
 
 # pylint: disable=invalid-name
@@ -123,7 +125,7 @@ def main(args, outs):
     outs.crispr_analysis = cr_io.recursive_hard_link_dict(args.in_crispr_analysis)
     outs.cloupe_file = cr_io.recursive_hard_link_dict(args.in_cloupe_file)
     outs.metrics_summary = cr_io.recursive_hard_link_dict(args.in_metrics_summary)
-    outs.sample_tsne_plots = cr_io.recursive_hard_link_dict(args.in_sample_tsne_plots)
+    outs.sample_projection_plots = cr_io.recursive_hard_link_dict(args.in_sample_projection_plots)
     outs.sample_barcode_rank_plots = cr_io.recursive_hard_link_dict(
         args.in_sample_barcode_rank_plots
     )

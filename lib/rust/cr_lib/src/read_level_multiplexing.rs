@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 /// Return the ID of this read-level multiplexing sequence.
-fn map_multiplexing_seq_to_id(
+pub fn map_multiplexing_seq_to_id(
     barcode: &BarcodeWithGemGroup,
     seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,

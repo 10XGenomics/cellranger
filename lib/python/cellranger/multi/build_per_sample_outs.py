@@ -20,24 +20,12 @@ def build_sample_outs(args, outs, is_pd: bool):
         count["analysis"] = hard_link(args.analysis)
 
     # Add cell_types if available
-    count["cell_types"] = {}
-    if hasattr(args, "cell_types"):
-
-        def hard_link_sample_cell_types_out(in_key: str, out_key: str, include_if: bool = True):
-            in_path = (args.cell_types or {}).get(in_key, None)
-            if in_path is None or not include_if:
-                count["cell_types"][out_key] = None
-                return
-            count["cell_types"][out_key] = hard_link(in_path)
-
-        hard_link_sample_cell_types_out("cas_cell_types", "cas_cell_types")
-        hard_link_sample_cell_types_out(
-            "cas_deconvolution_cell_types", "cas_deconvolution_cell_types"
-        )
-        hard_link_sample_cell_types_out("cas_deconvolution_results", "cas_deconvolution_results")
-        hard_link_sample_cell_types_out("cas_results", "cas_results")
-        hard_link_sample_cell_types_out("web_summary_cell_types_pd", "web_summary_cell_types_pd")
-        hard_link_sample_cell_types_out("minimal_cas_web_summary", "minimal_cas_web_summary")
+    if hasattr(args, "cell_types") and args.cell_types is not None:
+        count["cell_types"] = {}
+        for key, in_path in args.cell_types.items():
+            count["cell_types"][key] = hard_link(in_path)
+    else:
+        count["cell_types"] = None
 
     def hard_link_sample_slfe_out(in_key: str, out_key: str, include_if: bool = True):
         in_path = (args.sample_slfe_outs or {}).get(in_key, None)

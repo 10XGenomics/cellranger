@@ -1,11 +1,12 @@
 [dependencies]
-log = '0.4'
-
 [dependencies.anyhow]
 workspace = true
 
 [dependencies.bazel_utils]
 path = '../bazel_utils'
+
+[dependencies.log]
+workspace = true
 
 [dependencies.serde]
 workspace = true

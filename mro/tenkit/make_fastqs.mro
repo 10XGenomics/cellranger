@@ -12,7 +12,6 @@ pipeline MAKE_FASTQS(
     in  string bases_mask             "--use-bases-mask override",
     in  string bcl2fastq1_args        "Bonus arguments to bcl2fastq v1",
     in  string bcl2fastq2_args        "Bonus arguments to bcl2fastq v2",
-    in  string barcode_whitelist,
     in  string bc_read_type,
     in  int    bc_start_index,
     in  int    bc_length,
@@ -39,7 +38,6 @@ pipeline MAKE_FASTQS(
         check_executables = false,
         lanes             = self.lanes,
         specs             = self.specs,
-        barcode_whitelist = self.barcode_whitelist,
         bc_read_type      = self.bc_read_type,
         bc_start_index    = self.bc_start_index,
         bc_length         = self.bc_length,
@@ -59,7 +57,6 @@ pipeline MAKE_FASTQS(
         run_path              = self.run_path,
         output_path           = self.output_path,
         interop_output_path   = self.interop_output_path,
-        barcode_whitelist     = self.barcode_whitelist,
         check_executables     = true,
         max_bcl2fastq_threads = self.max_bcl2fastq_threads,
     ) using (

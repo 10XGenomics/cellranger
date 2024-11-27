@@ -6,14 +6,15 @@ use crate::align_metrics::{
     MULTI_GENOME,
 };
 use crate::types::FeatureReferenceFormat;
+use crate::utils::estimate_mem::{barcode_mem_gib, get_total_barcodes_detected};
 use crate::BarcodeMetricsShardFile;
 use anyhow::{bail, Result};
 use cr_h5::count_matrix::write_barcodes_column;
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
-use cr_types::{BarcodeIndexFormat, GenomeName, H5File, LibraryType};
+use cr_types::{BarcodeIndexFormat, GenomeName, H5File, LibraryType, MetricsFile};
 use itertools::zip_eq;
-use martian::prelude::{MartianMain, MartianRover};
+use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
 use martian_derive::{make_mro, MartianStruct};
 use martian_filetypes::FileTypeRead;
 use metric::join_metric_name;
@@ -30,6 +31,7 @@ pub struct WriteBarcodeSummaryStageInputs {
     pub per_barcode_metrics: Vec<BarcodeMetricsShardFile>,
     pub feature_reference: FeatureReferenceFormat,
     pub barcode_index: BarcodeIndexFormat,
+    pub barcode_correction_summary: MetricsFile,
 }
 
 /// The Martian stage outputs.
@@ -51,6 +53,8 @@ struct BarcodeCounts {
     half_mapped_counts: Vec<u32>,
     // Split-mapped probe reads (MAPQ = 3)
     split_mapped_counts: Vec<u32>,
+    // Gap not within max error probe reads (MAPQ = 5)
+    gap_mapped_not_within_max_error_counts: Vec<u32>,
 }
 
 impl BarcodeCounts {
@@ -61,6 +65,7 @@ impl BarcodeCounts {
             half_mapped_counts: vec![0; num_barcodes],
             split_mapped_counts: vec![0; num_barcodes],
             umi_counts: vec![0; num_barcodes],
+            gap_mapped_not_within_max_error_counts: vec![0; num_barcodes],
         }
     }
 }
@@ -141,7 +146,7 @@ impl BarcodeSummaryData {
         let metrics_reader =
             UnsortedShardReader::<BarcodeMetrics, LibFeatThenBarcodeOrder>::open_set(
                 per_barcode_metrics,
-            )?;
+            );
 
         fn update_counts(
             genome_barcode_counts: &mut HashMap<(FeatureType, GenomeName), BarcodeCounts>,
@@ -191,6 +196,12 @@ impl BarcodeSummaryData {
                                 checked_add(
                                     &mut entry.split_mapped_counts[index],
                                     genome_mapping_metrics.split_mapped.count(),
+                                );
+                                checked_add(
+                                    &mut entry.gap_mapped_not_within_max_error_counts[index],
+                                    genome_mapping_metrics
+                                        .gap_mapped_not_within_max_error
+                                        .count(),
                                 );
                             }
                         }
@@ -285,6 +296,7 @@ fn write_barcode_summary_h5(
         umi_counts,
         half_mapped_counts,
         split_mapped_counts,
+        gap_mapped_not_within_max_error_counts,
     } = genome_barcode_counts
         .iter()
         .filter(|((t, _), _)| *t == FeatureType::Gene)
@@ -312,6 +324,10 @@ fn write_barcode_summary_h5(
         (
             "_multi_transcriptome_half_mapped_barcoded_reads",
             half_mapped_counts,
+        ),
+        (
+            "_multi_transcriptome_gap_not_within_max_error_mapped_barcoded_reads",
+            gap_mapped_not_within_max_error_counts,
         ),
     ] {
         if !data.is_empty() {
@@ -351,27 +367,49 @@ fn write_barcode_summary_h5(
     Ok(())
 }
 
-#[make_mro(mem_gb = 7, volatile = strict)]
-impl MartianMain for WriteBarcodeSummary {
+#[make_mro(volatile = strict)]
+impl MartianStage for WriteBarcodeSummary {
     type StageInputs = WriteBarcodeSummaryStageInputs;
     type StageOutputs = WriteBarcodeSummaryStageOutputs;
+    type ChunkInputs = MartianVoid;
+    type ChunkOutputs = MartianVoid;
 
-    /// Run the Martian stage WRITE_BARCODE_SUMMARY.
+    fn split(
+        &self,
+        args: Self::StageInputs,
+        _rover: MartianRover,
+    ) -> Result<StageDef<Self::ChunkInputs>> {
+        // Multi uses more memory for sample_barcodes and other data.
+        let barcodes_count = get_total_barcodes_detected(&args.barcode_correction_summary.read()?);
+        // bytes_per_barcode and offset_gib are empirically determined.
+        let mem_gib = barcode_mem_gib(barcodes_count, 220, 2);
+        println!("barcode_count={barcodes_count},mem_gib={mem_gib}");
+        Ok(StageDef::with_join_resource(Resource::with_mem_gb(mem_gib)))
+    }
+
     fn main(
         &self,
-        WriteBarcodeSummaryStageInputs {
-            per_barcode_metrics,
-            feature_reference,
-            barcode_index,
-        }: Self::StageInputs,
+        _args: Self::StageInputs,
+        _chunk_args: MartianVoid,
+        _rover: MartianRover,
+    ) -> Result<Self::ChunkOutputs> {
+        unreachable!()
+    }
+
+    /// Run the Martian stage WRITE_BARCODE_SUMMARY.
+    fn join(
+        &self,
+        args: Self::StageInputs,
+        _chunk_defs: Vec<MartianVoid>,
+        _chunk_outs: Vec<MartianVoid>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
         let barcode_summary: H5File = rover.make_path("barcode_summary");
-        let barcode_index = barcode_index.read()?;
+        let barcode_index = args.barcode_index.read()?;
         write_barcode_summary_h5(
             &barcode_summary,
-            &per_barcode_metrics,
-            &feature_reference.read()?,
+            &args.per_barcode_metrics,
+            &args.feature_reference.read()?,
             &barcode_index,
         )?;
         Ok(Self::StageOutputs { barcode_summary })

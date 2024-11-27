@@ -15,7 +15,6 @@ pub(crate) fn count_umis_per_probe(
     _py: Python<'_>,
     mol_info_path: PathBuf,
     target_panel_summary_path: PathBuf,
-    reference_path: PathBuf,
 ) -> PyResult<Option<(Vec<String>, Vec<String>, Vec<String>, Vec<i32>)>> {
     let tps: TargetPanelSummary = TargetPanelSummaryFormat::from(&target_panel_summary_path)
         .read()
@@ -26,9 +25,8 @@ pub(crate) fn count_umis_per_probe(
 
     let mut valid_bc_filter = FilteredBarcodeFilter::new(&mol_info_path);
 
-    let psr: ProbeSetReference =
-        ProbeSetReference::from_path(&tps.target_panel_path, &reference_path, 1)
-            .expect("ProbeSetReference could not be made from path");
+    let psr: ProbeSetReference = ProbeSetReference::from_path(&tps.target_panel_path, None, 1)
+        .expect("ProbeSetReference could not be made from path");
     let probes: Vec<_> = psr.sorted_probes();
 
     if probes.is_empty() | (probes[0].region.is_none()) {
@@ -47,7 +45,7 @@ pub(crate) fn count_umis_per_probe(
         }
     }
 
-    let (probe_ids, gene_names, regions): (Vec<String>, Vec<String>, Vec<String>) = probes
+    let (probe_ids, gene_ids, regions): (Vec<String>, Vec<String>, Vec<String>) = probes
         .into_iter()
         .cloned()
         .map(|x| {
@@ -58,5 +56,5 @@ pub(crate) fn count_umis_per_probe(
             )
         })
         .multiunzip();
-    Ok(Some((probe_ids, gene_names, regions, result)))
+    Ok(Some((probe_ids, gene_ids, regions, result)))
 }

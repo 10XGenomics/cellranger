@@ -55,7 +55,7 @@ def make_color_map(features, jibes_plot=True):
 
 
 def make_histogram_plot(
-    feature_names, feature_counts, color_map, x_axis_lab: str = "Log 10 (1 + Count)"
+    feature_names, feature_counts, color_map, x_axis_lab: str = "Log 10 (1 + UMI Counts)"
 ):
     """Make a histogram plot.
 
@@ -99,8 +99,8 @@ def _make_rc_vectors(original_vectors):
     for i, v in enumerate(original_vectors):
         store_key = f"{JIBES_SHARED_VECTORS_RESOURCE_KEY_PREFIX}_{i}"
         use_key = f"{RESOURCE_PREFIX}_{store_key}"
-        shared_resources[
-            store_key
-        ] = cellranger.websummary.numeric_converters.array_to_float32_base64(v)
+        shared_resources[store_key] = (
+            cellranger.websummary.numeric_converters.array_to_float32_base64(v)
+        )
         vectors.append(use_key)
     return shared_resources, vectors

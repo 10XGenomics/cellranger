@@ -19,7 +19,9 @@ from typing import NamedTuple
 import martian
 
 import cellranger.constants as cr_constants
+import cellranger.hdf5 as cr_h5
 import cellranger.matrix as cr_matrix
+import cellranger.molecule_counter as cr_mc
 import cellranger.spatial.spatial_aggr_files as sa_files
 
 __MRO__ = """
@@ -93,9 +95,7 @@ def main(args, outs):
     # Get the fields to check for in the csv
     if args.product_type not in META_PARSE_CSV_FIELDS:
         martian.exit(
-            "Product type {} for aggr not recognized. Needs to be defined in META_PARSE_CSV_FIELDS".format(
-                args.product_type
-            )
+            f"Product type {args.product_type} for aggr not recognized. Needs to be defined in META_PARSE_CSV_FIELDS"
         )
     else:
         field_validation = META_PARSE_CSV_FIELDS[args.product_type]
@@ -113,9 +113,7 @@ def main(args, outs):
         if matrix_library_ids != csv_library_ids:
             str_csv_library_ids = ",".join([x.decode() for x in sorted(csv_library_ids)])
             str_matrix_library_ids = ",".join([x.decode() for x in sorted(matrix_library_ids)])
-            this_msg = "Library IDs specified in CSV ({}) do not match those contained in the input matrix ({})".format(
-                str_csv_library_ids, str_matrix_library_ids
-            )
+            this_msg = f"Library IDs specified in CSV ({str_csv_library_ids}) do not match those contained in the input matrix ({str_matrix_library_ids})"
             martian.exit(this_msg)
     copy_csv(args.aggregation_csv, outs.aggregation_csv)
 
@@ -200,9 +198,8 @@ def check_multiple_paths(
                 pipe_relpath = Path(piperoot) / test_path
                 if pipe_relpath.exists():
                     acceptable_paths.append(pipe_relpath.resolve())
-        else:
-            if test_path.exists():
-                acceptable_paths.append(test_path)
+        elif test_path.exists():
+            acceptable_paths.append(test_path)
     # Now we check if we have exactly one path
     if len(acceptable_paths) == 1:
         final_path = acceptable_paths.pop()
@@ -250,13 +247,12 @@ def parse_sample_sheet(
     Builds a sample_def list. Each row defines an input samples with validated inputs.
     """
     if not os.path.exists(aggr_csv_path):
-        martian.exit("Sample sheet does not exist: %s" % aggr_csv_path)
+        martian.exit(f"Sample sheet does not exist: {aggr_csv_path}")
 
     if not os.access(aggr_csv_path, os.R_OK):
         martian.exit(
-            "Sample sheet is not readable, please check file permissions: %s" % aggr_csv_path
+            f"Sample sheet is not readable, please check file permissions: {aggr_csv_path}"
         )
-
     sample_defs: list[dict[str, str]] = []
     with open(aggr_csv_path) as f:
         # skip comment lines
@@ -267,8 +263,7 @@ def parse_sample_sheet(
         for field in fields:
             if os.path.exists(field):
                 martian.exit(
-                    "Your CSV header contains a path: %s\n  Did you forget to include a header line?"
-                    % field
+                    f"Your CSV header contains a path: {field}\n  Did you forget to include a header line?"
                 )
             if not field or field.isspace():
                 martian.exit("Your CSV header has an unnamed column, please name all columns.")
@@ -283,9 +278,11 @@ def parse_sample_sheet(
         found_fields = [field.lower() for field in fields]
         for field in required_fields:
             if field not in found_fields:
-                martian.exit("Your header row is missing a required field: %s." % field)
+                martian.exit(f"Your header row is missing a required field: {field}.")
 
         # If we find optional fields, we now consider those as required
+        # NOTE: we rely below on an optional field (the 'spatial' folder with tissue positions)
+        #       coming after the required fields (specifically the aggr h5)
         for field in optional_fields:
             if field in found_fields:
                 required_fields.append(field)
@@ -339,6 +336,17 @@ def parse_sample_sheet(
                     martian.exit(f"Field type {field} not recognized.")
                 # Add the value for the field in the unique checker
                 check_unique[field].add(row[field])
+                # If this is the h5 file, check whether this is a Visium HD run.
+                if field == cr_constants.AGG_H5_FIELD:
+                    mol_info_fn = row[field]
+                    if not cr_h5.is_hdf5(mol_info_fn):
+                        martian.exit(f"Input molecule file is not a valid HDF5 file: {mol_info_fn}")
+                    with cr_mc.MoleculeCounter.open(mol_info_fn, "r") as mol_info:
+                        is_visium_hd = mol_info.get_visium_hd_slide_name() is not None
+                    if is_visium_hd:
+                        martian.exit(
+                            f"Visium HD runs, such as in row {i+1} of your CSV, are not currently supported by spaceranger aggr."
+                        )
             if AGG_SAMPLE_ID_FIELD in row:
                 row[cr_constants.AGG_ID_FIELD] = row.pop(AGG_SAMPLE_ID_FIELD)
 

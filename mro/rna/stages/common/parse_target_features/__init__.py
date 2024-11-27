@@ -15,20 +15,20 @@ import martian
 
 import cellranger.csv_io as cr_csv_io
 import cellranger.reference as cr_reference
-import cellranger.rna.library as rna_library
-import cellranger.sample_def as cr_sample_def
 from cellranger.reference_hash import compute_hash_of_file
 from cellranger.targeted import simple_utils, targeted_constants
 
 __MRO__ = """
 stage PARSE_TARGET_FEATURES(
-    in  map[]    sample_def,
+    in  string   target_set_name,
+    in  csv      target_set,
     in  path     reference_path,
     in  json     gene_index,
     in  bool     filter_probes,
     in  bool     no_target_umi_filter,
     in  bool     no_bam,
     in  bool     is_pd,
+    in  bool     is_antibody_only,
     out fa       bait_fasta,
     out csv      target_panel,
     out csv      probe_set,
@@ -48,24 +48,8 @@ stage PARSE_TARGET_FEATURES(
 
 
 def main(args, outs):
-    # HACK: needed for backwards compatibility against old sample defs. ultimately this stage
-    #       needs to be within count_gem_well_processor or the new (rustified) setup_chunks,
-    #       which will fix this.
-    for sample_def in args.sample_def:
-        if cr_sample_def.get_library_type(sample_def) is None:
-            sample_def[rna_library.LIBRARY_TYPE] = rna_library.GENE_EXPRESSION_LIBRARY_TYPE
 
-    # is there any target set?
-    target_sets = [
-        (cr_sample_def.get_target_set_name(sd), cr_sample_def.get_target_set(sd))
-        for sd in args.sample_def
-        if cr_sample_def.get_target_set(sd) is not None
-    ]
-    target_sets = sorted(set(target_sets))
-
-    if len(target_sets) > 1:
-        martian.exit(f"Multiple target sets/target set names found:\n\t{target_sets}")
-    elif len(target_sets) == 0:
+    if args.target_set is None or args.target_set == "" or args.is_antibody_only:
         # Sample is not targeted
         ## Set relevant flags
         outs.no_bam = args.no_bam
@@ -84,11 +68,16 @@ def main(args, outs):
         outs.target_panel_summary = None
     else:
         # Sample is targeted, gather basic info first
-        target_set_name, target_set_fn = target_sets[0]
+        target_set_name = args.target_set_name
+        target_set_fn = args.target_set
 
         ## load reference genes
-        gene_index = cr_reference.NewGeneIndex.load_from_json(args.gene_index)
-        gene_name_to_id = {gene.name: gene.id for gene in gene_index.genes}
+        if args.gene_index is None:
+            gene_index = None
+            gene_name_to_id = None
+        else:
+            gene_index = cr_reference.NewGeneIndex.load_from_json(args.gene_index)
+            gene_name_to_id = {gene.name: gene.id for gene in gene_index.genes}
 
         ## parse target set
         (target_set_metadata, target_gene_ids, bait_sequences) = simple_utils.parse_target_csv(
@@ -100,16 +89,21 @@ def main(args, outs):
         targeting_method = simple_utils.determine_targeting_type_from_csv(target_set_fn)
 
         ## get gene indices
-        target_gene_indices = sorted(
-            filter(
-                lambda x: x is not None,
-                (gene_index.gene_id_to_int(gene_id) for gene_id in target_gene_ids),
+        if gene_index is None:
+            outs.target_gene_indices = None
+        else:
+            target_gene_indices = sorted(
+                filter(
+                    lambda x: x is not None,
+                    (gene_index.gene_id_to_int(gene_id) for gene_id in target_gene_ids),
+                )
             )
-        )
-        if len(target_gene_indices) == 0:
-            martian.exit(
-                "There are no gene IDs in common between the reference transcriptome and the probe set."
-            )
+            if len(target_gene_indices) == 0:
+                martian.exit(
+                    "There are no gene IDs in common between the reference transcriptome and the probe set."
+                )
+            ## gene indices
+            cr_csv_io.write_target_features_csv(outs.target_gene_indices, target_gene_indices)
 
         # Set up outs
         outs.no_bam = args.no_bam
@@ -138,9 +132,6 @@ def main(args, outs):
         ## (FIXME: after moving target_set to top-level arg this isn't needed)
         shutil.copyfile(target_set_fn, outs.target_panel_or_probe_set)
 
-        ## gene indices
-        cr_csv_io.write_target_features_csv(outs.target_gene_indices, target_gene_indices)
-
         ## Write the bait sequence FASTA file
         simple_utils.write_bait_fasta(outs.bait_fasta, bait_sequences)
 
@@ -152,7 +143,7 @@ def main(args, outs):
                 ("target_panel_hash", target_panel_hash),
                 ("target_panel_name", target_set_name),
                 ("target_panel_path", target_set_fn),
-                ("target_panel_gene_count", len(target_gene_indices)),
+                ("target_panel_gene_count", len(target_gene_ids)),
                 ("target_panel_type", target_set_type),
                 ("targeting_method", targeting_method),
             ]

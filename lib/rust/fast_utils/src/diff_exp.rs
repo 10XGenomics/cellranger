@@ -1,77 +1,62 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use diff_exp::diff_exp::{DiffExpResult, SSeqParams};
 use diff_exp::{compute_sseq_params, sseq_differential_expression};
-use numpy::{IntoPyArray, PyArray1};
+use numpy::{Element, IntoPyArray, PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyList};
-//use scan_types::label_class::make_labelclass_from_feature_type_vector;
-use sprs::CsMatI;
+use sprs::CsMatBase;
 use sqz::mat::AdaptiveMatOwned;
 use sqz::matrix_map::MatrixIntoMap;
 
-type MatrixType = CsMatI<u32, u32>;
-
-// fn push_attr_to_list(list: &mut Vec<String>, obj: &PyAny, attr: &str) {
-//     list.push(obj.getattr(attr).unwrap().extract().unwrap());
-// }
-// Converts from a Python CountMatrix class to a Rust FeatureBarcodeMatrix struct
-// fn convert_matrix(  _py: Python<'_>,
-//     count_matrix: &PyAny) -> Result<AdaptiveFeatureBarcodeMatrix> {
-//     let matrix = count_matrix.getattr("m").unwrap();
-//     let indices: Vec<u32> = matrix.getattr("indices").unwrap().extract().unwrap();
-//     let indptr: Vec<u32> = matrix.getattr("indptr").unwrap().extract().unwrap();
-//     let data: Vec<u32> = matrix.getattr("data").unwrap().extract().unwrap();
-//     let barcodes: Vec<Vec<u8>> = count_matrix.getattr("bcs").unwrap().extract().unwrap();
-//     let barcodes : Vec<String> = barcodes.iter().map(|x| {String::from_utf8(x.to_vec()).unwrap()}).collect();
-//     let feature_defs: &PyList = count_matrix.getattr("feature_ref").unwrap().getattr("feature_defs").unwrap().extract().unwrap();
-//     let n_feats = feature_defs.len();
-//     let mut feature_ids = Vec::<String>::with_capacity(n_feats);
-//     let mut feature_names = Vec::<String>::with_capacity(n_feats);
-//     let mut feature_types = Vec::<String>::with_capacity(n_feats);
-//     for feature_def in feature_defs {
-//         push_attr_to_list(&mut feature_ids, feature_def, "id");
-//         push_attr_to_list(&mut feature_names, feature_def, "name");
-//         push_attr_to_list(&mut feature_types, feature_defs, "feature_type");
-//     }
-//     let feature_type_label = make_labelclass_from_feature_type_vector(&feature_types)?;
-//     let csc_mat = MatrixType::new_csc((feature_ids.len(), barcodes.len()), indptr, indices, data);
-//     let mat = AdaptiveMatOwned::from_csmat(&csc_mat);
-//     let final_matrix = AdaptiveFeatureBarcodeMatrix {
-//         name: "Dummy".to_string(),
-//         barcodes,
-//         feature_ids,
-//         feature_names,
-//         feature_types: feature_type_label,
-//         matrix: mat,
-//     };
-//     Ok(final_matrix)
-// }
-
-fn get_attr(matrix: &PyAny, attr: &str) -> Vec<u32> {
-    let pyvalues: &PyArray1<i32> = matrix.getattr(attr).unwrap().extract().unwrap();
-    pyvalues
-        .to_vec()
+/// Extract a python array of a desired type.
+fn extract_pyarray<'a, T: Element>(
+    py: &'a PyAny,
+    attr: &'static str,
+) -> Result<PyReadonlyArray1<'a, T>> {
+    py.getattr(attr)
+        .context(attr)
         .unwrap()
-        .into_iter()
-        .map(|x| x as u32)
-        .collect()
+        .extract()
+        .context(attr)
+        .map(|x: &PyArray1<T>| x.readonly())
 }
 
-// Convert a scipy sparse matrix to a rust sparse matrix
+/// Transmute a &[i32] to a &[u32] and validate that all elements are positive.
+fn transmute_i32_to_u32(xs: &[i32]) -> &[u32] {
+    assert!(xs.iter().all(|&x| x >= 0));
+    unsafe { std::slice::from_raw_parts(xs.as_ptr() as *const u32, xs.len()) }
+}
+
+/// Convert a scipy sparse matrix to a rust sparse matrix.
 fn convert_matrix(
     _py: Python<'_>,
     matrix: &PyAny,
 ) -> Result<AdaptiveMatOwned<u32, MatrixIntoMap<u32, u32>>> {
     let shape: (usize, usize) = matrix.getattr("shape").unwrap().extract().unwrap();
-    // Avoid a simple cast from PyAny to vec which iteratively grabs a python object for each array
-    // element
-    let indices: Vec<u32> = get_attr(matrix, "indices");
-    let indptr: Vec<u32> = get_attr(matrix, "indptr");
-    let data: Vec<u32> = get_attr(matrix, "data");
+    let data_py = extract_pyarray(matrix, "data").unwrap();
+    let data = transmute_i32_to_u32(data_py.as_slice().unwrap());
 
-    let csc_mat = MatrixType::new_csc(shape, indptr, indices, data);
-    let final_matrix = AdaptiveMatOwned::from_csmat(&csc_mat);
-    Ok(final_matrix)
+    // indices and indptr may be either i32 or i64. They have the same type.
+    let csc_matrix = if let Ok(indptr) = extract_pyarray::<i32>(matrix, "indptr") {
+        let indices = extract_pyarray::<i32>(matrix, "indices").unwrap();
+        AdaptiveMatOwned::from_csmat(&CsMatBase::new_csc(
+            shape,
+            indptr.as_slice().unwrap(),
+            indices.as_slice().unwrap(),
+            data,
+        ))
+    } else if let Ok(indptr) = extract_pyarray::<i64>(matrix, "indptr") {
+        let indices = extract_pyarray::<i64>(matrix, "indices").unwrap();
+        AdaptiveMatOwned::from_csmat(&CsMatBase::new_csc(
+            shape,
+            indptr.as_slice().unwrap(),
+            indices.as_slice().unwrap(),
+            data,
+        ))
+    } else {
+        bail!("indptr is neither i32 nor i64")
+    };
+    Ok(csc_matrix)
 }
 
 #[pyfunction]

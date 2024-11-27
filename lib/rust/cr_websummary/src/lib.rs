@@ -8,7 +8,7 @@ use alert::{Alert, AlertContext, AlertLevel, AlertSpec};
 use anyhow::Result;
 use metric::{PercentMetric, TxHashMap};
 use multi::websummary::{JsonMetricSummary, ToCsvRows, ToJsonSummary};
-use plotly::common::{Anchor, Title};
+use plotly::common::Anchor;
 use plotly::layout::{Axis, AxisType, HoverMode, Legend};
 use plotly::Layout;
 use serde::{Deserialize, Serialize};
@@ -18,16 +18,6 @@ use std::fmt::{Display, Formatter};
 use std::iter::zip;
 use std::str::FromStr;
 use thousands::Separable;
-
-const TABLE_HEADER_METRIC_KEYS: [&str; 7] = [
-    "Physical library ID",
-    "Fastq ID",
-    "CMO Name",
-    "Probe barcode ID",
-    "Genome",
-    "Targeting Status",
-    "Feature Type",
-];
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum WsCommand {
@@ -114,14 +104,14 @@ impl<C: Alert + ToCsvRows + ToJsonSummary> Tab<C> {
 }
 
 impl<C: Alert + ToCsvRows + ToJsonSummary> ToCsvRows for Tab<C> {
-    fn to_csv_rows(self) -> Vec<Vec<String>> {
+    fn to_csv_rows(&self) -> Vec<Vec<String>> {
         self.content.to_csv_rows()
     }
 }
 
 impl<C: Alert + ToCsvRows + ToJsonSummary> ToJsonSummary for Tab<C> {
-    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
-        self.content.to_json_summary()
+    fn to_json_summary(&self, ctx: &AlertContext) -> Vec<JsonMetricSummary> {
+        self.content.to_json_summary(ctx)
     }
 }
 
@@ -180,9 +170,6 @@ impl PrettyMetric {
         PrettyMetric(src.separate_with_commas())
     }
     pub fn percent(m: f64) -> Self {
-        PrettyMetric(format!("{:.2}%", 100.0 * m))
-    }
-    pub fn percent_f1(m: f64) -> Self {
         PrettyMetric(format!("{:.1}%", 100.0 * m))
     }
     pub fn count_and_percent(m: PercentMetric) -> Self {
@@ -253,60 +240,79 @@ impl From<Vec<String>> for TableRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupingHeader {
+    header: String,
+    optional: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GenericTable {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<Vec<String>>,
     pub rows: Vec<TableRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grouping_header: Option<GroupingHeader>,
 }
 
 impl ToCsvRows for GenericTable {
-    fn to_csv_rows(self) -> Vec<Vec<String>> {
-        let mut csv_rows: Vec<Vec<String>> = vec![];
-
+    fn to_csv_rows(&self) -> Vec<Vec<String>> {
         let table_header = self
             .header
+            .as_ref()
             .expect("No header for table being converted to CSV.");
         if table_header.is_empty() {
-            return csv_rows;
+            return vec![];
         }
-        if TABLE_HEADER_METRIC_KEYS
-            .iter()
-            .any(|x| *x == table_header[0])
-        {
-            // in this case, the metric table has a key in the first column such as "Physical Library ID"
-            // we write one CSV column that says what type of ID/key it is (Physical library ID, Fastq ID, etc)
-            // and another CSV column that specifies that ID/key itself
-            let metric_key_type: String = table_header[0].clone(); // e.g. "Physical library ID"
-            for table_row in self.rows {
-                let metric_key: String = table_row.0[0].clone(); // e.g. "GEX_1"
-                                                                 // header value and metric value for rest of columns (non-key columns)
-                for (metric_name, metric_val) in zip(&table_header[1..], &table_row.0[1..]) {
-                    let csv_row: Vec<String> = vec![
-                        metric_key_type.clone(),
-                        metric_key.clone(),
-                        metric_name.clone(),
-                        metric_val.clone(),
-                    ];
-                    csv_rows.push(csv_row);
-                }
+        if let Some(gh) = &self.grouping_header {
+            if let Some(grouping_header_pos) = table_header.iter().position(|h| h == &gh.header) {
+                // in this case, the metric table has a key such as "Physical Library ID"
+                // we write one CSV column that says what type of ID/key it is (Physical library ID, Fastq ID, etc)
+                // and another CSV column that specifies that ID/key itself
+                return self
+                    .rows
+                    .iter()
+                    .flat_map(|table_row| {
+                        let grouping_val = table_row.0[grouping_header_pos].clone(); // e.g. "GEX_1"
+                        let grouping_header = &gh.header;
+                        zip(table_header, &table_row.0).enumerate().filter_map(
+                            move |(i, (metric_name, metric_val))| {
+                                // Do not output a row for the grouping header/value since
+                                // it is included with all the other metrics.
+                                if i == grouping_header_pos {
+                                    return None;
+                                }
+                                Some(vec![
+                                    grouping_header.clone(), // e.g. "Physical library ID"
+                                    grouping_val.clone(),
+                                    metric_name.clone(),
+                                    metric_val.clone(),
+                                ])
+                            },
+                        )
+                    })
+                    .collect();
             }
-        } else {
-            // in this case, the table has no "key" in the first column and the metrics are free-standing.
-            for table_row in self.rows {
-                // header value and metric value for rest of columns (non-key columns)
-                for (metric_name, metric_val) in zip(&table_header, &table_row.0) {
-                    let csv_row: Vec<String> = vec![
-                        String::default(),
-                        String::default(),
-                        metric_name.clone(),
-                        metric_val.clone(),
-                    ];
-                    csv_rows.push(csv_row);
-                }
-            }
+            assert!(
+                gh.optional,
+                "required grouping header {} not found in header {table_header:?}",
+                gh.header
+            );
         }
 
-        csv_rows
+        // In this case, the table has no grouping key (or it's optional and not present) and the metrics are free-standing.
+        self.rows
+            .iter()
+            .flat_map(|table_row| {
+                zip(table_header, &table_row.0).map(|(metric_name, metric_val)| {
+                    vec![
+                        String::default(),
+                        String::default(),
+                        metric_name.clone(),
+                        metric_val.clone(),
+                    ]
+                })
+            })
+            .collect()
     }
 }
 
@@ -339,14 +345,14 @@ pub struct MetricCard<C: Into<CardWithMetric> + ToJsonSummary> {
 }
 
 impl<C: Into<CardWithMetric> + ToJsonSummary> ToCsvRows for MetricCard<C> {
-    fn to_csv_rows(self) -> Vec<Vec<String>> {
+    fn to_csv_rows(&self) -> Vec<Vec<String>> {
         self.card.table.to_csv_rows()
     }
 }
 
 impl<C: Into<CardWithMetric> + ToJsonSummary> ToJsonSummary for MetricCard<C> {
-    fn to_json_summary(&self) -> Vec<JsonMetricSummary> {
-        self.raw.to_json_summary()
+    fn to_json_summary(&self, ctx: &AlertContext) -> Vec<JsonMetricSummary> {
+        self.raw.to_json_summary(ctx)
     }
 }
 
@@ -433,12 +439,8 @@ impl PlotlyChart {
             .show_legend(true)
             .margin(plotly::layout::Margin::new().right(40).left(60).top(0))
             .hover_mode(HoverMode::Closest)
-            .x_axis(
-                Axis::new()
-                    .type_(AxisType::Category)
-                    .title(Title::new(&x_label)),
-            )
-            .y_axis(Axis::new().title(Title::new(&y_label)))
+            .x_axis(Axis::new().type_(AxisType::Category).title(x_label))
+            .y_axis(Axis::new().title(y_label))
             .legend(
                 Legend::new()
                     .y_anchor(Anchor::Top)
@@ -454,16 +456,6 @@ impl PlotlyChart {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct CountAndPercent(pub PercentMetric);
-
-// a wrapper type for Percents with only 1 decimal place precision
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
-pub struct PercentF1(pub Percent);
-
-impl From<PercentMetric> for PercentF1 {
-    fn from(src: PercentMetric) -> Self {
-        PercentF1(Percent::Metric(src))
-    }
-}
 
 pub trait MakePretty {
     fn make_pretty(&self) -> String;
@@ -524,27 +516,6 @@ impl MakePretty for CountAndPercent {
     }
     fn as_f64(&self) -> f64 {
         self.0.numerator.count() as f64
-    }
-}
-
-impl MakePretty for PercentF1 {
-    fn make_pretty(&self) -> String {
-        match &self.0 {
-            Percent::Metric(m) => match m.fraction() {
-                Some(f) => PrettyMetric::percent_f1(f).0,
-                None => "---%".to_string(),
-            },
-            Percent::Float(f) => PrettyMetric::percent(*f).0,
-        }
-    }
-    fn as_f64(&self) -> f64 {
-        match &self.0 {
-            Percent::Metric(m) => match m.fraction() {
-                Some(f) => f,
-                None => f64::NAN,
-            },
-            Percent::Float(f) => *f,
-        }
     }
 }
 
@@ -625,6 +596,7 @@ macro_rules! card_with_table {
                 let table = GenericTable {
                     header: Some(vec![$($col_header.to_string(),)*]),
                     rows: src.0.into_iter().map(|row| row.into()).collect(),
+                    grouping_header: None,
                 };
                 let help = TitleWithHelp {
                     title: $card_title.to_string(),

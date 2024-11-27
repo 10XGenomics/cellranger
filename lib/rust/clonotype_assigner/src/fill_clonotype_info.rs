@@ -15,7 +15,7 @@ use vdj_reference::VdjRegion;
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct FillClonotypeInfoStageInputs {
-    pub sample_number: Option<usize>,
+    pub sample_id: Option<String>,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub enclone_output: Option<ProtoBinFile>,
 }
@@ -98,7 +98,7 @@ impl MartianMain for FillClonotypeInfo {
                     let chain = chain_info.chain; // now this is an ExactSubClonotypeChain
                     let clonotype_id = ClonotypeId {
                         id: i + 1,
-                        sample_number: args.sample_number,
+                        sample_id: args.sample_id.as_deref(),
                     };
                     let fields = FieldsToFill {
                         raw_clonotype_id: clonotype_id.to_string(),

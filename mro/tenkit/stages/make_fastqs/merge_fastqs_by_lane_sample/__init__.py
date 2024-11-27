@@ -285,7 +285,7 @@ def join(args, outs, chunk_args, chunk_outs):
                 continue
             for input_file in chunk_arg.input_files:
                 if os.path.exists(input_file):
-                    martian.log_info("Removing split file: %s" % input_file)
+                    martian.log_info(f"Removing split file: {input_file}")
                     os.remove(input_file)
             unique_folders.update(
                 [os.path.dirname(input_file) for input_file in chunk_arg.input_files]
@@ -293,8 +293,8 @@ def join(args, outs, chunk_args, chunk_outs):
 
         # remove empty split folders
         for folder in unique_folders:
-            if not glob.glob("%s/*fastq*" % folder):
-                martian.log_info("Removing empty folder: %s" % folder)
+            if not glob.glob(f"{folder}/*fastq*"):
+                martian.log_info(f"Removing empty folder: {folder}")
                 os.rmdir(folder)
 
     # rename merged files (which have a _S0n FASTQ name for distinction in flat directories)
@@ -315,7 +315,7 @@ def join(args, outs, chunk_args, chunk_outs):
             os.rename(merged_file, out_path)
 
     if args.remove_undetermined_fastqs:
-        undetermined_fastqs = glob.glob("%s/Undetermined*fastq.gz" % args.fastq_path)
+        undetermined_fastqs = glob.glob(f"{args.fastq_path}/Undetermined*fastq.gz")
         for undetermined_fastq in undetermined_fastqs:
-            martian.log_info("Removing undetermined file: %s" % undetermined_fastq)
+            martian.log_info(f"Removing undetermined file: {undetermined_fastq}")
             os.remove(undetermined_fastq)

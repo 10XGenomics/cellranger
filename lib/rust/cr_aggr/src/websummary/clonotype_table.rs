@@ -40,7 +40,7 @@ mod tests {
                 "3",
                 "IGH:CAVSDLEPNSSASKIIF<br>IGK:CASSFSTCSANYGYTF",
                 "4",
-                "4.40%"
+                "4.4%"
             ]"#,
         );
     }
@@ -79,13 +79,13 @@ mod tests {
                             "1",
                             "IGH:CASSFSTCSANYGYTF",
                             "43",
-                            "47.25%"
+                            "47.3%"
                         ],
                         [
                             "3",
                             "IGH:CAVSDLEPNSSASKIIF<br>IGK:CASSFSTCSANYGYTF",
                             "4",
-                            "4.40%"
+                            "4.4%"
                         ]
                     ]
                 },

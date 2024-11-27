@@ -1,0 +1,415 @@
+@include "_cell_annotation_common_stages.mro"
+@include "_cr_ana_stages.mro"
+@include "_cr_lib_stages.mro"
+
+filetype csv;
+filetype h5;
+filetype html;
+filetype json;
+filetype json.gz;
+filetype png;
+filetype h5ad;
+filetype cloupe;
+filetype sring;
+filetype fload;
+
+struct CellTypes(
+    csv     cell_types,
+    json.gz cell_annotation_results,
+    html    web_summary_cell_types,
+    csv     cell_annotation_differential_expression,
+)
+
+stage GET_CLOUPE_CELL_TYPES(
+    in  csv  cell_types,
+    out json cloupe_cas_types,
+    src py   "stages/cas_cell_typing/get_cloupe_cell_types",
+) using (
+    volatile = strict,
+)
+
+stage GET_CELL_TYPES_BARCHART(
+    in  csv  cell_types,
+    out json cell_type_interactive_bar_chart,
+    src py   "stages/cas_cell_typing/get_cell_types_barchart",
+) using (
+    volatile = strict,
+)
+
+stage GET_CELL_TYPES_BOX_PLOT(
+    in  csv    cell_types,
+    in  h5     filtered_matrix,
+    in  string pipestance_type,
+    out json   cell_types_box_plot,
+    src py     "stages/cas_cell_typing/get_cell_types_box_plot",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage GET_CELL_TYPES_UMAP_PLOT(
+    in  path   analysis,
+    in  csv    cell_types,
+    in  string pipestance_type,
+    in  csv    cloupe_projection,
+    out json   cell_types_umap_plot,
+    src py     "stages/cas_cell_typing/get_cell_types_umap_plot",
+) using (
+    mem_gb   = 2,
+    volatile = strict,
+)
+
+stage EXTRACT_LOUPE_PROJECTION(
+    in  cloupe sample_cloupe,
+    in  string projection_name,
+    out csv    projection,
+    src py     "stages/cas_cell_typing/extract_loupe_projection",
+) using (
+    mem_gb   = 2,
+    volatile = strict,
+)
+
+stage ANALYZE_CELL_TYPES(
+    in  csv    cell_types,
+    in  path   analysis,
+    in  csv    tissue_positions,
+    in  png    tissue_lowres_image,
+    in  json   scale_factors,
+    in  float  cas_frac_returned_bcs     "Fraction of barcodes that went into cell annotation that were returned",
+    in  string cas_model_used,
+    in  string pipestance_type,
+    in  bool   cas_success,
+    in  bool   is_pd,
+    in  json   metadata,
+    out json   cas_metrics,
+    out json   cell_type_bar_chart,
+    out json   spatial_cell_types_chart,
+    src py     "stages/cas_cell_typing/analyze_cell_types",
+) using (
+    volatile = strict,
+)
+
+stage DISABLE_CAS_REPORTER_STAGES(
+    in  csv  cell_types,
+    out bool disable_differential_expression,
+    src py   "stages/cas_cell_typing/disable_cas_reporter_stages",
+) using (
+    volatile = strict,
+)
+
+stage APPEND_CELL_TYPES_CLOUPE(
+    in  cloupe sample_cloupe,
+    in  json   cloupe_cas_types,
+    in  string cas_track_name,
+    out cloupe cell_annotation_sample_cloupe,
+    src py     "stages/cas_cell_typing/append_cell_types_cloupe",
+)
+
+stage WRITE_CELL_TYPES_H5(
+    in  csv  cell_types,
+    out h5   cell_types,
+    out json cell_types_map,
+    src py   "stages/cas_cell_typing/write_cell_types_h5",
+)
+
+stage DEMUX_CLOUPE_TRACK_NAME(
+    in  string cas_track_name_from_user,
+    in  string cas_track_name_from_ppln,
+    out string cas_track_name,
+    src py     "stages/cas_cell_typing/demux_cloupe_track_name",
+)
+
+stage CHECK_CLOUPE_MATRIX_CONSISTENT(
+    in  cloupe sample_cloupe,
+    in  h5     filtered_matrix,
+    out string alert_string,
+    src py     "stages/cas_cell_typing/check_cloupe_matrix_consistent",
+)
+
+stage CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
+    in  h5   filtered_matrix,
+    in  bool skip_cell_annotation,
+    out bool cell_annotation_viable_but_not_requested,
+    src py   "stages/cas_cell_typing/cell_annotation_viable_but_not_requested",
+)
+
+stage TIDY_CELLTYPE_DIFFEXP(
+    in  path diffexp_csv,
+    in  json cell_types_map,
+    in  h5   filtered_matrix,
+    out csv  cas_diffexp_csv,
+    out json diffexp,
+    src py   "stages/cas_cell_typing/tidy_celltype_diffexp",
+)
+
+pipeline CELL_TYPE_DIFF_EXP(
+    in  csv  cell_types,
+    in  h5   filtered_matrix,
+    out json diffexp,
+    out csv  cas_diffexp_csv,
+)
+{
+    call WRITE_CELL_TYPES_H5(
+        cell_types = self.cell_types,
+    )
+
+    call RUN_DIFFERENTIAL_EXPRESSION_NG as DIFF_EXP_CAS(
+        matrix_h5        = self.filtered_matrix,
+        clustering_h5    = WRITE_CELL_TYPES_H5.cell_types,
+        is_antibody_only = false,
+    )
+
+    call TIDY_CELLTYPE_DIFFEXP(
+        diffexp_csv     = DIFF_EXP_CAS.diffexp_csv,
+        cell_types_map  = WRITE_CELL_TYPES_H5.cell_types_map,
+        filtered_matrix = self.filtered_matrix,
+    )
+
+    return (
+        * = TIDY_CELLTYPE_DIFFEXP,
+    )
+}
+
+pipeline SUMMARIZE_CELL_TYPES(
+    in  h5              filtered_matrix,
+    in  CellTypeResults cell_type_results,
+    in  path            analysis,
+    in  csv             tissue_positions,
+    in  png             tissue_lowres_image,
+    in  json            scale_factors,
+    in  string          pipestance_type,
+    in  bool            cas_success,
+    in  bool            is_pd,
+    in  csv             cloupe_projection,
+    out json            cas_metrics,
+    out json            cloupe_cas_types,
+    out json            cell_type_bar_chart,
+    out json            spatial_cell_types_chart,
+    out json            cell_type_interactive_bar_chart,
+    out json            cell_types_box_plot,
+    out json            cell_types_umap_plot,
+    out csv             cas_diffexp_csv,
+    out json            diffexp,
+    out bool            disable_differential_expression,
+)
+{
+    call DISABLE_CAS_REPORTER_STAGES(
+        cell_types = self.cell_type_results.cell_types,
+    )
+
+    call GET_CELL_TYPES_BARCHART(
+        cell_types = self.cell_type_results.cell_types,
+    )
+
+    call GET_CELL_TYPES_BOX_PLOT(
+        cell_types      = self.cell_type_results.cell_types,
+        filtered_matrix = self.filtered_matrix,
+        pipestance_type = self.pipestance_type,
+    )
+
+    call GET_CELL_TYPES_UMAP_PLOT(
+        analysis          = self.analysis,
+        cell_types        = self.cell_type_results.cell_types,
+        pipestance_type   = self.pipestance_type,
+        cloupe_projection = self.cloupe_projection,
+    )
+
+    call ANALYZE_CELL_TYPES(
+        cell_types            = self.cell_type_results.cell_types,
+        cas_frac_returned_bcs = self.cell_type_results.frac_returned_bcs,
+        analysis              = self.analysis,
+        tissue_positions      = self.tissue_positions,
+        tissue_lowres_image   = self.tissue_lowres_image,
+        scale_factors         = self.scale_factors,
+        cas_model_used        = self.cell_type_results.model_used,
+        pipestance_type       = self.pipestance_type,
+        cas_success           = self.cas_success,
+        metadata              = self.cell_type_results.metadata,
+        is_pd                 = self.is_pd,
+    )
+
+    call GET_CLOUPE_CELL_TYPES(
+        cell_types = self.cell_type_results.cell_types,
+    )
+
+    call CELL_TYPE_DIFF_EXP(
+        cell_types      = self.cell_type_results.cell_types,
+        filtered_matrix = self.filtered_matrix,
+    ) using (
+        disabled = DISABLE_CAS_REPORTER_STAGES.disable_differential_expression,
+    )
+
+    return (
+        cas_metrics              = ANALYZE_CELL_TYPES.cas_metrics,
+        cloupe_cas_types         = GET_CLOUPE_CELL_TYPES.cloupe_cas_types,
+        cell_type_bar_chart      = ANALYZE_CELL_TYPES.cell_type_bar_chart,
+        spatial_cell_types_chart = ANALYZE_CELL_TYPES.spatial_cell_types_chart,
+        cell_type_interactive_bar_chart = GET_CELL_TYPES_BARCHART.cell_type_interactive_bar_chart,
+        cell_types_box_plot      = GET_CELL_TYPES_BOX_PLOT.cell_types_box_plot,
+        cell_types_umap_plot     = GET_CELL_TYPES_UMAP_PLOT.cell_types_umap_plot,
+        diffexp                  = CELL_TYPE_DIFF_EXP.diffexp,
+        cas_diffexp_csv          = CELL_TYPE_DIFF_EXP.cas_diffexp_csv,
+        disable_differential_expression = DISABLE_CAS_REPORTER_STAGES.disable_differential_expression,
+    )
+}
+
+pipeline CELL_ANNOTATION_SERVICE(
+    in  h5        filtered_matrix,
+    in  path      analysis,
+    in  string    sample_id,
+    in  string    sample_desc,
+    in  csv       tissue_positions,
+    in  png       tissue_lowres_image,
+    in  json      scale_factors,
+    in  string    cell_annotation_model,
+    in  string    tenx_cloud_token_path,
+    in  string    pipestance_type,
+    in  string    alert_string,
+    in  bool      is_pd,
+    in  csv       cloupe_projection,
+    in  cloupe    sample_cloupe,
+    out CellTypes cell_types,
+    out json      cas_metrics,
+    out json      cloupe_cas_types,
+    out json      cell_type_bar_chart,
+    out json      spatial_cell_types_chart,
+    out json      cell_type_interactive_bar_chart,
+    out json      cell_types_box_plot,
+    out json      cell_types_umap_plot,
+    out json      cell_annotation_metrics,
+    out json      diffexp,
+    out string    cell_annotation_cloupe_name,
+    out bool      disable_summarize,
+)
+{
+    call CALL_CLOUD_CELL_TYPES(
+        override_num_bc_limit = false,
+        *                     = self,
+    )
+
+    call SUMMARIZE_CELL_TYPES(
+        filtered_matrix     = self.filtered_matrix,
+        cell_type_results   = CALL_CLOUD_CELL_TYPES.cell_type_results,
+        analysis            = self.analysis,
+        tissue_positions    = self.tissue_positions,
+        tissue_lowres_image = self.tissue_lowres_image,
+        scale_factors       = self.scale_factors,
+        pipestance_type     = self.pipestance_type,
+        cas_success         = CALL_CLOUD_CELL_TYPES.cas_success,
+        is_pd               = self.is_pd,
+        cloupe_projection   = self.cloupe_projection,
+    ) using (
+        disabled = CALL_CLOUD_CELL_TYPES.disable_summarize,
+    )
+
+    call GENERATE_CAS_WEBSUMMARY(
+        sample_id                = self.sample_id,
+        sample_desc              = self.sample_desc,
+        alert_string             = self.alert_string,
+        cas_frac_returned_bcs    = CALL_CLOUD_CELL_TYPES.cell_type_results.frac_returned_bcs,
+        cell_annotation_model    = CALL_CLOUD_CELL_TYPES.cell_type_results.model_used,
+        cell_type_bar_chart      = SUMMARIZE_CELL_TYPES.cell_type_bar_chart,
+        diffexp                  = SUMMARIZE_CELL_TYPES.diffexp,
+        spatial_cell_types_chart = SUMMARIZE_CELL_TYPES.spatial_cell_types_chart,
+        cell_type_interactive_bar_chart = SUMMARIZE_CELL_TYPES.cell_type_interactive_bar_chart,
+        cell_types_box_plot      = SUMMARIZE_CELL_TYPES.cell_types_box_plot,
+        cell_types_umap_plot     = SUMMARIZE_CELL_TYPES.cell_types_umap_plot,
+        metadata                 = CALL_CLOUD_CELL_TYPES.cell_type_results.metadata,
+        cas_success              = CALL_CLOUD_CELL_TYPES.cas_success,
+        disable_cas_ws           = CALL_CLOUD_CELL_TYPES.disable_cas_ws,
+        disable_differential_expression = SUMMARIZE_CELL_TYPES.disable_differential_expression,
+        pipestance_type          = self.pipestance_type,
+    ) using (
+        disabled = CALL_CLOUD_CELL_TYPES.disable_summarize,
+    )
+
+    return (
+        cell_types                  = {
+            cell_annotation_differential_expression: SUMMARIZE_CELL_TYPES.cas_diffexp_csv,
+            cell_annotation_results:                 CALL_CLOUD_CELL_TYPES.cell_type_results.results,
+            cell_types:                              CALL_CLOUD_CELL_TYPES.cell_type_results.cell_types,
+            web_summary_cell_types:                  GENERATE_CAS_WEBSUMMARY.summary,
+        },
+        cell_annotation_metrics     = GENERATE_CAS_WEBSUMMARY.cell_annotation_metrics,
+        cell_annotation_cloupe_name = GENERATE_CAS_WEBSUMMARY.cell_annotation_cloupe_name,
+        disable_summarize           = CALL_CLOUD_CELL_TYPES.disable_summarize,
+        *                           = SUMMARIZE_CELL_TYPES,
+    )
+}
+
+pipeline CELLRANGER_ANNOTATE_CS(
+    in  h5      filtered_matrix,
+    in  string  tenx_cloud_token_path,
+    in  string  sample_id,
+    in  string  sample_desc,
+    in  string  cell_annotation_model,
+    in  cloupe  sample_cloupe,
+    in  string  cas_track_name,
+    out csv     cell_types,
+    out json.gz cell_annotation_results,
+    out html    web_summary_cell_types,
+    out csv     cell_annotation_differential_expression,
+    out cloupe  cell_annotation_sample_cloupe,
+)
+{
+    call CELL_ANNOTATION_PREFLIGHT(
+        is_cr_annotate              = true,
+        is_multi                    = false,
+        tenx_cloud_token_path       = self.tenx_cloud_token_path,
+        cell_annotation_model       = self.cell_annotation_model,
+        cas_track_name              = self.cas_track_name,
+        reference_path              = null,
+        cr_annotate_filtered_matrix = self.filtered_matrix,
+        cr_annotate_sample_cloupe   = self.sample_cloupe,
+        skip_cell_annotation        = false,
+    ) using (
+        preflight = true,
+    )
+
+    call CHECK_CLOUPE_MATRIX_CONSISTENT(
+        * = self,
+    )
+
+    call EXTRACT_LOUPE_PROJECTION(
+        sample_cloupe   = self.sample_cloupe,
+        projection_name = "umap",
+    )
+
+    call CELL_ANNOTATION_SERVICE(
+        filtered_matrix       = self.filtered_matrix,
+        analysis              = null,
+        sample_id             = self.sample_id,
+        sample_desc           = self.sample_desc,
+        tissue_positions      = null,
+        tissue_lowres_image   = null,
+        scale_factors         = null,
+        cell_annotation_model = self.cell_annotation_model,
+        tenx_cloud_token_path = self.tenx_cloud_token_path,
+        pipestance_type       = "CELLRANGER_ANNOTATE_CS",
+        alert_string          = CHECK_CLOUPE_MATRIX_CONSISTENT.alert_string,
+        is_pd                 = false,
+        cloupe_projection     = EXTRACT_LOUPE_PROJECTION.projection,
+        sample_cloupe         = self.sample_cloupe,
+    )
+
+    call DEMUX_CLOUPE_TRACK_NAME(
+        cas_track_name_from_user = self.cas_track_name,
+        cas_track_name_from_ppln = CELL_ANNOTATION_SERVICE.cell_annotation_cloupe_name,
+    )
+
+    call APPEND_CELL_TYPES_CLOUPE(
+        sample_cloupe    = self.sample_cloupe,
+        cloupe_cas_types = CELL_ANNOTATION_SERVICE.cloupe_cas_types,
+        cas_track_name   = DEMUX_CLOUPE_TRACK_NAME.cas_track_name,
+    ) using (
+        disabled = CELL_ANNOTATION_SERVICE.disable_summarize,
+    )
+
+    return (
+        cell_types                    = CELL_ANNOTATION_SERVICE.cell_types.cell_types,
+        cell_annotation_results       = CELL_ANNOTATION_SERVICE.cell_types.cell_annotation_results,
+        cell_annotation_differential_expression = CELL_ANNOTATION_SERVICE.cell_types.cell_annotation_differential_expression,
+        web_summary_cell_types        = CELL_ANNOTATION_SERVICE.cell_types.web_summary_cell_types,
+        cell_annotation_sample_cloupe = APPEND_CELL_TYPES_CLOUPE.cell_annotation_sample_cloupe,
+    )
+}

@@ -1,5 +1,5 @@
 use crate::{TermDesc, TitleWithTermDesc};
-use cr_types::CellMultiplexingType;
+use cr_types::{BarcodeMultiplexingType, CellLevel, ReadLevel};
 use serde::Serialize;
 
 #[derive(Serialize, Clone)]
@@ -15,7 +15,7 @@ impl SvgGraph {
     pub fn new(
         svg_string: String,
         sample_node: String,
-        multiplexing_method: Option<CellMultiplexingType>,
+        multiplexing_method: Option<BarcodeMultiplexingType>,
     ) -> Self {
         let mut data = vec![TermDesc::with_one_desc(
             "Samples",
@@ -23,16 +23,22 @@ impl SvgGraph {
 			this analysis. There will be only one sample in a non-multiplexed analysis.",
         )];
         if let Some(multiplexing_method) = multiplexing_method {
-            if multiplexing_method == CellMultiplexingType::RTL {
+            if multiplexing_method == BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL) {
                 data.push(TermDesc::with_one_desc(
                     "Probe Barcode IDs",
                     "The probe barcodes used in \
                     this experiment.",
                 ));
-            } else if multiplexing_method == CellMultiplexingType::OH {
+            } else if multiplexing_method == BarcodeMultiplexingType::ReadLevel(ReadLevel::OH) {
                 data.push(TermDesc::with_one_desc(
-                    "Overhang IDs",
-                    "The overhangs used in this experiment.",
+                    "OCM Barcode IDs",
+                    "The OCM barcode IDs used in this experiment.",
+                ));
+            } else if multiplexing_method == BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag)
+            {
+                data.push(TermDesc::with_one_desc(
+                    "Hashtags",
+                    "The antibody features used for cell hashing in this experiment.",
                 ));
             } else {
                 data.push(TermDesc::with_one_desc(

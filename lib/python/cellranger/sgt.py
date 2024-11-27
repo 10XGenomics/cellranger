@@ -51,11 +51,14 @@ def simple_good_turing(xr: np.ndarray, xnr: np.ndarray):
     xnrz = _averaging_transform(xr, xnr)
     slope, _, _, _, _ = sp_stats.linregress(np.log(xr), np.log(xnrz))
 
-    if slope > -1:
-        raise SimpleGoodTuringError(
-            "The log-log slope is > -1 (%d); the SGT estimator is not applicable to these data."
-            % slope
-        )
+    if slope < -1:
+        print(f"The SGT slope is {slope}.")
+    else:
+        # The Simple Good-Turing (SGT) method is not applicable when its slope is larger than -1,
+        # in which case use a slope of -1, which results in r* = r, and which is the MLE.
+        # Use Turing estimates at low frequencies, and switch to MLE estimates for higher frequencies.
+        slope = -1
+        print("The SGT slope {slope} is > -1. The SGT estimator is not applicable to these data.")
 
     xrst = _rstest(xr, slope)
     xrstrel = xrst / xr
@@ -78,12 +81,11 @@ def simple_good_turing(xr: np.ndarray, xnr: np.ndarray):
     for r in range(len(xr)):
         if not useturing:
             xrstcmbrel[r] = xrstrel[r]
+        elif np.abs(xrstrel[r] - xrstarel[r]) * (1 + r) / tursd[r] > 1.65:
+            xrstcmbrel[r] = xrstarel[r]
         else:
-            if np.abs(xrstrel[r] - xrstarel[r]) * (1 + r) / tursd[r] > 1.65:
-                xrstcmbrel[r] = xrstarel[r]
-            else:
-                useturing = False
-                xrstcmbrel[r] = xrstrel[r]
+            useturing = False
+            xrstcmbrel[r] = xrstrel[r]
 
     # Renormalize the probabilities for observed objects
     sumpraw = np.sum(xrstcmbrel * xr * xnr / xN)

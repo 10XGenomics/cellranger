@@ -1,7 +1,7 @@
 use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
 use anyhow::Result;
-use barcode::{BarcodeConstruct, BcSegSeq, Whitelist, WhitelistSpec};
+use barcode::{BarcodeConstruct, BcSegSeq, Whitelist, WhitelistSource, WhitelistSpec};
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use fastq_set::read_pair::{ReadPair, ReadPart, RpRange};
 use itertools::Itertools;
@@ -40,6 +40,7 @@ impl<'a> WhitelistMatchFilter<'a> {
             .iter()
             .map(|def| (def.name, index_map[&def.barcode_whitelist()]))
             .collect();
+
         Ok(WhitelistMatchFilter {
             allowed_chems,
             chem_defs,
@@ -155,7 +156,14 @@ pub struct WhitelistMatcher {
 impl WhitelistMatcher {
     pub fn new(barcode_whitelist: BarcodeConstruct<&WhitelistSpec>) -> Result<Self> {
         Ok(WhitelistMatcher {
-            whitelist: Whitelist::construct(barcode_whitelist, false)?,
+            // Load this whitelist as a "plain" whitelist, regardless of type.
+            //
+            // This is sufficient for checking membership in the whitelist, but neglects
+            // all translation information. Using this method instead of as_whitelist
+            // reduces memory consumption since we are working in a context where
+            // we only care about matching to the whitelist, but not using translation.
+            whitelist: WhitelistSource::construct(barcode_whitelist)?
+                .map_result(|source| Ok(Whitelist::Plain(source.as_set()?)))?,
         })
     }
 
@@ -177,18 +185,12 @@ impl WhitelistMatcher {
         stats
     }
 
-    pub fn match_to_whitelist(
-        &self,
-        seqs: BarcodeConstruct<&[u8]>,
-    ) -> Option<BarcodeConstruct<BcSegSeq>> {
-        self.whitelist
-            .as_ref()
-            .zip(seqs)
-            .map_option(|(wl, seq)| wl.match_to_whitelist(BcSegSeq::from_bytes(seq)))
-    }
-
     fn contains(&self, sseq: BarcodeConstruct<&[u8]>) -> bool {
         // NOTE: This is robust to a single N cycle
-        self.match_to_whitelist(sseq).is_some()
+        self.whitelist
+            .as_ref()
+            .zip(sseq)
+            .map_option(|(wl, seq)| wl.match_to_whitelist(BcSegSeq::from_bytes(seq), false))
+            .is_some()
     }
 }

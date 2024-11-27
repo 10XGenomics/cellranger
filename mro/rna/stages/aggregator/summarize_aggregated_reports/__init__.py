@@ -9,6 +9,7 @@ import cellranger.constants as cr_constants
 import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
 import cellranger.websummary.sample_properties as wsp
+from cellranger.analysis.singlegenome import TSNE_NAME, UMAP_NAME
 from cellranger.websummary.aggr_websummary_builder import (
     build_web_summary_data_aggr,
     build_web_summary_html_aggr,
@@ -29,6 +30,7 @@ stage SUMMARIZE_AGGREGATED_REPORTS(
     in  json   antibody_treemap,
     in  json   crispr_analysis_metrics,
     in  string product_type,
+    in  bool   skip_tsne,
     out json   summary,
     out html   web_summary,
     out json   web_summary_data,
@@ -92,12 +94,15 @@ def join(args, outs, _chunk_defs, _chunk_outs):
     # Call the websummary builder.
     gg_id_to_name = {int(id): name[0] for id, name in args.gem_group_index.items()}
 
+    projection = UMAP_NAME if args.skip_tsne else TSNE_NAME
+
     build_web_summary_html_aggr(
         filename=outs.web_summary,
         sample_properties=sample_properties,
         gg_id_to_name_map=gg_id_to_name,
         sample_data_paths=sample_data_paths,
         sample_defs=args.sample_defs,
+        projection=projection,
     )
 
     # Do it again because ReactComponentEncoder transforms and deletes data while encoding
@@ -106,6 +111,7 @@ def join(args, outs, _chunk_defs, _chunk_outs):
         gg_id_to_name_map=gg_id_to_name,
         sample_data_paths=sample_data_paths,
         sample_defs=args.sample_defs,
+        projection=projection,
     )
     with open(outs.web_summary_data, "w") as f:
         json.dump(ws_data, f, indent=4, cls=ReactComponentEncoder)

@@ -50,12 +50,12 @@ where
 ///
 /// # Panics
 /// - If any of the numbers is <=0. This likely points to a bug in the caller code,
-/// since one should not be attempting to compute N50 of a list of non-positive
-/// numbers. Hence decided on a panic over returning a Result.
+///   since one should not be attempting to compute N50 of a list of non-positive
+///   numbers. Hence decided on a panic over returning a Result.
 ///
 /// # Warning
 /// - It is implicitly assumed that the sum of all the elements will
-/// fit within an f64.
+///   fit within an f64.
 ///
 /// # Example
 /// ```rust
@@ -86,12 +86,12 @@ where
 ///
 /// # Panics
 /// - If any of the numbers is <=0. This likely points to a bug in the caller code,
-/// since one should not be attempting to compute N90 of a list of non-positive
-/// numbers. Hence decided on a panic over returning a Result.
+///   since one should not be attempting to compute N90 of a list of non-positive
+///   numbers. Hence decided on a panic over returning a Result.
 ///
 /// # Warning
 /// - It is implicitly assumed that the sum of all the elements will
-/// fit within an f64.
+///   fit within an f64.
 ///
 /// # Example
 /// ```rust

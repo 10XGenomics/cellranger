@@ -147,8 +147,8 @@ fn process_multi_libraries(
             disable_vdj_aggr = false;
             // Check if meta contains origin and donor
             let mut vdj_meta = mlib.meta.clone();
-            let donor = vdj_meta.remove(&DONOR_HEADER.to_string());
-            let origin = vdj_meta.remove(&ORIGIN_HEADER.to_string());
+            let donor = vdj_meta.remove(DONOR_HEADER);
+            let origin = vdj_meta.remove(ORIGIN_HEADER);
             if donor.is_none() || origin.is_none() {
                 return Err(ParseAggrCsvErrors::ErrorParsingMultiVdjSample {
                     sample_id: mlib.sample_id.clone(),
@@ -183,8 +183,8 @@ fn process_multi_libraries(
             disable_vdj_aggr = false;
             // Check if meta contains origin and donor
             let mut vdj_meta = mlib.meta.clone();
-            let donor = vdj_meta.remove(&DONOR_HEADER.to_string());
-            let origin = vdj_meta.remove(&ORIGIN_HEADER.to_string());
+            let donor = vdj_meta.remove(DONOR_HEADER);
+            let origin = vdj_meta.remove(ORIGIN_HEADER);
             if donor.is_none() || origin.is_none() {
                 return Err(ParseAggrCsvErrors::ErrorParsingMultiVdjSample {
                     sample_id: mlib.sample_id.clone(),
@@ -758,6 +758,7 @@ impl MartianMain for ParseAggrCsv {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::{assert_debug_snapshot, assert_json_snapshot, assert_snapshot};
     use martian_filetypes::json_file::JsonFile;
     use martian_filetypes::tabular_file::CsvFile;
     use martian_filetypes::FileTypeRead;
@@ -776,7 +777,7 @@ mod tests {
     fn test_roundtrip_and_representation(input: &str) -> Result<()> {
         let input_file = JsonFile::from(input);
         let sample_defs: Vec<CountLibrary> = input_file.read()?;
-        insta::assert_debug_snapshot!(sample_defs);
+        assert_debug_snapshot!(sample_defs);
         let out = serde_json::to_string(&sample_defs)?;
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&out)?,
@@ -1726,7 +1727,7 @@ mod tests {
         // Settings for insta to force sorting of maps
         let mut settings = insta::Settings::clone_current();
         settings.set_sort_maps(true);
-        settings.bind(|| insta::assert_json_snapshot!(parser.build_sample_def(row).unwrap()));
+        settings.bind(|| assert_json_snapshot!(parser.build_sample_def(row).unwrap()));
     }
 
     #[test]
@@ -1830,7 +1831,7 @@ mod tests {
 
     #[test]
     fn test_text_field_validation() {
-        insta::assert_display_snapshot!(validate_text_value("Hello>world").unwrap_err());
+        assert_snapshot!(validate_text_value("Hello>world").unwrap_err());
         assert_eq!(validate_text_value("hEllO_123").unwrap(), "hEllO_123");
         assert!(validate_text_value("hE`llO{}123").is_err());
     }

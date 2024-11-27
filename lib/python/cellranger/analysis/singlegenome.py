@@ -8,6 +8,7 @@ from __future__ import annotations
 import os.path
 import re
 from collections.abc import Sequence
+from typing import TypeAlias
 
 import h5py as h5
 import numpy as np
@@ -35,6 +36,9 @@ COMPONENTS = {
 
 TSNE_NAME = "tsne"
 UMAP_NAME = "umap"
+PROJECTION_TITLE = {TSNE_NAME: "t-SNE", UMAP_NAME: "UMAP"}
+
+Projection: TypeAlias = str
 
 
 class SingleGenomeAnalysis:
@@ -71,7 +75,6 @@ class SingleGenomeAnalysis:
         self.n_umap_components = analysis_constants.UMAP_N_COMPONENTS
         self.umap_min_dist = analysis_constants.UMAP_MIN_DIST
         self.umap_n_neighbors = analysis_constants.UMAP_DEFAULT_N_NEIGHBORS
-        #
         self.dr_bcs = matrix.bcs_dim
         self.dr_features = matrix.features_dim
 
@@ -314,18 +317,9 @@ class SingleGenomeAnalysis:
             )
 
     @staticmethod
-    def load_bcs_from_matrix_h5(filename):
-        """Load just the barcodes from a matrix h5."""
-        with h5.File(ensure_binary(filename), "r") as f:
-            # Take the first group, assuming a single-genome matrix
-            # TODO: fixme when we have a single matrix group
-            group_name = next(iter(f.keys()))
-            return cr_matrix.CountMatrix.load_bcs_from_h5_group(f[group_name])
-
-    @staticmethod
-    def load_default_format(base_dir, method):
+    def load_default_format(base_dir, *, method, projections: Sequence[Projection]):
         h5_file_path = analysis_io.h5_path(base_dir)
         if os.path.exists(h5_file_path):
-            return SingleGenomeAnalysis.load_h5(h5_file_path, method)
+            return SingleGenomeAnalysis.load_h5(h5_file_path, method, projections)
         else:
             return None

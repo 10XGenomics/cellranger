@@ -481,7 +481,6 @@ pub fn library_type_requires_feature_ref(library_type: &str) -> bool {
 mod tests {
     use super::*;
     use crate::reference::feature_checker::compute_feature_dist;
-    use crate::reference::reference_info::ReferenceInfo;
     use crate::types::{FeatureBarcodeType, GenomeName, LibraryType};
     use arrayvec::ArrayVec;
     use barcode::BarcodeConstruct::GelBeadOnly;
@@ -491,7 +490,6 @@ mod tests {
     use fastq_set::Record;
     use std::fs::File;
     use std::io::{BufReader, Cursor, Write};
-    use transcriptome::Transcriptome;
     use umi::Umi;
 
     // helper function for checking corrections
@@ -522,7 +520,7 @@ mod tests {
         }
         let read = RnaRead {
             read: ReadPair::new([Some(Rec { seq, qual }), Some(Rec { seq, qual }), None, None]),
-            barcode: SegmentedBarcode::gel_bead_only(0, b"A", NotChecked),
+            segmented_barcode: SegmentedBarcode::gel_bead_only(0, b"A", NotChecked),
             umi: Umi::new(b"A"),
             bc_range: GelBeadOnly(RpRange::new(WhichRead::R1, 0, None)),
             umi_parts: ArrayVec::new(),
@@ -538,16 +536,8 @@ mod tests {
     fn test_load_feature_ref() -> Result<()> {
         let fdf_path = "test/feature/citeseq.csv";
         let rdr = BufReader::new(File::open(fdf_path).unwrap());
-        let fref = FeatureReference::new(
-            &ReferenceInfo::default(),
-            &Transcriptome::dummy(),
-            Some(rdr),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let fref =
+            FeatureReference::new(&[], None, Some(rdr), None, None, None, None, None).unwrap();
         let _fextr = FeatureExtractor::new(
             Arc::new(fref),
             Some(&[FeatureType::Barcode(FeatureBarcodeType::Antibody)].into()),
@@ -561,15 +551,7 @@ mod tests {
     fn test_bad_feature_ref() -> Result<()> {
         let fdf_path = "test/feature/CRISPR_lib.v5.500.csv";
         let rdr = BufReader::new(File::open(fdf_path)?);
-        let fref = FeatureReference::new(
-            &ReferenceInfo::default(),
-            &Transcriptome::dummy(),
-            Some(rdr),
-            None,
-            None,
-            None,
-            None,
-        )?;
+        let fref = FeatureReference::new(&[], None, Some(rdr), None, None, None, None, None)?;
         let fextr = FeatureExtractor::new(
             Arc::new(fref),
             Some(&[FeatureType::Barcode(FeatureBarcodeType::Crispr)].into()),
@@ -643,12 +625,11 @@ ID1,Name1,R1,(BC),ACGT,Antibody Capture
 ID2,Name2,R1,(BC),ACCT,Antibody Capture
 ID3,Name3,R1,(BC),TTTT,Antibody Capture
 "#;
-        let ref_info = ReferenceInfo::default();
-        let txome = Transcriptome::dummy();
         let fref = FeatureReference::new(
-            &ref_info,
-            &txome,
+            &[],
+            None,
             Some(Cursor::new(fdf_csv.as_bytes())),
+            None,
             None,
             None,
             None,
@@ -716,12 +697,11 @@ ID4,Name1,R1,^(BC),TT,Custom
 ID5,Name1,R1,^(BC),TT,Custom
 ID6,Name1,R1,^(BC),TT,Custom
 "#;
-        let ref_info = ReferenceInfo::default();
-        let txome = Transcriptome::dummy();
         let fref = FeatureReference::new(
-            &ref_info,
-            &txome,
+            &[],
+            None,
             Some(Cursor::new(fdf_csv.as_bytes())),
+            None,
             None,
             None,
             None,
@@ -752,12 +732,11 @@ ID8,N,R1,^(BC),ATAA,Custom
 ID9,N,R1,^(BC),TAAA,Custom
 "#;
 
-        let ref_info = ReferenceInfo::default();
-        let txome = Transcriptome::dummy();
         let fref = FeatureReference::new(
-            &ref_info,
-            &txome,
+            &[],
+            None,
             Some(Cursor::new(fdf_csv.as_bytes())),
+            None,
             None,
             None,
             None,

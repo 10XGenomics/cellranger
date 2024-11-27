@@ -81,7 +81,6 @@ fn main() -> Result<()> {
         cr_aggr::merge_molecules::MergeMolecules,
         cr_aggr::process_vdj_proto::ProcessVdjProto,
         cr_aggr::setup_vdj_aggr::SetupVdjAggr,
-        cr_aggr::run_enclone_aggr::RunEncloneAggr,
         cr_aggr::parse_aggr_csv::ParseAggrCsv,
         cr_aggr::write_contig_proto::WriteContigProto,
         cr_aggr::match_vdj_outs::MatchVdjOuts,

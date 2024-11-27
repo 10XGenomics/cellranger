@@ -54,18 +54,15 @@ def is_whitelist_spatial(whitelist_name: str):
 
 
 @overload
-def load_barcode_tsv(filename: str | bytes, as_set: Literal[False] = False) -> list[bytes]:
-    ...
+def load_barcode_tsv(filename: str | bytes, as_set: Literal[False] = False) -> list[bytes]: ...
 
 
 @overload
-def load_barcode_tsv(filename: str | bytes, as_set: Literal[True] = ...) -> set[bytes]:
-    ...
+def load_barcode_tsv(filename: str | bytes, as_set: Literal[True] = ...) -> set[bytes]: ...
 
 
 @overload
-def load_barcode_tsv(filename: str | bytes, as_set: bool = False) -> set[bytes] | list[bytes]:
-    ...
+def load_barcode_tsv(filename: str | bytes, as_set: bool = False) -> set[bytes] | list[bytes]: ...
 
 
 def load_barcode_tsv(filename: str | bytes, as_set=False) -> set[bytes] | list[bytes]:
@@ -79,27 +76,29 @@ def load_barcode_tsv(filename: str | bytes, as_set=False) -> set[bytes] | list[b
 
 
 @overload
-def get_barcode_whitelist_path(filename: None) -> None:
-    ...
+def get_barcode_whitelist_path(filename: None, translation: bool = False) -> None: ...
 
 
 @overload
-def get_barcode_whitelist_path(filename: str) -> str:
-    ...
+def get_barcode_whitelist_path(filename: str, translation: bool = False) -> str: ...
 
 
-def get_barcode_whitelist_path(filename: str | None) -> str | None:
+def get_barcode_whitelist_path(filename: str | None, translation: bool = False) -> str | None:
     # Look for exact path, .txt.gz, or .txt
     if filename is None:
         return None
     elif os.path.exists(filename):
         return filename
     else:
-        gz = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, filename + ".txt.gz")
+        rootdir = cr_constants.BARCODE_WHITELIST_PATH
+        if translation:
+            rootdir = os.path.join(rootdir, "translation")
+
+        gz = os.path.join(rootdir, filename + ".txt.gz")
         if os.path.exists(gz):
             return gz
 
-        txt = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, filename + ".txt")
+        txt = os.path.join(rootdir, filename + ".txt")
         return txt
 
 
@@ -130,65 +129,41 @@ def get_barcode_whitelist_paths(filenames: str):
     return ",".join([get_barcode_whitelist_path(p) for p in paths])
 
 
-@overload
-def load_barcode_whitelist(filename: None, as_set=False) -> None:
-    ...
+class WhitelistNotFound(Exception):
+    """Raised when a named whitelist is not found."""
 
 
 @overload
-def load_barcode_whitelist(filename: str, as_set: Literal[False] = False) -> list[bytes]:
-    ...
+def load_barcode_whitelist(filename: None, as_set=False) -> None: ...
 
 
 @overload
-def load_barcode_whitelist(filename: str, as_set: Literal[True]) -> set[bytes]:
-    ...
+def load_barcode_whitelist(
+    filename: str, as_set: Literal[False] = False, translation: bool = False
+) -> list[bytes]: ...
 
 
 @overload
-def load_barcode_whitelist(filename: str, as_set: bool) -> set[bytes] | list[bytes]:
-    ...
+def load_barcode_whitelist(
+    filename: str, as_set: Literal[True], translation: bool = False
+) -> set[bytes]: ...
 
 
-def load_barcode_whitelist(filename: str | None, as_set: bool = False):
-    path = get_barcode_whitelist_path(filename)
+@overload
+def load_barcode_whitelist(
+    filename: str, as_set: bool, translation: bool
+) -> set[bytes] | list[bytes]: ...
+
+
+def load_barcode_whitelist(filename: str | None, as_set: bool = False, translation: bool = False):
+    path = get_barcode_whitelist_path(filename, translation)
 
     if path is None:
         return None
     if not os.path.isfile(path):
-        raise NameError("Unable to find barcode whitelist: %s" % path)
+        raise WhitelistNotFound(f"Unable to find barcode whitelist: {path}")
 
     return load_barcode_tsv(path, as_set)
-
-
-def load_barcode_translate_map(bc_whitelist: str | None):
-    """Guide BC to Cell BC translate.
-
-    If the barcode whitelist needs to translate, return the mapping dictionary,
-    else, return None.
-    """
-    if bc_whitelist is None:
-        return None
-
-    file_path = None
-    for extension in [".txt", ".txt.gz"]:
-        file_ext = os.path.join(
-            cr_constants.BARCODE_WHITELIST_TRANSLATE_PATH, bc_whitelist + extension
-        )
-        if os.path.exists(file_ext):
-            file_path = file_ext
-            break
-
-    if file_path is None:
-        return None
-    else:
-        translate_map: dict[str, str] = {}
-        for line in cr_io.open_maybe_gzip(file_path, "r"):
-            if line.startswith("#"):
-                continue
-            bcs = line.strip().split()
-            translate_map[bcs[0]] = bcs[1]
-        return translate_map
 
 
 def load_probe_barcode_map(

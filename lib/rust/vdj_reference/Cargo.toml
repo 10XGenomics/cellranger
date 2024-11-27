@@ -1,12 +1,15 @@
 [dependencies]
-bio = '1'
-fxhash = '0.2'
-
 [dependencies.anyhow]
+workspace = true
+
+[dependencies.bio]
 workspace = true
 
 [dependencies.byteseq]
 path = '../byteseq'
+
+[dependencies.fxhash]
+workspace = true
 
 [dependencies.itertools]
 workspace = true
@@ -30,7 +33,7 @@ workspace = true
 workspace = true
 
 [dependencies.vdj_types]
-workspace = true
+path = '../vdj_types'
 
 [lib]
 test = false

@@ -22,7 +22,7 @@ def load_mtx(mtx_dir):
     if os.path.exists(v3_fn):
         return from_v3_mtx(mtx_dir)
 
-    raise OSError("Not a valid path to a feature-barcode mtx directory: '%s'" % str(mtx_dir))
+    raise OSError(f"Not a valid path to a feature-barcode mtx directory: '{mtx_dir!s}'")
 
 
 def save_dense_csv(mat: CountMatrix, filename):
@@ -41,7 +41,7 @@ def from_legacy_mtx(genome_dir):
     matrix_mtx = ensure_binary(os.path.join(genome_dir, "matrix.mtx"))
     for filepath in [barcodes_tsv, genes_tsv, matrix_mtx]:
         if not os.path.exists(filepath):
-            raise OSError("Required file not found: %s" % filepath)
+            raise OSError(f"Required file not found: {filepath}")
     barcodes = pd.read_csv(
         barcodes_tsv.encode(),
         delimiter="\t",

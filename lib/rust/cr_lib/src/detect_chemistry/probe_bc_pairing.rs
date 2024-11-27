@@ -5,7 +5,9 @@ use crate::barcode_overlap::{
     ProbeBarcodeGelBeadGrouper,
 };
 use anyhow::Result;
-use barcode::whitelist::{categorize_multiplexing_barcode_id, BarcodeId, MultiplexingBarcodeType};
+use barcode::whitelist::{
+    categorize_rtl_multiplexing_barcode_id, BarcodeId, RTLMultiplexingBarcodeType,
+};
 use barcode::{BarcodeConstruct, BcSegSeq, WhitelistSource};
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::LibraryType;
@@ -39,7 +41,7 @@ pub fn detect_probe_barcode_pairing(
         .map(|(library_type, chemistry_def)| {
             anyhow::Ok((
                 library_type,
-                WhitelistSource::construct(chemistry_def.barcode_whitelist(), false)?,
+                WhitelistSource::construct(chemistry_def.barcode_whitelist())?,
             ))
         })
         .try_collect()?;
@@ -69,7 +71,7 @@ pub fn detect_probe_barcode_pairing(
             .map(|seqs| seqs.map(BcSegSeq::from_bytes))
             .filter_map(move |seqs| {
                 seqs.zip(whitelist)
-                    .map_option(|(seq, whitelist)| whitelist.match_to_whitelist(seq))
+                    .map_option(|(seq, whitelist)| whitelist.match_to_whitelist(seq, false))
             })
             .map(|barcode_components| match barcode_components {
                 BarcodeConstruct::GelBeadAndProbe(x) => x,
@@ -129,13 +131,15 @@ pub fn get_rtl_and_ab_barcode_from_row(
     row: &FRPGemBarcodeOverlapRow,
 ) -> Option<(BarcodeId, BarcodeId)> {
     match (
-        categorize_multiplexing_barcode_id(&row.barcode1_id),
-        categorize_multiplexing_barcode_id(&row.barcode2_id),
+        categorize_rtl_multiplexing_barcode_id(&row.barcode1_id)
+            .expect("Missing Multiplexing Barcode!"),
+        categorize_rtl_multiplexing_barcode_id(&row.barcode2_id)
+            .expect("Missing Multiplexing Barcode!"),
     ) {
-        (MultiplexingBarcodeType::RTL, MultiplexingBarcodeType::Antibody) => {
+        (RTLMultiplexingBarcodeType::Gene, RTLMultiplexingBarcodeType::Antibody) => {
             Some((row.barcode1_id, row.barcode2_id))
         }
-        (MultiplexingBarcodeType::Antibody, MultiplexingBarcodeType::RTL) => {
+        (RTLMultiplexingBarcodeType::Antibody, RTLMultiplexingBarcodeType::Gene) => {
             Some((row.barcode2_id, row.barcode1_id))
         }
         _ => None,

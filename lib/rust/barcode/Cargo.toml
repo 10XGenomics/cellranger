@@ -27,8 +27,7 @@ workspace = true
 path = '../metric'
 
 [dependencies.ordered-float]
-features = ['serde']
-version = '3'
+workspace = true
 
 [dependencies.pyanyhow]
 path = '../pyanyhow'

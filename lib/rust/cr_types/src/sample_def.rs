@@ -72,8 +72,6 @@ pub struct SampleDef {
     pub sample_indices: Option<Vec<String>>,
     pub sample_names: Option<Vec<String>>,
     pub subsample_rate: Option<f64>,
-    pub target_set: Option<PathBuf>,
-    pub target_set_name: Option<String>,
     pub fastq_id: Option<String>,
 }
 
@@ -90,8 +88,6 @@ impl Default for SampleDef {
             sample_indices: None,
             sample_names: None,
             subsample_rate: None,
-            target_set: None,
-            target_set_name: None,
             fastq_id: None,
         }
     }

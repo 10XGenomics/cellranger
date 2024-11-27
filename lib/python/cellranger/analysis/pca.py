@@ -112,9 +112,9 @@ def run_pca(
         pca_features = thresholded_matrix.features_dim
     elif pca_features > thresholded_matrix.features_dim:
         msg = (
-            "You requested {} features but the matrix after thresholding only included {} features,"
+            f"You requested {pca_features} features but the matrix after thresholding only included {thresholded_matrix.features_dim} features,"
             "so the smaller amount is being used."
-        ).format(pca_features, thresholded_matrix.features_dim)
+        )
         print(msg)
         pca_features = thresholded_matrix.features_dim
     # Calc mean and variance of counts after normalizing
@@ -138,10 +138,8 @@ def run_pca(
             raise MatrixRankTooSmallException("Matrix rank is too small")
         else:
             print(
-                (
-                    "There are fewer nonzero features or barcodes ({}) than requested "
-                    "PCA components ({}); reducing the number of components."
-                ).format(likely_matrix_rank, n_pca_components)
+                f"There are fewer nonzero features or barcodes ({likely_matrix_rank}) than requested "
+                f"PCA components ({n_pca_components}); reducing the number of components."
             )
             n_pca_components = likely_matrix_rank
 

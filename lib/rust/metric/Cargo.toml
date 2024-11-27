@@ -1,6 +1,4 @@
 [dependencies]
-bincode = '1'
-num-traits = '0.2'
 serde_derive = '1'
 
 [dependencies.ahash]
@@ -11,11 +9,17 @@ version = '0.8'
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.bincode]
+workspace = true
+
 [dependencies.itertools]
 workspace = true
 
 [dependencies.metric_derive]
 path = '../metric_derive'
+
+[dependencies.num-traits]
+workspace = true
 
 [dependencies.serde]
 workspace = true

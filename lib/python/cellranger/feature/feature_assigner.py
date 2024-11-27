@@ -24,10 +24,7 @@ import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
 import tenkit.stats as tk_stats
 from cellranger.analysis.combinatorics import generate_solutions, multinomial_comb
-from cellranger.feature.feature_assignments import (
-    CellsPerFeature,
-    FeatureAssignmentsMatrix,
-)
+from cellranger.feature.feature_assignments import CellsPerFeature, FeatureAssignmentsMatrix
 from cellranger.feature.throughputs import CORR_FACTOR, N_G
 from cellranger.pandas_utils import sanitize_dataframe
 
@@ -275,10 +272,7 @@ class FeatureAssigner:
 
     def __init__(
         self,
-        # TODO: makes more sense to just use the specific feature sub-matrix
-        matrix: cr_matrix.CountMatrix,
-        # TODO: no need for this if using the specific feature sub-matrix
-        feature_type: str,
+        sub_matrix: cr_matrix.CountMatrix,
         assignments: OrderedDict[bytes, FeatureAssignments] | None = None,
         features_per_cell: dict[bytes, list[bytes]] | None = None,
         features_per_cell_table: pd.DataFrame | None = None,
@@ -291,12 +285,7 @@ class FeatureAssigner:
         sub-classes such as `GuideAssigner`, `AntibodyOrAntigenAssigner` and `TagAssigner`.
 
         Args:
-            matrix (CountMatrix): filtered feature counts matrix.
-                For CRISPR and Antibody libraries, the get_feature_assignments()
-                method sub-selects this matrix for the appropriate feature_type
-                and for each feature_id of that type while assigning barcodes to
-                each feature_id.
-            feature_type (str): one of those in `SUPPORTED_FEATURE_TYPES`
+            sub_matrix (CountMatrix): filtered count matrix subset to features of interest.
             assignments (dict): initialized in child classes
             features_per_cell (dict): contains (barcode: [feature_assigned]) pairs
             features_per_cell_table (pd.DataFrame): indexed by bc, provides
@@ -306,12 +295,14 @@ class FeatureAssigner:
                 feature assignments, such as the fraction with 1 feature,
                 multiple features, etc.
         """
-        assert isinstance(matrix, cr_matrix.CountMatrix), "matrix should be a CountMatrix object"
-        self.matrix = matrix
-        self.feature_type = feature_type
-        assert self.feature_type in SUPPORTED_FEATURE_TYPES, "feature_type {} not supported".format(
-            self.feature_type
-        )
+        assert isinstance(
+            sub_matrix, cr_matrix.CountMatrix
+        ), "matrix should be a CountMatrix object"
+        self.sub_matrix = sub_matrix
+        feature_types = self.sub_matrix.get_library_types()
+        assert len(feature_types) == 1
+        feature_type = next(iter(feature_types))
+        assert feature_type in SUPPORTED_FEATURE_TYPES, f"feature_type {feature_type} not supported"
 
         self.assignments = assignments
         self.features_per_cell = features_per_cell
@@ -339,7 +330,7 @@ class FeatureAssigner:
             if asst.is_contaminant:
                 continue
             for i in asst.bc_indices:
-                features_per_cell[self.matrix.bcs[i]].append(feature_id)
+                features_per_cell[self.sub_matrix.bcs[i]].append(feature_id)
 
         return features_per_cell
 
@@ -355,7 +346,7 @@ class FeatureAssigner:
             # check for contaminat tags in tag librares
             if asst.is_contaminant:
                 continue
-            cells_per_feature[f_id] = [self.matrix.bcs[i] for i in asst.bc_indices]
+            cells_per_feature[f_id] = [self.sub_matrix.bcs[i] for i in asst.bc_indices]
         return cells_per_feature
 
     # TODO: this can now be replaced with the same function from TagAssignmentsMatrix
@@ -379,12 +370,12 @@ class FeatureAssigner:
             features = sep.join(calls)
 
             # These three lines represent a fast way of populating the UMIS
-            cell_bc_index = self.matrix.bc_to_int(cell)
+            cell_bc_index = self.sub_matrix.bc_to_int(cell)
             bc_data = np.ravel(
-                self.matrix.m.getcol(cell_bc_index).toarray()
+                self.sub_matrix.m.getcol(cell_bc_index).toarray()
             )  # get data for a single bc, densify it, then flatten it
             umis = sep.join(
-                str(bc_data[self.matrix.feature_id_to_int(f_id)]).encode() for f_id in calls
+                str(bc_data[self.sub_matrix.feature_id_to_int(f_id)]).encode() for f_id in calls
             )
 
             features_per_cell_table.loc[cell] = (num_features, features, umis)
@@ -399,7 +390,7 @@ class FeatureAssigner:
             self.features_per_cell_table = self.get_features_per_cell_table()
 
         return AssignmentMetadata(
-            num_cells=self.matrix.bcs_dim,
+            num_cells=self.sub_matrix.bcs_dim,
             num_cells_with_features=self.features_per_cell_table.shape[0],
             num_cells_without_feature_umis=self.get_num_cells_without_molecules(),
             num_singlets=self.features_per_cell_table[
@@ -528,13 +519,13 @@ class FeatureAssigner:
             assignment_metadata.frac_singlets + assignment_metadata.frac_multiplets
         )
 
-        name_fr_ce_w_sg_features = report_prefix + "frac_cells_with_single_{}{}".format(
-            feature_bc_name, depth_suffix
+        name_fr_ce_w_sg_features = (
+            report_prefix + f"frac_cells_with_single_{feature_bc_name}{depth_suffix}"
         )
         frac_cells_with_single_features = assignment_metadata.frac_singlets
 
-        name_fr_ce_w_mult_features = report_prefix + "frac_cells_with_multiple_{}{}".format(
-            feature_bc_name, depth_suffix
+        name_fr_ce_w_mult_features = (
+            report_prefix + f"frac_cells_with_multiple_{feature_bc_name}{depth_suffix}"
         )
         frac_cells_multiple_features = assignment_metadata.frac_multiplets
 
@@ -617,9 +608,7 @@ class FeatureAssigner:
         Returns:
             int32: number of barcodes that do not have any feature umis
         """
-        counts = self.matrix.get_subselected_counts(
-            log_transform=False, library_type=self.feature_type
-        )
+        counts = self.sub_matrix.get_subselected_counts(log_transform=False, library_type=None)
         return np.sum(counts == 0)
 
     @staticmethod
@@ -647,7 +636,7 @@ class FeatureAssigner:
             if asst.is_contaminant:  # only relevant for multiplexing library
                 continue
 
-            mask = np.zeros(len(self.matrix.bcs))
+            mask = np.zeros(len(self.sub_matrix.bcs))
             if len(asst.bc_indices) > 0:
                 # Put 1 for barcodes that were assigned to this feature. Basically, if
                 # bc_indices = [1, 4], go from  [0, 0, 0, 0, 0] -> [0, 1, 0, 0, 1]
@@ -661,12 +650,12 @@ class FeatureAssigner:
         del feature_assignments_dict
         # when no assignments for whatever reason, simply return the object with empty df
         if len(feature_assignments_df) == 0:
-            return FeatureAssignmentsMatrix(feature_assignments_df, self.matrix, self.feature_type)
+            return FeatureAssignmentsMatrix(feature_assignments_df, self.sub_matrix)
 
-        feature_assignments_df.index = self.matrix.bcs
+        feature_assignments_df.index = self.sub_matrix.bcs
         feature_assignments_df = feature_assignments_df.T
         feature_assignments_matrix = FeatureAssignmentsMatrix(
-            feature_assignments_df, self.matrix, self.feature_type
+            feature_assignments_df, self.sub_matrix
         )
         return feature_assignments_matrix
 
@@ -678,18 +667,18 @@ class GuideAssigner(FeatureAssigner):
         self,
         matrix: cr_matrix.CountMatrix,
         *,
-        feature_type: str = rna_library.CRISPR_LIBRARY_TYPE,
         min_crispr_umi_threshold: int,
     ):
         super().__init__(
             matrix,
-            feature_type,
             assignments=None,
             features_per_cell=None,
             features_per_cell_table=None,
             assignment_metadata=None,
         )
-
+        self.report_prefix = rna_library.get_library_type_metric_prefix(
+            rna_library.CRISPR_LIBRARY_TYPE
+        )
         self.feature_mol_name = "guide"
         self.feature_bc_name = "protospacer"
         self.min_crispr_umi_threshold = min_crispr_umi_threshold
@@ -702,18 +691,15 @@ class GuideAssigner(FeatureAssigner):
 
     def get_guide_assignments(self) -> dict[bytes, FeatureAssignments]:
         """Get feature assignments for CRISPR library."""
-        if self.feature_type not in SUPPORTED_FEATURE_TYPES:
-            raise ValueError(f"Feature type {self.feature_type} is not supported")
-
         assignments: dict[bytes, FeatureAssignments] = OrderedDict()
-        feature_ids_this_type = self.matrix.get_feature_ids_by_type(self.feature_type)
-        self.matrix.tocsr()
-        for feature_id in feature_ids_this_type:
+        feature_ids = [f.id for f in self.sub_matrix.feature_ref.feature_defs]
+        self.sub_matrix.tocsr()
+        for feature_id in feature_ids:
             if not isinstance(feature_id, bytes):
                 raise ValueError(
                     f"Feature ID {feature_id} must be bytes but was {type(feature_id)}"
                 )
-            umi_counts = self.matrix.get_subselected_counts(
+            umi_counts = self.sub_matrix.get_subselected_counts(
                 log_transform=False, list_feature_ids=[feature_id]
             )
 
@@ -760,7 +746,7 @@ class GuideAssigner(FeatureAssigner):
         assignment_metadata = self.compute_generic_assignment_metadata()
 
         assert self.assignments is not None
-        umi_thresholds = self._compute_umi_thresholds(self.matrix, self.assignments)
+        umi_thresholds = self._compute_umi_thresholds(self.sub_matrix, self.assignments)
         # keep the crispr output unchanged
         assignment_metadata.umi_thresholds = umi_thresholds["umi_threshold"].to_dict()
         return assignment_metadata
@@ -769,9 +755,8 @@ class GuideAssigner(FeatureAssigner):
         """Feature assignment metrics for CRISPR library."""
         if self.assignment_metadata is None:
             self.assignment_metadata = self.compute_assignment_metadata()
-        report_prefix = rna_library.get_library_type_metric_prefix(self.feature_type)
         return self.get_generic_feature_assignment_metrics(
-            self.assignment_metadata, self.feature_bc_name, report_prefix, depth_suffix
+            self.assignment_metadata, self.feature_bc_name, self.report_prefix, depth_suffix
         )
 
     def get_feature_calls_summary(self) -> pd.DataFrame:
@@ -787,14 +772,15 @@ class AntibodyOrAntigenAssigner(FeatureAssigner):
     """Sub-class of FeatureAssigner specific to Antibody or Antigen Library features."""
 
     def __init__(self, matrix: cr_matrix.CountMatrix, feature_type: str):
+
         super().__init__(
-            matrix,
-            feature_type,
+            matrix.select_features_by_type(feature_type),
             assignments=None,
             features_per_cell=None,
             features_per_cell_table=None,
             assignment_metadata=None,
         )
+        self.report_prefix = rna_library.get_library_type_metric_prefix(feature_type)
 
         if feature_type == rna_library.ANTIGEN_LIBRARY_TYPE:
             self.feature_mol_name = self.feature_bc_name = "antigen"
@@ -809,18 +795,15 @@ class AntibodyOrAntigenAssigner(FeatureAssigner):
 
     def get_antibody_assignments(self) -> dict[bytes, FeatureAssignments]:
         """Get feature assignments for Antibody library."""
-        if self.feature_type not in SUPPORTED_FEATURE_TYPES:
-            raise ValueError(f"Feature type {self.feature_type} is not supported")
-
         assignments: OrderedDict[bytes, FeatureAssignments] = OrderedDict()
-        feature_ids_this_type = self.matrix.get_feature_ids_by_type(self.feature_type)
+        feature_ids = [f.id for f in self.sub_matrix.feature_ref.feature_defs]
 
-        for feature_id in feature_ids_this_type:
+        for feature_id in feature_ids:
             assert isinstance(feature_id, bytes)
             if feature_id not in self.assignment_list:
                 continue
-            umi_counts = self.matrix.get_subselected_counts(
-                log_transform=False, library_type=self.feature_type, list_feature_ids=[feature_id]
+            umi_counts = self.sub_matrix.get_subselected_counts(
+                log_transform=False, list_feature_ids=[feature_id]
             )
             total_count = umi_counts.sum()
             if total_count < MIN_COUNTS_PER_ANTIBODY:
@@ -857,7 +840,7 @@ class AntibodyOrAntigenAssigner(FeatureAssigner):
         """Compute assignment metadata for Antibody library."""
         assignment_metadata = self.compute_generic_assignment_metadata()
 
-        umi_thresholds = self._compute_umi_thresholds(self.matrix, self.assignments)
+        umi_thresholds = self._compute_umi_thresholds(self.sub_matrix, self.assignments)
         # keep the antibody output unchanged
         assignment_metadata.umi_thresholds = umi_thresholds["umi_threshold"].to_dict()
         return assignment_metadata
@@ -866,9 +849,8 @@ class AntibodyOrAntigenAssigner(FeatureAssigner):
         """Feature assignment metrics for Antibody library."""
         if self.assignment_metadata is None:
             self.assignment_metadata = self.compute_assignment_metadata()
-        report_prefix = rna_library.get_library_type_metric_prefix(self.feature_type)
         return self.get_generic_feature_assignment_metrics(
-            self.assignment_metadata, self.feature_bc_name, report_prefix, depth_suffix
+            self.assignment_metadata, self.feature_bc_name, self.report_prefix, depth_suffix
         )
 
 
@@ -888,13 +870,12 @@ class TagAssigner(FeatureAssigner):
         FeatureAssigner.__init__(
             self,
             matrix,
-            feature_type,
             assignments=None,
             features_per_cell=None,
             features_per_cell_table=None,
             assignment_metadata=None,
         )
-
+        self.report_prefix = rna_library.get_library_type_metric_prefix(feature_type)
         self.feature_mol_name = self.feature_bc_name = "tag"
         self.method = "GMM"
         self.n_gems = n_gems
@@ -905,16 +886,13 @@ class TagAssigner(FeatureAssigner):
 
     def get_tag_assignments(self) -> dict[bytes, FeatureAssignments]:
         """Get feature assignments for Tag library."""
-        if self.feature_type not in SUPPORTED_FEATURE_TYPES:
-            raise ValueError(f"Feature type {self.feature_type} is not supported")
-
         assignments: OrderedDict[bytes, FeatureAssignments] = OrderedDict()
-        feature_ids_this_type = self.matrix.get_feature_ids_by_type(self.feature_type)
+        feature_ids = [f.id for f in self.sub_matrix.feature_ref.feature_defs]
 
-        for feature_id in feature_ids_this_type:
+        for feature_id in feature_ids:
             assert isinstance(feature_id, bytes)
-            umi_counts = self.matrix.get_subselected_counts(
-                log_transform=False, library_type=self.feature_type, list_feature_ids=[feature_id]
+            umi_counts = self.sub_matrix.get_subselected_counts(
+                log_transform=False, list_feature_ids=[feature_id]
             )
 
             in_high_umi_component = TagAssigner._call_presence(umi_counts, self.method)
@@ -951,7 +929,7 @@ class TagAssigner(FeatureAssigner):
         assignment_metadata.freq_counts = freqs_df
 
         umi_thresholds = self._compute_umi_thresholds(
-            self.matrix, self.assignments, multiplexing=True
+            self.sub_matrix, self.assignments, multiplexing=True
         )
         assignment_metadata.umi_thresholds = umi_thresholds
 
@@ -965,9 +943,8 @@ class TagAssigner(FeatureAssigner):
         if self.assignment_metadata is None:
             self.assignment_metadata = self.compute_assignment_metadata()
 
-        report_prefix = rna_library.get_library_type_metric_prefix(self.feature_type)
         res = self.get_generic_feature_assignment_metrics(
-            self.assignment_metadata, self.feature_bc_name, report_prefix, depth_suffix
+            self.assignment_metadata, self.feature_bc_name, self.report_prefix, depth_suffix
         )
 
         freqs_df = self.assignment_metadata.freq_counts.drop(
@@ -977,11 +954,11 @@ class TagAssigner(FeatureAssigner):
             TagAssigner._compute_efficiency_metrics(
                 freqs_df[MEASURABLE_COL].values,
                 freqs_df[OBSERVED_COL].values,
-                report_prefix,
+                self.report_prefix,
                 depth_suffix,
             )
         )
-        res.update(self._compute_no_tag_metric(report_prefix, depth_suffix))
+        res.update(self._compute_no_tag_metric(self.report_prefix, depth_suffix))
         return res
 
     def _compute_no_tag_metric(self, report_prefix: str = "", depth_suffix: str = ""):
@@ -1063,7 +1040,7 @@ class TagAssigner(FeatureAssigner):
         # Calculate observed frequencies (note this does not include an entry for i = 0)
         obs_freqs = np.array([self._get_freq_num_features(i) for i in range(1, num_total_tags + 1)])
 
-        num_cells_called = len(self.matrix.bcs)
+        num_cells_called = len(self.sub_matrix.bcs)
         estimated_cells = calculate_expected_total_cells(num_cells_called, self.n_gems)
         # estimate of total cells actually present, while accounting for the fact that
         # a k-let probably contains k-cells in a single partition
@@ -1152,11 +1129,10 @@ class TagAssigner(FeatureAssigner):
         all_features = sorted(assignments.keys())
 
         # correlation check
-        tag_counts_matrix = self.matrix.select_features_by_type(self.feature_type)
         df = pd.DataFrame(
-            tag_counts_matrix.m.toarray(),
-            index=[f.id for f in tag_counts_matrix.feature_ref.feature_defs],
-            columns=tag_counts_matrix.bcs,
+            self.sub_matrix.m.toarray(),
+            index=[f.id for f in self.sub_matrix.feature_ref.feature_defs],
+            columns=self.sub_matrix.bcs,
         ).T
         df = df.loc[:, all_features]
         cor_df = df.corr()

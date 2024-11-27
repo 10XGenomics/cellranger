@@ -8,6 +8,7 @@ pub const FEATURE_QUAL_TAG: &[u8] = b"fq";
 pub const FEATURE_SEQ_TAG: &[u8] = b"fb";
 pub const FEATURE_IDS_TAG: &[u8] = b"fx";
 pub const PROBE_TAG: &[u8] = b"pr";
+pub const GAP_COORDINATES_TAG: &[u8] = b"gc";
 pub const EXTRA_FLAGS_TAG: &[u8] = b"xf";
 
 pub const RAW_UMI_SEQ_TAG: &[u8] = b"UR";

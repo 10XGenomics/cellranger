@@ -22,7 +22,7 @@ rustflags = [
   "-Drust_2018_idioms",
   "-Dunused",
   # clippy categorical
-  "-Dclippy::complexity",
+  # "-Dclippy::complexity",
   "-Dclippy::perf",
   "-Dclippy::style",
   "-Dclippy::suspicious",

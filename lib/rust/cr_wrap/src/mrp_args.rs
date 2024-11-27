@@ -49,8 +49,8 @@ pub struct MrpArgs {
     /// The path to a JSON file that specifies stage-level
     /// overrides for cores and memory. Finer-grained
     /// than --localcores, --mempercore and --localmem.
-    /// Consult https://support.10xgenomics.com/ for an example
-    /// override file.
+    /// Consult https://10xgen.com/resource-override
+    /// for an example override file.
     #[clap(long, value_name = "PATH")]
     overrides: Option<String>,
 

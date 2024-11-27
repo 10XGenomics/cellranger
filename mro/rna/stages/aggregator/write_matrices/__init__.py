@@ -47,28 +47,23 @@ stage WRITE_MATRICES(
 
 def split(args):
     with MoleculeCounter.open(args.molecules, "r") as mc:
-        num_barcodes = mc.get_ref_column_lazy("barcodes").shape[0]
+        num_barcodes = mc.get_barcode_list_size()
 
     # Worst case number of nonzero elements in final matrix
     if args.is_pd:
         num_nonzero = args.raw_nnz
     else:
         num_nonzero = args.filtered_nnz
-    join_mem_gb = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, num_nonzero)
-
+    mem_gib = 3 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, num_nonzero, scale=1.41)
+    print(f"{args.raw_nnz=},{args.filtered_nnz=},{num_nonzero=},{num_barcodes=},{mem_gib=}")
     return {
         "chunks": [],
-        "join": {"__mem_gb": join_mem_gb, "__threads": 2},
+        "join": {"__mem_gb": mem_gib},
     }
-
-
-def main(args, outs):
-    raise NotImplementedError()
 
 
 def join(args, outs, chunk_defs, chunk_outs):
     version = martian.get_pipelines_version()
-
     with open(args.summary) as f:
         summary = json.load(f)
 
@@ -90,24 +85,38 @@ def join(args, outs, chunk_defs, chunk_outs):
     # track original library/gem info
     library_map = cr_matrix.make_library_map_aggr(args.gem_group_index)
     extra_attrs.update(library_map)
+    sw_version = martian.get_pipelines_version()
 
     # Merge raw matrix for PD purposes
     if args.is_pd:
-        raw_matrix = cr_matrix.merge_matrices(args.raw_matrices_h5)
-        if is_antibody_only:
-            raw_matrix = raw_matrix.select_features_by_type(rna_library.ANTIBODY_LIBRARY_TYPE)
-        raw_matrix.save_h5_file(
-            outs.raw_matrix_h5, extra_attrs=extra_attrs, sw_version=martian.get_pipelines_version()
+        martian.log_info("Starting to merge raw matrices.")
+        cr_matrix.create_merged_matrix_from_col_concat(
+            args.raw_matrices_h5, outs.raw_matrix_h5, extra_attrs, sw_version
         )
-        del raw_matrix
+        if is_antibody_only:
+            raw_matrix = cr_matrix.CountMatrix.load_h5_file(outs.raw_matrix_h5)
+            raw_matrix = raw_matrix.select_features_by_type(rna_library.ANTIBODY_LIBRARY_TYPE)
+            raw_matrix.save_h5_file(
+                outs.raw_matrix_h5,
+                extra_attrs=extra_attrs,
+                sw_version=sw_version,
+            )
+            del raw_matrix
+        martian.log_info("Finished merging raw matrices.")
 
     # Merge filtered matrix
-    filt_mat = cr_matrix.merge_matrices(args.filtered_matrices_h5)
+    cr_matrix.create_merged_matrix_from_col_concat(
+        args.filtered_matrices_h5, outs.filtered_matrix_h5, extra_attrs, sw_version
+    )
+    filt_mat = cr_matrix.CountMatrix.load_h5_file(outs.filtered_matrix_h5)
     if is_antibody_only:
         filt_mat = filt_mat.select_features_by_type(rna_library.ANTIBODY_LIBRARY_TYPE)
-    filt_mat.save_h5_file(
-        outs.filtered_matrix_h5, extra_attrs=extra_attrs, sw_version=martian.get_pipelines_version()
-    )
+        filt_mat.save_h5_file(
+            outs.filtered_matrix_h5,
+            extra_attrs=extra_attrs,
+            sw_version=martian.get_pipelines_version(),
+        )
+    martian.log_info("Finished merging filtered matrices.")
 
     # Summarize the matrix across library types and genomes
     for lib_type in lib_types:
@@ -153,6 +162,7 @@ def join(args, outs, chunk_defs, chunk_outs):
                 summary[
                     "{}{}_filtered_bcs_conf_mapped_barcoded_reads_cum_frac".format(*prefixes)
                 ] = frac_reads_in_cells
+            martian.log_info("Finished collecting metrics")
 
             summary.update(
                 {
@@ -174,9 +184,13 @@ def join(args, outs, chunk_defs, chunk_outs):
         summary[
             f"{libtype_prefix}{rna_library.MULTI_REFS_PREFIX}_filtered_bcs_conf_mapped_barcoded_reads_cum_frac"
         ] = frac_reads_in_cells
-
-    # Write MEX format (do it last because it converts the matrices to COO)
-    rna_matrix.save_mex(filt_mat, outs.filtered_matrix_mex, version)
+    if args.is_pd:
+        outs.filtered_matrix_mex = None
+    else:
+        martian.log_info("Writing MEX File")
+        # Write MEX format (do it last because it converts the matrices to COO)
+        rna_matrix.save_mex(filt_mat, outs.filtered_matrix_mex, version)
+        martian.log_info("Finished writing MEX file")
 
     with open(outs.summary, "w") as f:
         tk_safe_json.dump_numpy(summary, f, indent=4, sort_keys=True)

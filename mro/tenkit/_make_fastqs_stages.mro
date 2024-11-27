@@ -12,7 +12,6 @@ stage MAKE_FASTQS_PREFLIGHT_LOCAL(
     in  int[]  lanes,
     in  map[]  specs,
     in  string bcl2fastq2_args,
-    in  string barcode_whitelist,
     in  string bc_read_type,
     in  int    bc_start_index,
     in  int    bc_length,
@@ -26,13 +25,12 @@ stage MAKE_FASTQS_PREFLIGHT_LOCAL(
 )
 
 stage MAKE_FASTQS_PREFLIGHT(
-    in  path   run_path,
-    in  path   output_path,
-    in  path   interop_output_path,
-    in  string barcode_whitelist,
-    in  bool   check_executables,
-    in  int    max_bcl2fastq_threads,
-    src py     "stages/make_fastqs/make_fastqs_preflight",
+    in  path run_path,
+    in  path output_path,
+    in  path interop_output_path,
+    in  bool check_executables,
+    in  int  max_bcl2fastq_threads,
+    src py   "stages/make_fastqs/make_fastqs_preflight",
 )
 
 stage PREPARE_SAMPLESHEET(

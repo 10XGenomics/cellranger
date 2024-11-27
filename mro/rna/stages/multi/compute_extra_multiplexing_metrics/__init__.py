@@ -13,23 +13,27 @@ and the sets of multiplet and singlet barcodes
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
+import cellranger.feature_ref as feature_ref
+import cellranger.rna.library as rna_library
 import tenkit.safe_json as tk_safe_json
 import tenkit.stats as tk_stats
 from cellranger import matrix as cr_matrix
 from cellranger.fast_utils import MultiGraph, tag_read_counts
 from cellranger.feature.feature_assignments import SampleBarcodes
-from cellranger.rna.library import MULTIPLEXING_LIBRARY_TYPE
 
 __MRO__ = """
-stage COMPUTE_EXTRA_MULTIPLEXING_METRICS (
-    in  h5   molecule_info,
-    in  h5   filtered_feature_counts_matrix,
-    in  json multi_graph,
-    in  json sample_cell_barcodes,
-    in  json non_singlet_barcodes,
-    out json summary,
+stage COMPUTE_EXTRA_MULTIPLEXING_METRICS(
+    in  h5     molecule_info,
+    in  h5     filtered_feature_counts_matrix,
+    in  json   multi_graph,
+    in  json   sample_cell_barcodes,
+    in  json   non_singlet_barcodes,
+    in  string multiplexing_method,
+    out json   summary,
     src py     "stages/multi/compute_extra_multiplexing_metrics",
 ) split (
 ) using (
@@ -39,12 +43,13 @@ stage COMPUTE_EXTRA_MULTIPLEXING_METRICS (
 
 
 # calculate median CMO UMIs per singlet
-def calculate_median_cmo_umis_per_singlet(fbm_fname, singlet_barcodes_json):
-    """Calculate the median CMO UMIs per singlet.
+def calculate_median_cmo_umis_per_singlet(fbm_fname, singlet_barcodes_json, library_type):
+    """Calculate the median CMO or Hashtag UMIs per singlet.
 
     Args:
         fbm_fname: File name of filtered feature_barcode_matrix
         singlet_barcodes_json: the SampleBarcodes in JSON format mapping sample names to list of barcodes assigned to it
+        library_type: Multiplexing Capture (for CMO) or Antibody Capture (for Hashatag)
 
     Returns:
         dict containing the MULTIPLEXING_median_cmo_umis_per_singlet metric.
@@ -52,7 +57,11 @@ def calculate_median_cmo_umis_per_singlet(fbm_fname, singlet_barcodes_json):
     fbm = cr_matrix.CountMatrix.load_h5_file(fbm_fname)
 
     # Subset features to multiplexing types
-    fbm = fbm.select_features_by_type(MULTIPLEXING_LIBRARY_TYPE)
+    if library_type == rna_library.MULTIPLEXING_LIBRARY_TYPE:
+        fbm = fbm.select_features_by_type(library_type)
+    else:
+        fbm = fbm.select_features_by_type_and_tag(library_type, feature_ref.HASHTAG_TAG)
+
     # If not multiplexing features, return None
     if fbm.features_dim == 0:
         return None
@@ -103,16 +112,21 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     config = MultiGraph.from_path(args.multi_graph)
 
+    multiplexing_method = rna_library.BarcodeMultiplexingType(args.multiplexing_method)
+    assert multiplexing_method.is_cell_multiplexed(), "Unsupported multiplexing method!"
+    library_type = multiplexing_method.multiplexing_library_type()
+
     metrics = {}
-    singlet_metric_name = "MULTIPLEXING_median_cmo_umis_per_singlet"
-    frac_reads_metric_name = "MULTIPLEXING_frac_reads_from_multiplets"
+    lib_prefix = rna_library.metric_prefix_map[library_type]
+    singlet_metric_name = f"{lib_prefix}_median_cmo_umis_per_singlet"
+    frac_reads_metric_name = f"{lib_prefix}_frac_reads_from_multiplets"
 
     def tag_frac_metric_name_maker(tag):
         return f"tag_{tag}_frac_reads_in_cells"
 
     # Caclulate median CMO UMI per singlet
     median_umi_per_singlet = calculate_median_cmo_umis_per_singlet(
-        args.filtered_feature_counts_matrix, args.sample_cell_barcodes
+        args.filtered_feature_counts_matrix, args.sample_cell_barcodes, library_type
     )
 
     if median_umi_per_singlet is None:  # Occurs if no multiplexing features
@@ -130,7 +144,12 @@ def join(args, outs, chunk_defs, chunk_outs):
             multiplet_counts,
             cell_associated_counts,
             total_counts,
-        ) = tag_read_counts(mol_info, args.sample_cell_barcodes, args.non_singlet_barcodes)
+        ) = tag_read_counts(
+            mol_info,
+            args.sample_cell_barcodes,
+            args.non_singlet_barcodes,
+            json.dumps(args.multiplexing_method),
+        )
 
         # get the list of tags from multi graph
         tags = set(tag for names in config.sample_tag_ids().values() for tag in names)

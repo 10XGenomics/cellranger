@@ -14,8 +14,9 @@ use vdj_ann::annotate::ContigAnnotation;
 use vdj_types::VdjRegion;
 
 // One row in contig annotations csv file.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ContigAnnotationCsvRow {
+    pub sample: String,
     pub barcode: String,
     pub is_cell: bool,
     pub contig_id: String,
@@ -52,6 +53,7 @@ pub struct ContigAnnotationCsvRow {
 impl From<&ContigAnnotation> for ContigAnnotationCsvRow {
     fn from(ann: &ContigAnnotation) -> Self {
         ContigAnnotationCsvRow {
+            sample: ann.sample.clone().unwrap_or_default(),
             barcode: ann.barcode.clone(),
             is_cell: ann.is_cell,
             contig_id: ann.contig_name.clone(),

@@ -3,13 +3,7 @@ name = 'cr_ana'
 test = false
 
 [dependencies]
-itertools = '0.10'
-log = '0.4'
-ndarray = '0.15'
-ndarray-stats = '0.5'
 noisy_float = '0.2'
-num-traits = '0.2'
-rayon = '1'
 
 [dependencies.anyhow]
 workspace = true
@@ -19,49 +13,57 @@ branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
 [dependencies.clap]
-default-features = false
-features = ['std', 'derive']
-version = '4'
+workspace = true
 
 [dependencies.cr_types]
 path = '../cr_types'
 
 [dependencies.diff-exp]
-branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs'
+workspace = true
 
 [dependencies.hclust]
-branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs'
+workspace = true
 
 [dependencies.hdf5]
-branch = 'conda_nov2021'
-features = ['conda']
-git = 'https://github.com/10XGenomics/hdf5-rust.git'
+workspace = true
 
 [dependencies.hdf5-io]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
+[dependencies.itertools]
+workspace = true
+
 [dependencies.leiden]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
+[dependencies.log]
+workspace = true
+
 [dependencies.martian]
-branch = 'master'
-git = 'https://github.com/martian-lang/martian-rust'
+workspace = true
 
 [dependencies.martian-derive]
-branch = 'master'
-git = 'https://github.com/martian-lang/martian-rust'
+workspace = true
 
 [dependencies.martian-filetypes]
-branch = 'master'
-git = 'https://github.com/martian-lang/martian-rust'
+workspace = true
+
+[dependencies.ndarray]
+workspace = true
 
 [dependencies.ndarray-npy]
-default-features = false
-version = '0.8'
+workspace = true
+
+[dependencies.ndarray-stats]
+workspace = true
+
+[dependencies.num-traits]
+workspace = true
+
+[dependencies.rayon]
+workspace = true
 
 [dependencies.scan-rs]
 branch = 'main'
@@ -72,17 +74,13 @@ branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
 [dependencies.serde]
-features = ['derive']
-version = '1'
+workspace = true
 
 [dependencies.sprs]
-default-features = false
-features = ['multi_thread']
-version = '0.11'
+workspace = true
 
 [dependencies.sqz]
-branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs'
+workspace = true
 
 [dependencies.umap-rs]
 branch = 'main'

@@ -3,7 +3,6 @@ use crate::{bam_utils, sw, utils};
 use debruijn::dna_string::DnaString;
 use rust_htslib::bam;
 use serde::{Deserialize, Serialize};
-use std;
 
 /// A macro creating methods for flag access.
 /// Copied from rust_htslib.
@@ -18,7 +17,7 @@ macro_rules! flag {
         }
 
         pub fn $unset(&mut self) {
-            self.flags &= std::u16::MAX - $bit;
+            self.flags &= u16::MAX - $bit;
         }
     };
 }

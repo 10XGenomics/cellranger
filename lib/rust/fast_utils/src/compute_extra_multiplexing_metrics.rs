@@ -3,10 +3,10 @@ use cr_h5::molecule_info::{
     BarcodeIdxType, FullUmiCount, GemGroupType, LibraryIdxType, MoleculeInfoIterator,
     MoleculeInfoReader,
 };
-use cr_types::reference::feature_reference::{FeatureDef, FeatureType};
+use cr_types::reference::feature_reference::{FeatureDef, FeatureType, HASHTAG};
 use cr_types::rna_read::LibraryInfo;
 use cr_types::types::FeatureBarcodeType;
-use cr_types::LibraryType;
+use cr_types::{BarcodeMultiplexingType, CellLevel, LibraryType};
 use itertools::Itertools;
 use itertools::__std_iter::Iterator;
 use pyo3::prelude::*;
@@ -20,10 +20,8 @@ const MULTIPLET_JSON_KEY: &str = "Multiplet";
 
 // A struct to accumulate data needed by the COMPUTE_EXTRA_MULTIPLEXING_METRICS stage
 struct TagReadCounts {
-    // first cmo feature index
-    idx_start: usize,
-    // last cmo feature index
-    idx_end: usize,
+    // Maps the feature index to the local index within the vectors defined below
+    feature_index_to_local_index: HashMap<usize, usize>,
     // name of all cmos
     tag_names: Vec<String>,
     // Vectors to count reads for various types of barcodes
@@ -49,18 +47,14 @@ impl TagReadCounts {
             "No multiplexing tags were found in the FeatureRef."
         );
         // Assuming all tags are in
-        let mut index = features[0].index;
-        for feature in &features[1..] {
-            index += 1;
-            assert!(
-                index == feature.index,
-                "The Multiplexing entries in the FeatureRef were not in serial order"
-            );
-        }
-        let size = index - features[0].index + 1;
+        let feature_index_to_local_index = features
+            .iter()
+            .enumerate()
+            .map(|(i, feature_def)| (feature_def.index, i))
+            .collect();
+        let size = features.len();
         TagReadCounts {
-            idx_start: features[0].index,
-            idx_end: index,
+            feature_index_to_local_index,
             singlet_counts: vec![0; size],
             multiplet_counts: vec![0; size],
             cell_associated_counts: vec![0; size],
@@ -74,9 +68,8 @@ impl TagReadCounts {
 
     fn consume_umicount(&mut self, cnt: FullUmiCount) {
         let idx = cnt.umi_data.feature_idx as usize;
-        if idx >= self.idx_start && idx <= self.idx_end {
+        if let Some(&index) = self.feature_index_to_local_index.get(&idx) {
             let n_reads = cnt.umi_data.read_count as usize;
-            let index = idx - self.idx_start;
             self.total_counts[index] += n_reads;
             let bc_gg = (cnt.barcode_idx, cnt.gem_group);
             if self.singlets.contains(&bc_gg) {
@@ -135,9 +128,10 @@ pub(crate) fn tag_read_counts(
     mol_info_path: String,
     singlets_path: String,
     non_singlets_path: String,
+    multiplexing_method: String,
 ) -> PyResult<(Vec<String>, Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>)> {
     // Calculates metrics for the COMPUTE_EXTRA_MULTIPLEXING_METRICS stage
-    // Given a molecule info file, it will go through and for each tag count how many reads are
+    // Given a molecule info file, it will go through and for each tag CMO or Hashtag count how many reads are
     // 1 - In "singlet" barcodes
     // 2 - In "multiplet" barcodes
     // 3-  In cell-associated barcodes
@@ -153,6 +147,20 @@ pub(crate) fn tag_read_counts(
         &bc_to_ind,
         Some(MULTIPLET_JSON_KEY),
     );
+    let (library_type, feature_type, feature_tag) =
+        match serde_json::from_str(&multiplexing_method).unwrap() {
+            BarcodeMultiplexingType::CellLevel(CellLevel::CMO) => (
+                LibraryType::Cellplex,
+                FeatureType::Barcode(FeatureBarcodeType::Multiplexing),
+                None,
+            ),
+            BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag) => (
+                LibraryType::Antibody,
+                FeatureType::Barcode(FeatureBarcodeType::Antibody),
+                Some(HASHTAG),
+            ),
+            _ => panic!("Unsupported multiplexing method!"),
+        };
 
     // Load up cell associated barcodes for multiplexing libraries
     let library_info: Vec<LibraryInfo> = MoleculeInfoReader::read_library_info(cur_path)
@@ -165,7 +173,7 @@ pub(crate) fn tag_read_counts(
     let mut lib_to_gg: HashMap<LibraryIdxType, GemGroupType> = HashMap::new();
     library_info
         .into_iter()
-        .filter(|x| x.library_type == LibraryType::Cellplex)
+        .filter(|x| x.library_type == library_type)
         .for_each(|z| {
             lib_to_gg.insert(z.library_id, z.gem_group);
         });
@@ -187,7 +195,11 @@ pub(crate) fn tag_read_counts(
         .feature_ref
         .feature_defs
         .iter()
-        .filter(|&x| x.feature_type == FeatureType::Barcode(FeatureBarcodeType::Multiplexing))
+        .filter(|&x| x.feature_type == feature_type)
+        .filter(|&x| match feature_tag {
+            Some(tag) => x.tags.contains_key(tag),
+            None => true,
+        })
         .cloned()
         .collect();
 

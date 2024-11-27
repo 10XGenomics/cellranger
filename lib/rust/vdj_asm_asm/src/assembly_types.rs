@@ -1,5 +1,4 @@
 use anyhow::Result;
-use barcode::Barcode;
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::rna_read::RnaRead;
 use itertools::Itertools;
@@ -71,6 +70,7 @@ pub struct BarcodeSupport {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct AssemblyStageInputs {
+    pub sample_id: String,
     pub chemistry_defs: ChemistryDefs,
     pub bc_sorted_rna_reads: Vec<Lz4<BincodeFile<Vec<RnaRead>>>>,
     pub vdj_reference_path: Option<PathBuf>,
@@ -80,6 +80,6 @@ pub struct AssemblyStageInputs {
     pub denovo: bool,
     pub inner_enrichment_primers: Option<PathBuf>,
     pub total_read_pairs: i64,
-    pub corrected_bc_counts: JsonFile<SimpleHistogram<Barcode>>,
+    pub corrected_bc_counts: JsonFile<SimpleHistogram<String>>,
     pub min_contig_length: Option<usize>,
 }

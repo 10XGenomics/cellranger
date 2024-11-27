@@ -45,17 +45,17 @@ const MAX_UMI_PARTS: usize = 4;
 ///
 /// # Tests
 /// * `test_rna_chunk_processor_interleaved_sc_vdj` - Test that the `RnaRead`
-/// produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
-/// VDJ chemistry with interleaved reads.
+///   produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
+///   VDJ chemistry with interleaved reads.
 /// * `test_rna_chunk_processor_interleaved_sc_vdj_r2` - Test that the `RnaRead`
-/// produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
-/// VDJ R2-only chemistry with interleaved reads.
+///   produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
+///   VDJ R2-only chemistry with interleaved reads.
 /// * `test_rna_chunk_processor_non_interleaved_sc_vdj` - Test that the `RnaRead`
-/// produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
-/// VDJ chemistry with non-interleaved reads.
+///   produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
+///   VDJ chemistry with non-interleaved reads.
 /// * `test_rna_chunk_processor_non_interleaved_sc_vdj_r2` - Test that the `RnaRead`
-/// produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
-/// VDJ R2-only chemistry with non-interleaved reads.
+///   produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
+///   VDJ R2-only chemistry with non-interleaved reads.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, MartianType)]
 pub struct RnaChunk {
     pub chemistry: ChemistryDef,
@@ -186,7 +186,7 @@ impl RnaChunk {
     ///
     /// # Test
     /// * `test_rna_chunk_subsample()` - Make sure we get roughly as many
-    /// reads as expected after subsampling
+    ///   reads as expected after subsampling
     pub fn set_subsample_rate(&mut self, value: f64) -> &mut Self {
         self.subsample_rate = Some(value);
         self
@@ -195,7 +195,7 @@ impl RnaChunk {
     ///
     /// # Test
     /// * `prop_test_rna_chunk_trim()` - Make sure that trimming works as
-    /// expected for arbitrary inputs
+    ///   expected for arbitrary inputs
     pub fn set_illumina_r1_trim_length(&mut self, value: usize) -> &mut Self {
         self.read_lengths.insert(WhichRead::R1, value);
         self
@@ -204,7 +204,7 @@ impl RnaChunk {
     ///
     /// # Test
     /// * `prop_test_rna_chunk_trim()` - Make sure that trimming works as
-    /// expected for arbitrary inputs
+    ///   expected for arbitrary inputs
     pub fn set_illumina_r2_trim_length(&mut self, value: usize) -> &mut Self {
         self.read_lengths.insert(WhichRead::R2, value);
         self
@@ -374,7 +374,7 @@ impl FastqProcessor for RnaProcessor {
     /// happens inside:
     /// - Attach Barcodes and UMIs
     /// - Find the ranges for RNA read1 and RNA read2. Remember, RNA read1 could
-    /// point to illumina read2, ut it guaranteed to be empty
+    ///   point to illumina read2, ut it guaranteed to be empty
     /// - Optionally hard trim the illumina R1 and R2 reads
     fn process_read(&self, read: ReadPair) -> ProcessResult<RnaRead> {
         let chem = &self.chunk.chemistry;
@@ -455,7 +455,7 @@ impl FastqProcessor for RnaProcessor {
 
         ProcessResult::Processed(RnaRead {
             read,
-            barcode,
+            segmented_barcode: barcode,
             umi: umi_seq.into(),
             bc_range,
             umi_parts,
@@ -474,9 +474,9 @@ impl FastqProcessor for RnaProcessor {
     ///
     /// # Tests
     /// * `test_rna_chunk_fastq_panic_1()` - Make sure that we panic if
-    /// interleaved and r2 is not None
+    ///   interleaved and r2 is not None
     /// * `test_rna_chunk_fastq_panic_2()` - Make sure that we panic if
-    /// not interleaved and r2 is None
+    ///   not interleaved and r2 is None
     fn fastq_files(&self) -> InputFastqs {
         // Make sure that either
         // - r2 is None and interleaved
@@ -524,7 +524,7 @@ impl UmiPart {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RnaRead {
     pub read: ReadPair,
-    pub barcode: SegmentedBarcode,
+    pub segmented_barcode: SegmentedBarcode,
     pub bc_range: BarcodeConstruct<RpRange>,
     pub umi: Umi,
     pub umi_parts: ArrayVec<[UmiPart; MAX_UMI_PARTS]>,
@@ -536,13 +536,11 @@ pub struct RnaRead {
 
 impl RnaRead {
     pub fn barcode(&self) -> Barcode {
-        self.barcode.into()
+        self.segmented_barcode.into()
     }
-    pub fn segmented_barcode(&self) -> SegmentedBarcode {
-        self.barcode
-    }
-    pub fn segmented_barcode_mut(&mut self) -> &mut SegmentedBarcode {
-        &mut self.barcode
+
+    pub fn barcode_is_valid(&self) -> bool {
+        self.segmented_barcode.is_valid()
     }
 
     pub fn raw_bc_seq(&self) -> BcSeq {
@@ -790,9 +788,9 @@ impl RnaRead {
     ///
     /// # Output
     /// * `FxHashMap<String, RpRange>` - where the key is the name of the adapter
-    /// and values is the `RpRange` where the adapter is found. Clearly, the adapters
-    /// which are not present in the read will not be part of the output. The `ReadAdapterCatalog`
-    /// guarantees that no two adapters share the same name, so there is no confusion.
+    ///   and values is the `RpRange` where the adapter is found. Clearly, the adapters
+    ///   which are not present in the read will not be part of the output. The `ReadAdapterCatalog`
+    ///   guarantees that no two adapters share the same name, so there is no confusion.
     ///
     /// # Test
     /// * `test_rna_read_adapter_trim()`: Test that we can trim reads consistent with cutadapt.
@@ -841,14 +839,14 @@ mod tests {
     use BarcodeConstruct::GelBeadOnly;
 
     fn processor(chunk: RnaChunk) -> RnaProcessor {
-        let whitelist = Whitelist::construct(chunk.chemistry.barcode_whitelist(), false).unwrap();
+        let whitelist = Whitelist::construct(chunk.chemistry.barcode_whitelist()).unwrap();
         RnaProcessor::new(chunk, whitelist)
     }
 
     #[test]
     fn test_read_10bp_umis() -> Result<()> {
         // make sure we can read 10bp UMIs with the v3 chemistry setup.
-        let chemistry = ChemistryDef::named(ChemistryName::ThreePrimeV3);
+        let chemistry = ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA);
         let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
             chemistry,
@@ -1835,6 +1833,7 @@ mod tests {
                 length: 19,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "custom".into(),
+                    translation: false,
                 },
             },
             segment2: BarcodeReadComponent {
@@ -1844,6 +1843,7 @@ mod tests {
                 length: 18,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "custom".into(),
+                    translation: false,
                 },
             },
             segment3: None,

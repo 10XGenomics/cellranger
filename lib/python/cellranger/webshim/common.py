@@ -12,6 +12,7 @@ import math
 import random
 import re
 import sys
+from collections.abc import Sequence
 from typing import Any  # pylint: disable=unused-import
 
 import numpy as np
@@ -29,11 +30,11 @@ import cellranger.webshim.constants.shared as shared_constants
 import cellranger.webshim.constants.vdj as ws_vdj_constants
 import tenkit.safe_json as tk_safe_json
 from cellranger.analysis.multigenome import MultiGenomeAnalysis
-from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+from cellranger.analysis.singlegenome import Projection, SingleGenomeAnalysis
 from cellranger.reference_paths import get_ref_name_from_genomes
 from cellranger.webshim.data import SampleData, generate_counter_barcode_rank_plot_data
 from cellranger.webshim.jibes_plotting import _make_rc_vectors, make_color_map, make_histogram_plot
-from cellranger.websummary.helpers import get_tsne_key
+from cellranger.websummary.helpers import get_projection_key
 from cellranger.websummary.sample_properties import CountSampleProperties, SampleProperties
 
 
@@ -98,7 +99,7 @@ def format_value(value, format_type):
         return f"{value:,.0f}"
     elif format_type[0] == "%":
         return format_type % float(value)
-    raise Exception("Invalid format type: %s" % format_type)
+    raise Exception(f"Invalid format type: {format_type}")
 
 
 def lookup_name(data, name):
@@ -321,7 +322,7 @@ def convert_numpy_array_to_line_chart(array, ntype):
     rows = []
     previous_count = None
     for (index,), count in np.ndenumerate(array):
-        if index == 0 or index == len(array) - 1:
+        if index in (0, len(array) - 1):
             rows.append([index, ntype(count)])
         elif previous_count != count:
             assert previous_count is not None
@@ -530,7 +531,7 @@ def plot_barcode_rank(chart, sample_properties, sample_data):
 # TODO: This unneccesary argument is needed because of how the PD code is structured.
 def plot_vdj_barcode_rank(chart, sample_properties, sample_data):
     """Generate the VDJ barcode rank plot."""
-    if not sample_data.cell_barcodes:  # No cells
+    if not sample_data.cell_barcodes or sample_data.vdj_barcode_support is None:
         return None
 
     counts_per_bc, plot_segments = sample_data.vdj_barcode_rank_plot_data()
@@ -592,7 +593,7 @@ def plot_clonotype_table(chart, sample_properties, sample_data):
     cols = []
     for name, col_def in col_defs.items():
         if name not in clonotypes:
-            raise ValueError("Column not found in clonotype summary: %s" % name)
+            raise ValueError(f"Column not found in clonotype summary: {name}")
         cols.append(
             {
                 "label": col_def["label"],
@@ -685,13 +686,13 @@ def plot_barnyard_barcode_counts(chart, sample_properties, sample_data):
         series["y"].append(int(count1))
 
     chart["layout"]["xaxis"] = {
-        "title": "%s UMI counts" % analysis.result["genome0"],
+        "title": "{} UMI counts".format(analysis.result["genome0"]),
         "rangemode": "tozero",
         "autorange": True,
         "fixedrange": False,
     }
     chart["layout"]["yaxis"] = {
-        "title": "%s UMI counts" % analysis.result["genome1"],
+        "title": "{} UMI counts".format(analysis.result["genome1"]),
         "rangemode": "tozero",
         "autorange": True,
         "fixedrange": False,
@@ -722,8 +723,8 @@ def plot_preprocess(analyses):
     return analyses
 
 
-def load_sample_data(sample_properties, sample_data_paths):
-    return SampleData(sample_properties, sample_data_paths, plot_preprocess)
+def load_sample_data(sample_properties, sample_data_paths, projections: Sequence[Projection]):
+    return SampleData(sample_properties, sample_data_paths, plot_preprocess, projections)
 
 
 def plot_tsne(chart, sample_properties, sample_data):
@@ -735,9 +736,9 @@ def plot_tsne(chart, sample_properties, sample_data):
     matrix = sample_data.get_analysis(SingleGenomeAnalysis).matrix
     library_types = matrix.get_library_types()
     if rna_library.GENE_EXPRESSION_LIBRARY_TYPE in library_types:
-        key = get_tsne_key(rna_library.GENE_EXPRESSION_LIBRARY_TYPE, 2)
+        key = get_projection_key(rna_library.GENE_EXPRESSION_LIBRARY_TYPE, 2)
     elif rna_library.ANTIBODY_LIBRARY_TYPE in library_types:
-        key = get_tsne_key(rna_library.ANTIBODY_LIBRARY_TYPE, 2)
+        key = get_projection_key(rna_library.ANTIBODY_LIBRARY_TYPE, 2)
 
     args = [
         analysis.get_tsne(key=key).transformed_tsne_matrix,
@@ -856,10 +857,10 @@ def plot_tsne_totalcounts(chart, sample_properties, sample_data):
     library_types = matrix.get_library_types()
     if rna_library.GENE_EXPRESSION_LIBRARY_TYPE in library_types:
         library_type = rna_library.GENE_EXPRESSION_LIBRARY_TYPE
-        key = get_tsne_key(library_type, 2)
+        key = get_projection_key(library_type, 2)
     elif rna_library.ANTIBODY_LIBRARY_TYPE in library_types:
         library_type = rna_library.ANTIBODY_LIBRARY_TYPE
-        key = get_tsne_key(library_type, 2)
+        key = get_projection_key(library_type, 2)
 
     matrix = analysis.matrix.select_features_by_type(library_type)
     reads_per_bc = matrix.get_counts_per_bc()
@@ -1045,16 +1046,13 @@ def plot_subsampled_scatterplot_metric(
         targeting_groups_to_plot = [cr_constants.ON_TARGET_SUBSAMPLE]
         if not show_targeted_only:
             targeting_groups_to_plot.append(cr_constants.OFF_TARGET_SUBSAMPLE)
-        targeting_group_suffix = "_(%s)" % ("|".join(targeting_groups_to_plot))
+        targeting_group_suffix = "_({})".format("|".join(targeting_groups_to_plot))
     else:
         targeting_group_suffix = ""
 
     # Regular expression to match <reference>_<subsample_type>_<subsample_depth>_<metric_suffix> pattern
-    metric_pattern = r"^{}({})_([0-9]+)_{}{}$".format(
-        ref_prefix,
-        subsample_type,
-        metric_suffix,
-        targeting_group_suffix,
+    metric_pattern = (
+        rf"^{ref_prefix}({subsample_type})_([0-9]+)_{metric_suffix}{targeting_group_suffix}$"
     )
 
     metric_search_results = [re.search(metric_pattern, key) for key in summary_data.keys()]
@@ -1090,13 +1088,10 @@ def plot_subsampled_scatterplot_metric(
                     trace_label = cr_tgt_utils.reformat_targeted_label(targeting_group)
                 else:
                     trace_label = ""
+            elif is_targeted:
+                trace_label = f"{genome}_{cr_tgt_utils.reformat_targeted_label(targeting_group)}"
             else:
-                if is_targeted:
-                    trace_label = "{}_{}".format(
-                        genome, cr_tgt_utils.reformat_targeted_label(targeting_group)
-                    )
-                else:
-                    trace_label = genome
+                trace_label = genome
 
             points.append(
                 (
@@ -1167,7 +1162,7 @@ def build_charts(sample_properties, chart_dicts, sample_data, all_prefixes={}, m
         assert f
 
         if function is not None and f is None:
-            raise ValueError('Could not find webshim chart function "%s"' % function)
+            raise ValueError(f'Could not find webshim chart function "{function}"')
 
         kwargs: dict[str, Any] = chart_dict.pop("kwargs", {})
 
@@ -1359,7 +1354,7 @@ def build_info_dict(sample_properties, sample_data, pipeline):
             name_metric = f"{prefix}{cr_constants.REFERENCE_GENOMES_KEY}"
             if name_metric not in sample_data.summary:
                 raise ValueError(
-                    "Reference metadata metric %s not found in metrics summary." % name_metric
+                    f"Reference metadata metric {name_metric} not found in metrics summary."
                 )
             ref_name = sample_data.summary.get(name_metric)
 

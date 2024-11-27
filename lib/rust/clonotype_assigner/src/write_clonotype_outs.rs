@@ -1,7 +1,7 @@
 //! WriteClonotypeOuts stage code
 
 use crate::assigner::ProtoBinFile;
-use amino::aa_seq;
+use amino::nucleotide_to_aminoacid_sequence;
 use anyhow::Result;
 use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
@@ -29,7 +29,7 @@ pub struct ClonotypesCsvRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct WriteClonotypeOutsStageInputs {
-    pub sample_number: Option<usize>,
+    pub sample_id: Option<String>,
     pub receptor: VdjReceptor,
     pub enclone_output: ProtoBinFile,
 }
@@ -101,7 +101,7 @@ impl MartianMain for WriteClonotypeOuts {
                     cdr3s_aa.push(format!(
                         "{}:{}",
                         chain.chain_type,
-                        str::from_utf8(&aa_seq(cdr3_nt, 0)).unwrap()
+                        str::from_utf8(&nucleotide_to_aminoacid_sequence(cdr3_nt, 0)).unwrap()
                     ));
                 }
                 let (inkt_evidence, mait_evidence) = match args.receptor {
@@ -109,8 +109,8 @@ impl MartianMain for WriteClonotypeOuts {
                         let mut inkt_evidences = Vec::new();
                         let mut mait_evidences = Vec::new();
                         for ex_cl in &clonotype.exact_clonotypes {
-                            inkt_evidences.push(ex_cl.inkt_evidence.clone());
-                            mait_evidences.push(ex_cl.mait_evidence.clone());
+                            inkt_evidences.push(ex_cl.inkt_evidence);
+                            mait_evidences.push(ex_cl.mait_evidence);
                         }
                         (
                             Some(invariant_evidence_display(&inkt_evidences)),
@@ -124,7 +124,7 @@ impl MartianMain for WriteClonotypeOuts {
                 let row = ClonotypesCsvRow {
                     clonotype_id: ClonotypeId {
                         id: i + 1,
-                        sample_number: args.sample_number,
+                        sample_id: args.sample_id.as_deref(),
                     }
                     .to_string(),
                     frequency: clonotype.frequency as usize,

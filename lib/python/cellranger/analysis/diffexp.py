@@ -179,6 +179,7 @@ def save_differential_expression_csv(
     base_dir,
     cluster_names=None,
     file_name="differential_expression",
+    cell_types=None,
 ):
     """Write diffexp results to CSV."""
     out_dir = base_dir
@@ -191,7 +192,13 @@ def save_differential_expression_csv(
 
     n_clusters = de.data.shape[1] // 3
     for i in range(n_clusters):
-        if cluster_names is None:
+        if cell_types:
+            diff_expression_header += [
+                f"{cell_types[i]}, Mean Counts",
+                f"{cell_types[i]}, Log2 fold change",
+                f"{cell_types[i]}, Adjusted p value",
+            ]
+        elif cluster_names is None:
             diff_expression_header += [
                 "Cluster %d Mean Counts" % (i + 1),
                 "Cluster %d Log2 fold change" % (i + 1),
@@ -199,9 +206,9 @@ def save_differential_expression_csv(
             ]
         else:
             diff_expression_header += [
-                "Perturbation %s, Mean Counts" % cluster_names[i],
-                "Perturbation %s, Log2 fold change" % cluster_names[i],
-                "Perturbation %s, Adjusted p value" % cluster_names[i],
+                f"Perturbation {cluster_names[i]}, Mean Counts",
+                f"Perturbation {cluster_names[i]}, Log2 fold change",
+                f"Perturbation {cluster_names[i]}, Adjusted p value",
             ]
 
     diff_expression_prefixes = [(f.id, f.name) for f in matrix.feature_ref.feature_defs]

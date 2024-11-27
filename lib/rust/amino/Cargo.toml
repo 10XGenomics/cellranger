@@ -1,0 +1,16 @@
+[dependencies]
+[dependencies.debruijn]
+workspace = true
+
+[dependencies.string_utils]
+path = '../string_utils'
+
+[lib]
+test = false
+
+[package]
+authors = ['10x Genomics']
+edition = '2021'
+name = 'amino'
+publish = false
+version = '0.1.0'

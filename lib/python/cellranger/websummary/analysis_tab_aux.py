@@ -5,7 +5,7 @@
 """This file shows plots in the analysis tab that aren't related to the outputs of the SC_RNA_ANALYZER pipeline.
 
 e.g. targeted UMI plots, sequencing saturation plots, etc
-splitting things up in this way allows turing repo to utilize TSNE/clustering plots without pulling in a lot of transitive dependencies
+splitting things up in this way allows turing repo to utilize UMAP/clustering plots without pulling in a lot of transitive dependencies
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.constants.shared as shared_constants
 import cellranger.websummary.plotly_tools as pltly
 from cellranger.analysis.multigenome import MultiGenomeAnalysis
-from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+from cellranger.analysis.singlegenome import UMAP_NAME, SingleGenomeAnalysis
 from cellranger.targeted.targeted_constants import (
     GDNA_CONTENT_METRIC,
     GDNA_PLOT_NAME,
@@ -32,8 +32,8 @@ from cellranger.targeted.targeted_constants import (
 )
 from cellranger.targeted.utils import OFFTARGET_WS_LABEL, TARGETED_WS_LABEL
 from cellranger.webshim.jibes_plotting import make_color_map
-from cellranger.websummary.analysis_tab_core import TSNE_LAYOUT_CONFIG
-from cellranger.websummary.helpers import get_tsne_key
+from cellranger.websummary.analysis_tab_core import projection_layout_config
+from cellranger.websummary.helpers import get_projection_key
 from cellranger.websummary.metrics import SpatialAggrMetricAnnotations
 from cellranger.websummary.numeric_converters import round_floats_in_list
 from cellranger.websummary.react_components import BarnyardPanel
@@ -68,8 +68,7 @@ CANONICAL_VISIUM_HD_BIN_NAME = "square_008um"
 SEQ_SATURATION_PLOT_HELP = {
     "helpText": "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per cell), up to the observed sequencing depth. "
     "Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted mRNA transcripts have been sequenced. "
-    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. "
-    "The dotted line is drawn at a value reasonably approximating the saturation point.",
+    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. ",
     "title": "Sequencing Saturation",
 }
 
@@ -108,16 +107,21 @@ SPATIAL_TARGETED_RPU_PLOT_HELP = [
 SPATIAL_SEQ_SATURATION_PLOT_HELP = {
     "helpText": "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per spot), up to the observed sequencing depth. "
     "Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted mRNA transcripts have been sequenced. "
-    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. "
-    "The dotted line is drawn at a value reasonably approximating the saturation point.",
+    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. ",
     "title": "Sequencing Saturation",
 }
 
 RTL_SEQ_SATURATION_PLOT_HELP = {
     HELP_TEXT_KEY: "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in mean reads per spot), up to the observed sequencing depth. "
     "Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted probe ligation products have been sequenced. "
-    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. "
-    "The dotted line is drawn at a value reasonably approximating the saturation point.",
+    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. ",
+    TITLE_KEY: "Sequencing Saturation",
+}
+
+VISIUM_HD_RTL_SEQ_SATURATION_PLOT_HELP = {
+    HELP_TEXT_KEY: "This plot shows the Sequencing Saturation metric as a function of downsampled sequencing depth (measured in total number of read pairs), up to the observed sequencing depth. "
+    "Sequencing Saturation is a measure of the observed library complexity, and approaches 1.0 (100%) when all converted probe ligation products have been sequenced. "
+    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point. ",
     TITLE_KEY: "Sequencing Saturation",
 }
 
@@ -306,9 +310,8 @@ def targeted_table(metadata, sample_data, species_list, is_spatial=False):
         if is_spatial:
             if enrichment_calculations_disabled and metric == "spatial_num_rpu_enriched_genes":
                 value_on_target = value_off_target = "N/A"
-        else:
-            if enrichment_calculations_disabled and metric == "num_rpu_enriched_genes":
-                value_on_target = value_off_target = "N/A"
+        elif enrichment_calculations_disabled and metric == "num_rpu_enriched_genes":
+            value_on_target = value_off_target = "N/A"
 
         metric_name = on_target_metric[0].name
         metric_helptext = metadata.gen_metric_helptext([metric + TARGETED_WS_LABEL.metric_suffix])
@@ -371,20 +374,6 @@ def seq_saturation_plot(sample_data, sample_properties):
                 "range": [0, 1],
                 "fixedrange": False,
             },
-            "shapes": [
-                {
-                    "type": "line",
-                    "x0": 0,
-                    "y0": 0.9,
-                    "x1": 0,
-                    "y1": 0.9,
-                    "line": {
-                        "color": "rgb(128, 128, 128)",
-                        "width": 4,
-                        "dash": "dot",
-                    },
-                },
-            ],
         },
         "data": [],  # data entries are built in the function
     }
@@ -483,7 +472,7 @@ def reads_per_umi_plot(sample_data):
         x1 = np.log10(np.nanmax(per_feature_metrics[cr_tgt_utils.UMIS_IN_CELLS_COLNAME]) + 1)
         data.append(
             {
-                "name": "Reads per UMI threshold (%.2f)" % math.pow(10, b),
+                "name": f"Reads per UMI threshold ({math.pow(10, b):.2f})",
                 "x": [x0, x1],
                 "y": [x0 * a + b, x1 * a + b],
                 "mode": "lines",
@@ -570,22 +559,29 @@ def _add_targeting_line_colors(plot):
     return plot
 
 
-def cmo_tags_on_tsne_from_path(
-    analysis_dir, cells_per_tag: CellsPerFeature, non_singlet_barcodes: CellsPerFeature
+def cmo_tags_on_umap_from_path(
+    analysis_dir,
+    cells_per_tag: CellsPerFeature,
+    non_singlet_barcodes: CellsPerFeature,
+    multiplexing_method: rna_library.BarcodeMultiplexingType,
 ):
     """Given the base analysis directory for a single genome analysis h5,.
 
-    Get the CMO tSNE colored by CMO tag labels
+    Get the CMO UMAP colored by CMO tag labels
     """
     if analysis_dir is None or cells_per_tag is None or non_singlet_barcodes is None:
         return None
 
-    analysis = SingleGenomeAnalysis.load_default_format(analysis_dir, "pca")
+    analysis = SingleGenomeAnalysis.load_default_format(
+        analysis_dir, method="pca", projections=(UMAP_NAME,)
+    )
 
     if analysis is None:
         return None
 
-    return cmo_tags_on_tsne_helper(analysis, cells_per_tag, non_singlet_barcodes)
+    return cmo_tags_on_umap_helper(
+        analysis, cells_per_tag, non_singlet_barcodes, multiplexing_method
+    )
 
 
 def _filter_out_missing_barcodes(
@@ -617,21 +613,23 @@ def _filter_out_missing_barcodes(
     return matrix_bcs
 
 
-# whole-library TSNE for CMO tag data, colored by CMO tag.
-def cmo_tags_on_tsne_helper(
+# whole-library UMAP for CMO tag data, colored by CMO tag.
+def cmo_tags_on_umap_helper(
     analysis: SingleGenomeAnalysis,
     cells_per_tag: CellsPerFeature,
     non_singlet_barcodes: CellsPerFeature,
+    multiplexing_method: rna_library.BarcodeMultiplexingType,
 ):
     # pylint: disable=too-many-locals
-    """CMO tag labels on CMO tSNE helper function."""
-    library_type = rna_library.MULTIPLEXING_LIBRARY_TYPE
-    key = get_tsne_key(library_type, 2)
-    if key not in analysis.tsne:
+    """CMO tag labels on CMO UMAP helper function."""
+    assert multiplexing_method.is_cell_multiplexed(), "Unsupported multiplexing method!"
+    library_type = multiplexing_method.multiplexing_library_type()
+    key = get_projection_key(library_type, 2)
+    if key not in analysis.umap:
         return None
-    tsne_coordinates = analysis.get_tsne(key=key).transformed_tsne_matrix
+    umap_coordinates = analysis.get_umap(key=key).transformed_umap_matrix
 
-    title = "t-SNE Projection of Cells by CMO"
+    title = "UMAP Projection of Cells by CMO"
     data = []
 
     total_bcs = float(len(analysis.matrix.bcs))
@@ -661,8 +659,8 @@ def cmo_tags_on_tsne_helper(
         data.append(
             {
                 "name": f"{tag} ({tag_prop:.1%})",
-                "x": round_floats_in_list(tsne_coordinates[tag_indices, 0]),
-                "y": round_floats_in_list(tsne_coordinates[tag_indices, 1]),
+                "x": round_floats_in_list(umap_coordinates[tag_indices, 0]),
+                "y": round_floats_in_list(umap_coordinates[tag_indices, 1]),
                 "type": "scattergl",
                 "mode": "markers",
                 "marker": {"opacity": 0.9, "size": 4, "color": color_map[tag]},
@@ -698,15 +696,15 @@ def cmo_tags_on_tsne_helper(
     unassigned_indices = analysis.matrix.bcs_to_ints(unassigned)
     add_data(b"Unassigned", unassigned_prop, unassigned_indices)
 
-    # Note: the help text has been included in tsne_cluster plot
-    layout = TSNE_LAYOUT_CONFIG.copy()
+    # Note: the help text has been included in umap_cluster plot
+    layout = projection_layout_config(projection=UMAP_NAME).copy()
     layout["title"] = title
-    cmo_tag_tsne_plot = {
+    cmo_tag_umap_plot = {
         "config": pltly.PLOT_CONFIG,
         "layout": layout,
         "data": data,
     }
-    return cmo_tag_tsne_plot
+    return cmo_tag_umap_plot
 
 
 def antibody_histogram_plot(sample_data):

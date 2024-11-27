@@ -60,15 +60,18 @@ pub enum AutoChemistryName {
     Vdj,
 }
 
-const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 7] = [
+const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 10] = [
     ChemistryName::ThreePrimeV1,
     ChemistryName::ThreePrimeV2,
-    ChemistryName::ThreePrimeV3,
+    ChemistryName::ThreePrimeV3PolyA,
+    ChemistryName::ThreePrimeV3CS1,
     // LT is no longer supported, but we retain it here so that we can issue
     // an accurate error message in DETECT_CHEMISTRY if we detect an LT kit.
     ChemistryName::ThreePrimeV3LT,
-    ChemistryName::ThreePrimeV3HT,
-    ChemistryName::ThreePrimeV4,
+    ChemistryName::ThreePrimeV3HTPolyA,
+    ChemistryName::ThreePrimeV3HTCS1,
+    ChemistryName::ThreePrimeV4PolyA,
+    ChemistryName::ThreePrimeV4CS1,
     // ARC is not supported by count, but is included to improve debugging
     // of reagent mix-ups.
     ChemistryName::ArcV1,
@@ -87,7 +90,7 @@ const VDJ_AUTO_CHEMS: [ChemistryName; 6] = [
     ChemistryName::VdjPEV3,
     ChemistryName::VdjR2V3,
     ChemistryName::VdjR2FRP,
-    ChemistryName::ThreePrimeV3,
+    ChemistryName::ThreePrimeV3PolyA,
 ];
 
 impl AutoChemistryName {
@@ -237,25 +240,33 @@ pub enum ChemistryName {
     #[serde(rename = "SCVDJ-v3")]
     #[strum(serialize = "SCVDJ-v3")]
     VdjPEV3,
+    #[serde(rename = "SCVDJ-v3-OCM")]
+    #[strum(serialize = "SCVDJ-v3-OCM")]
+    VdjPEOCMV3,
     #[serde(rename = "SCVDJ-Splint-R2-FRP")]
     #[strum(serialize = "SCVDJ-Splint-R2-FRP")]
     VdjR2FRP,
     #[serde(rename = "SCVDJ-R2-v3")]
     #[strum(serialize = "SCVDJ-R2-v3")]
     VdjR2V3,
+    #[serde(rename = "SCVDJ-R2-OCM-v3")]
+    #[strum(serialize = "SCVDJ-R2-OCM-v3")]
+    VdjR2OCMV3,
     #[serde(rename = "SCVDJ-R1")]
     #[strum(serialize = "SCVDJ-R1")]
     VdjR1, // Deprecated now, does not have a V2 version
 
+    // N.B. OCM was only added for these for internal purposes and
+    // so only ever added for R2, not R1-only or paired-end.
     #[serde(rename = "SC5P-R1")]
     #[strum(serialize = "SC5P-R1")]
     FivePrimeR1,
     #[serde(rename = "SC5P-R2")]
     #[strum(serialize = "SC5P-R2")]
     FivePrimeR2,
-    #[serde(rename = "SC5P-R2-OH")]
-    #[strum(serialize = "SC5P-R2-OH")]
-    FivePrimeR2OH,
+    #[serde(rename = "SC5P-R2-OCM")]
+    #[strum(serialize = "SC5P-R2-OCM")]
+    FivePrimeR2OCM,
     #[serde(rename = "SC5PHT")]
     #[strum(serialize = "SC5PHT")]
     FivePrimeHT,
@@ -266,15 +277,21 @@ pub enum ChemistryName {
     #[serde(rename = "SC5P-R1-v3")]
     #[strum(serialize = "SC5P-R1-v3")]
     FivePrimeR1V3,
+    #[serde(rename = "SC5P-R1-OCM-v3")]
+    #[strum(serialize = "SC5P-R1-OCM-v3")]
+    FivePrimeR1OCMV3,
     #[serde(rename = "SC5P-R2-v3")]
     #[strum(serialize = "SC5P-R2-v3")]
     FivePrimeR2V3,
-    #[serde(rename = "SC5P-R2-OH-v3")]
-    #[strum(serialize = "SC5P-R2-OH-v3")]
-    FivePrimeR2OHV3,
+    #[serde(rename = "SC5P-R2-OCM-v3")]
+    #[strum(serialize = "SC5P-R2-OCM-v3")]
+    FivePrimeR2OCMV3,
     #[serde(rename = "SC5P-PE-v3")]
     #[strum(serialize = "SC5P-PE-v3")]
     FivePrimePEV3,
+    #[serde(rename = "SC5P-PE-OCM-v3")]
+    #[strum(serialize = "SC5P-PE-OCM-v3")]
+    FivePrimePEOCMV3,
 
     #[serde(rename = "SC3Pv1")]
     #[strum(serialize = "SC3Pv1")]
@@ -282,24 +299,45 @@ pub enum ChemistryName {
     #[serde(rename = "SC3Pv2")]
     #[strum(serialize = "SC3Pv2")]
     ThreePrimeV2,
-    #[serde(rename = "SC3Pv3")]
-    #[strum(serialize = "SC3Pv3")]
-    ThreePrimeV3,
-    #[serde(rename = "SC3Pv3-OH")]
-    #[strum(serialize = "SC3Pv3-OH")]
-    ThreePrimeV3OH,
+
+    #[serde(rename = "SC3Pv3-polyA")]
+    #[strum(serialize = "SC3Pv3-polyA")]
+    ThreePrimeV3PolyA,
+    #[serde(rename = "SC3Pv3-CS1")]
+    #[strum(serialize = "SC3Pv3-CS1")]
+    ThreePrimeV3CS1,
+
+    #[serde(rename = "SC3Pv3-polyA-OCM")]
+    #[strum(serialize = "SC3Pv3-polyA-OCM")]
+    ThreePrimeV3PolyAOCM,
+    #[serde(rename = "SC3Pv3-CS1-OCM")]
+    #[strum(serialize = "SC3Pv3-CS1-OCM")]
+    ThreePrimeV3CS1OCM,
+
     #[serde(rename = "SC3Pv3LT")]
     #[strum(serialize = "SC3Pv3LT")]
     ThreePrimeV3LT, // deprecated, to be removed
-    #[serde(rename = "SC3Pv3HT")]
-    #[strum(serialize = "SC3Pv3HT")]
-    ThreePrimeV3HT,
-    #[serde(rename = "SC3Pv4")]
-    #[strum(serialize = "SC3Pv4")]
-    ThreePrimeV4,
-    #[serde(rename = "SC3Pv4-OH")]
-    #[strum(serialize = "SC3Pv4-OH")]
-    ThreePrimeV4OH,
+
+    #[serde(rename = "SC3Pv3HT-polyA")]
+    #[strum(serialize = "SC3Pv3HT-polyA")]
+    ThreePrimeV3HTPolyA,
+    #[serde(rename = "SC3Pv3HT-CS1")]
+    #[strum(serialize = "SC3Pv3HT-CS1")]
+    ThreePrimeV3HTCS1,
+
+    #[serde(rename = "SC3Pv4-polyA")]
+    #[strum(serialize = "SC3Pv4-polyA")]
+    ThreePrimeV4PolyA,
+    #[serde(rename = "SC3Pv4-CS1")]
+    #[strum(serialize = "SC3Pv4-CS1")]
+    ThreePrimeV4CS1,
+
+    #[serde(rename = "SC3Pv4-polyA-OCM")]
+    #[strum(serialize = "SC3Pv4-polyA-OCM")]
+    ThreePrimeV4PolyAOCM,
+    #[serde(rename = "SC3Pv4-CS1-OCM")]
+    #[strum(serialize = "SC3Pv4-CS1-OCM")]
+    ThreePrimeV4CS1OCM,
 
     #[serde(rename = "SPATIAL3Pv1")]
     #[strum(serialize = "SPATIAL3Pv1")]
@@ -328,6 +366,14 @@ pub enum ChemistryName {
     #[serde(rename = "ATAC-v1")]
     #[strum(serialize = "ATAC-v1")]
     AtacV1,
+
+    #[serde(rename = "SFRP-no-trim-R2")]
+    #[strum(serialize = "SFRP-no-trim-R2")]
+    SfrpNoTrimR2,
+
+    #[serde(rename = "MFRP-R1-no-trim-R2")]
+    #[strum(serialize = "MFRP-R1-no-trim-R2")]
+    MfrpR1NoTrimR2,
 }
 
 impl ChemistryName {
@@ -346,6 +392,7 @@ impl ChemistryName {
 
             // FRP chemistries are RTL.
             SFRP
+            | SfrpNoTrimR2
             | MFRP_RNA
             | MFRP_Ab
             | MFRP_47
@@ -354,21 +401,87 @@ impl ChemistryName {
             | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
             | MFRP_Ab_R2pos50
-            | MFRP_CRISPR => Some(true),
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2 => Some(true),
 
             // All other chemistries are not RTL.
             // These are explicitly listed for future exhaustiveness checks.
             FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3 | VdjR1
-            | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimePE
-            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimePEV3 | ThreePrimeV1
-            | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
-            | ThreePrimeV4 | ThreePrimeV4OH | ArcV1 | AtacV1 => Some(false),
+            | VdjPEOCMV3 | VdjR2OCMV3 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OCM
+            | FivePrimeHT | FivePrimePE | FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3
+            | FivePrimeR2OCMV3 | FivePrimePEV3 | FivePrimePEOCMV3 | ThreePrimeV1 | ThreePrimeV2
+            | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM | ArcV1 | AtacV1 => {
+                Some(false)
+            }
         }
     }
 
     /// Return true if a multiplexed RTL chemistry.
     pub fn is_rtl_multiplexed(&self) -> bool {
         self.is_rtl().unwrap_or(false) && self != &ChemistryName::SFRP
+    }
+
+    /// Return true if a this is an SFRP chemistry.
+    pub fn is_sfrp(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        match self {
+            SFRP | SfrpNoTrimR2 => true,
+            MFRP_RNA
+            | MFRP_Ab
+            | MFRP_47
+            | MFRP_uncollapsed
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
+            | MFRP_R1_48_uncollapsed
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2
+            | Custom
+            | FeatureBarcodingOnly
+            | VdjPE
+            | VdjR2
+            | VdjPEV3
+            | VdjR2FRP
+            | VdjR2V3
+            | VdjR1
+            | VdjPEOCMV3
+            | VdjR2OCMV3
+            | FivePrimeR1
+            | FivePrimeR2
+            | FivePrimeR2OCM
+            | FivePrimeHT
+            | FivePrimePE
+            | FivePrimeR1V3
+            | FivePrimeR1OCMV3
+            | FivePrimeR2V3
+            | FivePrimeR2OCMV3
+            | FivePrimePEV3
+            | FivePrimePEOCMV3
+            | ThreePrimeV1
+            | ThreePrimeV2
+            | ThreePrimeV3PolyA
+            | ThreePrimeV3CS1
+            | ThreePrimeV3PolyAOCM
+            | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT
+            | ThreePrimeV3HTPolyA
+            | ThreePrimeV3HTCS1
+            | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1
+            | ThreePrimeV4PolyAOCM
+            | ThreePrimeV4CS1OCM
+            | SpatialThreePrimeV1
+            | SpatialThreePrimeV2
+            | SpatialThreePrimeV3
+            | SpatialThreePrimeV4
+            | SpatialThreePrimeV5
+            | SpatialHdV1
+            | ArcV1
+            | AtacV1 => false,
+        }
     }
 
     /// Return true if this is an MFRP chemistry.
@@ -384,31 +497,222 @@ impl ChemistryName {
             | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
             | MFRP_Ab_R2pos50
-            | MFRP_CRISPR => true,
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2 => true,
             Custom | SFRP | FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3
-            | VdjR1 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OH | FivePrimeHT | FivePrimePE
-            | FivePrimeR1V3 | FivePrimeR2V3 | FivePrimeR2OHV3 | FivePrimePEV3 | ThreePrimeV1
-            | ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
-            | ThreePrimeV4 | ThreePrimeV4OH | SpatialThreePrimeV1 | SpatialThreePrimeV2
-            | SpatialThreePrimeV3 | SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1
-            | ArcV1 | AtacV1 => false,
+            | VdjR1 | VdjPEOCMV3 | VdjR2OCMV3 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OCM
+            | FivePrimeHT | FivePrimePE | FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3
+            | FivePrimeR2OCMV3 | FivePrimePEV3 | FivePrimePEOCMV3 | ThreePrimeV1 | ThreePrimeV2
+            | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM | SpatialThreePrimeV1
+            | SpatialThreePrimeV2 | SpatialThreePrimeV3 | SpatialThreePrimeV4
+            | SpatialThreePrimeV5 | SpatialHdV1 | ArcV1 | AtacV1 | SfrpNoTrimR2 => false,
+        }
+    }
+
+    /// Return true if this is a single-cell 3' v3 chemistry.
+    pub fn is_sc_3p_v3(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        match self {
+            ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 => true,
+            Custom
+            | SFRP
+            | SfrpNoTrimR2
+            | MFRP_RNA
+            | MFRP_Ab
+            | MFRP_47
+            | MFRP_uncollapsed
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
+            | MFRP_R1_48_uncollapsed
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2
+            | FeatureBarcodingOnly
+            | VdjPE
+            | VdjR2
+            | VdjPEV3
+            | VdjR2FRP
+            | VdjR2V3
+            | VdjR1
+            | VdjPEOCMV3
+            | VdjR2OCMV3
+            | FivePrimeR1
+            | FivePrimeR2
+            | FivePrimeR2OCM
+            | FivePrimeHT
+            | FivePrimePE
+            | FivePrimeR1V3
+            | FivePrimeR1OCMV3
+            | FivePrimeR2V3
+            | FivePrimeR2OCMV3
+            | FivePrimePEV3
+            | FivePrimePEOCMV3
+            | ThreePrimeV1
+            | ThreePrimeV2
+            | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1
+            | ThreePrimeV4PolyAOCM
+            | ThreePrimeV4CS1OCM
+            | SpatialThreePrimeV1
+            | SpatialThreePrimeV2
+            | SpatialThreePrimeV3
+            | SpatialThreePrimeV4
+            | SpatialThreePrimeV5
+            | SpatialHdV1
+            | ArcV1
+            | AtacV1 => false,
+        }
+    }
+
+    /// Return true if this is a single-cell 3' v4 (GEM-X) chemistry.
+    pub fn is_sc_3p_v4(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        match self {
+            ThreePrimeV4PolyA | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM => true,
+            Custom
+            | SFRP
+            | SfrpNoTrimR2
+            | MFRP_RNA
+            | MFRP_Ab
+            | MFRP_47
+            | MFRP_uncollapsed
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
+            | MFRP_R1_48_uncollapsed
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2
+            | FeatureBarcodingOnly
+            | VdjPE
+            | VdjR2
+            | VdjPEV3
+            | VdjR2FRP
+            | VdjR2V3
+            | VdjR1
+            | VdjPEOCMV3
+            | VdjR2OCMV3
+            | FivePrimeR1
+            | FivePrimeR2
+            | FivePrimeR2OCM
+            | FivePrimeHT
+            | FivePrimePE
+            | FivePrimeR1V3
+            | FivePrimeR1OCMV3
+            | FivePrimeR2V3
+            | FivePrimeR2OCMV3
+            | FivePrimePEV3
+            | FivePrimePEOCMV3
+            | ThreePrimeV1
+            | ThreePrimeV2
+            | ThreePrimeV3PolyA
+            | ThreePrimeV3CS1
+            | ThreePrimeV3PolyAOCM
+            | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT
+            | ThreePrimeV3HTPolyA
+            | ThreePrimeV3HTCS1
+            | SpatialThreePrimeV1
+            | SpatialThreePrimeV2
+            | SpatialThreePrimeV3
+            | SpatialThreePrimeV4
+            | SpatialThreePrimeV5
+            | SpatialHdV1
+            | ArcV1
+            | AtacV1 => false,
+        }
+    }
+
+    /// Return true if this is a single-cell 5' v3 (GEM-X) chemistry.
+    pub fn is_sc_5p_v3(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        match self {
+            FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3 | FivePrimeR2OCMV3 | FivePrimePEV3
+            | FivePrimePEOCMV3 => true,
+            Custom
+            | SFRP
+            | SfrpNoTrimR2
+            | MFRP_RNA
+            | MFRP_Ab
+            | MFRP_47
+            | MFRP_uncollapsed
+            | MFRP_RNA_R1
+            | MFRP_Ab_R1
+            | MFRP_R1_48_uncollapsed
+            | MFRP_Ab_R2pos50
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2
+            | FeatureBarcodingOnly
+            | VdjPE
+            | VdjR2
+            | VdjPEV3
+            | VdjR2FRP
+            | VdjR2V3
+            | VdjR1
+            | VdjPEOCMV3
+            | VdjR2OCMV3
+            | FivePrimeR1
+            | FivePrimeR2
+            | FivePrimeR2OCM
+            | FivePrimeHT
+            | FivePrimePE
+            | ThreePrimeV1
+            | ThreePrimeV2
+            | ThreePrimeV3PolyA
+            | ThreePrimeV3CS1
+            | ThreePrimeV3PolyAOCM
+            | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT
+            | ThreePrimeV3HTPolyA
+            | ThreePrimeV3HTCS1
+            | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1
+            | ThreePrimeV4PolyAOCM
+            | ThreePrimeV4CS1OCM
+            | SpatialThreePrimeV1
+            | SpatialThreePrimeV2
+            | SpatialThreePrimeV3
+            | SpatialThreePrimeV4
+            | SpatialThreePrimeV5
+            | SpatialHdV1
+            | ArcV1
+            | AtacV1 => false,
         }
     }
 
     /// Return true if this chemistry is compatible with the provided library type.
-    /// NOTE: this method is currently only used for Flex, and the full implementation
-    /// would be verbose. This can be expanded in the future if other products
+    /// NOTE: this method is currently only used for Flex, SC3Pv3, and SC3Pv4.
+    /// The full implementation would be verbose.
+    ///
+    /// This can be expanded in the future if other products
     /// need to answer this question.
     pub fn compatible_with_library_type(&self, library_type: LibraryType) -> bool {
-        assert!(self.is_mfrp() || *self == SFRP);
+        assert!(self.is_mfrp() || self.is_sfrp() || self.is_sc_3p_v3() || self.is_sc_3p_v4());
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
         match library_type {
             LibraryType::Gex => matches!(
                 self,
-                SFRP | MFRP_RNA | MFRP_47 | MFRP_uncollapsed | MFRP_RNA_R1 | MFRP_R1_48_uncollapsed
+                SFRP | SfrpNoTrimR2
+                    | MFRP_RNA
+                    | MFRP_47
+                    | MFRP_uncollapsed
+                    | MFRP_RNA_R1
+                    | MFRP_R1_48_uncollapsed
+                    | MfrpR1NoTrimR2
+                    | ThreePrimeV3PolyA
+                    | ThreePrimeV3PolyAOCM
+                    | ThreePrimeV3HTPolyA
+                    | ThreePrimeV4PolyA
+                    | ThreePrimeV4PolyAOCM
+                    | ThreePrimeV3LT
             ),
-            LibraryType::Antibody => matches!(
+            LibraryType::Antibody | LibraryType::Custom => matches!(
                 self,
                 SFRP | MFRP_Ab
                     | MFRP_47
@@ -416,12 +720,43 @@ impl ChemistryName {
                     | MFRP_Ab_R1
                     | MFRP_R1_48_uncollapsed
                     | MFRP_Ab_R2pos50
+                    | ThreePrimeV3PolyA
+                    | ThreePrimeV3CS1
+                    | ThreePrimeV3PolyAOCM
+                    | ThreePrimeV3CS1OCM
+                    | ThreePrimeV3HTPolyA
+                    | ThreePrimeV3HTCS1
+                    | ThreePrimeV4PolyA
+                    | ThreePrimeV4PolyAOCM
+                    | ThreePrimeV4CS1
+                    | ThreePrimeV4CS1OCM
+                    | ThreePrimeV3LT
             ),
             LibraryType::Crispr => matches!(
                 self,
-                SFRP | MFRP_47 | MFRP_uncollapsed | MFRP_R1_48_uncollapsed | MFRP_CRISPR
+                SFRP | MFRP_47
+                    | MFRP_uncollapsed
+                    | MFRP_R1_48_uncollapsed
+                    | MFRP_CRISPR
+                    | ThreePrimeV3PolyA
+                    | ThreePrimeV3CS1
+                    | ThreePrimeV3PolyAOCM
+                    | ThreePrimeV3CS1OCM
+                    | ThreePrimeV3HTPolyA
+                    | ThreePrimeV3HTCS1
+                    | ThreePrimeV3LT
             ),
-            _ => panic!("the library type {library_type} is not supported by Flex"),
+            LibraryType::Cellplex => matches!(
+                self,
+                ThreePrimeV3CS1
+                    | ThreePrimeV3CS1OCM
+                    | ThreePrimeV3HTCS1
+                    | ThreePrimeV4CS1
+                    | ThreePrimeV4CS1OCM
+            ),
+            _ => {
+                panic!("The library type {library_type} is not supported by the chemistry {self}.")
+            }
         }
     }
 
@@ -472,10 +807,16 @@ impl ChemistryName {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
         match self {
-            ThreePrimeV3 => Ok(ThreePrimeV3OH),
-            ThreePrimeV4 => Ok(ThreePrimeV4OH),
-            FivePrimeR2 => Ok(FivePrimeR2OH),
-            FivePrimeR2V3 => Ok(FivePrimeR2OHV3),
+            ThreePrimeV3PolyA => Ok(ThreePrimeV3PolyAOCM),
+            ThreePrimeV3CS1 => Ok(ThreePrimeV3CS1OCM),
+            ThreePrimeV4PolyA => Ok(ThreePrimeV4PolyAOCM),
+            ThreePrimeV4CS1 => Ok(ThreePrimeV4CS1OCM),
+            FivePrimeR1V3 => Ok(FivePrimeR1OCMV3),
+            FivePrimeR2 => Ok(FivePrimeR2OCM),
+            FivePrimeR2V3 => Ok(FivePrimeR2OCMV3),
+            FivePrimePEV3 => Ok(FivePrimePEOCMV3),
+            VdjPEV3 => Ok(VdjPEOCMV3),
+            VdjR2V3 => Ok(VdjR2OCMV3),
 
             _ => bail!("Overhang chemistry undefined for {self}"),
         }
@@ -487,7 +828,15 @@ impl ChemistryName {
         use ChemistryName::*;
         matches!(
             self,
-            VdjPE | VdjR1 | VdjR2 | VdjPEV3 | VdjR2V3 | VdjR2FRP | ThreePrimeV3
+            VdjPE
+                | VdjR1
+                | VdjR2
+                | VdjPEV3
+                | VdjR2V3
+                | VdjR2FRP
+                | ThreePrimeV3PolyA
+                | VdjPEOCMV3
+                | VdjR2OCMV3
         )
     }
 }
@@ -599,11 +948,13 @@ impl ChemistryName {
 
         match self {
             // standard 'modern' chemistries
-            ThreePrimeV2 | ThreePrimeV3 | ThreePrimeV3OH | ThreePrimeV3LT | ThreePrimeV3HT
-            | ThreePrimeV4 | ThreePrimeV4OH | SpatialThreePrimeV1 | SpatialThreePrimeV2
-            | SpatialThreePrimeV3 | SpatialThreePrimeV4 | SpatialThreePrimeV5 | FivePrimeR2
-            | FivePrimeR2OH | FivePrimeHT | FivePrimeR2V3 | FivePrimeR2OHV3
-            | FeatureBarcodingOnly | SFRP | ArcV1 => &[
+            ThreePrimeV2 | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM
+            | ThreePrimeV3CS1OCM | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1
+            | ThreePrimeV4PolyA | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM
+            | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
+            | SpatialThreePrimeV4 | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OCM
+            | FivePrimeHT | FivePrimeR2V3 | FivePrimeR2OCMV3 | FeatureBarcodingOnly | SFRP
+            | SfrpNoTrimR2 | ArcV1 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],
@@ -617,7 +968,8 @@ impl ChemistryName {
             | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
             | MFRP_Ab_R2pos50
-            | MFRP_CRISPR => &[
+            | MFRP_CRISPR
+            | MfrpR1NoTrimR2 => &[
                 "10x_bam_to_fastq:R1(GR:GY,UR:UY,1R:1Y)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL,2R:2Y)",
             ],
@@ -631,16 +983,16 @@ impl ChemistryName {
 
             // VDJ chemistry should not be coming through here - may need changing if
             // we decide to make bamtofastq compatible BAMs from VDJ in the future.
-            VdjR1 | VdjR2 | VdjPE | VdjR2V3 | VdjPEV3 | VdjR2FRP => {
+            VdjR1 | VdjR2 | VdjPE | VdjR2V3 | VdjPEV3 | VdjR2FRP | VdjPEOCMV3 | VdjR2OCMV3 => {
                 panic!("VDJ don't yet make a normal BAM file")
             }
 
             // this chemistry supported for customers & bamtofastq doesn't work, so don't emit any
             // bamtofastq headers
-            FivePrimeR1 | FivePrimeR1V3 => &[],
+            FivePrimeR1 | FivePrimeR1V3 | FivePrimeR1OCMV3 => &[],
 
             // 5' PE chem
-            FivePrimePE | FivePrimePEV3 => &[
+            FivePrimePE | FivePrimePEV3 | FivePrimePEOCMV3 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY,SEQ:QUAL)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],
@@ -727,7 +1079,7 @@ pub(crate) enum BarcodeKind {
     LeftProbe,
     RightProbe,
     SpotSegment,
-    // To enable OH multiplexing
+    // To enable OCM multiplexing
     Overhang,
 }
 
@@ -781,7 +1133,7 @@ impl BarcodeReadComponent {
         translate_to: &WhitelistSource,
         path: PathBuf,
     ) -> Result<()> {
-        let source = self.whitelist.as_source(true)?;
+        let source = self.whitelist.as_source()?;
         let mut file = BufWriter::new(File::create(&path)?);
         for row in source.create_translation_from_id_map(id_map, translate_to)? {
             writeln!(file, "{}\t{}\t{}", row.0, row.1, row.2)?;
@@ -795,7 +1147,7 @@ impl BarcodeReadComponent {
 
     /// For a translated whitelist build a sequence to id map
     pub fn build_seq_to_id_map(&self) -> Result<TxHashMap<BcSegSeq, BarcodeId>> {
-        self.whitelist().as_source(true)?.as_translation_seq_to_id()
+        self.whitelist().as_source()?.as_translation_seq_to_id()
     }
 }
 
@@ -891,64 +1243,64 @@ impl AsMartianPrimaryType for BarcodeExtraction {
 /// The corresponding chemistry definition would be:
 ///
 /// - Barcode is present in the first 16 bases of Read 1.
-/// This translates to a `read_type` "R1", `read_offset` 0
-/// and `read_length` 16. Valid options for `read_type` are
-/// "R1", "R2", "I1", "I2"
-/// ``` text
-/// {
-///     "barcode_read_length": 16,
-///     "barcode_read_offset": 0,
-///     "barcode_read_type": "R1",
-///     "barcode_whitelist": "737K-august-2016",
-/// ```
+///   This translates to a `read_type` "R1", `read_offset` 0
+///   and `read_length` 16. Valid options for `read_type` are
+///   "R1", "R2", "I1", "I2"
+///   ``` text
+///   {
+///       "barcode_read_length": 16,
+///       "barcode_read_offset": 0,
+///       "barcode_read_type": "R1",
+///       "barcode_whitelist": "737K-august-2016",
+///   ```
 /// - Description and name for the chemistry
-/// ``` text
-///     "description": "Single Cell V(D)J",
-///     "name": "SCVDJ",
-/// ```
+///   ``` text
+///       "description": "Single Cell V(D)J",
+///       "name": "SCVDJ",
+///   ```
 /// - Specify the `endedness` of the product. This would be `three_prime` for Single Cell
-/// 3' Gene expression and `five_prime` for VDJ and 5' Gene expression
-/// ``` text
-///     "endedness": "five_prime",
-/// ```
+///   3' Gene expression and `five_prime` for VDJ and 5' Gene expression
+///   ``` text
+///       "endedness": "five_prime",
+///   ```
 /// - Every RNA product will have cDNA sequences in
-/// one or both of read1 and read2. Hence an `rna_read`
-/// definition is necessary for each chemistry. `rna_read2`
-/// is optional. For V(D)J, `rna_read` would be the bases in read1
-/// beyond the spacer sequence and `rna_read2` would be all the
-/// bases in read2. It is not necessary that `rna_read` correspond to
-/// read1. For example, in Single Cell 5' R2-only mode, `rna_read`
-/// would be all of read2 and `rna_read2` would be empty.
-/// ``` text
-///     "rna": {
-///        "length": null,
-///        "offset": 41,
-///        "read_type": "R1",
-///     }
-/// ```
+///   one or both of read1 and read2. Hence an `rna_read`
+///   definition is necessary for each chemistry. `rna_read2`
+///   is optional. For V(D)J, `rna_read` would be the bases in read1
+///   beyond the spacer sequence and `rna_read2` would be all the
+///   bases in read2. It is not necessary that `rna_read` correspond to
+///   read1. For example, in Single Cell 5' R2-only mode, `rna_read`
+///   would be all of read2 and `rna_read2` would be empty.
+///   ``` text
+///       "rna": {
+///          "length": null,
+///          "offset": 41,
+///          "read_type": "R1",
+///       }
+///   ```
 /// - Optionally specify `rna_read2`
-/// ``` text
-///     "rna2": {
-///        "length": null,
-///        "offset": 0,
-///        "read_type": "R2",
-///     }
-/// ```
+///   ``` text
+///       "rna2": {
+///          "length": null,
+///          "offset": 0,
+///          "read_type": "R2",
+///       }
+///   ```
 /// - Strandedness is `+` when the rna_read and the transcript are
-/// expected to be in the same orientation and `-` otherwise.
-/// ``` text
-///     "strandedness": "+",
-/// ```
+///   expected to be in the same orientation and `-` otherwise.
+///   ``` text
+///       "strandedness": "+",
+///   ```
 /// - UMI is present in the bases 16-25 of read1
-/// ``` text
-///     "umi": {
-///         "length": 10,
-///         "min_length": null,
-///         "offset": 16,
-///         "read_type": "R1"
-///     }
-/// }
-/// ```
+///   ``` text
+///       "umi": {
+///           "length": 10,
+///           "min_length": null,
+///           "offset": 16,
+///           "read_type": "R1"
+///       }
+///   }
+///   ```
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
 #[serde(deny_unknown_fields)]
 pub struct ChemistryDef {
@@ -1110,6 +1462,9 @@ pub trait ChemistryDefsExt {
 
     /// Return the endedness of this chemistry.
     fn endedness(&self) -> Option<WhichEnd>;
+
+    /// Convert `self` to a `Value`.
+    fn to_value(&self) -> Value;
 }
 
 impl ChemistryDefsExt for ChemistryDefs {
@@ -1170,6 +1525,11 @@ impl ChemistryDefsExt for ChemistryDefs {
             .at_most_one()
             .unwrap()
     }
+
+    /// Convert `self` to a `Value`.
+    fn to_value(&self) -> Value {
+        serde_json::to_value(self).unwrap()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianType)]
@@ -1211,6 +1571,16 @@ impl IndexScheme {
         let strandedness = self.read_defs.strand;
         let endedness = self.read_defs.endedness;
 
+        // FIXME: CELLRANGER-8653 this is not a good long-term solution.
+        // Better would be to allow searching for a whitelist in either the
+        // regular or translation locations, and determine which is which based
+        // on that. This would require ensuring that whitelists in each location
+        // do not have naming collisions.
+        let translation = matches!(
+            barcode_whitelist,
+            "3M-3pgex-may-2023_NXT" | "3M-february-2018_NXT"
+        );
+
         let gel_bead_barcode = BarcodeReadComponent {
             read_type: self.read_defs.barcode_read_type,
             kind: BarcodeKind::GelBead,
@@ -1218,6 +1588,7 @@ impl IndexScheme {
             length: self.read_defs.barcode_read_length,
             whitelist: WhitelistSpec::TxtFile {
                 name: barcode_whitelist.into(),
+                translation,
             },
         };
 
@@ -1232,6 +1603,7 @@ impl IndexScheme {
                 length: self.read_defs.right_probe_barcode_read_length.unwrap(),
                 whitelist: WhitelistSpec::TxtFile {
                     name: right_probe_barcode_whitelist,
+                    translation: true,
                 },
             })
         } else {
@@ -1284,6 +1656,7 @@ impl IndexScheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_json_snapshot;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -1385,7 +1758,8 @@ mod tests {
                     assert_eq!(
                         barcode.whitelist,
                         WhitelistSpec::TxtFile {
-                            name: "737k-whitelist".into()
+                            name: "737k-whitelist".into(),
+                            translation: false,
                         }
                     );
                 }
@@ -1396,7 +1770,8 @@ mod tests {
                     assert_eq!(
                         barcode.whitelist,
                         WhitelistSpec::TxtFile {
-                            name: "probe-barcodes-whitelist".into()
+                            name: "probe-barcodes-whitelist".into(),
+                            translation: true,
                         }
                     );
                 }
@@ -1440,8 +1815,8 @@ mod tests {
             Auto(AutoChemistryName::ThreePrime)
         );
         assert_eq!(
-            serde_json::from_str::<AutoOrRefinedChemistry>(r#""SC3Pv3""#).unwrap(),
-            Refined(ChemistryName::ThreePrimeV3)
+            serde_json::from_str::<AutoOrRefinedChemistry>(r#""SC3Pv3-polyA""#).unwrap(),
+            Refined(ChemistryName::ThreePrimeV3PolyA)
         );
     }
 
@@ -1473,7 +1848,7 @@ mod tests {
     fn test_min_read_length() {
         use ChemistryName::{
             FivePrimeHT, FivePrimePE, FivePrimeR1, FivePrimeR2, ThreePrimeV1, ThreePrimeV2,
-            ThreePrimeV3, ThreePrimeV3HT, ThreePrimeV3LT, VdjPE, VdjR2,
+            ThreePrimeV3HTPolyA, ThreePrimeV3LT, ThreePrimeV3PolyA, VdjPE, VdjR2,
         };
         use WhichRead::{I1, R1, R2};
         assert_eq!(ChemistryDef::named(ThreePrimeV1).min_read_length(I1), 14);
@@ -1483,14 +1858,26 @@ mod tests {
         assert_eq!(ChemistryDef::named(ThreePrimeV2).min_read_length(R1), 26);
         assert_eq!(ChemistryDef::named(ThreePrimeV2).min_read_length(R2), 25);
 
-        assert_eq!(ChemistryDef::named(ThreePrimeV3).min_read_length(R1), 26);
-        assert_eq!(ChemistryDef::named(ThreePrimeV3).min_read_length(R2), 25);
+        assert_eq!(
+            ChemistryDef::named(ThreePrimeV3PolyA).min_read_length(R1),
+            26
+        );
+        assert_eq!(
+            ChemistryDef::named(ThreePrimeV3PolyA).min_read_length(R2),
+            25
+        );
 
         assert_eq!(ChemistryDef::named(ThreePrimeV3LT).min_read_length(R1), 26);
         assert_eq!(ChemistryDef::named(ThreePrimeV3LT).min_read_length(R2), 25);
 
-        assert_eq!(ChemistryDef::named(ThreePrimeV3HT).min_read_length(R1), 26);
-        assert_eq!(ChemistryDef::named(ThreePrimeV3HT).min_read_length(R2), 25);
+        assert_eq!(
+            ChemistryDef::named(ThreePrimeV3HTPolyA).min_read_length(R1),
+            26
+        );
+        assert_eq!(
+            ChemistryDef::named(ThreePrimeV3HTPolyA).min_read_length(R2),
+            25
+        );
 
         assert_eq!(ChemistryDef::named(FivePrimeR1).min_read_length(R1), 66);
         assert_eq!(ChemistryDef::named(FivePrimeR1).min_read_length(R2), 0);
@@ -1513,8 +1900,8 @@ mod tests {
 
     #[test]
     fn test_chem_json_report() {
-        insta::assert_json_snapshot!(
-            ChemistryDef::named(ChemistryName::ThreePrimeV3).to_json_reporter()
+        assert_json_snapshot!(
+            ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA).to_json_reporter()
         );
     }
 
@@ -1527,6 +1914,7 @@ mod tests {
             length: 16,
             whitelist: WhitelistSpec::TxtFile {
                 name: "737K-august-2016".to_string(),
+                translation: false,
             },
         }];
         assert_eq!(
@@ -1545,6 +1933,7 @@ mod tests {
                 length: 16,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
+                    translation: false,
                 },
             },
             BarcodeReadComponent {
@@ -1554,6 +1943,7 @@ mod tests {
                 length: 8,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1a-right".to_string(),
+                    translation: true,
                 },
             },
         ];
@@ -1574,6 +1964,7 @@ mod tests {
                 length: 16,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
+                    translation: false,
                 },
             },
             BarcodeReadComponent {
@@ -1583,6 +1974,7 @@ mod tests {
                 length: 8,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1a-left".to_string(),
+                    translation: true,
                 },
             },
             BarcodeReadComponent {
@@ -1592,6 +1984,7 @@ mod tests {
                 length: 8,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1a-right".to_string(),
+                    translation: true,
                 },
             },
         ];
@@ -1608,6 +2001,7 @@ mod tests {
                 length: 7,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part1.txt".to_string(),
+                    translation: false,
                 },
             },
             BarcodeReadComponent {
@@ -1617,6 +2011,7 @@ mod tests {
                 length: 7,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part2.txt".to_string(),
+                    translation: false,
                 },
             },
             BarcodeReadComponent {
@@ -1626,6 +2021,7 @@ mod tests {
                 length: 7,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part3.txt".to_string(),
+                    translation: false,
                 },
             },
             BarcodeReadComponent {
@@ -1635,6 +2031,7 @@ mod tests {
                 length: 7,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part4.txt".to_string(),
+                    translation: false,
                 },
             },
         ];
@@ -1678,6 +2075,7 @@ mod tests {
                 length: 16,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
+                    translation: false,
                 },
             },
             BarcodeReadComponent {
@@ -1687,6 +2085,7 @@ mod tests {
                 length: 16,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
+                    translation: false,
                 },
             },
         ];
@@ -1704,6 +2103,7 @@ mod tests {
                 length: 16,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1-right".to_string(),
+                    translation: true,
                 },
             },
             BarcodeReadComponent {
@@ -1713,6 +2113,7 @@ mod tests {
                 length: 16,
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1-right".to_string(),
+                    translation: true,
                 },
             },
         ];
@@ -1724,12 +2125,41 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<WhitelistSpec>(
                 r#"{
-                    "name": "3M-february-2018"
+                    "name": "3M-february-2018_TRU"
                 }"#,
             )
             .unwrap(),
             WhitelistSpec::TxtFile {
-                name: "3M-february-2018".into(),
+                name: "3M-february-2018_TRU".into(),
+                translation: false,
+            }
+        );
+
+        assert_eq!(
+            serde_json::from_str::<WhitelistSpec>(
+                r#"{
+                    "name": "3M-february-2018_TRU",
+                    "translation": false
+                }"#,
+            )
+            .unwrap(),
+            WhitelistSpec::TxtFile {
+                name: "3M-february-2018_TRU".into(),
+                translation: false,
+            }
+        );
+
+        assert_eq!(
+            serde_json::from_str::<WhitelistSpec>(
+                r#"{
+                    "name": "3M-february-2018_TRU",
+                    "translation": true
+                }"#,
+            )
+            .unwrap(),
+            WhitelistSpec::TxtFile {
+                name: "3M-february-2018_TRU".into(),
+                translation: true,
             }
         );
 

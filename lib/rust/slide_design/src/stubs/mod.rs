@@ -21,3 +21,6 @@ pub fn load_oligos(_: &Path, _: OligoPart) -> Result<Vec<String>> {
 pub fn spot_pitch(_: &Path) -> Result<u32> {
     unimplemented!()
 }
+pub fn validate_slide_id_name(slide_id: &str) -> Result<String> {
+    unimplemented!()
+}

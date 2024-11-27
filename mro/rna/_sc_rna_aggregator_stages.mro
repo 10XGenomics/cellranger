@@ -146,6 +146,7 @@ stage SUMMARIZE_AGGREGATED_REPORTS(
     in  json   antibody_treemap,
     in  json   crispr_analysis_metrics,
     in  string product_type,
+    in  bool   skip_tsne,
     out json   summary,
     out html   web_summary,
     out json   web_summary_data,

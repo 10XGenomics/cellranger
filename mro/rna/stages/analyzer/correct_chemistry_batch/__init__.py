@@ -300,9 +300,8 @@ def join(args, outs, chunk_defs, chunk_outs):
             if batch_id_to_alignment_count[i] > 3 and batch_id_to_alignment_count[j] > 3:
                 continue
         # re-align within panorama is disable
-        else:
-            if panorama_idx_i == panorama_idx_j:
-                continue
+        elif panorama_idx_i == panorama_idx_j:
+            continue
 
         # use the panorama with the larger shape as reference
         panorama_i_size = sum(
