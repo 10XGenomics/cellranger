@@ -39,13 +39,26 @@ func cstring(b []byte) string {
 	}
 }
 
+// If true, enable verbose error reporting.
+var Verbose bool
+
+func verboseErrorf(format string, args ...any) {
+	if Verbose {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
+func verboseErrorln(args ...any) {
+	if Verbose {
+		fmt.Fprintln(os.Stderr, args...)
+	}
+}
+
 // Collect the uname data.
 func checkUname(_ context.Context, index int, results chan<- siteCheckSection) {
 	var buf unix.Utsname
 	if err := unix.Uname(&buf); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get OS info: %v\n",
+		verboseErrorf("Could not get OS info: %v\n",
 			err)
-		return
 	}
 	results <- siteCheckSection{
 		Section: "System Info",
@@ -133,7 +146,7 @@ func catFiles(section string, index int, results chan<- siteCheckSection, names 
 // Collect the kernel version information.
 func checkKernel(_ context.Context, index int, results chan<- siteCheckSection) {
 	if err := catFiles("Kernel Build", index, results, "/proc/version"); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get kernel info: %v\n",
+		verboseErrorf("Could not get kernel info: %v\n",
 			err)
 	}
 }
@@ -148,7 +161,7 @@ func checkGlibc(_ context.Context, index int, results chan<- siteCheckSection) {
 	}
 }
 
-// Reusable byte arrays
+// Reusable byte arrays.
 var (
 	colon    = []byte{':'}
 	slash    = []byte{'/'}
@@ -173,7 +186,7 @@ func lineValue(line, search []byte) ([]byte, bool) {
 func checkCpu(_ context.Context, index int, results chan<- siteCheckSection) {
 	f, err := os.Open("/proc/cpuinfo")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get cpu info: %v\n",
+		verboseErrorf("Could not get cpu info: %v\n",
 			err)
 		return
 	}
@@ -236,7 +249,7 @@ func checkCpu(_ context.Context, index int, results chan<- siteCheckSection) {
 func checkMemory(_ context.Context, index int, results chan<- siteCheckSection) {
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get mem info: %v\n",
+		verboseErrorf("Could not get mem info: %v\n",
 			err)
 		return
 	}
@@ -254,23 +267,20 @@ func checkMemory(_ context.Context, index int, results chan<- siteCheckSection) 
 			return
 		}
 	}
-	fmt.Fprintln(os.Stderr, "Could not find MemTotal in /proc/meminfo")
+	verboseErrorln("Could not find MemTotal in /proc/meminfo")
 }
 
 // Check disk free space and mount options.
 func checkDisk(_ context.Context, index int, results chan<- siteCheckSection) {
 	f, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get mount info: %v\n",
+		verboseErrorf("Could not get mount info: %v\n",
 			err)
 		return
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
-	var spaceBuf, optsBuf strings.Builder
-	spaceBuf.WriteString("Size Used Avail")
-	spaceStartLen := spaceBuf.Len()
-	autofs := []byte("autofs")
+	var optsBuf strings.Builder
 	for scanner.Scan() {
 		// From `man 5 proc`:
 		// /proc/[pid]/mountinfo (since Linux 2.6.26)
@@ -307,17 +317,6 @@ func checkDisk(_ context.Context, index int, results chan<- siteCheckSection) {
 		optsBuf.WriteString(" (")
 		optsBuf.Write(fields[5])
 		optsBuf.WriteString(")\n")
-		if !bytes.Equal(kind, autofs) {
-			getSpace(&spaceBuf, string(fields[4]))
-		}
-	}
-	if space := spaceBuf.String(); len(space) > spaceStartLen {
-		results <- siteCheckSection{
-			Section: "Disk Space",
-			Cmd:     "df -Ph | awk '{print $2, $3, $4}'",
-			Output:  space,
-			Index:   index,
-		}
 	}
 	if opts := strings.TrimSpace(optsBuf.String()); len(opts) > 0 {
 		results <- siteCheckSection{
@@ -326,57 +325,6 @@ func checkDisk(_ context.Context, index int, results chan<- siteCheckSection) {
 			Output:  opts,
 			Index:   index,
 		}
-	}
-}
-
-// Convert block size and number of blocks into human-readable value.
-func humanSpace(bsize int64, amount uint64) (string, rune) {
-	total := uint64(bsize) * amount
-	if total < 1024 {
-		return strconv.FormatUint(total, 10), 0
-	}
-	for i, suffix := range sizeSuffixes[:len(sizeSuffixes)-1] {
-		unit := ((total >> (9 + 10*i)) + 1) / 2
-		if unit < 1024 {
-			return strconv.FormatUint(unit, 10), suffix
-		}
-	}
-	unit := ((total >> (9 + 40)) + 1) / 2
-	return strconv.FormatUint(unit, 10), 'P'
-}
-
-// Write the total/used/avail space for a mount to the given string builder.
-func getSpace(builder *strings.Builder, mount string) {
-	if strings.HasPrefix(mount, "/sys/kernel/debug") {
-		return
-	}
-	var buf unix.Statfs_t
-	err := unix.Statfs(mount, &buf)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get disk stats for %s: %v\n",
-			mount, err)
-		return
-	}
-	if buf.Blocks == 0 {
-		return
-	}
-	builder.WriteByte('\n')
-	a, s := humanSpace(buf.Bsize, buf.Blocks)
-	builder.WriteString(a)
-	if s != 0 {
-		builder.WriteRune(s)
-	}
-	builder.WriteByte(' ')
-	a, s = humanSpace(buf.Bsize, buf.Blocks-buf.Bfree)
-	builder.WriteString(a)
-	if s != 0 {
-		builder.WriteRune(s)
-	}
-	builder.WriteByte(' ')
-	a, s = humanSpace(buf.Bsize, buf.Bavail)
-	builder.WriteString(a)
-	if s != 0 {
-		builder.WriteRune(s)
 	}
 }
 
@@ -466,7 +414,7 @@ func checkUlimits(_ context.Context, index int, results chan<- siteCheckSection)
 func checkFileLimit(_ context.Context, index int, results chan<- siteCheckSection) {
 	if err := catFiles("Global File Limit", index, results,
 		"/proc/sys/fs/file-max", "/proc/sys/fs/file-nr"); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not get file max: %v\n",
+		verboseErrorf("Could not get file max: %v\n",
 			err)
 	}
 }
@@ -474,7 +422,7 @@ func checkFileLimit(_ context.Context, index int, results chan<- siteCheckSectio
 // Report kernel memory settings.
 func checkVmConfig(_ context.Context, index int, results chan<- siteCheckSection) {
 	if entries, err := os.ReadDir("/proc/sys/vm"); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not list vm proc directory: %v\n",
+		verboseErrorf("Could not list vm proc directory: %v\n",
 			err)
 	} else {
 		var buf strings.Builder
@@ -497,11 +445,11 @@ func checkVmConfig(_ context.Context, index int, results chan<- siteCheckSection
 		}
 	}
 	if thp, err := filepath.Glob("/sys/kernel/mm/*transparent_hugepage/enabled"); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not list hugepage config files: %v\n",
+		verboseErrorf("Could not list hugepage config files: %v\n",
 			err)
 	} else if len(thp) > 0 {
 		if err := catFiles("THP memory config", index, results, thp...); err != nil {
-			fmt.Fprintf(os.Stderr, "Could not read hugepage config file: %v\n",
+			verboseErrorf("Could not read hugepage config file: %v\n",
 				err)
 		}
 	}
@@ -608,26 +556,26 @@ func checkMemoryCgroup(cgroup string, v2 bool, index int, results chan<- siteChe
 	cgroupBuf = append(cgroupBuf, "/memory."...)
 	if err := catFiles("cgroup mem stats", index, results,
 		string(append(cgroupBuf, "stat"...))); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not read cgroup stats: %v\n",
+		verboseErrorf("Could not read cgroup stats: %v\n",
 			err)
 	}
 	if err := catFiles("memory soft limit", index, results,
 		makeString(append(cgroupBuf, softLimit...)),
 		makeString(append(cgroupBuf, softSwapLimt...))); err != nil &&
 		!errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "Could not read cgroup soft limit: %v\n",
+		verboseErrorf("Could not read cgroup soft limit: %v\n",
 			err)
 	}
 	if err := catFiles("memory hard limit", index, results,
 		string(append(cgroupBuf, hardLimit...))); err != nil &&
 		!errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "Could not read cgroup hard limit: %v\n",
+		verboseErrorf("Could not read cgroup hard limit: %v\n",
 			err)
 	}
 	if err := catFiles("memory swap limit", index, results,
 		string(append(cgroupBuf, hardSwapLimit...))); err != nil &&
 		!errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "Could not read cgroup swap limit: %v\n",
+		verboseErrorf("Could not read cgroup swap limit: %v\n",
 			err)
 	}
 }
@@ -673,8 +621,9 @@ func checkContainer(_ context.Context, index int, results chan<- siteCheckSectio
 func checkInit(_ context.Context, index int, results chan<- siteCheckSection) {
 	f, err := os.Open("/proc/1/sched")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not read init process info: %v\n",
+		verboseErrorf("Could not read init process info: %v\n",
 			err)
+		return
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -706,7 +655,7 @@ func execOut(ctx context.Context, stderr bool, e string, args ...string) []byte 
 		return nil
 	}
 	if ctx.Err() != nil {
-		fmt.Fprintln(os.Stderr, e, "timed out")
+		verboseErrorln(e, "timed out")
 	}
 	return bytes.TrimSpace(buf.Bytes())
 }
@@ -979,7 +928,7 @@ func checkRefdata(_ context.Context, index int, results chan<- siteCheckSection)
 	if refdata != "" {
 		if err := catFiles("10X Refdata Version", index, results,
 			path.Join(refdata, "version")); err != nil {
-			fmt.Fprintf(os.Stderr, "Could not read refdata version: %v\n",
+			verboseErrorf("Could not read refdata version: %v\n",
 				err)
 		}
 	}

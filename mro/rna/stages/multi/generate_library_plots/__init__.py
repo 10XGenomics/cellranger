@@ -107,7 +107,8 @@ def main(args, outs):
                 projection=UMAP_NAME,
                 library_type=multiplexing_method.multiplexing_library_type(),
             )
-        cmo_umi_projection_plot["layout"]["title"] = None
+        if cmo_umi_projection_plot is not None:
+            cmo_umi_projection_plot["layout"]["title"] = None
 
         cells_per_tag = CellsPerFeature.load_from_file(cells_per_tag)
         non_singlet_barcodes = CellsPerFeature.load_from_file(args.non_singlet_barcodes)
@@ -118,7 +119,8 @@ def main(args, outs):
             non_singlet_barcodes,
             multiplexing_method,
         )
-        cmo_tags_projection_plot["layout"]["title"] = None
+        if cmo_tags_projection_plot is not None:
+            cmo_tags_projection_plot["layout"]["title"] = None
 
         cmo_projection_plot = {
             "cmo_umi_projection_plot": cmo_umi_projection_plot,

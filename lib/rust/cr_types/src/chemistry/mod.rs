@@ -745,6 +745,10 @@ impl ChemistryName {
                     | ThreePrimeV3HTPolyA
                     | ThreePrimeV3HTCS1
                     | ThreePrimeV3LT
+                    | ThreePrimeV4PolyA
+                    | ThreePrimeV4CS1
+                    | ThreePrimeV4PolyAOCM
+                    | ThreePrimeV4CS1OCM
             ),
             LibraryType::Cellplex => matches!(
                 self,

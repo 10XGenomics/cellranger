@@ -8,6 +8,7 @@ use std::path::Path;
 #[serde(rename_all = "snake_case")]
 pub enum OligoPart {
     Bc1,
+    Bc2,
 }
 
 impl AsMartianPrimaryType for OligoPart {

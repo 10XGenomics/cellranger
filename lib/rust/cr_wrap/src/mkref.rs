@@ -263,12 +263,14 @@ fn move_outputs(pipestance_name: &str, args: &MrpArgs, output_ref_dir_name: &str
             let item = item?;
             fs::rename(item.path(), pipestance_path.join(item.file_name()))?;
         }
-        fs::remove_dir_all(outs_path)?;
+        // Don't fail if we didn't successfully delete.
+        let _ = fs::remove_dir_all(outs_path.clone());
     } else {
         // We ran in the current working dir, so move the outputs into it
         // and delete the pipestance directory.
         fs::rename(output_reference_path, output_ref_dir_name)?;
-        fs::remove_dir_all(pipestance_path)?;
+        // Don't fail if we didn't successfully delete.
+        let _ = fs::remove_dir_all(pipestance_path);
     }
     Ok(())
 }

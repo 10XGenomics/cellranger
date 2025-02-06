@@ -146,6 +146,7 @@ pipeline SC_VDJ_ASSEMBLER_CS(
             "SCVDJ-R2",
             "SCVDJ-R2-v3",
             "SCVDJ-R1",
+            "SCVDJ-v3",
         ],
         is_multi              = false,
         feature_config        = null,

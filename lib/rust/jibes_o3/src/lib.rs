@@ -253,6 +253,22 @@ impl JibesEMO3 {
                 coefficients[0] = y_bar - MIN_FOREGROUND_DELTA * x_bar;
             }
 
+            // Check if the coefficients are Nan (happens if all UMI counts for tag are equal)
+            // such that the regression matrix isn't full rank.
+            if coefficients.iter().any(|&x| x.is_nan()) {
+                // By convention we will set the foreground to the minimum foreground and the
+                // background to the average counts seen since we can't explain a constant
+                // with two two values in a deterministic way.  This should be `first_elem` most
+                // of the time.
+                let avg_cnts = self
+                    .counts
+                    .axis_iter(Axis(0))
+                    .map(|row| row[k])
+                    .fold(0.0, |sum, cnt| sum + cnt)
+                    / (self.n() as f64);
+                coefficients[0] = avg_cnts;
+                coefficients[1] = MIN_FOREGROUND_DELTA;
+            }
             self.model.background[k] = coefficients[0];
             self.model.foreground[k] = coefficients[1];
 

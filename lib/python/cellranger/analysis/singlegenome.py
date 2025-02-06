@@ -146,6 +146,11 @@ class SingleGenomeAnalysis:
                 tsne.transformed_tsne_matrix[cell_bc_indices, :], name=tsne.name, key=tsne.key
             )
 
+        for name, umap in self.umap.items():
+            self.umap[name] = UMAP(
+                umap.transformed_umap_matrix[cell_bc_indices, :], name=umap.name, key=umap.key
+            )
+
     def subsample_bcs(self, num_bcs):
         """Subsample barcodes across entire analysis (matrix, DR, etc)."""
         if num_bcs >= self.matrix.bcs_dim:

@@ -309,12 +309,14 @@ impl ChemistrySet {
             },
             Self::ThreePrimeV4 => match library_type {
                 LibraryType::Gex => Some(ChemistryName::ThreePrimeV4PolyA),
-                LibraryType::Antibody | LibraryType::Custom => Some(ChemistryName::ThreePrimeV4CS1),
+                LibraryType::Antibody | LibraryType::Crispr | LibraryType::Custom => {
+                    Some(ChemistryName::ThreePrimeV4CS1)
+                }
                 _ => None,
             },
             Self::ThreePrimeV4OCM => match library_type {
                 LibraryType::Gex => Some(ChemistryName::ThreePrimeV4PolyAOCM),
-                LibraryType::Antibody | LibraryType::Custom => {
+                LibraryType::Antibody | LibraryType::Crispr | LibraryType::Custom => {
                     Some(ChemistryName::ThreePrimeV4CS1OCM)
                 }
                 _ => None,

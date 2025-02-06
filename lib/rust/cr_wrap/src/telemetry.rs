@@ -84,7 +84,10 @@ impl TelemetryCollector {
             Ok(child) => {
                 self.procs.push((child, Instant::now()));
             }
-            Err(err) => eprintln!("Failed to start telemetry collector: {err}"),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("The telemetry collector is not available.");
+            }
+            Err(err) => eprintln!("Telemetry collection will not run: {err}"),
         }
     }
 

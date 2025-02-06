@@ -101,8 +101,10 @@ def main(args, outs):
     # figure out the encoding of the input string)
     martian.log_info("Running vlconverter: {}".format(" ".join(call)))
     try:
-        results = tk_subproc.check_output(unicode_call)
+        results = tk_subproc.check_output(unicode_call, stderr=subprocess.PIPE)
         martian.log_info(f"vlconverter output: {results}")
     except subprocess.CalledProcessError as e:
         outs.output_for_vloupe = None
-        martian.throw(f"Could not generate .vloupe file: \n{e.output}")
+        martian.throw(
+            f"Could not generate .vloupe file:\nstdout:\n{e.stdout}\n\nstderr:\n{e.stderr}"
+        )

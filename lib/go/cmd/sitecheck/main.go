@@ -21,6 +21,8 @@ import (
 
 func main() {
 	showVersion := flag.Bool("version", false, "Show version and exit.")
+	flag.BoolVar(&sitecheck.Verbose, "verbose", false,
+		"Show verbose error messages.")
 	flag.Usage = func() {
 		product := os.Getenv("TENX_PRODUCT")
 		fmt.Fprintf(flag.CommandLine.Output(),
