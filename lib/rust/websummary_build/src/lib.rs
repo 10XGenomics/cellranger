@@ -1,11 +1,16 @@
+//! websummary_build
+#![deny(missing_docs)]
+
 use anyhow::{Context, Result};
 use std::path::Path;
 use tenx_websummary::WebSummaryBuildFiles;
 
+/// Read a file and return a string
 pub fn read_to_string(fname: &Path) -> Result<String> {
     std::fs::read_to_string(fname).with_context(|| format!("While opening {fname:?} file"))
 }
 
+/// Return the path of the websummary build files
 pub fn build_files() -> Result<WebSummaryBuildFiles<'static>> {
     let dist_folder = {
         // Option 1: Load from runfiles dir
@@ -25,7 +30,7 @@ pub fn build_files() -> Result<WebSummaryBuildFiles<'static>> {
     build_files_in(&dist_folder)
 }
 
-pub fn build_files_in(dist_folder: &Path) -> Result<WebSummaryBuildFiles<'static>> {
+fn build_files_in(dist_folder: &Path) -> Result<WebSummaryBuildFiles<'static>> {
     let script_js = read_to_string(&dist_folder.join("tenx-websummary-script.min.js"))?;
     let styles_css = read_to_string(&dist_folder.join("tenx-websummary-styles.min.css"))?;
     let template_html = read_to_string(&dist_folder.join("template.html"))?;

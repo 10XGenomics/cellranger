@@ -1,18 +1,18 @@
+#![deny(missing_docs)]
 use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
+use crate::detect_chemistry::chemistry_filter::DetectChemistryCandidates;
 use anyhow::Result;
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile, FeatureType};
-use fastq_set::read_pair::ReadPair;
 use fastq_set::WhichRead;
-use metric::{SimpleHistogram, TxHashMap, TxHashSet};
+use fastq_set::read_pair::ReadPair;
+use metric::{Histogram, SimpleHistogram, TxHashMap};
 use std::fmt;
 
 pub(crate) const WHICH_LEN_READS: [WhichRead; 3] = [WhichRead::R1, WhichRead::R2, WhichRead::I1];
 
-pub(crate) struct LengthFilter<'a> {
-    allowed_chems: &'a TxHashSet<ChemistryName>,
-    chem_defs: Vec<ChemistryDef>,
+pub(crate) struct LengthFilter {
     min_feature_read_lengths: TxHashMap<FeatureType, TxHashMap<WhichRead, usize>>,
 }
 
@@ -47,61 +47,56 @@ impl LengthStats {
     }
 }
 
-impl<'a> ChemistryFilter<'a> for LengthFilter<'a> {
-    fn context() -> &'static str {
-        "Length based filtering"
-    }
-    fn allowed_chemistries(&self) -> &'a TxHashSet<ChemistryName> {
-        self.allowed_chems
-    }
-    fn input_chemistries(&self) -> TxHashSet<ChemistryName> {
-        self.chem_defs.iter().map(|def| def.name).collect()
-    }
+impl ChemistryFilter for LengthFilter {
+    const CONTEXT: &'static str = "Length based filtering";
+
     fn process_unit(
         &mut self,
+        possible_chems: &DetectChemistryCandidates,
         unit: &DetectChemistryUnit,
         read_pairs: &[ReadPair],
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        let (stats, compatible_chems, max_lengths) = self.process_reads(unit, read_pairs)?;
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
+        let (stats, compatible_chems, max_lengths) =
+            self.process_reads(possible_chems, unit, read_pairs)?;
         println!("{stats:#?}");
         if compatible_chems.is_empty() {
             Err(DetectChemistryErrors::NotEnoughReadLength {
                 stats,
                 unit: Box::new(unit.clone()),
-                chems: self.input_chemistries(),
+                chems: possible_chems.clone(),
                 max_lengths,
             })
         } else {
             Ok(compatible_chems)
         }
     }
-    fn post_process(
-        &self,
-        mut result: TxHashSet<ChemistryName>,
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
+}
+
+impl LengthFilter {
+    /// If the consensus set of chemistries contains a PE option, remove the
+    /// single-ended option from the input collection.
+    pub(crate) fn post_process_pe(
+        consensus: &DetectChemistryCandidates,
+        result: &mut DetectChemistryCandidates,
+    ) {
         use ChemistryName::{
             FivePrimePE, FivePrimePEV3, FivePrimeR2, FivePrimeR2V3, VdjPE, VdjPEV3, VdjR2, VdjR2V3,
         };
-        if result.contains(&FivePrimePE) {
+        if consensus.contains_key(&FivePrimePE) {
             result.remove(&FivePrimeR2);
         }
-        if result.contains(&FivePrimePEV3) {
+        if consensus.contains_key(&FivePrimePEV3) {
             result.remove(&FivePrimeR2V3);
         }
-        if result.contains(&VdjPE) {
+        if consensus.contains_key(&VdjPE) {
             result.remove(&VdjR2);
         }
-        if result.contains(&VdjPEV3) {
+        if consensus.contains_key(&VdjPEV3) {
             result.remove(&VdjR2V3);
         }
-        Ok(result)
     }
-}
 
-impl<'a> LengthFilter<'a> {
-    pub(crate) fn new<'b>(
-        allowed_chems: &'a TxHashSet<ChemistryName>,
-        chems: impl IntoIterator<Item = &'b ChemistryName>,
+    pub(crate) fn new(
         feature_ref: Option<&FeatureReferenceFile>,
         feature_config: Option<&FeatureConfig>,
     ) -> Result<Self> {
@@ -111,8 +106,6 @@ impl<'a> LengthFilter<'a> {
             TxHashMap::default()
         };
         Ok(LengthFilter {
-            allowed_chems,
-            chem_defs: chems.into_iter().map(|c| ChemistryDef::named(*c)).collect(),
             min_feature_read_lengths,
         })
     }
@@ -120,12 +113,13 @@ impl<'a> LengthFilter<'a> {
     #[allow(clippy::type_complexity)]
     pub(crate) fn process_reads(
         &self,
+        possible_chems: &DetectChemistryCandidates,
         unit: &DetectChemistryUnit,
         read_pairs: &[ReadPair],
     ) -> Result<
         (
             LengthStats,
-            TxHashSet<ChemistryName>,
+            DetectChemistryCandidates,
             TxHashMap<WhichRead, usize>,
         ),
         DetectChemistryErrors,
@@ -155,7 +149,7 @@ impl<'a> LengthFilter<'a> {
                 .collect(),
         };
 
-        if let Some(feature_type) = unit.library_type.feature_barcode_type() {
+        let min_lengths = if let Some(feature_type) = unit.library_type.feature_barcode_type() {
             // non-gene feature types get evaluated against the feature reference
             let Some(min_lengths) = self
                 .min_feature_read_lengths
@@ -177,20 +171,18 @@ impl<'a> LengthFilter<'a> {
                     });
                 }
             }
-            let compatible_chems = self
-                .chem_defs
-                .iter()
-                .filter(|def| stats.is_compatible(def, Some(min_lengths)))
-                .map(|def| def.name)
-                .collect();
-            return Ok((stats, compatible_chems, max_lengths));
-        }
+            Some(min_lengths)
+        } else {
+            None
+        };
 
-        let compatible_chems = self
-            .chem_defs
+        let compatible_chems = possible_chems
             .iter()
-            .filter(|def| stats.is_compatible(def, None))
-            .map(|def| def.name)
+            .filter_map(|(name, def)| {
+                stats
+                    .is_compatible(def, min_lengths)
+                    .then_some((*name, def.clone()))
+            })
             .collect();
 
         Ok((stats, compatible_chems, max_lengths))

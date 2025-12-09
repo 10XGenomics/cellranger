@@ -21,14 +21,17 @@ stage GET_CELL_TYPES_UMAP_PLOT(
 import martian
 
 import cellranger.feature.utils as feature_utils
-from cellranger.cell_typing.cas_metrics import cell_type_umap
+from cellranger.cell_typing.broad_tenx.cas_metrics import cell_type_umap
 
 
 def main(args, outs):
     if args.analysis and args.cell_types:
         ## UMAP of cell types
         umap_plot = cell_type_umap(
-            cell_types=args.cell_types, analysis=args.analysis, cloupe_projection=None
+            cell_types=args.cell_types,
+            analysis=args.analysis,
+            cloupe_projection=None,
+            configure_legend=True,
         )
         feature_utils.write_json_from_dict(umap_plot, outs.cell_types_umap_plot)
         return
@@ -37,6 +40,7 @@ def main(args, outs):
             cell_types=args.cell_types,
             analysis=None,
             cloupe_projection=args.cloupe_projection,
+            configure_legend=True,
         )
         feature_utils.write_json_from_dict(umap_plot, outs.cell_types_umap_plot)
         return

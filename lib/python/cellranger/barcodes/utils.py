@@ -71,7 +71,7 @@ def load_barcode_tsv(filename: str | bytes, as_set=False) -> set[bytes] | list[b
         barcodes = [x.strip() for x in bc_file if b"#" not in x]
     barcode_set = set(barcodes)
     if len(barcodes) != len(barcode_set):
-        raise Exception(f"Duplicates found in barcode whitelist: {filename}")
+        raise ValueError(f"Duplicates found in barcode whitelist: {filename}")
     return barcode_set if as_set else barcodes
 
 
@@ -84,7 +84,7 @@ def get_barcode_whitelist_path(filename: str, translation: bool = False) -> str:
 
 
 def get_barcode_whitelist_path(filename: str | None, translation: bool = False) -> str | None:
-    # Look for exact path, .txt.gz, or .txt
+    """Look for exact path of barcode whitelist .txt.gz, or .txt and return it."""
     if filename is None:
         return None
     elif os.path.exists(filename):
@@ -112,7 +112,7 @@ def get_all_whitelist_filenames() -> list[str]:
     """
     basenames = os.listdir(cr_constants.BARCODE_WHITELIST_PATH)
     allowed_suffixes = (".txt", ".txt.gz")
-    all_files = []
+    all_files: list[str] = []
     for name in basenames:
         full_name = os.path.join(cr_constants.BARCODE_WHITELIST_PATH, name)
         if (
@@ -124,7 +124,7 @@ def get_all_whitelist_filenames() -> list[str]:
     return all_files
 
 
-def get_barcode_whitelist_paths(filenames: str):
+def get_barcode_whitelist_paths(filenames: str) -> str:
     paths = filenames.split(",")
     return ",".join([get_barcode_whitelist_path(p) for p in paths])
 
@@ -155,7 +155,12 @@ def load_barcode_whitelist(
 ) -> set[bytes] | list[bytes]: ...
 
 
-def load_barcode_whitelist(filename: str | None, as_set: bool = False, translation: bool = False):
+def load_barcode_whitelist(
+    filename: str | None,
+    as_set: bool = False,
+    translation: bool = False,
+) -> None | set[bytes] | list[bytes]:
+    """Load barcodes from a barcode whitelist file."""
     path = get_barcode_whitelist_path(filename, translation)
 
     if path is None:
@@ -167,17 +172,18 @@ def load_barcode_whitelist(filename: str | None, as_set: bool = False, translati
 
 
 def load_probe_barcode_map(
-    name: str | None = None, path: str | None = None
-) -> dict[str, str] | None:
-    """Map probe BC ids to their collaped sequences.
+    name: str | None = None,
+    *,
+    path: str | None = None,
+    strand: str | None = None,
+) -> dict[str, str]:
+    """Return a dict of barcode IDs to their translated sequences.
 
-    If the barcode whitelist exists return the mapping dictionary,
-    else, return None.
+    Exactly one of the arguments `name` or `path` must be provided.
+    Reverse complement the sequences if `strand` is `"-"`.
     """
-    if name is None and path is None:
-        return None
-
-    assert not (name is not None and path is not None)
+    assert name is not None or path is not None
+    assert name is None or path is None
 
     if name is not None:
         file_path = None
@@ -188,17 +194,16 @@ def load_probe_barcode_map(
                 break
     else:
         file_path = path
+    assert file_path is not None
 
-    if file_path is None:
-        return None
-    else:
-        translate_map = {}
-        for line in cr_io.open_maybe_gzip(file_path, "r"):
-            if line.startswith("#"):
-                continue
-            bcs = line.strip().split()
-            translate_map[bcs[2]] = bcs[1]
-        return translate_map
+    barcode_id_to_seq = {}
+    for line in cr_io.open_maybe_gzip(file_path, "r"):
+        if line.startswith("#"):
+            continue
+        _seq, translated_seq, barcode_id = line.strip().split()
+        barcode_id_to_seq[barcode_id] = translated_seq
+
+    return barcode_id_to_seq
 
 
 def get_mem_gb_request_from_barcode_whitelist(

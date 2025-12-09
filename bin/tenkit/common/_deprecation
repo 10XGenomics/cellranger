@@ -9,8 +9,8 @@ function check {
     if [ ! -z "$1" ]; then
         echo "WARNING: This operating system version is unsupported or will soon be unsupported:"
         echo "($1)"
-        echo "Future releases of this pipeline will require RedHat/CentOS 7 or greater,"
-        echo "or Ubuntu 14 or greater."
+        echo "Future releases of this pipeline will require RedHat/CentOS 8 or greater,"
+        echo "or Ubuntu 16 or greater."
         echo "For more information, see support.10xgenomics.com/os-support."
         echo ""
         echo "To continue running this version for now, set TENX_IGNORE_DEPRECATED_OS=1"

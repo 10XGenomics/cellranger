@@ -1,5 +1,6 @@
-use clap::builder::NonEmptyStringValueParser;
+#![expect(missing_docs)]
 use clap::Parser;
+use clap::builder::NonEmptyStringValueParser;
 
 #[derive(Parser, Debug, Clone)]
 pub struct MrpArgs {
@@ -87,7 +88,7 @@ pub struct MrpArgs {
 
 impl MrpArgs {
     /// Convert this struct into a vector of command line arguments.
-    pub(crate) fn get_args(&self) -> Vec<String> {
+    pub(super) fn get_args(&self) -> Vec<String> {
         [
             optional_arg(&self.jobmode, "jobmode"),
             optional_arg(&self.jobinterval, "jobinterval"),

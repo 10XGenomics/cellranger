@@ -1,14 +1,15 @@
 //! Martian stage MULTI_SETUP_CHUNKS
+#![deny(missing_docs)]
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use barcode::WhitelistSpec;
+use cr_types::LibraryType;
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::rna_read::RnaChunk;
 use cr_types::sample_def::SampleDef;
-use cr_types::LibraryType;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,7 @@ pub struct MultiSetupChunksStageOutputs {
     pub visium_hd_slide_name: Option<String>,
 }
 
+/// Martian stage MULTI_SETUP_CHUNKS
 pub struct MultiSetupChunks;
 
 #[make_mro]
@@ -91,13 +93,13 @@ impl MartianMain for MultiSetupChunks {
                     u16::try_from(chunk_id).unwrap(),
                 )
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let barcode_whitelists = args
             .chemistry_defs
             .values()
             .filter_map(|x| {
-                x.barcode_whitelist()
+                x.barcode_whitelist_spec()
                     .option_gel_bead()
                     .and_then(WhitelistSpec::whitelist_name)
             })
@@ -108,7 +110,10 @@ impl MartianMain for MultiSetupChunks {
         let visium_hd_slide_name = args
             .chemistry_defs
             .values()
-            .filter_map(|x| x.barcode_whitelist().map_option(WhitelistSpec::slide_name))
+            .filter_map(|x| {
+                x.barcode_whitelist_spec()
+                    .map_option(WhitelistSpec::slide_name)
+            })
             .flatten()
             .dedup()
             .at_most_one()

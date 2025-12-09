@@ -1,6 +1,4 @@
 // Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
-
-//!
 //! Code for reading and writing custom proto files
 //!
 //! Protobuf format by default is not suitable for streaming. We need to write our own logic to
@@ -18,6 +16,7 @@
 //! In the above diagram,
 //! - `Length` is an unsigned 32 bit integer stored in **Big endian** order.
 //! - If there are multiple messages, they are stored consecutively following the same format.
+#![expect(missing_docs)]
 
 use crate::types::{Clonotype, EncloneOutputs};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};

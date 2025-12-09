@@ -1,4 +1,6 @@
+//! vdj_ann
 // Copyright (c) 2019 10x Genomics, Inc. All rights reserved.
+#![deny(missing_docs)]
 
 // Modules introducing macros need to come before the modules that use them.
 

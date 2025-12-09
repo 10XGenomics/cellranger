@@ -1,15 +1,17 @@
 //! I/O HDF5 helper functions
+#![deny(missing_docs)]
 
 use crate::types::{
-    clustering_key, ClusteringKey, ClusteringResult, ClusteringType, EmbeddingResult,
-    EmbeddingType, H5File, PcaResult,
+    ClusteringKey, ClusteringResult, ClusteringType, EmbeddingResult, EmbeddingType, H5File,
+    PcaResult, ReductionType, clustering_key,
 };
 use anyhow::{Context, Result};
 use cr_types::reference::feature_reference::FeatureType;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
-use ndarray::{s, Array2};
+use ndarray::{Array2, s};
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 const VERSION_DS: &str = "version";
 const VERSION: i64 = 2;
@@ -49,7 +51,7 @@ pub(crate) fn matrix_feature_types(matrix: &H5File) -> Result<BTreeMap<FeatureTy
     let feature_types = dataset
         .read_1d::<FA>()?
         .iter()
-        .map(|x| x.parse::<FeatureType>())
+        .map(|x| FeatureType::from_str(x))
         .fold_while(Ok(BTreeMap::default()), |mut acc, x| match x {
             Ok(x) => {
                 *acc.as_mut().unwrap().entry(x).or_insert(0) += 1;
@@ -82,60 +84,92 @@ pub(crate) mod pca {
     pub(crate) const VARIANCE: &str = "variance_explained";
 }
 
+pub(crate) mod lsa {
+    pub(crate) const GROUP: &str = "lsa";
+    pub(crate) const MATRIX: &str = "transformed_lsa_matrix";
+}
+
+pub(crate) mod plsa {
+    pub(crate) const GROUP: &str = "plsa";
+    pub(crate) const MATRIX: &str = "transformed_plsa_matrix";
+}
+
 fn feature_group(group: hdf5::Group, feature_type: FeatureType) -> Result<hdf5::Group> {
     let member = group
         .member_names()?
         .into_iter()
         .find(|m| m.contains(feature_type.as_snake_case()));
     if member.is_none() {
-        anyhow::bail!(
-            "Could not find {:?} feature in group {:?}",
-            feature_type,
-            group
-        )
+        anyhow::bail!("Could not find {feature_type:?} feature in group {group:?}")
     }
     Ok(group.group(&member.unwrap())?)
 }
 
-pub(crate) struct PcaMatrixShape {
+pub(crate) struct ReductionMatrixShape {
     pub num_bcs: usize,
     pub num_components: usize,
 }
 
-pub(crate) fn load_transformed_pca(
-    pca_h5: &H5File,
+pub(crate) fn load_transformed_reduction_h5(
+    reduction_h5: &H5File,
     feature_type: FeatureType,
-    input_pcs: Option<usize>,
-) -> Result<(hdf5::Group, PcaMatrixShape)> {
-    let file = hdf5::File::open(pca_h5)?;
-    let group = file.group(pca::GROUP)?;
+    input_dims: Option<usize>,
+    reduction_type: ReductionType,
+) -> Result<(hdf5::Group, ReductionMatrixShape)> {
+    let file = hdf5::File::open(reduction_h5)?;
+    let group = match reduction_type {
+        // bcpca+bclsa types have pca-h5 files from reduce_dimensions_for_cbc
+        ReductionType::pca | ReductionType::bcpca | ReductionType::bclsa => {
+            file.group(pca::GROUP)?
+        }
+        ReductionType::lsa => file.group(lsa::GROUP)?,
+        ReductionType::plsa => file.group(plsa::GROUP)?,
+    };
     let n_components = feature_group(group, feature_type)?;
-    let sh = n_components.dataset(pca::MATRIX)?.shape();
-    let mut shape = PcaMatrixShape {
+    let sh = match reduction_type {
+        ReductionType::pca | ReductionType::bcpca | ReductionType::bclsa => {
+            n_components.dataset(pca::MATRIX)?.shape()
+        }
+        ReductionType::lsa => n_components.dataset(lsa::MATRIX)?.shape(),
+        ReductionType::plsa => n_components.dataset(plsa::MATRIX)?.shape(),
+    };
+    let mut shape = ReductionMatrixShape {
         num_bcs: sh[0],
         num_components: sh[1],
     };
-    if let Some(input_pcs) = input_pcs {
-        if shape.num_components > input_pcs {
-            shape.num_components = input_pcs;
-        }
+    if let Some(input_dims) = input_dims
+        && shape.num_components > input_dims
+    {
+        shape.num_components = input_dims;
     }
     Ok((n_components, shape))
 }
 
-pub(crate) fn load_transformed_pca_matrix(
-    pca_h5: &H5File,
+pub(crate) fn load_transformed_matrix(
+    reduction_h5: &H5File,
     feature_type: FeatureType,
-    input_pcs: Option<usize>,
+    input_dims: Option<usize>,
+    reduction_type: ReductionType,
 ) -> Result<Array2<f64>> {
-    let (n_components, shape) = load_transformed_pca(pca_h5, feature_type, input_pcs)?;
-    let proj = if input_pcs.is_some() {
+    let (n_components, shape) = load_transformed_reduction_h5(
+        reduction_h5,
+        feature_type,
+        input_dims,
+        reduction_type.clone(),
+    )?;
+
+    let dataset = match reduction_type {
+        ReductionType::lsa => n_components.dataset(lsa::MATRIX)?,
+        ReductionType::pca | ReductionType::bcpca | ReductionType::bclsa => {
+            n_components.dataset(pca::MATRIX)?
+        }
+        ReductionType::plsa => n_components.dataset(plsa::MATRIX)?,
+    };
+    let proj = if input_dims.is_some() {
         // Get the minimum of the number of available and requested components.
-        n_components
-            .dataset(pca::MATRIX)?
-            .read_slice_2d::<f64, _>(s![.., 0..shape.num_components])?
+        dataset.read_slice_2d::<f64, _>(s![.., 0..shape.num_components])?
     } else {
-        n_components.dataset(pca::MATRIX)?.read_2d::<f64>()?
+        dataset.read_2d::<f64>()?
     };
     Ok(proj)
 }
@@ -172,7 +206,7 @@ pub(crate) fn save_pca(pca_h5: &H5File, result: &PcaResult<'_>) -> Result<()> {
         .try_collect()?;
     group
         .new_dataset::<FA>()
-        .shape((features_selected.len(),))
+        .shape(features_selected.len())
         .create(pca::FEATURES)?
         .write(&features_selected)?;
     group
@@ -185,6 +219,7 @@ pub(crate) fn save_pca(pca_h5: &H5File, result: &PcaResult<'_>) -> Result<()> {
         .shape(variance_explained.dim())
         .create(pca::VARIANCE)?
         .write(variance_explained)?;
+    file.close()?;
     Ok(())
 }
 
@@ -203,7 +238,7 @@ pub(crate) fn combine_pcas<'a>(
         for num_pcs in in_group.member_names()? {
             let in_group = in_group.group(&num_pcs)?;
             let components_staging_area = in_group.dataset(pca::COMPONENTS)?;
-            let mut components = ndarray::Array2::<f64>::zeros((1, 1));
+            let mut components = Array2::<f64>::zeros((1, 1));
             let mut dispersion = ndarray::Array1::<f64>::zeros(1);
             let mut features_selected = ndarray::Array1::<FA>::from_elem(1, FA::new());
             let mut variance_explained = ndarray::Array1::<f64>::zeros(1);
@@ -228,7 +263,7 @@ pub(crate) fn combine_pcas<'a>(
                 .write(&dispersion)?;
             out_group
                 .new_dataset::<FA>()
-                .shape((features_selected.len(),))
+                .shape(features_selected.len())
                 .create(pca::FEATURES)?
                 .write(&features_selected)?;
             out_group
@@ -243,6 +278,7 @@ pub(crate) fn combine_pcas<'a>(
                 .write(&variance_explained)?;
         }
     }
+    output.close()?;
     Ok(())
 }
 
@@ -346,7 +382,7 @@ pub(crate) fn save_clustering(path: &H5File, result: &ClusteringResult) -> Resul
         })?)?;
     group
         .new_dataset::<i64>()
-        .shape((labels.len(),))
+        .shape(labels.len())
         .create(clustering::CLUSTERS)?
         .write(&labels[..])?;
     group
@@ -366,6 +402,7 @@ pub(crate) fn save_clustering(path: &H5File, result: &ClusteringResult) -> Resul
         .new_dataset::<i64>()
         .create(clustering::NUM)?
         .write_scalar(labels.iter().max().unwrap_or(&0))?;
+    file.close()?;
     Ok(())
 }
 
@@ -406,7 +443,7 @@ pub(crate) fn combine_clusterings<'a>(
                 .write_scalar(&clustering_type)?;
             out_group
                 .new_dataset::<i64>()
-                .shape((clusters.len(),))
+                .shape(clusters.len())
                 .create(clustering::CLUSTERS)?
                 .write(&clusters)?;
             out_group
@@ -423,6 +460,7 @@ pub(crate) fn combine_clusterings<'a>(
                 .write_scalar(&num_clusters)?;
         }
     }
+    output.close()?;
     Ok(())
 }
 
@@ -461,6 +499,7 @@ pub(crate) fn save_embedding(path: &H5File, result: &EmbeddingResult<'_>) -> Res
             feature_type.as_snake_case(),
             dims,
         ))?)?;
+    file.close()?;
     Ok(())
 }
 

@@ -3,15 +3,16 @@
 //! vector of rna reads. This is likely a patch until the more structured
 //! form of data makes its way deep into the assembler
 //!
+#![deny(missing_docs)]
 use bitflags::bitflags;
 use cr_types::chemistry::ChemistryDef;
 use cr_types::rna_read::RnaRead;
 use debruijn::dna_string::DnaString;
+use fastq_set::WhichEnd;
 use fastq_set::metric_utils::ILLUMINA_QUAL_OFFSET;
 use fastq_set::sseq::HammingIterOpt;
-use fastq_set::WhichEnd;
 use itertools::Itertools;
-use metric::SimpleHistogram;
+use metric::{Histogram, SimpleHistogram};
 
 bitflags! {
     struct ReadFlags: u16 {
@@ -29,7 +30,7 @@ bitflags! {
 
 // TODO: We should ultimately get rid of this complex output type and use a struct instead.
 // Output: (barcode, Vec<(umi, seq, qual, readname, flags)>, actual number of reads)
-pub(crate) fn make_read_data(
+pub(super) fn make_read_data(
     rna_reads: &[RnaRead],
     n_free_tail: usize,
     chemistry_def: &ChemistryDef,
@@ -142,16 +143,16 @@ pub(crate) fn make_read_data(
 }
 
 #[derive(Default)]
-pub struct UmiSortedReads {
-    pub reads: Vec<DnaString>,
-    pub quals: Vec<Vec<u8>>,
-    pub readnames: Vec<String>,
-    pub umi_id: Vec<i32>,         // Umi Id of each read
-    pub unique_umis: Vec<String>, // List of sorted UMIs
-    pub flags: Vec<u16>,
+pub(super) struct UmiSortedReads {
+    pub(super) reads: Vec<DnaString>,
+    pub(super) quals: Vec<Vec<u8>>,
+    pub(super) readnames: Vec<String>,
+    pub(super) umi_id: Vec<i32>,         // Umi Id of each read
+    pub(super) unique_umis: Vec<String>, // List of sorted UMIs
+    pub(super) flags: Vec<u16>,
 }
 
-pub fn correct_umis(
+pub(super) fn correct_umis(
     rna_reads: &mut [RnaRead],
     chemistry_def: &ChemistryDef,
 ) -> (i32, UmiSortedReads) {
@@ -174,7 +175,7 @@ pub fn correct_umis(
     let mut umi_sorted_reads = UmiSortedReads::default();
     for (i, (umi, group_reads)) in read_data
         .into_iter()
-        .group_by(|r| r.0.clone())
+        .chunk_by(|r| r.0.clone())
         .into_iter()
         .enumerate()
     {

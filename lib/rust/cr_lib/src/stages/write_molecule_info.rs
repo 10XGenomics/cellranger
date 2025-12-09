@@ -1,20 +1,21 @@
 //! Martian stage WRITE_MOLECULE_INFO
+#![deny(missing_docs)]
 
+use super::parse_multi_config::CellCalling;
+use crate::BcUmiInfoShardFile;
 use crate::probe_barcode_matrix::ProbeCounts;
-use crate::stages::collate_metrics::SampleMetrics;
+use crate::stages::SampleMetrics;
 use crate::stages::parse_multi_config::CellCallingParam;
 use crate::types::FeatureReferenceFormat;
 use crate::utils::estimate_mem::{barcode_mem_gib, get_total_barcodes_detected};
-use crate::BcUmiInfoShardFile;
 use anyhow::Result;
-use barcode::{Barcode, BarcodeContent};
-use cr_h5::molecule_info::MoleculeInfoWriter;
+use barcode::Barcode;
+use cr_h5::molecule_info::{MoleculeInfoWriter, trim_barcodes};
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
 use cr_types::filtered_barcodes::{FilteredBarcodesCsv, FilteredBarcodesCsvRow};
-use cr_types::probe_set::{Probe, ProbeSetReferenceMetadata};
+use cr_types::probe_set::Probe;
 use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::reference::get_reference_genome_names;
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::rna_read::{LibraryInfo, RnaChunk};
 use cr_types::target_panel_summary::{TargetPanelSummary, TargetPanelSummaryFormat};
@@ -25,17 +26,16 @@ use cr_types::{
 use itertools::Itertools;
 use json_report_derive::JsonReport;
 use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeRead;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
-use martian_filetypes::FileTypeRead;
-use metric::{join_metric_name, CountMetric, JsonReport, PercentMetric, TxHashMap, TxHashSet};
+use metric::{CountMetric, JsonReport, PercentMetric, TxHashMap, TxHashSet, join_metric_name};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use shardio::ShardReader;
 use std::collections::HashMap;
-use std::path::PathBuf;
-use strum_macros::IntoStaticStr;
+use strum::IntoStaticStr;
 
 /// Describes whether a molecule info is raw (uber), sample, or count.
 /// Stored in molecule info metrics and used to set aggr preflights.
@@ -47,6 +47,7 @@ pub enum MoleculeInfoType {
     Count,
 }
 
+/// Martian stage WRITE_MOLECULE_INFO
 pub struct WriteMoleculeInfo;
 
 #[derive(Clone, Deserialize, MartianStruct)]
@@ -54,18 +55,15 @@ pub struct WriteMoleculeInfoStageInputs {
     pub chemistry_defs: ChemistryDefs,
     pub gem_well: GemWell,
     pub counts_bc_order: Vec<BcUmiInfoShardFile>,
-    pub reference_path: Option<PathBuf>,
+    pub reference_info: Option<ReferenceInfo>,
     pub read_chunks: Vec<RnaChunk>,
-    pub feature_reference: FeatureReferenceFormat,
+    pub feature_reference_binary: FeatureReferenceFormat,
     pub filtered_barcodes: FilteredBarcodesCsv,
     pub per_probe_metrics: Option<CsvFile<ProbeCounts>>,
     pub target_panel_summary: Option<TargetPanelSummaryFormat>,
     pub matrix_computer_summary: MetricsFile,
-    pub recovered_cells: Option<CellCallingParam>,
-    pub force_cells: Option<CellCallingParam>,
     pub include_introns: bool,
-    pub disable_ab_aggregate_detection: bool,
-    pub disable_high_occupancy_gem_detection: bool,
+    pub cell_calling_config: CellCalling,
     pub filter_probes: Option<bool>,
     pub multi_config_sha: Option<String>,
     pub sample_barcodes: Option<SampleBarcodesFile>,
@@ -73,7 +71,6 @@ pub struct WriteMoleculeInfoStageInputs {
     pub barcode_index: BarcodeIndexFormat,
     pub slide_serial_capture_area: Option<String>,
 }
-
 #[derive(Serialize, MartianStruct)]
 pub struct SampleMoleculeInfo {
     pub sample: SampleAssignment,
@@ -137,13 +134,12 @@ impl MartianStage for WriteMoleculeInfo {
             println!(
                 "barcode_count={barcodes_count},sample_barcodes_mem_gib={sample_barcodes_mem_gib}"
             );
-
             sample_barcodes_mem_gib
         } else {
             // For WRITE_MOLECULE_INFO.
             0
         };
-        let mem_gib = 12 + sample_barcodes_mem_gib;
+        let mem_gib = 16 + sample_barcodes_mem_gib;
         println!("mem_gib={mem_gib}");
         Ok(StageDef::with_join_resource(Resource::with_mem_gb(mem_gib)))
     }
@@ -176,7 +172,7 @@ impl MartianStage for WriteMoleculeInfo {
             target_panel_summary.map(|x| x.target_panel_name.as_str()),
         );
 
-        let feature_reference = args.feature_reference.read()?;
+        let feature_reference = args.feature_reference_binary.read()?;
         let targets_per_lib = load_targets_per_lib(&feature_reference, &library_info)?;
 
         let (probes, filtered_probes) =
@@ -200,20 +196,16 @@ impl MartianStage for WriteMoleculeInfo {
                 TxHashMap::default()
             };
 
-        let ref_info = args
-            .reference_path
-            .as_deref()
-            .map(ReferenceInfo::from_reference_path)
-            .transpose()?;
-        let genomes = get_reference_genome_names(
-            ref_info.as_ref(),
-            target_panel_summary
-                .map(|x| ProbeSetReferenceMetadata::load_from(&x.target_panel_path))
-                .transpose()?
-                .as_ref(),
-        );
-
         let library_filtered_genome_barcodes = args.filtered_barcodes.read()?;
+        // We are not using reference_info.genomes list because antibody can run without a reference
+        // transcriptome and without a probe set with listed genomes
+        let genomes: Vec<GenomeName> = library_filtered_genome_barcodes
+            .iter()
+            .map(|x| &x.genome)
+            .unique()
+            .sorted()
+            .cloned()
+            .collect();
         let library_filtered_barcodes: TxHashSet<&Barcode> = library_filtered_genome_barcodes
             .iter()
             .map(|x| &x.barcode as &Barcode)
@@ -249,11 +241,6 @@ impl MartianStage for WriteMoleculeInfo {
             .into_iter()
             .map(cr_types::LibraryInfo::Count)
             .collect();
-        let valid_barcodes: Vec<BarcodeContent> = barcode_index
-            .sorted_barcodes()
-            .iter()
-            .map(|barcode| *barcode.content())
-            .collect();
 
         for sample in sample_barcodes.get_samples() {
             let h5_path: H5File = rover.make_path(format!("molecule_info_{sample}"));
@@ -262,7 +249,9 @@ impl MartianStage for WriteMoleculeInfo {
                 &feature_reference,
                 probes.as_deref(),
                 filtered_probes.as_deref(),
-                &valid_barcodes,
+                barcode_index
+                    .sorted_barcodes()
+                    .map(|barcode| *barcode.content()),
                 &library_info,
             )?;
 
@@ -332,7 +321,7 @@ impl MartianStage for WriteMoleculeInfo {
                 per_sample_metrics_json,
                 &visitor.metrics,
                 molecule_info_type,
-                ref_info.as_ref(),
+                args.reference_info.as_ref(),
                 target_panel_summary,
             )?;
             writer.write_metrics(&serde_json::to_string(&metrics)?)?;
@@ -351,7 +340,14 @@ impl MartianStage for WriteMoleculeInfo {
                 summary,
             })
         });
-        let multi_mol_info = multi_mol_info_iter.try_collect()?;
+        let multi_mol_info: Vec<_> = multi_mol_info_iter.try_collect()?;
+
+        for sample in &multi_mol_info {
+            // Trim out barcodes that have zero counts.
+            // FIXME: it would be a lot nicer to handle this when writing in the
+            // first place. This is the one-liner solution.
+            trim_barcodes(&sample.h5_file, false)?;
+        }
 
         Ok(if sample_barcodes.is_multiplexed() {
             Self::StageOutputs {
@@ -523,8 +519,7 @@ fn get_molecule_info_metrics(
     if let Some(ref_info) = ref_info {
         final_metrics.extend(
             ref_info
-                .clone()
-                .into_json_report()
+                .to_json_reporter()
                 .into_iter()
                 .filter(|(k, _)| REFERENCE_METRICS.contains(&k.as_str())),
         );
@@ -562,7 +557,11 @@ fn get_molecule_info_metrics(
     final_metrics.insert(LIBRARIES_METRIC.to_string(), Value::Object(lib_metrics));
 
     let gem_groups = [args.gem_well.inner()];
-    let gg_metrics = get_gem_group_metrics(&gem_groups, &args.force_cells, &args.recovered_cells);
+    let gg_metrics = get_gem_group_metrics(
+        &gem_groups,
+        &Some(args.cell_calling_config.force_cells.clone()),
+        &Some(args.cell_calling_config.recovered_cells.clone()),
+    );
     final_metrics.insert(GEM_GROUPS_METRIC.to_string(), Value::Object(gg_metrics));
 
     // analysis parameters metrics could come from either sample or gem-well
@@ -571,8 +570,10 @@ fn get_molecule_info_metrics(
         serde_json::to_value(AnalysisParameters {
             include_introns: (aligner == AlignerParam::Star).then_some(args.include_introns),
             filter_probes: args.filter_probes,
-            filter_aggregates: !args.disable_ab_aggregate_detection,
-            filter_high_occupancy_gems: !args.disable_high_occupancy_gem_detection,
+            filter_aggregates: !args.cell_calling_config.disable_ab_aggregate_detection,
+            filter_high_occupancy_gems: !args
+                .cell_calling_config
+                .disable_high_occupancy_gem_detection,
         })
         .unwrap(),
     );
@@ -628,7 +629,7 @@ pub struct MoleculeInfoMetrics {
     on_target_usable_read_pairs: TxHashMap<u16, CountMetric>,
 }
 
-impl<'a> MoleculeInfoVisitor<'a> {
+impl MoleculeInfoVisitor<'_> {
     fn visit(&mut self, bc_umi_info: &BcUmiInfo) {
         let is_cell_barcode = self.sample_filtered_barcodes.contains(&bc_umi_info.barcode);
 
@@ -692,7 +693,7 @@ fn build_barcode_info(
         .filter(|x| sample_filtered_barcodes.contains(&x.barcode as &Barcode))
         .flat_map(|barcode_genome| {
             let barcode: &Barcode = &barcode_genome.barcode;
-            let barcode_idx = barcode_index.get_index(barcode);
+            let barcode_idx = barcode_index.must_get(barcode);
             let genome_idx = genome_to_idx[&barcode_genome.genome];
             gem_group_to_libraries[&barcode.gem_group()]
                 .iter()

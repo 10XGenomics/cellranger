@@ -9,12 +9,14 @@ import os
 import martian
 
 import cellranger.analysis.constants as analysis_constants
-import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
+from cellranger.matrix import CountMatrix
+from cellranger.molecule_counter import MoleculeCounter
 
 __MRO__ = """
 stage ANALYZER_PREFLIGHT(
     in  bool   no_secondary_analysis,
+    in  h5     molecule_info,
     in  h5     filtered_matrices_h5,
     in  csv    use_genes,
     in  csv    exclude_genes,
@@ -53,6 +55,8 @@ stage ANALYZER_PREFLIGHT(
     out bool   disable_correct_chemistry_batch,
     out bool   skip_multigenome_analysis,
     src py     "stages/analyzer/analyzer_preflight",
+) using (
+    volatile = strict,
 )
 """
 
@@ -81,8 +85,8 @@ def main(args, outs):
     if not (args.filtered_matrices_h5 and os.path.exists(args.filtered_matrices_h5)):
         martian.exit(f"Filtered matrix does not exist: {args.filtered_matrices_h5}")
 
-    flt_matrix_dims = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_matrices_h5)
-    flt_genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrices_h5)
+    flt_matrix_dims = CountMatrix.load_dims_from_h5(args.filtered_matrices_h5)
+    flt_genomes = CountMatrix.get_genomes_from_h5(args.filtered_matrices_h5)
 
     # check for empty matrix
     nonzero_entries = flt_matrix_dims[2]
@@ -94,14 +98,13 @@ def main(args, outs):
         outs.skip_multigenome_analysis = True
         return
 
-    outs.is_antibody_only = False
-    # check for presence of Gene Expression matrix
-    library_types = cr_matrix.CountMatrix.load_library_types_from_h5_file(args.filtered_matrices_h5)
-    if (
-        rna_library.GENE_EXPRESSION_LIBRARY_TYPE not in library_types
-        and rna_library.ANTIBODY_LIBRARY_TYPE in library_types
-    ):  # No GEX features found
-        outs.is_antibody_only = True
+    # molecule_info is None for reanalyze.
+    library_types = (
+        MoleculeCounter.load_library_types_from_h5_file(args.molecule_info)
+        if args.molecule_info is not None
+        else CountMatrix.load_library_types_from_h5_file(args.filtered_matrices_h5)
+    )
+    outs.is_antibody_only = library_types == {rna_library.ANTIBODY_LIBRARY_TYPE}
 
     if len(flt_genomes) > 1:
         martian.log_info("Matrix has multiple genomes - multi-genome analysis will be performed")
@@ -115,7 +118,7 @@ def main(args, outs):
     # if we're using the defaults and the matrix doesn't have enough data, skip analysis
     if args.max_clusters is None and total_bcs < analysis_constants.MAX_N_CLUSTERS_DEFAULT:
         martian.log_info(
-            "Feature-barcode matrix is tiny (num_cells = %d) - skipping analysis." % total_bcs
+            f"Feature-barcode matrix is tiny (num_cells = {total_bcs}) - skipping analysis."
         )
         outs.skip = True
         outs.disable_run_pca = True
@@ -124,7 +127,7 @@ def main(args, outs):
         return
     if args.num_principal_comps is None and total_genes <= 1:
         martian.log_info(
-            "Feature-barcode matrix is tiny (num_genes = %d) - skipping analysis." % total_genes
+            f"Feature-barcode matrix is tiny (num_genes = {total_genes}) - skipping analysis."
         )
         outs.skip = True
         outs.disable_run_pca = True
@@ -138,9 +141,9 @@ def main(args, outs):
             martian.exit("Cannot specify both --barcodes and --force-cells in the same run.")
         if args.force_cells > total_bcs:
             martian.exit(
-                "Desired cell count (%d) is greater than the number of barcodes in the matrix (%d). "
+                f"Desired cell count ({args.force_cells}) is greater than "
+                f"the number of barcodes in the matrix ({total_bcs}). "
                 "Try passing in the raw (unfiltered) feature-barcode matrix instead, if available."
-                % (args.force_cells, total_bcs)
             )
         total_bcs = args.force_cells
 

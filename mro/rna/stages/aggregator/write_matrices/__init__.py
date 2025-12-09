@@ -54,7 +54,7 @@ def split(args):
         num_nonzero = args.raw_nnz
     else:
         num_nonzero = args.filtered_nnz
-    mem_gib = 3 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, num_nonzero, scale=1.41)
+    mem_gib = 3 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, num_nonzero, scale=2.4)
     print(f"{args.raw_nnz=},{args.filtered_nnz=},{num_nonzero=},{num_barcodes=},{mem_gib=}")
     return {
         "chunks": [],

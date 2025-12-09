@@ -7,9 +7,8 @@
 
 pipeline _SLFE_CELLS_REPORTER(
     in  map<ChemistryDef> chemistry_defs,
-    in  path              reference_path,
-    in  CellCallingParam  recovered_cells,
-    in  CellCallingParam  force_cells,
+    in  ReferenceInfo     reference_info,
+    in  CellCalling       cell_calling_config,
     in  frf.bincode       slfe_feature_reference,
     in  tps.json          target_panel_summary,
     in  h5                matrices_h5,
@@ -24,8 +23,6 @@ pipeline _SLFE_CELLS_REPORTER(
     in  csv               per_barcode_metrics,
     in  bool              include_introns,
     in  bool              filter_probes,
-    in  bool              disable_ab_aggregate_detection,
-    in  bool              disable_high_occupancy_gem_detection,
     in  bool              disable_subsampling,
     in  string            multi_config_sha,
     in  bi.bincode        barcode_index,
@@ -35,56 +32,34 @@ pipeline _SLFE_CELLS_REPORTER(
 )
 {
     call WRITE_MOLECULE_INFO(
-        chemistry_defs            = self.chemistry_defs,
-        gem_well                  = self.gem_well,
-        counts_bc_order           = self.report_mol_inputs,
-        reference_path            = self.reference_path,
-        read_chunks               = self.read_chunks,
-        feature_reference         = self.slfe_feature_reference,
-        target_panel_summary      = self.target_panel_summary,
-        matrix_computer_summary   = self.matrix_computer_summary,
-        recovered_cells           = self.recovered_cells,
-        force_cells               = self.force_cells,
-        filtered_barcodes         = self.filtered_barcodes,
-        per_probe_metrics         = self.per_probe_metrics,
-        include_introns           = self.include_introns,
-        filter_probes             = self.filter_probes,
-        disable_ab_aggregate_detection = self.disable_ab_aggregate_detection,
-        disable_high_occupancy_gem_detection = self.disable_high_occupancy_gem_detection,
-        multi_config_sha          = self.multi_config_sha,
-        sample_barcodes           = null,
-        per_sample_metrics        = null,
-        barcode_index             = self.barcode_index,
-        slide_serial_capture_area = self.slide_serial_capture_area,
+        sample_barcodes          = null,
+        per_sample_metrics       = null,
+        counts_bc_order          = self.report_mol_inputs,
+        feature_reference_binary = self.slfe_feature_reference,
+        *                        = self,
     )
 
     call SUBSAMPLE_READS(
-        molecule_info     = WRITE_MOLECULE_INFO.single_mol_info.h5_file,
-        filtered_barcodes = self.filtered_barcodes,
-        target_mode       = null,
+        molecule_info = WRITE_MOLECULE_INFO.single_mol_info.h5_file,
+        target_mode   = null,
+        *             = self,
     ) using (
         disabled = self.disable_subsampling,
         volatile = true,
     )
 
     call SUMMARIZE_BASIC_REPORTS(
-        sample                  = null,
-        matrices_h5             = self.matrices_h5,
-        filtered_barcodes       = self.filtered_barcodes,
-        per_barcode_metrics     = self.per_barcode_metrics,
-        matrix_computer_summary = self.matrix_computer_summary,
-        barcode_summary         = self.barcode_summary,
-        recovered_cells         = self.recovered_cells,
-        reference_path          = self.reference_path,
-        # this is being run "library level", use all bcs
-        sample_bcs_only         = false,
-        target_panel_summary    = self.target_panel_summary,
-        summary_jsons           = [
-            self.matrix_computer_summary,
+        summary_jsons   = [
             SUBSAMPLE_READS.summary,
             WRITE_MOLECULE_INFO.single_mol_info.summary,
+            self.matrix_computer_summary,
             self.filter_barcodes_summary,
         ],
+        sample          = null,
+        # this is being run "library level", use all bcs
+        sample_bcs_only = false,
+        recovered_cells = self.cell_calling_config.recovered_cells,
+        *               = self,
     )
 
     return (
@@ -97,7 +72,6 @@ pipeline _SLFE_CELLS_REPORTER(
 pipeline _SAMPLE_CELLS_REPORTER(
     in  string           sample,
     in  h5               molecule_info,
-    in  path             reference_path,
     in  CellCallingParam recovered_cells,
     in  h5               matrices_h5,
     in  json             matrix_computer_summary,
@@ -108,6 +82,8 @@ pipeline _SAMPLE_CELLS_REPORTER(
     in  json             count_analyzer_metrics,
     in  json             crispr_analyzer_metrics,
     in  json             targeted_analyzer_metrics,
+    in  json             cell_annotation_metrics,
+    in  json             cas_metrics,
     in  tps.json         target_panel_summary,
     out json             summary,
 )
@@ -128,7 +104,6 @@ pipeline _SAMPLE_CELLS_REPORTER(
         matrix_computer_summary = self.matrix_computer_summary,
         barcode_summary         = self.barcode_summary,
         recovered_cells         = self.recovered_cells,
-        reference_path          = self.reference_path,
         # we want "all reads" etc to include only those with sample barcodes.
         sample_bcs_only         = true,
         target_panel_summary    = self.target_panel_summary,
@@ -139,6 +114,8 @@ pipeline _SAMPLE_CELLS_REPORTER(
             self.count_analyzer_metrics,
             self.crispr_analyzer_metrics,
             self.targeted_analyzer_metrics,
+            self.cell_annotation_metrics,
+            self.cas_metrics,
         ],
     )
 

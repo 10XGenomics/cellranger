@@ -1,14 +1,4 @@
-#![deny(
-    missing_copy_implementations,
-    non_upper_case_globals,
-    trivial_casts,
-    trivial_numeric_casts,
-    unsafe_code,
-    unstable_features,
-    unused_extern_crates,
-    unused_import_braces,
-    unused_qualifications
-)]
+#![deny(missing_docs)]
 #![recursion_limit = "128"]
 
 //!
@@ -26,9 +16,6 @@
 //! # What you write
 //!
 //! ``` ignore
-//! #[macro_use]
-//! extern crate metric_derive;
-//!
 //! #[derive(Metric)]
 //! struct Foo {
 //!     bar1: CountMetric,
@@ -39,9 +26,6 @@
 //! # What you get
 //!
 //! ``` ignore
-//! #[macro_use]
-//! extern crate metric_derive;
-//!
 //! struct Foo {
 //!     bar1: CountMetric,
 //!     bar2: PercentMetric,
@@ -55,10 +39,8 @@
 //! }
 //! ```
 
-#[macro_use]
-extern crate quote;
-
 use proc_macro::TokenStream;
+use quote::quote;
 use syn::spanned::Spanned;
 use syn::{Data, DeriveInput, Fields, Index};
 
@@ -97,7 +79,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                 quote! {
                     // The generated impl
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics Metric for #name #ty_generics #where_clause {
                         fn merge(&mut self, other: Self) {
                             #(
@@ -107,7 +88,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     }
 
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics ::std::ops::Add for #name #ty_generics #where_clause {
                         type Output = #name #ty_generics;
                         fn add(mut self, other: Self::Output) -> Self::Output {
@@ -117,7 +97,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     }
 
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics ::std::ops::AddAssign for #name #ty_generics #where_clause {
                         fn add_assign(&mut self, other: #name #ty_generics) {
                             self.merge(other);
@@ -125,7 +104,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     }
 
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics ::std::iter::Sum for #name #ty_generics #where_clause {
                         fn sum<IteratorType: Iterator<Item=#name #ty_generics>>(iter: IteratorType) -> #name #ty_generics {
                             iter.fold(Default::default(), |a, b| a + b)
@@ -147,7 +125,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                 quote! {
                     // The generated impl
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics Metric for #name #ty_generics #where_clause {
                         fn merge(&mut self, other: Self) {
                             #(
@@ -157,7 +134,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     }
 
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics ::std::ops::Add for #name #ty_generics #where_clause {
                         type Output = #name #ty_generics;
                         fn add(mut self, other: Self::Output) -> Self::Output {
@@ -167,7 +143,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     }
 
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics ::std::ops::AddAssign for #name #ty_generics #where_clause {
                         fn add_assign(&mut self, other: #name #ty_generics) {
                             self.merge(other);
@@ -175,7 +150,6 @@ pub fn derive_metric_trait(input: TokenStream) -> TokenStream {
                     }
 
                     #[automatically_derived]
-                    #[allow(unused_attributes)]
                     impl #impl_generics ::std::iter::Sum for #name #ty_generics #where_clause {
                         fn sum<IteratorType: Iterator<Item=#name #ty_generics>>(iter: IteratorType) -> #name #ty_generics {
                             iter.fold(Default::default(), |a, b| a + b)

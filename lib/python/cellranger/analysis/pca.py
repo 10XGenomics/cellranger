@@ -19,6 +19,7 @@ import cellranger.analysis.io as analysis_io
 import cellranger.analysis.stats as analysis_stats
 import cellranger.h5_constants as h5_constants
 from cellranger.analysis.analysis_types import PCA
+from cellranger.analysis.io import format_library_type
 from cellranger.analysis.irlb import irlb
 
 if TYPE_CHECKING:
@@ -254,20 +255,26 @@ def get_irlb_mem_gb_from_matrix_dim(nonzero_entries, features, bcs, pcs):
     return max(h5_constants.MIN_MEM_GB, np.ceil(irlba_mem_gb))
 
 
-def save_pca_csv(pca_map: Mapping[int, PCA], matrix: CountMatrix, base_dir: str):
-    save_pca_csv_with_bc_feature(pca_map, matrix.bcs, matrix.feature_ref.feature_defs, base_dir)
+def save_pca_csv(
+    pca_map: Mapping[int, PCA], matrix: CountMatrix, base_dir: str, library_type: str | None = None
+):
+    save_pca_csv_with_bc_feature(
+        pca_map, matrix.bcs, matrix.feature_ref.feature_defs, base_dir, library_type
+    )
 
 
 def save_pca2_csv(pca_map: Mapping[int, PCA], barcodes, base_dir: str, library_type: str):
     """Used only for saving the results of PCA2 in the batch correction pipeline."""
     for n_components, pca in pca_map.items():
-        n_components_dir = os.path.join(base_dir, f"{library_type}_{n_components}_components")
+        n_components_dir = os.path.join(
+            base_dir, f"{format_library_type(library_type)}_{n_components}_components"
+        )
         os.makedirs(n_components_dir, exist_ok=True)
 
         matrix_fn = os.path.join(n_components_dir, "projection.csv")
         n_columns = pca.transformed_pca_matrix.shape[1]
         assert n_columns <= n_components
-        matrix_header = ["Barcode"] + ["PC-%d" % (i + 1) for i in range(n_columns)]
+        matrix_header = ["Barcode"] + [f"PC-{i + 1}" for i in range(n_columns)]
         analysis_io.save_matrix_csv(matrix_fn, pca.transformed_pca_matrix, matrix_header, barcodes)
 
 
@@ -276,16 +283,22 @@ def save_pca_csv_with_bc_feature(
     barcodes: Iterable[bytes],
     features: Iterable[FeatureDef],
     base_dir: str,
+    library_type: str | None = None,
 ):
     """Used only for saving the results of python-based PCA in the ATAC pipeline."""
     for n_components, pca in pca_map.items():
-        n_components_dir = os.path.join(base_dir, f"{n_components}_components")
+        if library_type is None:
+            n_components_dir = os.path.join(base_dir, f"{n_components}_components")
+        else:
+            n_components_dir = os.path.join(
+                base_dir, f"{format_library_type(library_type)}_{n_components}_components"
+            )
         os.makedirs(n_components_dir, exist_ok=True)
 
         matrix_fn = os.path.join(n_components_dir, "projection.csv")
         n_columns = pca.transformed_pca_matrix.shape[1]
         assert n_columns <= n_components
-        matrix_header = ["Barcode"] + ["PC-%d" % (i + 1) for i in range(n_columns)]
+        matrix_header = ["Barcode"] + [f"PC-{i+1}" for i in range(n_columns)]
         analysis_io.save_matrix_csv(matrix_fn, pca.transformed_pca_matrix, matrix_header, barcodes)
 
         # FBPCA presently provides 0-sized entries for the following PCA() member variables.
@@ -323,18 +336,9 @@ def save_pca_csv_with_bc_feature(
             )
 
 
-def save_pca_h5(pca_map: Mapping[int, PCA], fname: str):
+def save_pca_h5(pca_map: Mapping[int, PCA], fname: str, library_type: str | None = None):
     analysis_io.save_dimension_reduction_h5(
-        pca_map, fname, analysis_constants.ANALYSIS_H5_PCA_GROUP
-    )
-
-
-def save_pca2_h5(pca_map: Mapping[int, PCA], fname: str, library_type: str):
-    analysis_io.save_pca2_dimension_reduction_h5(
-        pca_map,
-        fname,
-        analysis_constants.ANALYSIS_H5_PCA_GROUP,
-        library_type,
+        pca_map, fname, analysis_constants.ANALYSIS_H5_PCA_GROUP, library_type
     )
 
 

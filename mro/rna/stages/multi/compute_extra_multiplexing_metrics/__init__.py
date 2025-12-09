@@ -85,8 +85,7 @@ def split(args):
     mem_gb = 2.0 + 2.0e-08 * nnz + 6.3e-06 * num_cells
     vmem_gb = 3.0 + 1.4e-08 * nnz + 2e-05 * num_cells
 
-    if vmem_gb < mem_gb + 3.0:
-        vmem_gb = mem_gb + 3.0
+    vmem_gb = max(vmem_gb, mem_gb + 3.0)
 
     return {
         "chunks": [],

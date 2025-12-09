@@ -1,4 +1,5 @@
 //! Compute overlap coefficient matrix for a collection of barcodes.
+#![deny(missing_docs)]
 use barcode::whitelist::BarcodeId;
 use barcode::{BcSegSeq, GelBeadAndProbeConstruct};
 use itertools::Itertools;

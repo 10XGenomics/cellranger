@@ -1,9 +1,10 @@
 //! MatchVdjOuts stage code
+#![expect(missing_docs)]
 
 use crate::write_contig_proto::ProtoFile;
 use anyhow::Result;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::{CsvFile, TsvFile};
 use serde::{Deserialize, Serialize};
@@ -105,7 +106,7 @@ impl MartianMain for MatchVdjOuts {
             .iter()
             .filter_map(|aar| {
                 aar.as_ref().and_then(|aar| {
-                    if aar.antigen_specificity_scores.is_none() & aar.per_barcode_csv.is_none() {
+                    if aar.antigen_specificity_scores.is_none() && aar.per_barcode_csv.is_none() {
                         None
                     } else {
                         Some(aar.clone())

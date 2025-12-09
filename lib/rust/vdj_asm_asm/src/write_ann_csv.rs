@@ -1,11 +1,10 @@
-//!
 //! WriteAnnCsv stage produces the CS outputs `all_contig_annotations.csv` and
 //! `filtered_contig_annotations.csv` from the contig annotations json file.
-//!
+#![expect(missing_docs)]
 
 use anyhow::Result;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};

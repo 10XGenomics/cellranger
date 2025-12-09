@@ -1,16 +1,18 @@
 //!
 //! A thin wrapper around orbit used for chemistry detection to distinguish between 3' and 5'
 //!
+#![deny(missing_docs)]
 
 use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
+use crate::detect_chemistry::chemistry_filter::DetectChemistryCandidates;
 use anyhow::Result;
+use barcode::whitelist::ReqStrand;
+use cr_types::AlignerParam;
 use cr_types::chemistry::ChemistryName;
-use cr_types::rna_read::HIGH_CONF_MAPQ;
-use cr_types::ReqStrand;
-use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
 use fastq_set::WhichEnd;
-use metric::{set, TxHashSet};
+use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
+use metric::{TxHashSet, set};
 use orbit::{StarAligner, StarReference, StarSettings};
 use std::fmt;
 use std::path::Path;
@@ -79,55 +81,46 @@ impl MappingStats {
     }
 }
 
-pub(crate) struct ReadMappingFilter<'a> {
+pub(crate) struct ReadMappingFilter {
     aligner: StarAligner,
     annotator: TranscriptAnnotator,
-    allowed_chems: &'a TxHashSet<ChemistryName>,
-    chems: TxHashSet<ChemistryName>,
 }
 
-impl<'a> ChemistryFilter<'a> for ReadMappingFilter<'a> {
-    fn context() -> &'static str {
-        "Mapping based filtering"
-    }
-    fn allowed_chemistries(&self) -> &'a TxHashSet<ChemistryName> {
-        self.allowed_chems
-    }
-    fn input_chemistries(&self) -> TxHashSet<ChemistryName> {
-        self.chems.clone()
-    }
+impl ChemistryFilter for ReadMappingFilter {
+    const CONTEXT: &'static str = "Mapping based filtering";
     fn process_unit(
         &mut self,
+        candidates: &DetectChemistryCandidates,
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
         if !unit.library_type.is_gex() {
-            return Ok(self.input_chemistries());
+            return Ok(candidates.clone());
         }
         let stats = self.map_reads(reads);
         println!("{stats:#?}");
-        let compatible_chems: TxHashSet<_> = stats
-            .compatible_chemistries()
-            .intersection(&self.input_chemistries())
-            .copied()
+        let compatible_with_stats = stats.compatible_chemistries();
+        let compatible_chems: DetectChemistryCandidates = candidates
+            .iter()
+            .filter_map(|(name, def)| {
+                compatible_with_stats
+                    .contains(name)
+                    .then_some((*name, def.clone()))
+            })
             .collect();
         if compatible_chems.is_empty() {
             return Err(DetectChemistryErrors::NotEnoughMapping {
                 stats,
                 unit: Box::new(unit.clone()),
-                chems: self.input_chemistries(),
+                chems: candidates.clone(),
             });
         }
         Ok(compatible_chems)
     }
 }
 
-impl<'a> ReadMappingFilter<'a> {
-    pub(crate) fn new(
-        reference_path: &Path,
-        allowed_chems: &'a TxHashSet<ChemistryName>,
-        chems: TxHashSet<ChemistryName>,
-    ) -> Result<Self> {
+impl ReadMappingFilter {
+    pub(crate) fn new(reference_path: &Path) -> Result<Self> {
         let star_path = reference_path.join("star");
         let settings = StarSettings::new(star_path.to_str().unwrap());
         let reference = StarReference::load(settings)?;
@@ -143,15 +136,11 @@ impl<'a> ReadMappingFilter<'a> {
                 region_min_overlap: 0.5,
                 include_exons: true,
                 include_introns: false,
+                aligner: AlignerParam::Star,
             },
         )?;
 
-        Ok(ReadMappingFilter {
-            aligner,
-            annotator,
-            allowed_chems,
-            chems,
-        })
+        Ok(ReadMappingFilter { aligner, annotator })
     }
 
     pub(crate) fn map_reads(&mut self, read_pairs: &[ReadPair]) -> MappingStats {
@@ -175,7 +164,7 @@ impl<'a> ReadMappingFilter<'a> {
             // is changed from 255
             if let Some(rec) = read_recs
                 .into_iter()
-                .find(|rec| rec.mapq() >= HIGH_CONF_MAPQ)
+                .find(|rec| rec.mapq() >= self.annotator.params.aligner.high_conf_mapq())
             // Should we .find(|rec| !rec.is_secondary() && !rec.is_unmapped())?
             {
                 mapping_stats.conf_mapped_reads += 1;

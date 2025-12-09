@@ -1,10 +1,11 @@
 //! Martian stage PROCESS_VDJ_PROTO
+#![expect(missing_docs)]
 
 use crate::parse_aggr_csv::VdjAggrCsvLibrary;
 use anyhow::Result;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -171,7 +172,8 @@ impl MartianMain for ProcessVdjProto {
     }
 }
 
-pub fn make_test_library(key: &'static str) -> VdjAggrCsvLibrary {
+#[cfg(test)]
+pub(crate) fn make_test_library(key: &'static str) -> VdjAggrCsvLibrary {
     VdjAggrCsvLibrary {
         library_id: key.into(),
         vdj_contig_info: format!("../cr_aggr/test_resources/vdj_contig_info/{key}.pb").into(),
@@ -185,7 +187,7 @@ pub fn make_test_library(key: &'static str) -> VdjAggrCsvLibrary {
 mod tests {
     use super::*;
     use dui_tests::stage_test::StageFailTest;
-    use dui_tests::{stage_fail_dui_test, DuiTest};
+    use dui_tests::{DuiTest, stage_fail_dui_test};
     use insta::assert_yaml_snapshot;
 
     #[test]

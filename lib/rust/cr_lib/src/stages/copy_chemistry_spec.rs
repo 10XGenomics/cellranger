@@ -5,12 +5,14 @@
 //!
 //! This stage can also handle expanding a ChemistrySet into the individual
 //! chemistries required for each library.
+#![deny(missing_docs)]
 
 use anyhow::Result;
-use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistrySpecs};
+use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryDef, ChemistryDefs, ChemistrySpecs};
 use cr_types::sample_def::SampleDef;
+use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use multi::config::ChemistryParam;
 use serde::{Deserialize, Serialize};
 
@@ -18,13 +20,16 @@ use serde::{Deserialize, Serialize};
 pub struct CopyChemistrySpecStageInputs {
     pub sample_defs: Vec<SampleDef>,
     pub chemistry_spec: ChemistryParam,
+    pub custom_chemistry_def: Option<ChemistryDef>,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct CopyChemistrySpecStageOutputs {
     pub chemistry_specs: ChemistrySpecs,
+    pub custom_chemistry_defs: ChemistryDefs,
 }
 
+/// Martian stage COPY_CHEMISTRY_SPEC
 pub struct CopyChemistrySpec;
 
 #[make_mro(volatile = strict)]
@@ -45,9 +50,22 @@ impl MartianMain for CopyChemistrySpec {
                             set.chemistry_for_library_type(library_type)?,
                         ),
                     };
-                    Ok((library_type, chem))
+                    anyhow::Ok((library_type, chem))
                 })
-                .collect::<Result<_>>()?,
+                .try_collect()?,
+            custom_chemistry_defs: if let Some(custom_chemistry_def) = args.custom_chemistry_def {
+                args.sample_defs
+                    .iter()
+                    .map(|sample| {
+                        (
+                            sample.library_type.unwrap_or_default(),
+                            custom_chemistry_def.clone(),
+                        )
+                    })
+                    .collect()
+            } else {
+                ChemistryDefs::default()
+            },
         })
     }
 }

@@ -1,5 +1,6 @@
-use crate::env::PkgEnv;
+#![expect(missing_docs)]
 use crate::IntoExitCode;
+use crate::env::PkgEnv;
 use std::ffi::OsString;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;

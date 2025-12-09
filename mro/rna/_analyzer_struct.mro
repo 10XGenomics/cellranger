@@ -42,7 +42,6 @@ struct AnalyzerInputs(
     int    tsne_stop_lying_iter,
     int    tsne_mom_switch_iter,
     float  tsne_theta,
-    string umap_implementation,
     int    umap_n_neighbors,
     int    umap_input_pcs,
     int    umap_max_dims,
@@ -51,6 +50,9 @@ struct AnalyzerInputs(
     int    force_cells,
     bool   skip_multigenome_analysis,
     bool   enable_tsne,
+    bool   parallel_graphclust,
+    bool   parallel_umap,
+    bool   sketch_graphclust,
 )
 
 struct AnalyzerOutputs(

@@ -1,18 +1,17 @@
-//!
+//! Martian stage GENERATE_CAS_WEBSUMMARY
 //! Dump vega plots into cell annotation websummary
-//! stage GENERATE_CAS_WEBSUMMARY
-//!
-use crate::cell_annotation_ws_parameters::{
-    generate_cas_bc_mismatch_alert, generate_cas_de_warn_alert, generate_cas_failure_alert,
-    generate_cell_type_barcharts_from_json, generate_cell_type_diffexp_from_json,
-    generate_cell_type_metrics, generate_cell_type_umap_plot_from_json,
-    generate_cell_type_violin_plot_from_json, CellAnnotationMetrics,
-};
+#![deny(missing_docs)]
 use crate::HtmlFile;
+use crate::cell_annotation_ws_parameters::{
+    CellAnnotationMetrics, CellTypeWebSummaryBundle, generate_cas_bc_mismatch_alert,
+    generate_cas_de_warn_alert, generate_cas_failure_alert, generate_cell_type_barcharts_from_json,
+    generate_cell_type_diffexp_from_json, generate_cell_type_metrics,
+    generate_cell_type_umap_plot_from_json, generate_cell_type_violin_plot_from_json,
+};
 use anyhow::{Ok, Result};
 use cr_types::constants::{COMMAND_LINE_ENV_DEFAULT_VALUE, COMMAND_LINE_ENV_VARIABLE_NAME};
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use serde::{Deserialize, Serialize};
@@ -43,10 +42,7 @@ pub struct GenerateCasWebsummaryStageInputs {
     cell_annotation_model: Option<String>,
     cell_type_bar_chart: Option<JsonFile<Value>>,
     spatial_cell_types_chart: Option<JsonFile<Value>>,
-    cell_type_interactive_bar_chart: Option<JsonFile<Value>>,
-    cell_types_box_plot: Option<JsonFile<Value>>,
-    cell_types_umap_plot: Option<JsonFile<Value>>,
-    diffexp: Option<JsonFile<DifferentialExpressionTable>>,
+    cell_type_websummary_bundle: CellTypeWebSummaryBundle,
     cas_success: Option<bool>,
     disable_differential_expression: Option<bool>,
     alert_string: Option<String>,
@@ -85,13 +81,11 @@ impl WebSummaryContent {
         Ok(WebSummaryContent {
             disclaimer_banner: cell_annotation_metrics.generate_disclaiming_banner(),
             metrics_table: Card::full_width(generate_cell_type_metrics(cell_annotation_metrics)?),
-            cell_type_interactive_bar_chart: args
-                .cell_type_interactive_bar_chart
+            cell_type_interactive_bar_chart: args.cell_type_websummary_bundle.cell_type_interactive_bar_chart
                 .as_ref()
                 .map(|x| Ok(Card::full_width(generate_cell_type_barcharts_from_json(x)?)))
                 .transpose()?,
-            cell_types_box_plot: args
-                .cell_types_box_plot
+            cell_types_box_plot: args.cell_type_websummary_bundle.cell_types_box_plot
                 .as_ref()
                 .map(|x| {
                     Ok(Card::full_width(generate_cell_type_violin_plot_from_json(
@@ -99,13 +93,11 @@ impl WebSummaryContent {
                     )?))
                 })
                 .transpose()?,
-            cell_types_umap_plot: args
-                .cell_types_umap_plot
+            cell_types_umap_plot: args.cell_type_websummary_bundle.cell_types_umap_plot
                 .as_ref()
                 .map(|x| Ok(Card::full_width(generate_cell_type_umap_plot_from_json(x)?)))
                 .transpose()?,
-            diffexp_table: args
-                .diffexp
+            diffexp_table: args.cell_type_websummary_bundle.diffexp
                 .as_ref()
                 .map(|x| Ok(Card::full_width(generate_cell_type_diffexp_from_json(x)?)))
                 .transpose()?,
@@ -145,6 +137,7 @@ impl WebSummaryContent {
     }
 }
 
+/// Martian stage GENERATE_CAS_WEBSUMMARY
 pub struct GenerateCasWebsummary;
 
 #[make_mro]
@@ -167,7 +160,7 @@ impl MartianMain for GenerateCasWebsummary {
         let metadata_metrics = args
             .metadata
             .as_ref()
-            .map(martian_filetypes::FileTypeRead::read)
+            .map(FileTypeRead::read)
             .transpose()?
             .unwrap_or_default();
 

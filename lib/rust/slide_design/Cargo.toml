@@ -1,5 +1,5 @@
 [dependencies]
-md5 = '0.7'
+md5 = '0.8'
 
 [dependencies.anyhow]
 workspace = true
@@ -57,7 +57,7 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
-[dependencies.strum_macros]
+[dependencies.strum]
 workspace = true
 
 [features]
@@ -68,9 +68,12 @@ tenx_source_available = []
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'slide_design'
 publish = false
 version = '0.1.0'

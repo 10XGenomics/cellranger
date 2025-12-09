@@ -46,23 +46,14 @@ stage REPORT_CONTIGS(
 )
 
 stage SUMMARIZE_VDJ_REPORTS(
-    in  string       sample_id,
-    in  string       sample_desc,
+    in  json         metrics_summary_json,
     in  ChemistryDef vdj_chemistry_def,
-    in  json[]       summaries,
-    in  int          total_read_pairs,
     in  json         cell_barcodes,
+    in  csv          all_contig_annotations_csv,
     in  csv          clonotype_summary,
-    in  csv          barcode_support,
-    in  string       receptor,
-    in  int          n50_n50_rpu,
-    out string       receptor,
-    out json         metrics_summary_json,
     out csv          metrics_summary_csv,
     out html         web_summary,
     out json         web_summary_data,
     src py           "stages/vdj/summarize_reports",
 ) split (
-) retain (
-    metrics_summary_json,
 )

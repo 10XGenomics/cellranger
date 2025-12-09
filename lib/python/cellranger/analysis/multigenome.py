@@ -285,8 +285,8 @@ class MultiGenomeAnalysis:
             top_txome_reads_per_bc[0, :], top_txome_reads_per_bc[1, :], n_gems=self.n_gems
         )
         d["filtered_bcs_observed_all"] = n_barcodes
-        d["filtered_bcs_observed_multiplets"] = int(round(n_multiplet_obs))
-        d["filtered_bcs_inferred_multiplets"] = int(round(n_multiplet_boot.mean()))
+        d["filtered_bcs_observed_multiplets"] = round(n_multiplet_obs)
+        d["filtered_bcs_inferred_multiplets"] = round(n_multiplet_boot.mean())
         multiplet_rate = tk_stats.robust_divide(n_multiplet_boot.mean(), len(use_barcodes))
         d["filtered_bcs_inferred_multiplet_rate"] = multiplet_rate
         d["filtered_bcs_inferred_normalized_multiplet_rate"] = 1000 * tk_stats.robust_divide(

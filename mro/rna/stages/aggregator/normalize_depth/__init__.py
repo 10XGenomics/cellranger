@@ -155,7 +155,7 @@ def split(args):
     for lib_idx, lib in enumerate(library_info):
         lib_type = lib[rna_library.LIBRARY_TYPE]
         print(f"{lib_type} Usable read pairs per cell: {usable_rpc[lib_idx]}")
-        print("%s Minimum read pairs usable per cell: %d" % (lib_type, min_rpc_by_lt[lib_type]))
+        print(f"{lib_type} Minimum read pairs usable per cell: {min_rpc_by_lt[lib_type]}")
 
     if not downsample:
         frac_reads_kept = np.ones(len(library_info), dtype=float)
@@ -181,6 +181,7 @@ def split(args):
 
     with MoleculeCounter.open(args.molecules, "r") as mc:
         # Number of barcodes in the full matrix
+        is_visium_hd = mc.is_visium_hd()
         num_barcodes = mc.get_ref_column_lazy("barcodes").shape[0]
 
         for chunk_start, chunk_len in mc.get_chunks(tgt_chunk_len, preserve_boundaries=True):
@@ -194,10 +195,10 @@ def split(args):
                 num_barcodes, chunk_len, scale=1.0
             )
 
-            barcodes_mem_gib = round(140 * num_barcodes / 1024**3, 1)
+            barcodes_mem_gib = round(160 * num_barcodes / 1024**3, 1)
 
             # bytes per molecule = 30.07 + 21.47 = 51.54
-            # bytes per barcode = 107.37 + 140 = 247.37
+            # bytes per barcode = 107.37 + 160 = 267.37
             mem_gib = 2 + matrix_mem_gib + mol_mem_gib + barcodes_mem_gib
             print(
                 f"chunk={len(chunks)},{chunk_len=},{num_barcodes=},{mol_mem_gib=},{matrix_mem_gib=},{barcodes_mem_gib=},{mem_gib=}"
@@ -219,7 +220,8 @@ def split(args):
     # Nonetheless, it needs to load the barcodes, which can get large when many samples
     # are being aggregated.
     # WRITE_MATRICES will use the precise nnz counts to make an appropriate mem request.
-    join_mem_gib = 1 + round(56 * num_barcodes / 1024**3, 1)
+    barcode_mem_factor = 112 if is_visium_hd else 56
+    join_mem_gib = 1 + round(barcode_mem_factor * num_barcodes / 1024**3, 1)
     print(f"{num_barcodes=},{join_mem_gib=}")
     return {"chunks": chunks, "join": {"__mem_gb": join_mem_gib, "__threads": 2}}
 
@@ -445,7 +447,7 @@ def _update_metrics(
             cur_bcs = barcode_seqs[idx_start:idx_end]  # this can be of size 0
             assert cur_bcs.shape[0] == chnksize, "Expected elements missing from BC array."
             new_bc = cr_utils.format_barcode_seq(cur_bcs[0], gg)
-            barcode_dtype = np.dtype("S%d" % len(new_bc))
+            barcode_dtype = np.dtype(f"S{len(new_bc)}")
             barcode_list.append(
                 np.fromiter(
                     (cr_utils.format_barcode_seq(bc, gg) for bc in cur_bcs),
@@ -605,7 +607,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         for lib_idx in lib_inds:
             aggr_id = library_info[lib_idx]["aggr_id"]
             old_gg = library_info[lib_idx]["old_gem_group"]
-            batch = aggr_id + ("-%d" % old_gg if old_gg > 1 else "")
+            batch = aggr_id + (f"-{old_gg}" if old_gg > 1 else "")
             all_batches[batch] = None
             if IS_SPATIAL:
                 n_cells = summary["num_spots_by_library"][lib_idx]

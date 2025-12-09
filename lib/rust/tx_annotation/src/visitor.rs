@@ -68,12 +68,13 @@
 //!    read level. The `walk_` function at the barcode level visits each of the read nodes (by
 //!    calling various `visit_*` functions) and the `walk_` function at the read level visits
 //!    various annotation properties of the read.
+#![deny(missing_docs)]
 
 use crate::mark_dups::DupInfo;
 use crate::read::{AnnotationInfo, ReadAnnotations};
 use crate::transcript::AnnotationRegion;
-use cr_types::rna_read::RnaRead;
 use cr_types::GenomeName;
+use cr_types::rna_read::RnaRead;
 use std::collections::HashSet;
 use transcriptome::Gene;
 

@@ -1,21 +1,24 @@
-pub mod alert;
+//! cr_websummary
+#![expect(missing_docs)]
+mod alert;
 pub mod multi;
-pub mod value;
+mod value;
+
+pub use alert::{AlertContext, AlertLevel, AlertSpec};
 
 extern crate self as cr_websummary;
 
-use alert::{Alert, AlertContext, AlertLevel, AlertSpec};
+use alert::Alert;
 use anyhow::Result;
 use metric::{PercentMetric, TxHashMap};
-use multi::websummary::{JsonMetricSummary, ToCsvRows, ToJsonSummary};
+use plotly::Layout;
 use plotly::common::Anchor;
 use plotly::layout::{Axis, AxisType, HoverMode, Legend};
-use plotly::Layout;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::default::Default;
 use std::fmt::{Display, Formatter};
-use std::iter::zip;
 use std::str::FromStr;
 use thousands::Separable;
 
@@ -82,12 +85,12 @@ impl WsSample {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Tab<C: Alert + ToCsvRows + ToJsonSummary> {
+pub struct Tab<C: Alert> {
     pub content: C,
     alerts: Vec<AlertSpec>,
 }
 
-impl<C: Alert + ToCsvRows + ToJsonSummary> Tab<C> {
+impl<C: Alert> Tab<C> {
     pub fn new(content: C, context: &AlertContext) -> Self {
         let mut alerts = content.alerts(context);
         // All tabs should have an alert if preflight was skipped.
@@ -100,18 +103,6 @@ impl<C: Alert + ToCsvRows + ToJsonSummary> Tab<C> {
             });
         }
         Tab { content, alerts }
-    }
-}
-
-impl<C: Alert + ToCsvRows + ToJsonSummary> ToCsvRows for Tab<C> {
-    fn to_csv_rows(&self) -> Vec<Vec<String>> {
-        self.content.to_csv_rows()
-    }
-}
-
-impl<C: Alert + ToCsvRows + ToJsonSummary> ToJsonSummary for Tab<C> {
-    fn to_json_summary(&self, ctx: &AlertContext) -> Vec<JsonMetricSummary> {
-        self.content.to_json_summary(ctx)
     }
 }
 
@@ -254,68 +245,6 @@ pub struct GenericTable {
     pub grouping_header: Option<GroupingHeader>,
 }
 
-impl ToCsvRows for GenericTable {
-    fn to_csv_rows(&self) -> Vec<Vec<String>> {
-        let table_header = self
-            .header
-            .as_ref()
-            .expect("No header for table being converted to CSV.");
-        if table_header.is_empty() {
-            return vec![];
-        }
-        if let Some(gh) = &self.grouping_header {
-            if let Some(grouping_header_pos) = table_header.iter().position(|h| h == &gh.header) {
-                // in this case, the metric table has a key such as "Physical Library ID"
-                // we write one CSV column that says what type of ID/key it is (Physical library ID, Fastq ID, etc)
-                // and another CSV column that specifies that ID/key itself
-                return self
-                    .rows
-                    .iter()
-                    .flat_map(|table_row| {
-                        let grouping_val = table_row.0[grouping_header_pos].clone(); // e.g. "GEX_1"
-                        let grouping_header = &gh.header;
-                        zip(table_header, &table_row.0).enumerate().filter_map(
-                            move |(i, (metric_name, metric_val))| {
-                                // Do not output a row for the grouping header/value since
-                                // it is included with all the other metrics.
-                                if i == grouping_header_pos {
-                                    return None;
-                                }
-                                Some(vec![
-                                    grouping_header.clone(), // e.g. "Physical library ID"
-                                    grouping_val.clone(),
-                                    metric_name.clone(),
-                                    metric_val.clone(),
-                                ])
-                            },
-                        )
-                    })
-                    .collect();
-            }
-            assert!(
-                gh.optional,
-                "required grouping header {} not found in header {table_header:?}",
-                gh.header
-            );
-        }
-
-        // In this case, the table has no grouping key (or it's optional and not present) and the metrics are free-standing.
-        self.rows
-            .iter()
-            .flat_map(|table_row| {
-                zip(table_header, &table_row.0).map(|(metric_name, metric_val)| {
-                    vec![
-                        String::default(),
-                        String::default(),
-                        metric_name.clone(),
-                        metric_val.clone(),
-                    ]
-                })
-            })
-            .collect()
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NamedTable {
     pub name: String,
@@ -329,47 +258,6 @@ pub struct CardWithTable {
 }
 
 impl Alert for CardWithTable {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CardWithMetric {
-    pub table: GenericTable,
-    pub help: TitleWithTermDesc,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(transparent)]
-pub struct MetricCard<C: Into<CardWithMetric> + ToJsonSummary> {
-    card: CardWithMetric,
-    #[serde(skip)]
-    raw: C,
-}
-
-impl<C: Into<CardWithMetric> + ToJsonSummary> ToCsvRows for MetricCard<C> {
-    fn to_csv_rows(&self) -> Vec<Vec<String>> {
-        self.card.table.to_csv_rows()
-    }
-}
-
-impl<C: Into<CardWithMetric> + ToJsonSummary> ToJsonSummary for MetricCard<C> {
-    fn to_json_summary(&self, ctx: &AlertContext) -> Vec<JsonMetricSummary> {
-        self.raw.to_json_summary(ctx)
-    }
-}
-
-impl<C: Clone + Into<CardWithMetric> + ToJsonSummary> From<C> for MetricCard<C> {
-    fn from(src: C) -> Self {
-        MetricCard {
-            card: src.clone().into(),
-            raw: src,
-        }
-    }
-}
-
-impl<C: Alert + Into<CardWithMetric> + ToJsonSummary> Alert for MetricCard<C> {
-    fn alerts(&self, ctx: &AlertContext) -> Vec<AlertSpec> {
-        self.raw.alerts(ctx)
-    }
-}
 
 const DEFAULT_PLOTLY_CONFIG: &str = r#"{
     "displayModeBar": true,
@@ -393,21 +281,17 @@ pub struct ChartWithHelp {
 }
 
 impl Alert for ChartWithHelp {}
-impl ToCsvRows for ChartWithHelp {}
-impl ToJsonSummary for ChartWithHelp {}
 
 // a titled plot where the plot can have
 // whatever data structure we want
 // this is useful for e.g. the JIBES biplot
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawChartWithHelp {
-    pub plot: Value,
+    pub plot: Box<RawValue>,
     pub help: TitleWithHelp,
 }
 
 impl Alert for RawChartWithHelp {}
-impl ToCsvRows for RawChartWithHelp {}
-impl ToJsonSummary for RawChartWithHelp {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PlotlyChart {
@@ -459,6 +343,7 @@ pub struct CountAndPercent(pub PercentMetric);
 
 pub trait MakePretty {
     fn make_pretty(&self) -> String;
+    fn to_string_for_csv(&self) -> String;
     fn as_f64(&self) -> f64;
 }
 
@@ -466,6 +351,11 @@ impl MakePretty for Vec<String> {
     fn make_pretty(&self) -> String {
         self.join("<br>")
     }
+
+    fn to_string_for_csv(&self) -> String {
+        self.join(" ")
+    }
+
     fn as_f64(&self) -> f64 {
         unreachable!("Vec<String> cannot be cast into f64")
     }
@@ -475,6 +365,11 @@ impl MakePretty for String {
     fn make_pretty(&self) -> String {
         self.clone()
     }
+
+    fn to_string_for_csv(&self) -> String {
+        self.clone()
+    }
+
     fn as_f64(&self) -> f64 {
         unreachable!("String cannot be cast into f64")
     }
@@ -484,6 +379,11 @@ impl MakePretty for usize {
     fn make_pretty(&self) -> String {
         PrettyMetric::integer(*self as i64).0
     }
+
+    fn to_string_for_csv(&self) -> String {
+        self.to_string()
+    }
+
     fn as_f64(&self) -> f64 {
         *self as f64
     }
@@ -499,13 +399,18 @@ impl MakePretty for Percent {
             Percent::Float(f) => PrettyMetric::percent(*f).0,
         }
     }
+
+    fn to_string_for_csv(&self) -> String {
+        self.as_f64().to_string()
+    }
+
     fn as_f64(&self) -> f64 {
-        match &self {
+        match *self {
             Percent::Metric(m) => match m.fraction() {
                 Some(f) => f,
                 None => f64::NAN,
             },
-            Percent::Float(f) => *f,
+            Percent::Float(f) => f,
         }
     }
 }
@@ -514,6 +419,11 @@ impl MakePretty for CountAndPercent {
     fn make_pretty(&self) -> String {
         PrettyMetric::count_and_percent(self.0).0
     }
+
+    fn to_string_for_csv(&self) -> String {
+        self.0.numerator.count().to_string()
+    }
+
     fn as_f64(&self) -> f64 {
         self.0.numerator.count() as f64
     }
@@ -523,18 +433,28 @@ impl MakePretty for f64 {
     fn make_pretty(&self) -> String {
         PrettyMetric::decimal(*self).0
     }
+
+    fn to_string_for_csv(&self) -> String {
+        self.to_string()
+    }
+
     fn as_f64(&self) -> f64 {
         *self
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct FloatAsInt(pub f64);
 
 impl MakePretty for FloatAsInt {
     fn make_pretty(&self) -> String {
         (self.0.round() as usize).make_pretty()
     }
+
+    fn to_string_for_csv(&self) -> String {
+        (self.0.round() as usize).to_string()
+    }
+
     fn as_f64(&self) -> f64 {
         self.0
     }
@@ -647,5 +567,5 @@ fn init() {
     // this ensures insta knows where to find its snap tests
     let cwd = std::env::current_dir().unwrap();
     let workspace_root = cwd.parent().unwrap();
-    std::env::set_var("INSTA_WORKSPACE_ROOT", workspace_root);
+    unsafe { std::env::set_var("INSTA_WORKSPACE_ROOT", workspace_root) }
 }

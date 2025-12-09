@@ -1,7 +1,8 @@
-// Allow deprecated to suppress SipHasher warnings
-#![allow(deprecated)]
+#![deny(missing_docs)]
 
-use std::hash::{Hash, Hasher, SipHasher};
+#[cfg(test)]
+use std::hash::{Hash, Hasher};
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 
 /// Computes log(exp(a) + exp(b)) in a way that tries to avoid over/underflows.
@@ -44,18 +45,22 @@ pub fn logaddexp_arr(vals: &[f64], base: f64) -> f64 {
     res
 }
 
+#[cfg(test)]
 pub fn rm_extension(path: &Path) -> PathBuf {
     path.with_extension("")
 }
 
+#[cfg(test)]
 pub fn base_to_bits_hash(c: u8, name: &str, pos: usize) -> u8 {
+    use metric::TxHasher;
+
     match c {
         b'A' => 0u8,
         b'C' => 1u8,
         b'G' => 2u8,
         b'T' => 3u8,
         _ => {
-            let mut hasher = SipHasher::new();
+            let mut hasher = TxHasher::hasher();
             name.hash(&mut hasher);
             pos.hash(&mut hasher);
             (hasher.finish() % 4) as u8
@@ -66,11 +71,6 @@ pub fn base_to_bits_hash(c: u8, name: &str, pos: usize) -> u8 {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::constants::NUCS;
-    use rand;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
-    use rand_xorshift::XorShiftRng;
 
     // Computes approximation of
     //   /    n           \
@@ -160,60 +160,6 @@ pub mod tests {
         }
         Some((max_index, max))
     }
-    fn replace_ns(s: &str, name: &str) -> String {
-        let in_bytes = s.as_bytes();
-        let mut out_bytes: Vec<u8> = Vec::with_capacity(in_bytes.len());
-        for (i, c) in in_bytes.iter().enumerate() {
-            out_bytes.push(match *c {
-                b'A' | b'C' | b'G' | b'T' => *c,
-                _ => {
-                    let mut hasher = SipHasher::new();
-                    name.hash(&mut hasher);
-                    i.hash(&mut hasher);
-                    NUCS[(hasher.finish() % 4) as usize]
-                }
-            });
-        }
-        String::from_utf8(out_bytes).unwrap()
-    }
-    fn replace_ns_rand(s: &str, rng: &mut StdRng) -> String {
-        let in_bytes = s.as_bytes();
-        let mut out_bytes: Vec<u8> = Vec::with_capacity(in_bytes.len());
-        for c in in_bytes {
-            out_bytes.push(match *c {
-                b'A' | b'C' | b'G' | b'T' => *c,
-                _ => NUCS[rand::Rng::gen_range(rng, 0..4)],
-            });
-        }
-        String::from_utf8(out_bytes).unwrap()
-    }
-    /// Pseudorandomly drop a read or read pair. Returns true to drop, false to keep.
-    fn drop_read(subsample_rate: f64, name: &str) -> bool {
-        match subsample_rate {
-            x if x == 0.0 => true,
-            y if y >= 1.0 => false,
-            _ => {
-                use rand::Rng;
-                let mut hasher = SipHasher::new();
-
-                // Strip the augmented data from this read name if there are any
-                let key = match name.find("|||") {
-                    Some(i) => &name[0..i],
-                    None => name,
-                };
-                key.hash(&mut hasher);
-
-                let hash = hasher.finish();
-
-                let mut seed = [0u8; 16];
-                for (i, s) in seed.iter_mut().take(8).enumerate() {
-                    *s = (hash >> (i * 8) & 0xFF) as u8;
-                }
-                let mut rng: XorShiftRng = rand::SeedableRng::from_seed(seed);
-                rng.gen::<f64>() > subsample_rate
-            }
-        }
-    }
 
     macro_rules! assert_delta {
         ($x:expr, $y:expr, $d:expr) => {
@@ -237,35 +183,6 @@ pub mod tests {
             rm_extension(Path::new("foo/bar/foo.bar.txt")).as_os_str(),
             "foo/bar/foo.bar"
         );
-    }
-
-    #[test]
-    fn test_replace_ns() {
-        let seed = [0u8; 32];
-        let mut rng: StdRng = SeedableRng::from_seed(seed);
-        assert_eq!(replace_ns_rand("ACGT", &mut rng), "ACGT".to_string());
-        assert!(replace_ns_rand("ACGTNNN", &mut rng).starts_with("ACGT"));
-
-        assert_eq!(replace_ns("ACGT", "foo"), "ACGT".to_string());
-        assert!(replace_ns("ACGTNNN", "foo").starts_with("ACGT"));
-    }
-
-    #[test]
-    fn test_drop_read() {
-        assert!(drop_read(0.0, "foo"));
-        assert!(drop_read(0.0000001, "foo"));
-        assert!(!drop_read(0.9999999, "foo"));
-        assert!(!drop_read(1.0, "foo"));
-
-        let x = drop_read(0.5, "bar");
-        for _ in 0..10 {
-            assert_eq!(drop_read(0.5, "bar"), x);
-        }
-
-        let x = drop_read(0.5, "bar");
-        for _ in 0..10 {
-            assert_eq!(drop_read(0.5, "bar|||asdfasdf"), x);
-        }
     }
 
     #[test]

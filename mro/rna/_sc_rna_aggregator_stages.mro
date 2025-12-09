@@ -46,6 +46,7 @@ stage CHECK_MOLECULE_INFO_VERSION(
     out map<string> antigen_specificity_controls,
     out csv         feature_reference,
     out bool        disable_antigen_aggr,
+    out bool        is_visium_hd,
     src py          "stages/aggregator/check_molecule_info_version",
 ) split (
     in  int         mol_h5_version,
@@ -89,7 +90,7 @@ stage NORMALIZE_DEPTH(
     out h5         raw_matrix_h5,
     out h5         filtered_matrix_h5,
 ) using (
-    mem_gb   = 4,
+    mem_gb   = 5,
     volatile = strict,
 )
 

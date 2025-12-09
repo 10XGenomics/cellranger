@@ -1,4 +1,6 @@
+//! vdj_ann_ref
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![deny(missing_docs)]
 
 // This file contains code to make reference data.
 //
@@ -9,105 +11,61 @@
 // ◼ create a reference for a new species will know the conventions used by the
 // ◼ code.
 
-use io_utils::read_to_string_safe;
-use vdj_ann::refx::{make_vdj_ref_data_core, RefData};
-
+/// Return the path of the human VDJ reference
 pub fn human_ref() -> &'static str {
     include_str!["../vdj_refs/human/fasta/regions.fa"]
 }
 
-pub fn human_ref_old() -> &'static str {
-    include_str!["../vdj_refs_old/human/fasta/regions.fa"]
-}
-
-pub fn human_ref_2_0() -> &'static str {
-    include_str!["../vdj_refs_2.0/human/fasta/regions.fa"]
-}
-
-pub fn human_ref_3_1() -> &'static str {
-    include_str!["../vdj_refs_3.1/human/fasta/regions.fa"]
-}
-
-pub fn human_ref_4_0() -> &'static str {
-    include_str!["../vdj_refs_4.0/human/fasta/regions.fa"]
-}
-
-pub fn human_ref_5_0() -> &'static str {
-    include_str!["../vdj_refs_5.0/human/fasta/regions.fa"]
-}
-
-pub fn human_ref_7_0() -> &'static str {
-    include_str!["../vdj_refs_7.0/human/fasta/regions.fa"]
-}
-
-pub fn mouse_ref() -> &'static str {
-    include_str!["../vdj_refs/mouse/fasta/regions.fa"]
-}
-
-pub fn mouse_ref_old() -> &'static str {
-    include_str!["../vdj_refs_old/mouse/fasta/regions.fa"]
-}
-
-pub fn mouse_ref_3_1() -> &'static str {
-    include_str!["../vdj_refs_3.1/mouse/fasta/regions.fa"]
-}
-
-pub fn mouse_ref_4_0() -> &'static str {
-    include_str!["../vdj_refs_4.0/mouse/fasta/regions.fa"]
-}
-
-pub fn mouse_ref_5_0() -> &'static str {
-    include_str!["../vdj_refs_5.0/mouse/fasta/regions.fa"]
-}
-
-pub fn mouse_ref_7_0() -> &'static str {
-    include_str!["../vdj_refs_7.0/mouse/fasta/regions.fa"]
-}
-
-// ids_to_use_opt: Optional hashSet of ids. If specified only reference
-// entries with id in the HashSet is used to construct RefData
-#[allow(clippy::too_many_arguments)]
-pub fn make_vdj_ref_data(
-    refdata: &mut RefData,
-    imgt: bool,
-    species: &str,
-    extended: bool,
-    is_tcr: bool,
-    is_bcr: bool,
-    human_supp_ref: &str,
-    mouse_supp_ref: &str,
-) {
-    // Necessary for lifetime management of results from read_to_string_safe
-    let x: String;
-    let refx = match (imgt, species) {
-        (false, "human") => human_ref(),
-        (false, "mouse") => mouse_ref(),
-        (true, "human") => {
-            x = read_to_string_safe("vdj_IMGT_20170916-2.1.0/fasta/regions.fa");
-            x.as_str()
-        }
-        (true, "mouse") => {
-            x = read_to_string_safe("vdj_IMGT_mouse_20180723-2.2.0/fasta/regions.fa");
-            x.as_str()
-        }
-        _ => panic!("Invalid species {}.", &species),
+/// Open a file for reading
+#[macro_export]
+macro_rules! open_for_read {
+    ($filename:expr) => {
+        ::std::io::BufReader::new(
+            ::std::fs::File::open(::core::convert::AsRef::<::std::path::Path>::as_ref(
+                $filename,
+            ))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Could not open file \"{}\"",
+                    ::core::convert::AsRef::<::std::path::Path>::as_ref($filename)
+                        .to_string_lossy(),
+                )
+            }),
+        )
     };
-    let ext_refx = if extended && !imgt {
-        match species {
-            "human" => human_supp_ref,
-            "mouse" => mouse_supp_ref,
-            _ => unreachable!("Invalid species {}.", &species),
-        }
-    } else {
-        ""
+}
+
+/// Open a file for writing
+#[macro_export]
+macro_rules! open_for_write_new {
+    ($filename:expr) => {
+        ::std::io::BufWriter::new(
+            ::std::fs::File::create(::core::convert::AsRef::<::std::path::Path>::as_ref(
+                $filename,
+            ))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Could not create file \"{}\"",
+                    ::core::convert::AsRef::<::std::path::Path>::as_ref($filename)
+                        .to_string_lossy()
+                )
+            }),
+        )
     };
-    assert!(!refx.is_empty(), "Reference file has zero length.");
-    make_vdj_ref_data_core(refdata, refx, ext_refx, is_tcr, is_bcr, None);
+}
+
+/// Capitalize first letter
+pub fn cap1(s: &str) -> String {
+    let mut x = s.as_bytes().to_vec();
+    let c = x[0].to_ascii_uppercase();
+    x[0] = c;
+    String::from_utf8(x.clone()).unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vdj_ann::refx::RefData;
 
     // The following test checks for alignment of a D region.  This example was fixed by code
     // changes in March 2020.

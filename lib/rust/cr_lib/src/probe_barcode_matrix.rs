@@ -1,25 +1,21 @@
 //! Probe barcode matrix I/O
+#![deny(missing_docs)]
 
-use anyhow::{bail, Context, Result};
-use barcode::Barcode;
-use cr_h5::count_matrix::{write_barcodes_column, MAT_H5_BUF_SZ};
-use cr_h5::feature_reference_io::{make_fixed_ascii, write_target_set_group, FA_LEN};
+use anyhow::{Context, Result};
+use cr_h5::count_matrix::{MAT_H5_BUF_SZ, write_barcodes_column};
+use cr_h5::feature_reference_io::{FA_LEN, make_fixed_ascii, write_target_set_group};
 use cr_h5::{extend_dataset, make_column_ds, write_column_ds};
-use cr_types::probe_set::{is_deprecated_probe, Probe, ProbeRegion, ProbeSetReference, ProbeType};
+use cr_types::probe_set::{Probe, ProbeRegion, ProbeSetReference, ProbeType, is_deprecated_probe};
 use cr_types::reference::feature_reference::TargetSet;
 use cr_types::reference::probe_set_reference::TargetSetFile;
-use cr_types::{BarcodeIndex, CountShardFile, ProbeBarcodeCount};
+use cr_types::{BarcodeIndex, CountShardFile, GenomeName, ProbeBarcodeCount};
 use hdf5::types::FixedAscii;
 use hdf5::{File, Group};
-use itertools::{process_results, Itertools};
-use martian_filetypes::json_file::JsonFile;
-use martian_filetypes::FileTypeRead;
+use itertools::Itertools;
 use metric::TxHashSet;
 use serde::{Deserialize, Serialize};
 use shardio::ShardReader;
-use std::collections::HashMap;
 use std::path::Path;
-use std::str::FromStr;
 use transcriptome::Gene;
 
 const MATRIX_GROUP: &str = "matrix";
@@ -45,6 +41,7 @@ pub struct ProbeCounts {
     pub ref_sequence_name: String,
     pub ref_sequence_pos: Option<usize>,
     pub cigar_string: String,
+    pub genome: GenomeName,
 }
 
 impl ProbeCounts {
@@ -70,6 +67,7 @@ impl From<ProbeCounts> for Probe {
     fn from(probe: ProbeCounts) -> Probe {
         Probe {
             probe_id: probe.probe_id,
+            probe_seq: String::new(),
             gene: Gene {
                 name: probe.gene_name,
                 id: probe.gene_id,
@@ -80,6 +78,7 @@ impl From<ProbeCounts> for Probe {
             ref_sequence_name: probe.ref_sequence_name,
             ref_sequence_pos: probe.ref_sequence_pos,
             cigar_string: probe.cigar_string,
+            genome: probe.genome,
         }
     }
 }
@@ -152,7 +151,7 @@ fn write_probe_columns(
         probe_region_strings.push(make_fixed_ascii(&probe_region_string)?);
 
         // Put in the genome as another dataset
-        genome_strings.push(make_fixed_ascii(&psr.genome)?);
+        genome_strings.push(make_fixed_ascii(&probe.genome)?);
     }
 
     // Write vectors to the H5 matrix
@@ -190,18 +189,9 @@ fn write_probe_matrix_h5_helper(
     filtered_barcodes: &[bool],
     probe_set_name: &str,
 ) -> Result<()> {
-    // Avoid failure in writing a hdf5 dataset of length 0 with gzip chunk size 1
-    if barcode_index.is_empty() {
-        bail!(
-            "No 10x barcodes were observed in the experiment. This is likely the consequence of a \
-            sample mixup or very poor sequencing quality on the barcode bases. Further execution \
-            is halted."
-        );
-    }
-
     // Write the Barcode column in to the h5
     write_barcodes_column(group, "barcodes", barcode_index.sorted_barcodes())?;
-    write_column_ds::<bool>(group, "filtered_barcodes", filtered_barcodes)?;
+    write_column_ds(group, "filtered_barcodes", filtered_barcodes)?;
 
     // Create a group of probes and write the probe info into the h5
     let mut probe_group = group.create_group(PROBE_SET_REF_GROUP)?;
@@ -218,12 +208,12 @@ fn write_probe_matrix_h5_helper(
     // Barcode_counts is used to construct the indptr of the sparse matrix
     let mut barcode_counts = vec![0; barcode_index.len()];
 
-    process_results(reader.iter()?, |iter| {
-        for (barcode, counts) in &iter.group_by(|x| x.barcode) {
+    reader.iter()?.process_results(|iter| {
+        for (barcode, counts) in &iter.chunk_by(|x| x.barcode) {
             // If not in the filtered barcodes, we dont process the the UMI
-            if !barcode_index.contains_barcode(&barcode) {
+            let Some(barcode_index) = barcode_index.get(&barcode) else {
                 continue;
-            }
+            };
 
             // Count all counts corresponding to a barcode
             // probe_idx is the index of the probe. Thus indices_buf maintains
@@ -238,7 +228,6 @@ fn write_probe_matrix_h5_helper(
             }
 
             // barcode_counts maintain difference of adjacent indptr
-            let barcode_index = barcode_index.get_index(&barcode);
             // Just making sure that the shards are indeed sorted by barcodes
             assert_eq!(barcode_counts[barcode_index], 0);
             barcode_counts[barcode_index] = n;
@@ -306,79 +295,4 @@ pub fn write_probe_bc_matrix(
         probe_set_name,
     )?;
     Ok(())
-}
-
-/// Function to read a sample_barcode json.
-/// Expect to have a Hashmap of {sample: vec of barcodes}
-pub fn read_bc_json(
-    json_path: &JsonFile<HashMap<String, Vec<String>>>,
-) -> Result<HashMap<String, Vec<Barcode>>> {
-    let tmp_hashmap = json_path.read()?;
-    let sample_barcodes_hashmap: HashMap<String, Vec<Barcode>> = tmp_hashmap
-        .into_iter()
-        .map(|(name, str_vc)| {
-            (
-                name,
-                str_vc
-                    .into_iter()
-                    .map(|x| Barcode::from_str(&x).unwrap())
-                    .collect(),
-            )
-        })
-        .collect();
-    Ok(sample_barcodes_hashmap)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use barcode::BcSeq;
-    use std::fs::write;
-    use tempfile::tempdir;
-
-    fn barcode(seq: &[u8]) -> Barcode {
-        Barcode::with_seq(1, BcSeq::from_bytes(seq), true)
-    }
-
-    #[test]
-    /// Test function fo read_bc_json
-    fn test_read_bc_json() {
-        let dir = tempdir().expect("Can not create directory");
-        let file_path = dir.path().join("tmp_json.json");
-        let json_string = r#"
-        {
-            "Sample1":[
-                "AAACTGGGTAAAGGCCATCCCAAC-1",
-                "AAAGCGAAGACCATGGATCCCAAC-1"
-            ],
-            "Sample2":[
-                "TTGAGCGAGTCAACTTAACGCCGA-1",
-                "TTGAGGTAGGGATGAAAACGCCGA-1",
-                "TTGAGGAGTTAGTGAGAACGCCGA-1"
-            ]
-        }"#;
-        write(&file_path, json_string).expect("Unable to write file");
-
-        let sample_barcode_expected = HashMap::from([
-            (
-                String::from("Sample1"),
-                vec![
-                    barcode(b"AAACTGGGTAAAGGCCATCCCAAC"),
-                    barcode(b"AAAGCGAAGACCATGGATCCCAAC"),
-                ],
-            ),
-            (
-                String::from("Sample2"),
-                vec![
-                    barcode(b"TTGAGCGAGTCAACTTAACGCCGA"),
-                    barcode(b"TTGAGGTAGGGATGAAAACGCCGA"),
-                    barcode(b"TTGAGGAGTTAGTGAGAACGCCGA"),
-                ],
-            ),
-        ]);
-
-        let sample_barcodes_hashmap_read = read_bc_json(&JsonFile::from(file_path)).unwrap();
-        dir.close().expect("Could not delete directory");
-        assert_eq!(sample_barcodes_hashmap_read, sample_barcode_expected);
-    }
 }

@@ -5,7 +5,7 @@
 
 import martian
 
-import cellranger.cell_typing.common as ct_common
+import cellranger.cell_typing.broad_tenx.common as ct_common
 import cellranger.matrix as cr_matrix
 
 __MRO__ = """

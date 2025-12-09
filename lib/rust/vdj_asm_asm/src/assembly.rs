@@ -1,4 +1,5 @@
 // This is code for a rust-only implementation of stage ASSEMBLE_VDJ.
+#![expect(missing_docs)]
 //
 // ◼ The way we generate a bam file here doesn't make sense.  In the current
 // ◼ implementation, we build sorted bam files, then merge them, which involves
@@ -10,66 +11,64 @@
 // ◼ doing any interweaving.
 
 use crate::assembly_types::{
-    AsmReadsPerBcFormat, AssemblyStageInputs, BamBaiFile, BamFile, BarcodeSupport,
-    ContigSummaryRow, FastqFile, UmiList, UmiSummaryRow,
+    AssemblyStageInputs, BamBaiFile, BamFile, ContigSummaryRow, FastqFile, UmiList, UmiSummaryRow,
 };
 use crate::contig_aligner::ContigAligner;
-use anyhow::{Error, Result};
-use cr_types::chemistry::ChemistryDef;
-use cr_types::rna_read::RnaRead;
+use anyhow::{Context, Error, Result, bail};
 use cr_types::LibraryType;
+use cr_types::rna_read::RnaRead;
+use debruijn::Mer;
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::Kmer20;
-use debruijn::Mer;
-use io_utils::{fwrite, fwriteln, path_exists, read_obj, read_to_string_safe, write_obj};
+use io_utils::{fwrite, fwriteln};
 use itertools::Itertools;
 use kmer_lookup::make_kmer_lookup_20_single;
-use libc::{getrlimit, rlimit, RLIMIT_NOFILE};
 use martian::{MartianFileType, MartianRover, MartianStage, Resource, StageDef};
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::bin_file::{BinaryFormat, BincodeFile};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::lz4_file::Lz4;
-use martian_filetypes::tabular_file::{CsvFile, TsvFile, TsvFileNoHeader};
+use martian_filetypes::tabular_file::{TsvFile, TsvFileNoHeader};
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO, LazyWrite};
-use metric::SimpleHistogram;
-use parameters_toml::vdj_max_reads_per_barcode;
+use metric::Histogram;
 use rust_htslib::bam;
 use rust_htslib::bam::HeaderView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs::{remove_file, rename, File};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::fs::{File, read_to_string, remove_file, rename};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
-use string_utils::{stringme, strme, TextUtils};
-use vdj_ann::annotate::{chain_type, ContigAnnotation, JunctionSupport};
-use vdj_ann::refx::{make_vdj_ref_data_core, RefData};
+use string_utils::TextUtils;
+use vdj_ann::annotate::{ContigAnnotation, chain_type};
+use vdj_ann::refx::{RefData, make_vdj_ref_data_core};
 use vdj_asm_utils::asm::write_sam_record_simple;
 use vdj_asm_utils::barcode_data::{BarcodeData, BarcodeDataBrief};
 use vdj_asm_utils::constants::{
-    ReadType, CHAIN_TYPESX, CLIP, GAP_EXTEND, GAP_OPEN, KMER_LEN_BANDED_ALIGN, MATCH_SCORE,
-    MISMATCH_SCORE, OR_CHAIN_TYPES, WINDOW_SIZE_BANDED_ALIGN,
+    CHAIN_TYPESX, CLIP, GAP_EXTEND, GAP_OPEN, KMER_LEN_BANDED_ALIGN, MATCH_SCORE, MISMATCH_SCORE,
+    OR_CHAIN_TYPES, ReadType, WINDOW_SIZE_BANDED_ALIGN,
 };
 use vdj_asm_utils::heuristics::Heuristics;
-use vdj_asm_utils::hops::FlowcellContam;
 use vdj_asm_utils::log_opts::LogOpts;
 use vdj_asm_utils::primers::{get_primer_exts, inner_primers, outer_primers};
-use vdj_asm_utils::process::process_barcode;
+use vdj_asm_utils::process::{ProcessBarcodeResult, process_barcode};
+use vdj_asm_utils::umi_data::UmiInfo;
 use vdj_asm_utils::{bam_utils, graph_read, sw};
 use vdj_reference::VdjReceptor;
-use vdj_types::VdjChain;
+use vdj_types::{VdjChain, get_max_read_pairs_per_barcode};
 pub struct Assembly;
 martian_filetype!(Lz4File, "lz4");
 martian_filetype!(TxtFile, "txt");
-martian_filetype!(BinFile, "bin");
 
 martian_filetype!(_BarcodeDataBriefFile, "bdf");
 pub type BarcodeDataBriefFile = BinaryFormat<_BarcodeDataBriefFile, Vec<BarcodeDataBrief>>;
 
 martian_filetype!(_BarcodeDataFile, "bd");
 pub type BarcodeDataFile = BinaryFormat<_BarcodeDataFile, Vec<BarcodeData>>;
+
+martian_filetype!(_UmiInfoFile, "uinfo");
+pub type UmiInfoFile = BinaryFormat<_UmiInfoFile, Vec<UmiInfo>>;
 
 // martian_filetype!(_ContigAnnFile, "can");
 // impl FileStorage<Vec<ContigAnnotation>> for _ContigAnnFile {}
@@ -96,19 +95,13 @@ fn merge_bams(paths: &[BamFile], out: &Path) -> Result<()> {
         .collect::<Vec<_>>();
     // if there's only a single input path, copy the input
     if paths.len() == 1 {
-        let _ = std::fs::copy(&paths[0], out)?;
+        let _ = fs::copy(&paths[0], out)?;
         return Ok(());
     }
     // get the NOFILE ulimit so we don't ask samtools to open too many files
-    let rlim = unsafe {
-        let mut rlim = rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        let ret = getrlimit(RLIMIT_NOFILE, &mut rlim as *mut rlimit);
-        assert!(ret == 0, "unable to determine soft NOFILE ulimit");
-        rlim.rlim_cur as usize
-    };
+    let rlim = rustix::process::getrlimit(rustix::process::Resource::Nofile)
+        .current
+        .unwrap() as usize;
     assert!(rlim >= 102, "soft NOFILE ulimit is unworkably low");
     let rlim = rlim - 100;
     // keep merging files, rlim at a time, until only 1 remains
@@ -225,12 +218,12 @@ fn enrichment_primers(
             }
             let x = refdata.refs[i].clone().rc().to_string();
             for primer in &human_inner_primers {
-                if x.contains(&stringme(primer)) {
+                if x.contains(std::str::from_utf8(primer).unwrap()) {
                     human_count += 1;
                 }
             }
             for primer in &mouse_inner_primers {
-                if x.contains(&stringme(primer)) {
+                if x.contains(std::str::from_utf8(primer).unwrap()) {
                     mouse_count += 1;
                 }
             }
@@ -293,19 +286,11 @@ fn sam_to_bam(out_bam_file: &Path, sam_header: bam::header::Header, out_sam_file
     let out_bam_sorted_filename =
         out_bam_filename_str.rev_before("/").to_string() + "/contig_bam_sorted.bam";
     let tmp_filename = out_bam_sorted_filename.clone() + ".tmp.0000.bam";
-    if path_exists(&tmp_filename) {
+    if Path::new(&tmp_filename).exists() {
         remove_file(&tmp_filename).unwrap();
     }
     sort_bam(out_bam_filename_str, &out_bam_sorted_filename);
     rename(&out_bam_sorted_filename, out_bam_file).unwrap();
-}
-
-fn get_max_reads_per_barcode(chemistry_def: &ChemistryDef) -> usize {
-    if chemistry_def.is_paired_end() {
-        *vdj_max_reads_per_barcode().unwrap() / 2
-    } else {
-        *vdj_max_reads_per_barcode().unwrap()
-    }
 }
 
 // =================================================================================
@@ -318,12 +303,11 @@ pub struct AssemblyStageOutputs {
     pub contig_bam_bai: BamBaiFile,
     pub summary_tsv: TsvFile<ContigSummaryRow>,
     pub umi_summary_tsv: TsvFile<UmiSummaryRow>,
+    pub umi_info: UmiInfoFile,
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub barcode_brief: BarcodeDataBriefFile,
     pub barcode_full: BarcodeDataFile,
-    pub barcode_support: CsvFile<BarcodeSupport>,
     pub barcodes_in_chunks: Vec<JsonFile<Vec<String>>>,
-    pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
 
     // The outputs below are simply bubbled up to the outs folder
     pub align_info: TxtFile,
@@ -351,8 +335,7 @@ pub struct AssemblyChunkOutputs {
     pub align_info: TxtFile,
     pub unmapped_sample_fastq: FastqFile,
     pub barcode_data: BarcodeDataFile,
-    pub barcode_data_brief: BinFile,
-    pub outs_builder: BincodeFile<Vec<BarcodeSupport>>,
+    pub umi_info: UmiInfoFile,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
@@ -371,7 +354,9 @@ impl VdjPrimers {
         let is_bcr = receptor == Some(VdjReceptor::IG);
         let mut refdata = RefData::new();
         if let Some(ref ref_path) = ref_path {
-            let fasta = read_to_string_safe(format!("{}/fasta/regions.fa", ref_path.display()));
+            let fasta_path = ref_path.join("fasta/regions.fa");
+            let fasta = read_to_string(&fasta_path)
+                .with_context(|| fasta_path.to_string_lossy().to_string())?;
             make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
         }
         let mut inner_primersx = Vec::<Vec<u8>>::new();
@@ -462,7 +447,7 @@ impl MartianStage for Assembly {
         let is_bcr = args.receptor == Some(VdjReceptor::IG);
         let is_gd = Some(args.receptor == Some(VdjReceptor::TRGD));
         let (refdata, refdatax, refdata_full, rkmers_plus_full_20) =
-            load_refdata(args.vdj_reference_path.as_deref(), is_tcr, is_bcr);
+            load_refdata(args.vdj_reference_path.as_deref(), is_tcr, is_bcr)?;
         let refs = &refdata.refs;
 
         // Get filenames and set up writers.
@@ -473,8 +458,6 @@ impl MartianStage for Assembly {
         let umi_summary_file: TsvFileNoHeader<UmiSummaryRow> = rover.make_path("umi_summary");
 
         let summary_file: TsvFileNoHeader<ContigSummaryRow> = rover.make_path("summary");
-
-        let ob_file: BincodeFile<_> = rover.make_path("outs_builder");
 
         // Set up to write a sam file.
 
@@ -490,7 +473,7 @@ impl MartianStage for Assembly {
 
         let unmapped_sample_fastq_file: FastqFile = rover.make_path("unmapped_sample_fastq");
 
-        let (sam_header, barcodes, barcode_data, barcode_data_brief) = write_simple_sam(
+        let (sam_header, barcodes, barcode_data, umi_info) = write_simple_sam(
             &args,
             &split_args,
             &out_sam_filenamex,
@@ -498,7 +481,6 @@ impl MartianStage for Assembly {
             &align_info_file,
             &umi_summary_file,
             &summary_file,
-            &ob_file,
             &unmapped_sample_fastq_file,
             &refdata,
             refdatax,
@@ -516,9 +498,9 @@ impl MartianStage for Assembly {
         let barcode_data_file: BarcodeDataFile = rover.make_path("barcode_data");
         barcode_data_file.write(&barcode_data)?;
         drop(barcode_data);
-        let barcode_data_brief_file = rover.make_path("barcode_data_brief.bin");
-        write_obj(&barcode_data_brief, &barcode_data_brief_file);
-        drop(barcode_data_brief);
+        let umi_info_file: UmiInfoFile = rover.make_path("umi_info");
+        umi_info_file.write(&umi_info)?;
+        drop(umi_info);
 
         let out_bam_filename: BamFile = rover.make_path("contig_bam");
         sam_to_bam(&out_bam_filename, sam_header, &out_sam_filenamex);
@@ -539,8 +521,7 @@ impl MartianStage for Assembly {
             align_info: align_info_file,
             unmapped_sample_fastq: unmapped_sample_fastq_file,
             barcode_data: barcode_data_file,
-            barcode_data_brief: barcode_data_brief_file,
-            outs_builder: ob_file,
+            umi_info: umi_info_file,
         })
     }
 
@@ -586,13 +567,6 @@ impl MartianStage for Assembly {
         }
         drop(unmapped_sample_fastq);
 
-        let mut barcode_data_brief = Vec::<BarcodeDataBrief>::new();
-        for co in &chunk_outs {
-            let mut barcode_data_brief_this: Vec<BarcodeDataBrief> =
-                read_obj(&co.barcode_data_brief);
-            barcode_data_brief.append(&mut barcode_data_brief_this);
-        }
-
         // Load the number of read pairs assigned to each barcode.
 
         let bc_counts = args.corrected_bc_counts.as_ref().to_str().unwrap();
@@ -628,7 +602,10 @@ impl MartianStage for Assembly {
             }
 
             // second pass
-            let max_read_pairs_per_barcode = get_max_reads_per_barcode(chemistry_def);
+            let max_read_pairs_per_barcode = get_max_read_pairs_per_barcode(
+                chemistry_def.is_paired_end(),
+                args.max_reads_per_barcode,
+            );
             let reader2 = co.contig_annotations.lazy_reader()?;
             for can in reader2 {
                 let mut can: ContigAnnotation = can?;
@@ -665,29 +642,20 @@ impl MartianStage for Assembly {
         let is_bcr = args.receptor == Some(VdjReceptor::IG);
 
         if let Some(ref ref_path) = args.vdj_reference_path {
-            let fasta = read_to_string_safe(format!("{}/fasta/regions.fa", ref_path.display()));
+            let fasta_path = ref_path.join("fasta/regions.fa");
+            let fasta = read_to_string(&fasta_path)
+                .with_context(|| fasta_path.to_string_lossy().to_string())?;
             make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
         }
 
-        // Merge barcode support files.
-        let barcode_support_file: CsvFile<BarcodeSupport> = rover.make_path("barcode_support.csv");
-        write_bc_support_csv(&barcode_support_file, &chunk_outs)?;
-
         let barcode_data_brief_file: BarcodeDataBriefFile = rover.make_path("barcode_data_brief");
-        barcode_data_brief_file.write(&barcode_data_brief)?;
+        write_bc_databrief(&barcode_data_brief_file, &chunk_outs)?;
 
         let barcode_data_full_file: BarcodeDataFile = rover.make_path("barcode_data_full");
         write_bc_data_full(&barcode_data_full_file, &chunk_outs)?;
 
-        let assemblable_reads_per_bc = {
-            let path: AsmReadsPerBcFormat = rover.make_path("assemblable_reads_per_bc");
-            let mut hist = SimpleHistogram::default();
-            for brief in barcode_data_brief {
-                hist.insert(brief.barcode, brief.xucounts.iter().sum::<i32>());
-            }
-            path.write(&hist)?;
-            path
-        };
+        let umi_info_full_file: UmiInfoFile = rover.make_path("umi_info");
+        write_umi_info_full(&umi_info_full_file, &chunk_outs)?;
 
         // Return results.
 
@@ -701,23 +669,23 @@ impl MartianStage for Assembly {
             contig_bam_bai: contig_bam_bai_filename,
             summary_tsv: summary_tsv_file,
             umi_summary_tsv: umi_summary_tsv_file,
+            umi_info: umi_info_full_file,
             contig_annotations: contig_annotations_file,
             barcode_brief: barcode_data_brief_file,
             barcode_full: barcode_data_full_file,
-            barcode_support: barcode_support_file,
             barcodes_in_chunks,
-            assemblable_reads_per_bc,
             align_info: align_info_file,
             unmapped_sample_fastq: unmapped_sample_fastq_file,
         })
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn load_refdata(
     vdj_reference_path: Option<&Path>,
     is_tcr: bool,
     is_bcr: bool,
-) -> (RefData, RefData, RefData, Vec<(Kmer20, i32, i32)>) {
+) -> Result<(RefData, RefData, RefData, Vec<(Kmer20, i32, i32)>)> {
     // Load reference and make a lookup table for it.  Actually there are three
     // versions:
     // (1) just for TCR or BCR (so long as we know which we have);
@@ -730,20 +698,19 @@ fn load_refdata(
     let mut rkmers_plus_full_20 = Vec::<(Kmer20, i32, i32)>::new();
     if let Some(ref_path) = vdj_reference_path {
         let ref_path = ref_path.to_str().unwrap();
-        let fasta_path = format!("{ref_path}/fasta/regions.fa");
-        let fasta = read_to_string_safe(&fasta_path);
-        let ext_fasta =
-            fs::read_to_string(format!("{ref_path}/fasta/supp_regions.fa")).unwrap_or_default();
-        assert!(
-            !fasta.is_empty(),
-            "Reference file at {fasta_path} has zero length."
-        );
+        let fasta = read_regions(Path::new(ref_path))?;
+        let ext_fasta = match read_to_string(format!("{ref_path}/fasta/supp_regions.fa")) {
+            Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(err) => bail!(err),
+            Ok(contents) => contents,
+        };
+
         make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
         make_vdj_ref_data_core(&mut refdata_full, &fasta, "", true, true, None);
         make_kmer_lookup_20_single(&refdata_full.refs, &mut rkmers_plus_full_20);
         make_vdj_ref_data_core(&mut refdatax, &fasta, &ext_fasta, is_tcr, is_bcr, None);
     }
-    (refdata, refdatax, refdata_full, rkmers_plus_full_20)
+    Ok((refdata, refdatax, refdata_full, rkmers_plus_full_20))
 }
 
 fn make_rtype(refdata_full: &RefData, has_refs: bool) -> Vec<i32> {
@@ -763,7 +730,7 @@ fn make_rtype(refdata_full: &RefData, has_refs: bool) -> Vec<i32> {
                             None
                         }
                     })
-                    .last()
+                    .next_back()
                     .unwrap_or(-1)
             })
             .collect()
@@ -782,7 +749,6 @@ fn write_simple_sam(
     align_info_file: &TxtFile,
     umi_summary_file: &TsvFileNoHeader<UmiSummaryRow>,
     summary_file: &TsvFileNoHeader<ContigSummaryRow>,
-    ob_file: &BincodeFile<Vec<BarcodeSupport>>,
     unmapped_sample_fastq_file: &FastqFile,
     refdata: &RefData,
     refdatax: RefData,
@@ -798,9 +764,9 @@ fn write_simple_sam(
         bam::header::Header,
         Vec<String>,
         Vec<BarcodeData>,
-        Vec<BarcodeDataBrief>,
+        Vec<UmiInfo>,
     ),
-    martian::Error,
+    Error,
 > {
     // CELLRANGER-7889: "VDJ" is hardcoded in mro injection of chemistry defs map.
     let chemistry_def = &args.chemistry_defs[&LibraryType::VdjAuto];
@@ -812,9 +778,6 @@ fn write_simple_sam(
         heur.free = true;
     }
     // Null stuff.
-
-    let lena = 0;
-    let contam = FlowcellContam::new();
     let n50_n50_rpu = args.n50_n50_rpu;
     // Compute primer extensions.
     let inner_primersx = &split_args.primers.inner_primers;
@@ -827,7 +790,6 @@ fn write_simple_sam(
     let mut align_info = align_info_file.buf_writer()?;
     let mut umi_summary_writer = umi_summary_file.lazy_writer()?;
     let mut summary_writer = summary_file.lazy_writer()?;
-    let mut ob_writer = ob_file.lazy_writer()?;
     let mut unmapped_sample_fastq = unmapped_sample_fastq_file.buf_writer()?;
     let vdj_adapters = crate::adapter::get_vdj_adapters();
 
@@ -835,7 +797,6 @@ fn write_simple_sam(
 
     let mut barcodes = Vec::<String>::new();
     let mut barcode_data = Vec::<BarcodeData>::new();
-    let mut barcode_data_brief = Vec::<BarcodeDataBrief>::new();
     // Sam header.
 
     let mut sam_header = bam::header::Header::new();
@@ -883,7 +844,7 @@ fn write_simple_sam(
         let (mut bid, mut rid) = (0, 0);
         let mut unmapped = 0;
         for (barcode, read_iter) in &bc_sorted_lazy_reader
-            .group_by(|read: &Result<RnaRead>| read.as_ref().ok().map(RnaRead::barcode))
+            .chunk_by(|read: &Result<RnaRead>| read.as_ref().ok().map(RnaRead::barcode))
         {
             let mut barcode_data_this = BarcodeData::new();
 
@@ -904,7 +865,10 @@ fn write_simple_sam(
             barcode_data_this.nreads = read_data.2 as i32;
             barcode_data_this.nreads_used_for_assembly = this_bc_reads.len() as i32;
             // Assign fraction of reads used for assembly of each barcode
-            let max_read_pairs_per_barcode = get_max_reads_per_barcode(chemistry_def);
+            let max_read_pairs_per_barcode = get_max_read_pairs_per_barcode(
+                chemistry_def.is_paired_end(),
+                args.max_reads_per_barcode,
+            );
             barcode_data_this.frac =
                 if barcode_data_this.nreads as usize <= max_read_pairs_per_barcode {
                     1.0_f64
@@ -943,7 +907,11 @@ fn write_simple_sam(
                                 for q in &mut qual {
                                     *q += 33;
                                 }
-                                fwriteln!(unmapped_sample_fastq, "{}", strme(&qual));
+                                fwriteln!(
+                                    unmapped_sample_fastq,
+                                    "{}",
+                                    std::str::from_utf8(&qual).unwrap()
+                                );
                             }
                             unmapped += 1;
                         }
@@ -986,22 +954,16 @@ fn write_simple_sam(
             barcode_data_this.nreads_umi_corrected = corrected;
 
             // Create assemblies.
-
-            let mut nedges = 0;
-            let mut conx = Vec::<DnaString>::new();
-            let mut conxq = Vec::<Vec<u8>>::new();
-            let mut cids = Vec::<Vec<i32>>::new();
-            let mut cumi = Vec::<Vec<i32>>::new();
-            let mut productive = Vec::<bool>::new();
-            let mut validated_umis = Vec::<Vec<String>>::new();
-            let mut non_validated_umis = Vec::<Vec<String>>::new();
-            let mut invalidated_umis = Vec::<Vec<String>>::new();
-            let mut barcode_data_brief_this = BarcodeDataBrief::new();
-            let mut junction_support = Vec::<Option<JunctionSupport>>::new();
-            barcode_data_brief_this.barcode.clone_from(&barcode);
-            barcode_data_brief_this.read_pairs = barcode_data_this.nreads as u64;
-            barcode_data_brief_this.frac_reads_used = barcode_data_this.frac;
-            process_barcode(
+            let ProcessBarcodeResult {
+                conx,
+                conxq,
+                cids,
+                cumi,
+                junction_support,
+                productive,
+                nedges,
+                umi_info,
+            } = process_barcode(
                 &chbid,
                 single_end,
                 is_tcr,
@@ -1020,25 +982,12 @@ fn write_simple_sam(
                 &refdata_full,
                 &rkmers_plus_full_20,
                 &refdatax,
-                lena,
-                &contam,
                 args.min_contig_length,
                 &mut barcode_data_this,
-                &mut barcode_data_brief_this,
-                &mut conx,
-                &mut conxq,
-                &mut productive,
-                &mut validated_umis,
-                &mut non_validated_umis,
-                &mut invalidated_umis,
-                &mut cids,
-                &mut cumi,
-                &mut nedges,
-                &mut junction_support,
                 &mut log2,
                 log_opts,
                 &heur,
-            );
+            )?;
 
             // Write contigs and annotation for them.
             for i in 0..conx.len() {
@@ -1053,11 +1002,8 @@ fn write_simple_sam(
                     cids[i].len(),
                     cumi[i].len(),
                     false, // determined in ASM_CALL_CELLS stage
-                    Some(validated_umis[i].clone()),
-                    Some(non_validated_umis[i].clone()),
-                    Some(invalidated_umis[i].clone()),
                     false, // determined in ASM_CALL_CELLS stage
-                    junction_support[i].as_ref().cloned(),
+                    junction_support[i].clone(),
                 );
 
                 can.sample = Some(args.sample_id.clone());
@@ -1087,34 +1033,44 @@ fn write_simple_sam(
                     contig_of_umi[umi_id[read_id as usize] as usize] = Some(t);
                 }
             }
-
-            // umi_count is the number of umis supporting the barcode.  There
-            // are choices here as to how we count.  We use ALL the umis but
-            // could change this.
-            ob_writer.write_item(&BarcodeSupport {
-                barcode: barcode.clone(),
-                count: barcode_data_this.xucounts.len(),
-            })?;
-
-            // Write umi_summary.  We do not enforce a lower bound on the number
-            // of reads per UMI, and simply write "1" for the min_umi_reads
-            // field, and declare every UMI good.
+            // Write umi_summary
             const MIN_READS_PER_UMI: i32 = 1;
-            for (umi, group) in &umi_id.iter().group_by(|&&id| id) {
-                let tigname = contig_of_umi[umi as usize].map_or(String::new(), |t| {
-                    format!("{}_contig_{}", barcode.clone(), t + 1)
-                });
-                let umi_string = &uu[umi as usize];
+            for info in umi_info {
                 umi_summary_writer.write_item(&UmiSummaryRow {
                     barcode: barcode.clone(),
-                    umi_id: umi,
-                    umi: umi_string.to_string(),
-                    reads: group.count(),
+                    umi_id: info.umi_id,
+                    umi: info.umi.to_string(),
+                    reads: info.reads,
                     min_umi_reads: MIN_READS_PER_UMI,
                     good_umi: true,
-                    contigs: tigname,
+                    contigs: info
+                        .contig
+                        .map_or_else(String::new, |c| c.tigname(&barcode)),
                 })?;
             }
+
+            // The read counts generated using UmiInfo do not match the original counts
+            // see: CELLRANGER-9116
+            // let mut contig_umi_info: Vec<UmiInfo> = umi_info
+            //     .into_iter()
+            //     .filter(|info| info.contig.is_some())
+            //     .collect();
+            // contig_umi_info.sort_by_key(|info| info.contig.clone());
+            // for (contig_id, group) in &contig_umi_info
+            //     .into_iter()
+            //     .chunk_by(|info| info.contig.clone().unwrap())
+            // {
+            //     let group: Vec<UmiInfo> = group.into_iter().collect();
+            //     let barcode = group.first().unwrap().barcode.to_string();
+            //     summary_writer.write_item(&ContigSummaryRow {
+            //         barcode: barcode.clone(),
+            //         contig_name: contig_id.tigname(&barcode),
+            //         num_reads: group.iter().map(|info| info.reads).sum(),
+            //         num_pairs: group.iter().map(|info| info.read_pairs).sum(),
+            //         num_umis: group.len(),
+            //         umi_list: UmiList(group.iter().map(|info| info.umi_id).collect()),
+            //     });
+            // }
 
             // Write summary.
             for (t, cid) in cids.iter().enumerate() {
@@ -1254,7 +1210,6 @@ fn write_simple_sam(
 
             bid += 1;
             barcode_data.push(barcode_data_this);
-            barcode_data_brief.push(barcode_data_brief_this);
 
             if nedges > 0 {
                 log.append(&mut log2);
@@ -1265,7 +1220,7 @@ fn write_simple_sam(
     // Print log.
     // ◼ Figure out if we want to print this and if so to _stdout or elsewhere.
 
-    print!("{}", stringme(&log));
+    print!("{}", String::from_utf8(log).unwrap());
 
     // Finish writing of the simple_sam_writer.  It is not enough to have it go
     // out of scope, which seems like a bug in lz4.
@@ -1273,11 +1228,11 @@ fn write_simple_sam(
 
     let (_, res) = simple_sam_writer.finish();
     res?;
-    ob_writer.finish()?;
     ann_writer.finish()?;
     umi_summary_writer.finish()?;
     summary_writer.finish()?;
-    Ok((sam_header, barcodes, barcode_data, barcode_data_brief))
+    let umi_info = Vec::<UmiInfo>::new();
+    Ok((sam_header, barcodes, barcode_data, umi_info))
 }
 
 fn write_contig_summary_tsv(
@@ -1320,22 +1275,6 @@ fn write_umi_summary_tsv(
     Ok(())
 }
 
-fn write_bc_support_csv(
-    summary: &CsvFile<BarcodeSupport>,
-    chunk_outs: &[AssemblyChunkOutputs],
-) -> Result<()> {
-    let mut writer = summary.lazy_writer()?;
-    for co in chunk_outs {
-        let reader = co.outs_builder.lazy_reader()?;
-        for bc_support in reader {
-            let bc_support = bc_support?;
-            writer.write_item(&bc_support)?;
-        }
-    }
-    writer.finish()?;
-    Ok(())
-}
-
 fn write_bc_data_full(file: &BarcodeDataFile, chunk_outs: &[AssemblyChunkOutputs]) -> Result<()> {
     let mut writer = file.lazy_writer()?;
     for chunk in chunk_outs {
@@ -1347,4 +1286,47 @@ fn write_bc_data_full(file: &BarcodeDataFile, chunk_outs: &[AssemblyChunkOutputs
     }
     writer.finish()?;
     Ok(())
+}
+
+fn write_bc_databrief(
+    file: &BarcodeDataBriefFile,
+    chunk_outs: &[AssemblyChunkOutputs],
+) -> Result<()> {
+    let mut writer = file.lazy_writer()?;
+    for chunk in chunk_outs {
+        let reader = chunk.barcode_data.lazy_reader()?;
+        for bc_data in reader {
+            let bc_data = bc_data?;
+            let bc_brief: BarcodeDataBrief = bc_data.into();
+            writer.write_item(&bc_brief)?;
+        }
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+fn write_umi_info_full(file: &UmiInfoFile, chunk_outs: &[AssemblyChunkOutputs]) -> Result<()> {
+    let mut writer = file.lazy_writer()?;
+    for chunk in chunk_outs {
+        let reader = chunk.umi_info.lazy_reader()?;
+        for umi_info in reader {
+            let umi_info = umi_info?;
+            writer.write_item(&umi_info)?;
+        }
+    }
+    writer.finish()?;
+    Ok(())
+}
+
+/// Read the regions.fa file from the provided reference path.
+fn read_regions(ref_path: &Path) -> Result<String> {
+    let fasta_path = ref_path.join("fasta/regions.fa");
+    let fasta =
+        read_to_string(&fasta_path).with_context(|| fasta_path.to_string_lossy().to_string())?;
+    assert!(
+        !fasta.is_empty(),
+        "Reference file at {} has zero length.",
+        fasta_path.display(),
+    );
+    Ok(fasta)
 }

@@ -52,7 +52,7 @@ TARGETED_RPU_METRIC_KEY = "mean_reads_per_umi_per_gene_cells_on_target"
 
 def split(args):
     _, num_barcodes, nnz = CountMatrix.load_dims_from_h5(args.filtered_gene_bc_matrices)
-    mem_gib = max(4, 0.5 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1.0))
+    mem_gib = max(5, 2 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1.4))
     print(f"{num_barcodes=},{nnz=},{mem_gib=}")
     return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
@@ -326,7 +326,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     matrix = CountMatrix.load_h5_file(args.filtered_gene_bc_matrices)
     all_target_feature_indices = matrix.feature_ref.get_target_feature_indices()
     assert all_target_feature_indices is not None, "Targeted panel not found in feature reference."
-    genomes = [g for g in matrix.feature_ref.get_genomes() if g != ""]
+    genomes = matrix.get_genomes()
     if len(genomes) < 2:
         genomes = [None]
     else:

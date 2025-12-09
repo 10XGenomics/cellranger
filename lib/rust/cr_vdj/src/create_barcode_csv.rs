@@ -1,12 +1,11 @@
-//!
 //! Compute per_barcode.csv for BEAM analysis. Note that this is different from the
 //! per_barcode_metrics.csv computed in BASIC_SC_RNA_COUNTER.
-//!
+#![expect(missing_docs)]
 
-use crate::matrix::{load_barcodes_from_matrix, H5File};
-use anyhow::{ensure, Result};
+use crate::matrix::{H5File, load_barcodes_from_matrix};
+use anyhow::{Result, ensure};
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, MartianType, make_mro};
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
 use metric::{TxHashMap, TxHashSet};
@@ -32,7 +31,7 @@ impl From<GemInfo> for GemInfoHelper {
 }
 
 impl TryFrom<GemInfoHelper> for GemInfo {
-    type Error = anyhow::Error;
+    type Error = Error;
     fn try_from(value: GemInfoHelper) -> Result<Self, Error> {
         ensure!(value.0.len() == 2);
         Ok(GemInfo {
@@ -154,7 +153,7 @@ impl MartianMain for CreateBarcodeCsv {
             let sample_id = args
                 .count_gem_well_map
                 .as_ref()
-                .and_then(|gem_well_map| gem_well_map.get(barcode.split('-').last().unwrap()))
+                .and_then(|gem_well_map| gem_well_map.get(barcode.split('-').next_back().unwrap()))
                 .map(|gw_info| gw_info.sample_id.clone());
 
             let row = match vdj_cell_info.remove(&barcode) {

@@ -1,9 +1,10 @@
+#![deny(missing_docs)]
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
 use nom::character::complete::{char, space0, space1};
 use nom::combinator::peek;
-use nom::error::{make_error, ErrorKind};
-use nom::multi::{many0, many1, many_till};
+use nom::error::{ErrorKind, make_error};
+use nom::multi::{many_till, many0, many1};
 use nom::sequence::{delimited, preceded, terminated};
 use nom::{Err, IResult, InputTake, Slice};
 use nom_locate::LocatedSpan;
@@ -18,7 +19,7 @@ pub struct XtraData {
 }
 
 impl XtraData {
-    pub fn new(path: impl AsRef<Path>) -> Self {
+    pub(crate) fn new(path: impl AsRef<Path>) -> Self {
         XtraData {
             filename: Arc::new(path.as_ref().to_owned()),
         }
@@ -37,12 +38,11 @@ impl Display for XtraData {
     }
 }
 
-pub type Span<'a> = LocatedSpan<&'a str, XtraData>;
+pub(crate) type Span<'a> = LocatedSpan<&'a str, XtraData>;
 
 #[derive(Debug, Clone, Copy)]
-pub struct SectionHdr<'a> {
+pub(crate) struct SectionHdr<'a> {
     fragment: &'a str,
-    offset: usize,
     line: u32,
     column: usize,
 }
@@ -51,7 +51,6 @@ impl<'a> From<&Span<'a>> for SectionHdr<'a> {
     fn from(span: &Span<'a>) -> Self {
         SectionHdr {
             fragment: span.fragment(),
-            offset: span.location_offset(),
             line: span.location_line(),
             column: span.get_utf8_column(),
         }
@@ -59,30 +58,29 @@ impl<'a> From<&Span<'a>> for SectionHdr<'a> {
 }
 
 impl<'a> SectionHdr<'a> {
-    pub fn fragment(&self) -> &'a str {
+    pub(crate) fn fragment(&self) -> &'a str {
         self.fragment
     }
-    pub fn location_offset(&self) -> usize {
-        self.offset
-    }
-    pub fn location_line(&self) -> u32 {
+
+    pub(crate) fn location_line(&self) -> u32 {
         self.line
     }
-    pub fn get_utf8_column(&self) -> usize {
+
+    pub(crate) fn get_utf8_column(&self) -> usize {
         self.column
     }
 }
 
-impl<'a> Display for SectionHdr<'a> {
+impl Display for SectionHdr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}]", self.fragment)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Section<'a, T: Display = SectionHdr<'a>> {
-    pub name: T,
-    pub rows: Vec<Vec<Span<'a>>>,
+pub(crate) struct Section<'a, T: Display = SectionHdr<'a>> {
+    pub(crate) name: T,
+    pub(crate) rows: Vec<Vec<Span<'a>>>,
 }
 
 impl<'a, T: Display> Section<'a, T> {
@@ -97,11 +95,7 @@ impl<'a, T: Display> Section<'a, T> {
                 .into_iter()
                 .filter_map(|row| {
                     let row = row.into_iter().collect::<Vec<_>>();
-                    if row.is_empty() {
-                        None
-                    } else {
-                        Some(row)
-                    }
+                    if row.is_empty() { None } else { Some(row) }
                 })
                 .collect::<Vec<_>>(),
         }
@@ -299,11 +293,11 @@ fn section(input: Span<'_>) -> IResult<Span<'_>, Section<'_, SectionHdr<'_>>> {
     Ok((input, Section::new(SectionHdr::from(&name), rows)))
 }
 
-pub fn section_csv(input: Span<'_>) -> IResult<Span<'_>, Vec<Section<'_, SectionHdr<'_>>>> {
+pub(crate) fn section_csv(input: Span<'_>) -> IResult<Span<'_>, Vec<Section<'_, SectionHdr<'_>>>> {
     many1(section)(input)
 }
 
-pub fn plain_csv<T: Display>(name: T, input: Span<'_>) -> IResult<Span<'_>, Section<'_, T>> {
+pub(crate) fn plain_csv<T: Display>(name: T, input: Span<'_>) -> IResult<Span<'_>, Section<'_, T>> {
     let (input, _) = input.take_split(0);
     let (input, (rows, _)) = many_till(row, peek(alt((header, eof))))(input)?;
     Ok((input, Section::new(name, rows)))
@@ -311,18 +305,18 @@ pub fn plain_csv<T: Display>(name: T, input: Span<'_>) -> IResult<Span<'_>, Sect
 
 #[cfg(test)]
 mod tests {
-    use super::{section_csv, Section, SectionHdr, Span, XtraData};
+    use super::{Section, SectionHdr, Span, XtraData, section_csv};
     use anyhow::Result;
     use std::convert::Into;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct SectionStr<'a> {
+    pub(crate) struct SectionStr<'a> {
         name: &'a str,
         rows: Vec<Vec<&'a str>>,
     }
 
     impl<'a> SectionStr<'a> {
-        pub fn new(name: &'a str, rows: Vec<Vec<&'a str>>) -> Self {
+        pub(crate) fn new(name: &'a str, rows: Vec<Vec<&'a str>>) -> Self {
             SectionStr { name, rows }
         }
     }
@@ -344,10 +338,10 @@ mod tests {
     fn one_section() -> Result<()> {
         let xtra = XtraData::new("tests::one_section");
         let scsv = Span::new_extra(
-            r#"
+            r"
             # comment
             [hi]
-            yes,1, 2"#,
+            yes,1, 2",
             xtra,
         );
         let (_input, parsed) = section_csv(scsv)?;
@@ -391,11 +385,11 @@ mod tests {
     fn avoid_early_comment_termination() -> Result<()> {
         let xtra = XtraData::new("tests::avoid_early_comment_termination");
         let scsv = Span::new_extra(
-            r#"
+            r"
             # i am a comment
             [hi] #this should be a valid comment too
             col1,col2,col3
-            val1,val#2,val3 # real comment"#,
+            val1,val#2,val3 # real comment",
             xtra,
         );
         let (_input, parsed) = section_csv(scsv)?;
@@ -486,11 +480,11 @@ aaa,"b\"bb",ccc
     fn spaces_in_headers() -> Result<()> {
         let xtra = XtraData::new("tests::spaces_in_headers");
         let scsv = Span::new_extra(
-            r#"
+            r"
             # comment
             [    hi there      ]
             yes,1, 2
-            "#,
+            ",
             xtra,
         );
         let (_input, parsed) = section_csv(scsv)?;

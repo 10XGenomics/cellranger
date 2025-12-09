@@ -27,10 +27,7 @@ path = '../cr_types'
 workspace = true
 
 [dependencies.fastq_set]
-workspace = true
-
-[dependencies.fxhash]
-workspace = true
+path = '../fastq_set'
 
 [dependencies.hdf5]
 workspace = true
@@ -47,9 +44,6 @@ path = '../json_report_derive'
 [dependencies.kmer_lookup]
 path = '../kmer_lookup'
 
-[dependencies.libc]
-workspace = true
-
 [dependencies.lz4]
 workspace = true
 
@@ -65,10 +59,10 @@ workspace = true
 [dependencies.metric]
 path = '../metric'
 
-[dependencies.parameters_toml]
-path = '../parameters_toml'
-
 [dependencies.rust-htslib]
+workspace = true
+
+[dependencies.rustix]
 workspace = true
 
 [dependencies.serde]
@@ -104,10 +98,13 @@ default = []
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
 autobins = false
-edition = '2021'
+edition = '2024'
 name = 'vdj_asm_asm'
 publish = false
 version = '0.1.0'

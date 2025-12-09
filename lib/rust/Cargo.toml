@@ -15,67 +15,64 @@ opt-level = 3
 split-debuginfo = 'unpacked'
 
 [workspace]
-members = ['barcode', 'barcode_extensions', 'barcodes_folder', 'bazel_utils', 'byteseq', 'clonotype_assigner', 'cloud_utils', 'cr_aggr', 'cr_ana', 'cr_bam', 'cr_h5', 'cr_lib', 'cr_types', 'cr_vdj', 'cr_websummary', 'cr_wrap', 'fast_utils', 'jibes_o3', 'json_report_derive', 'metric', 'metric_derive', 'multi', 'multiconfig_converter', 'par_proc', 'parameters_toml', 'pyanyhow', 'slide_design', 'stats', 'tenkit2', 'transcriptome', 'tx_annotation', 'umi', 'vdj_asm_asm', 'vdj_asm_utils', 'vdj_filter_barcodes', 'vdj_proto', 'vdj_reference', 'websummary_build', 'websummary_derive', 'amino', 'enclone', 'enclone_args', 'enclone_core', 'enclone_process', 'enclone_proto', 'enclone_ranger', 'enclone_stuff', 'equiv', 'graph_simple', 'hyperbase', 'io_utils', 'kmer_lookup', 'stats_utils', 'string_utils', 'vdj_ann', 'vdj_ann_ref', 'vdj_types', 'vector_utils']
+members = ['barcode', 'barcode_extensions', 'barcodes_folder', 'bazel_utils', 'byteseq', 'clonotype_assigner', 'cloud_utils', 'cr_aggr', 'cr_ana', 'cr_bam', 'cr_h5', 'cr_lib', 'cr_types', 'cr_vdj', 'cr_websummary', 'cr_wrap', 'fast_utils', 'jibes_o3', 'json_report_derive', 'metric', 'metric_derive', 'multi', 'multiconfig_converter', 'par_proc', 'pyanyhow', 'slide_design', 'souporcell', 'stats', 'transcriptome', 'tx_annotation', 'umi', 'vartrix', 'vdj_asm_asm', 'vdj_asm_utils', 'vdj_filter_barcodes', 'vdj_proto', 'vdj_reference', 'websummary_build', 'websummary_derive', 'amino', 'enclone_proto', 'enclone_process', 'equiv', 'graph_simple', 'hyperbase', 'io_utils', 'kmer_lookup', 'string_utils', 'vdj_ann', 'vdj_ann_ref', 'vdj_types', 'vector_utils']
 resolver = '2'
 
 [workspace.dependencies]
-bincode = '1.1.3'
+bincode = '1'
 bio = '2'
 bio-types = '1'
 bitflags = '2'
 byteorder = '1'
-criterion = '0.5'
+criterion = '0.7'
 csv = '1'
-ctor = '0.2'
+ctor = '0.5'
 debruijn = '0.3'
 docopt = '1'
+fastq = '0.6'
 file_diff = '1'
 flate2 = '1'
-fxhash = '0.2'
 glob = '0.3'
 heck = '0.5'
 hex = '0.4'
 hostname = '0.4'
-indoc = '1'
-itertools = '0.10'
+indoc = '2'
+itertools = '0.14'
 lazy_static = '1'
 libc = '0.2'
 log = '0.4'
 lz4 = '1'
-ndarray = '0.15'
-ndarray-stats = '0.5'
+ndarray = '0.16'
+ndarray-stats = '0.6'
 nom_locate = '4'
 num-traits = '0.2'
-numpy = '0.19'
-parquet_derive = '51'
+numpy = '0.25'
+parquet_derive = '56'
 permutation = '0.4'
-petgraph = '0.6'
-plotly = '0.9'
+petgraph = '0.8'
+plotly = '0.13'
 pretty_assertions = '1'
 proc-macro2 = '1'
 proptest = '1'
 prost = '0.13'
 prost-build = '0.13'
 quote = '1'
-rand = '0.8'
-rand_chacha = '0.3'
-rand_distr = '0.4'
-rand_pcg = '0.3'
-rand_xorshift = '0.3'
+rand_distr = '0.5'
 rayon = '1'
-serde_json = '1'
 sha2 = '0.10'
-statrs = '0.16'
-strum = '0.25'
-strum_macros = '0.26'
-superslice = '1'
+strsim = '0.11'
 syn = '2'
-tempfile = '3.4'
-thiserror = '1'
+tempfile = '3'
+thiserror = '2'
 thousands = '0.2'
+tiff = '0.10'
 toml = '0.8'
 triple_accel = '0.4'
-wyhash = '0.5'
+
+[workspace.dependencies.ahash]
+default-features = false
+features = ['std']
+version = '0.8'
 
 [workspace.dependencies.anyhow]
 features = ['backtrace']
@@ -83,7 +80,7 @@ version = '1'
 
 [workspace.dependencies.arrayvec]
 features = ['serde']
-version = '0.5'
+version = '0.7'
 
 [workspace.dependencies.blas-src]
 branch = 'main'
@@ -94,34 +91,40 @@ default-features = false
 features = ['std', 'derive']
 version = '4'
 
+[workspace.dependencies.counter]
+features = ['serde']
+version = '0.6'
+
 [workspace.dependencies.derive_more]
 features = ['add', 'add_assign', 'deref', 'display']
-version = '1.0'
+version = '2'
 
 [workspace.dependencies.diff-exp]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
-[workspace.dependencies.fastq_set]
-branch = 'master'
-git = 'https://github.com/10XGenomics/fastq_set'
-
 [workspace.dependencies.geo]
 default-features = false
-version = '0.28'
+version = '0.31'
 
 [workspace.dependencies.geo-types]
 default-features = false
 version = '0.7'
+
+[workspace.dependencies.geojson]
+default-features = false
+features = ['geo-types']
+version = '0.24'
 
 [workspace.dependencies.hclust]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
 [workspace.dependencies.hdf5]
-branch = 'conda_nov2021'
-features = ['conda']
-git = 'https://github.com/10XGenomics/hdf5-rust.git'
+branch = 'main'
+features = ['static', 'zlib']
+git = 'https://github.com/10XGenomics/hdf5-rust'
+package = 'hdf5-metno'
 
 [workspace.dependencies.image]
 default-features = false
@@ -143,29 +146,42 @@ git = 'https://github.com/martian-lang/martian-rust'
 branch = 'master'
 git = 'https://github.com/martian-lang/martian-rust'
 
+[workspace.dependencies.minimap2]
+features = ['htslib']
+version = '0.1.28'
+
 [workspace.dependencies.ndarray-npy]
 default-features = false
-version = '0.8'
+version = '0.9'
 
 [workspace.dependencies.nom]
 default-features = false
 version = '7'
 
+[workspace.dependencies.orbit]
+branch = 'master'
+git = 'https://github.com/10XGenomics/orbit'
+
 [workspace.dependencies.ordered-float]
 features = ['serde']
-version = '>=3, < 5'
+version = '>=3, <6'
 
 [workspace.dependencies.parquet]
 default-features = false
 features = ['zstd', 'json']
-version = '51'
+version = '56'
 
 [workspace.dependencies.pyo3]
-features = ['extension-module', 'abi3-py310']
-version = '0.19'
+features = ['extension-module', 'abi3-py312']
+version = '0.25'
 
 [workspace.dependencies.qd]
 git = 'https://github.com/Barandis/qd'
+
+[workspace.dependencies.rand]
+default-features = false
+features = ['small_rng']
+version = '0.9'
 
 [workspace.dependencies.regex]
 default-features = false
@@ -175,11 +191,19 @@ version = '1'
 [workspace.dependencies.rust-htslib]
 default-features = false
 features = ['serde_feature', 'libdeflate']
-version = '0.47'
+version = '0.50'
+
+[workspace.dependencies.rustix]
+features = ['fs', 'param', 'process', 'system']
+version = '1'
 
 [workspace.dependencies.serde]
 features = ['derive']
 version = '1.0'
+
+[workspace.dependencies.serde_json]
+features = ['raw_value']
+version = '1'
 
 [workspace.dependencies.shardio]
 branch = 'master'
@@ -194,6 +218,14 @@ version = '0.11'
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
+[workspace.dependencies.statrs]
+default-features = false
+version = '0.18'
+
+[workspace.dependencies.strum]
+features = ['derive']
+version = '0.27'
+
 [workspace.dependencies.tenx-websummary]
 branch = 'master'
 git = 'https://github.com/10XGenomics/websummary'
@@ -204,4 +236,65 @@ version = '1'
 
 [workspace.dependencies.zip]
 default-features = false
-version = '0.6'
+version = '5'
+
+[workspace.lints]
+[workspace.lints.clippy]
+borrow_as_ptr = 'deny'
+cloned_instead_of_copied = 'deny'
+complexity = 'deny'
+enum_glob_use = 'deny'
+explicit_deref_methods = 'deny'
+explicit_into_iter_loop = 'deny'
+explicit_iter_loop = 'deny'
+filter_map_next = 'deny'
+flat_map_option = 'deny'
+from_iter_instead_of_collect = 'deny'
+ignored_unit_patterns = 'deny'
+implicit_clone = 'deny'
+inefficient_to_string = 'deny'
+manual_assert = 'deny'
+manual_instant_elapsed = 'deny'
+manual_is_variant_and = 'deny'
+manual_let_else = 'deny'
+manual_ok_or = 'deny'
+manual_string_new = 'deny'
+map_unwrap_or = 'deny'
+match_wildcard_for_single_variants = 'deny'
+mut_mut = 'deny'
+needless_bitwise_bool = 'deny'
+needless_collect = 'deny'
+needless_continue = 'deny'
+needless_for_each = 'deny'
+needless_raw_string_hashes = 'deny'
+option_as_ref_cloned = 'deny'
+or_fun_call = 'deny'
+perf = 'deny'
+ptr_as_ptr = 'deny'
+ptr_cast_constness = 'deny'
+redundant_closure_for_method_calls = 'deny'
+redundant_else = 'deny'
+ref_as_ptr = 'deny'
+semicolon_if_nothing_returned = 'deny'
+single_char_pattern = 'deny'
+style = 'deny'
+suspicious = 'deny'
+unchecked_duration_subtraction = 'deny'
+unicode_not_nfc = 'deny'
+uninlined_format_args = 'deny'
+unnecessary_join = 'deny'
+unused_self = 'deny'
+used_underscore_binding = 'deny'
+wildcard_imports = 'deny'
+
+[workspace.lints.clippy.comparison_chain]
+level = 'allow'
+priority = 1
+
+[workspace.lints.rust]
+future_incompatible = 'deny'
+nonstandard_style = 'deny'
+rust_2018_idioms = 'deny'
+unused = 'deny'
+unused_qualifications = 'deny'
+warnings = 'deny'

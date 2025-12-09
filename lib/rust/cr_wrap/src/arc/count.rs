@@ -1,14 +1,15 @@
+#![expect(missing_docs)]
 use crate::arc::types::{
-    validate_distance, validate_strict_fraction, ForceCellsArgs, MinCounts, MAX_CLUSTERS_RANGE,
+    ForceCellsArgs, MAX_CLUSTERS_RANGE, MinCounts, validate_distance, validate_strict_fraction,
 };
 use crate::create_bam_arg::CreateBam;
 use crate::fastqs::FastqArgs;
 use crate::mrp_args::MrpArgs;
-use crate::utils::{validate_id, CliPath};
-use anyhow::{bail, Result};
-use clap::{self, value_parser, Parser};
-use cr_types::sample_def::SampleDef;
+use crate::utils::{CliPath, validate_id};
+use anyhow::{Result, bail, ensure};
+use clap::{self, Parser, value_parser};
 use cr_types::LibraryType;
+use cr_types::sample_def::SampleDef;
 use ordered_float::NotNan;
 use serde::{self, Serialize};
 use std::collections::HashMap;
@@ -61,6 +62,14 @@ pub struct CountArgs {
     #[clap(long)]
     gex_exclude_introns: bool,
 
+    /// The path to the 10x Cloud Analysis user token used to enable cell annotation. If not provided, will default to the location stored through cellranger-arc cloud auth setup
+    #[clap(long, value_name = "PATH")]
+    tenx_cloud_token_path: Option<CliPath>,
+
+    /// Cell annotation model to use. Valid model names can be viewed by running `cellranger-arc cloud annotation models` or on the 10x Genomics Support site. If "auto", uses the default model for the species. If not provided, does not run cell annotation
+    #[clap(long, value_name = "MODEL")]
+    cell_annotation_model: Option<String>,
+
     /// Hidden option: Whether to check for barcode compatibility between libraries. [default: true]
     #[clap(
         long,
@@ -89,6 +98,18 @@ pub struct CountArgs {
     #[clap(flatten)]
     create_bam: CreateBam,
 
+    /// Disable secondary analysis, e.g. clustering
+    #[clap(long = "nosecondary")]
+    no_secondary_analysis: bool,
+
+    /// Trim the input Read 1 for GEX data to this length before analysis
+    #[clap(long, value_name = "NUM")]
+    rna_r1_length: Option<usize>,
+
+    /// Trim the input Read 2 for GEX data to this length before analysis
+    #[clap(long, value_name = "NUM")]
+    rna_r2_length: Option<usize>,
+
     /// Do not execute the pipeline.
     /// Generate a pipeline invocation (.mro) file and stop.
     #[clap(long)]
@@ -100,6 +121,8 @@ pub struct CountArgs {
 
 impl CountArgs {
     pub fn to_mro_args(&self) -> Result<CountMro> {
+        use LibraryType::{Atac, GeneExpression};
+
         let c = self.clone();
         let mut sample_defs = Vec::new();
 
@@ -117,27 +140,26 @@ impl CountArgs {
                 lanes: None,
             };
             match l.library_type {
-                LibraryType::Atac => seen_atac = true,
-                LibraryType::Gex => seen_gex = true,
-                v => {
+                Atac => seen_atac = true,
+                GeneExpression => seen_gex = true,
+                library_type => {
                     bail!(
-                        "Invalid value in library_type column {}: cellranger-arc \
-                        count is only compatible with `{}` and \
-                        `{}` libraries.",
-                        v,
-                        LibraryType::Gex,
-                        LibraryType::Atac,
+                        "Invalid value in library_type column {library_type}: cellranger-arc count \
+                         is only compatible with `{GeneExpression}` and `{Atac}` libraries.",
                     );
                 }
             };
             sample_defs.extend(fq.get_sample_defs(l.library_type)?);
         }
-        if !seen_atac {
-            bail!("Invalid libraries file: missing `Chromatin Accessibility` FASTQ files");
-        }
-        if !seen_gex {
-            bail!("Invalid libraries file: missing `Gene Expression` FASTQ files");
-        }
+
+        ensure!(
+            seen_atac,
+            "Invalid libraries file: missing `Chromatin Accessibility` FASTQ files"
+        );
+        ensure!(
+            seen_gex,
+            "Invalid libraries file: missing `Gene Expression` FASTQ files"
+        );
 
         Ok(CountMro {
             sample_id: c.id.clone(),
@@ -154,6 +176,12 @@ impl CountArgs {
             peak_qval: c.peak_qval,
             k_means_max_clusters: c.k_means_max_clusters,
             no_bam: !self.create_bam.validated()?,
+            no_secondary_analysis: c.no_secondary_analysis,
+            rna_r1_length: c.rna_r1_length,
+            rna_r2_length: c.rna_r2_length,
+            tenx_cloud_token_path: c.tenx_cloud_token_path.clone(),
+            cell_annotation_model: c.cell_annotation_model.clone(),
+            skip_cell_annotation: c.cell_annotation_model.is_none(),
         })
     }
 }
@@ -172,4 +200,10 @@ pub struct CountMro {
     pub feature_linkage_max_dist_mb: Option<NotNan<f64>>,
     pub k_means_max_clusters: Option<u64>,
     pub no_bam: bool,
+    pub no_secondary_analysis: bool,
+    pub rna_r1_length: Option<usize>,
+    pub rna_r2_length: Option<usize>,
+    pub tenx_cloud_token_path: Option<CliPath>,
+    pub cell_annotation_model: Option<String>,
+    pub skip_cell_annotation: bool,
 }

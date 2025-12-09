@@ -64,7 +64,10 @@ MINIMUM_DEPTH_TO_FILTER = 1000000
 # if tag reads usable per cell is below this, do NOT do UMI filtering
 # Essentially turns off UMI filtering as we won't get 1M usable reads per cell
 
-NUM_TOTAL_TAGS = 14
+# The minimum number of terms to include in the cell load poisson distribution.
+# You'd need to cram a ridiculous number of cells into the Chromium to need
+# this many terms, and this is probably already more than we really need.
+MIN_POISSON_KLET = 14
 
 # set measurable probabilities to 0 for poisson probabilities < this value
 # else takes forever to compute
@@ -99,19 +102,24 @@ def calculate_fat_tail_frac(
     return {f"{report_prefix}frac_fat_tail{depth_suffix}": frac_fat_tail}
 
 
-def get_multiplet_counts_unrounded(obs_cells: float, n_gems: int = N_G) -> np.ndarray:
-    """Returns unrounded counts for multiplets 1 and above."""
+def get_multiplet_counts_unrounded(
+    obs_cells: float, max_klet: int = MIN_POISSON_KLET, n_gems: int = N_G
+) -> np.ndarray:
+    """Returns unrounded counts for multiplets 1 through max(max_klet, MIN_POISSON_KLET).
+
+    This function will always return at least MIN_POISSON_KLET terms.
+    """
     num_loaded_cells = CORR_FACTOR * obs_cells
     # estimate the numnber of cells loaded from the number of recovered cells
     loading_rate = float(num_loaded_cells) / n_gems  # Poisson loading rate
     # expected counts of i-lets just due to Poisson loading
-    poisson_fracs = TagAssigner.get_poisson_multiplets_fractions(loading_rate)
+    poisson_fracs = TagAssigner.get_poisson_multiplets_fractions(loading_rate, max_klet=max_klet)
     poisson_counts = poisson_fracs * n_gems / CORR_FACTOR
     return poisson_counts
 
 
 def get_multiplet_counts(obs_cells: float, n_gems: int = N_G) -> np.ndarray:
-    return np.round(get_multiplet_counts_unrounded(obs_cells, n_gems))
+    return np.round(get_multiplet_counts_unrounded(obs_cells, n_gems=n_gems))
 
 
 class CellEstimateCantConvergeException(Exception):
@@ -127,7 +135,9 @@ def calculate_expected_total_cells(obs_barcodes: int, n_gems: int = N_G) -> floa
     """
 
     def to_minimize(x):
-        return np.power(obs_barcodes - np.sum(get_multiplet_counts_unrounded(x, n_gems)), 2.0)
+        return np.power(
+            obs_barcodes - np.sum(get_multiplet_counts_unrounded(x, n_gems=n_gems)), 2.0
+        )
 
     z = optimize.minimize(to_minimize, x0=obs_barcodes * 1.1)
     if not z.success:
@@ -1015,30 +1025,29 @@ class TagAssigner(FeatureAssigner):
             self, self.assignment_metadata, self.feature_mol_name, self.feature_bc_name
         )
 
-    def compute_assignment_freqs(
-        self, num_zero_features: int, num_total_tags: int = NUM_TOTAL_TAGS
-    ) -> pd.DataFrame:
+    def compute_assignment_freqs(self, num_zero_features: int) -> pd.DataFrame:
         """Compute assignment frequencies.
 
         Args:
-            num_zero_features: the pre-computed number of cells assigned exactly 0 tags.
-            num_total_tags: The number of rows to produce.
+            num_zero_features: the pre-computed number of barcodes assigned exactly 0 tags.
 
         Returns:
             pd.DataFrame: with the following columns:
-                n: ranges from 0 to num_total_tags and
-                poisson_loading: number of cells being n-lets in theory
-                measurable: number of cells that should be measured to have n tags
-                observed: number of cells assigned with n tags
+                n: ranges from 0 to MIN_POISSON_KLET
+                poisson_loading: number of barcodes being that n-let based on poisson distribution
+                measurable: number of barcodes that should be measured to have n tags
+                observed: number of barcodes assigned with n tags
         """
         freq_df = pd.DataFrame(
-            columns=[POISSON_COL, MEASURABLE_COL, OBSERVED_COL], index=range(num_total_tags + 1)
+            columns=[POISSON_COL, MEASURABLE_COL, OBSERVED_COL], index=range(MIN_POISSON_KLET + 1)
         )
 
         freq_df.loc[0, :] = [0, 0, num_zero_features]
 
         # Calculate observed frequencies (note this does not include an entry for i = 0)
-        obs_freqs = np.array([self._get_freq_num_features(i) for i in range(1, num_total_tags + 1)])
+        obs_freqs = np.array(
+            [self._get_freq_num_features(i) for i in range(1, MIN_POISSON_KLET + 1)]
+        )
 
         num_cells_called = len(self.sub_matrix.bcs)
         estimated_cells = calculate_expected_total_cells(num_cells_called, self.n_gems)
@@ -1046,7 +1055,7 @@ class TagAssigner(FeatureAssigner):
         # a k-let probably contains k-cells in a single partition
 
         poisson_counts = get_multiplet_counts(
-            estimated_cells, self.n_gems
+            estimated_cells, n_gems=self.n_gems
         )  # expected counts, according to Poisson statistics
 
         num_loaded_cells = CORR_FACTOR * estimated_cells
@@ -1055,10 +1064,12 @@ class TagAssigner(FeatureAssigner):
 
         measurable_fracs = self.get_measurable_multiplets_fractions(loading_rate)
         measurable_counts = np.round(
-            TagAssigner.get_partitions_from_fractions(measurable_fracs, num_gems=self.n_gems)
+            # we only recover 1/corr_factor of those GEMs from the emulsion
+            measurable_fracs
+            * (self.n_gems / CORR_FACTOR)
         )
 
-        for i in range(1, num_total_tags + 1):
+        for i in range(1, MIN_POISSON_KLET + 1):
             freq_df.loc[i, POISSON_COL] = poisson_counts[i - 1]
             freq_df.loc[i, MEASURABLE_COL] = measurable_counts[i - 1]
             freq_df.loc[i, OBSERVED_COL] = obs_freqs[i - 1]
@@ -1165,32 +1176,17 @@ class TagAssigner(FeatureAssigner):
         return cell_fractions
 
     @staticmethod
-    def get_poisson_multiplets_fractions(loading_rate, max_klet: int = NUM_TOTAL_TAGS):
+    def get_poisson_multiplets_fractions(loading_rate, max_klet: int = MIN_POISSON_KLET):
         """Returns the fractions of GEMs for each n-let.
 
-        Given a loading_rate and the total number of tags,
+        Given a loading_rate and the maximum n,
         returns fractions of GEMs that would be 1-let, 2-let ..., n-let
         """
+        # potentially include more terms, but always use at least MIN_POISSON_KLET
+        max_klet = max(max_klet, MIN_POISSON_KLET)
         rate_v = sp_stats.poisson(loading_rate)
         k_lets = range(1, max_klet + 1)
         return rate_v.pmf(k_lets)
-
-    @staticmethod
-    def get_partitions_from_fractions(
-        fractions: np.ndarray, num_gems: int = N_G, corr_factor: float = CORR_FACTOR
-    ) -> np.ndarray:
-        """Return the scaled fractions.
-
-        Args:
-            fractions (np.ndarray): TODO
-            num_gems (int): TODO
-            corr_factor (float): TODO
-
-        Returns:
-            np.ndarray:
-        """
-        # we only recover 1/corr_factor of those GEMs from the emulsion
-        return fractions * (num_gems / corr_factor)
 
     def _helper_get_measurable_multiplets(self, n_let: int) -> np.ndarray:
         """A helper function to get a list of probability to detect a GEM with n_let cells.
@@ -1205,7 +1201,7 @@ class TagAssigner(FeatureAssigner):
     def get_measurable_multiplets_fractions(self, loading_rate) -> np.ndarray:
         """Predict the fractions of GEMs containing different number of cells.
 
-        Uses given number of cells and tags.
+        Uses given number of cells.
 
         :return: np.array of non-zero float (variable length)
         """

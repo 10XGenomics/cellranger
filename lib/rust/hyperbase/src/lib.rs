@@ -1,27 +1,27 @@
+//! hyperbase
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![expect(missing_docs)]
 
 // This file defines a HyperBasevector structure, and a Hyper structure, which
 // is a HyperBasevector plus an involution and read ids for each edge.
 
-use debruijn::compression::{compress_kmers, SimpleCompress};
+use debruijn::compression::{SimpleCompress, compress_kmers};
 use debruijn::dna_string::DnaString;
 use debruijn::graph::DebruijnGraph;
 use debruijn::kmer::Kmer20;
-use debruijn::{filter, kmer, Exts, Kmer, Mer, Vmer};
+use debruijn::{Exts, Kmer, Mer, Vmer, filter};
 use equiv::EquivRel;
 use graph_simple::GraphSimple;
 use kmer_lookup::make_kmer_lookup_20_single;
 use petgraph::prelude::*;
 use std::cmp::max;
-use vector_utils::{
-    bin_position, bin_position1_3, next_diff, next_diff1_3, reverse_sort, unique_sort,
-};
+use vector_utils::{bin_position, bin_position1_3, unique_sort};
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // CONVERT FROM DEBRUIJN GRAPH TO PET GRAPH
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
-pub fn debruijn_to_petgraph_hyperbasevector<K: Kmer>(
+fn debruijn_to_petgraph_hyperbasevector<K: Kmer>(
     g_in: &DebruijnGraph<K, Vec<u32>>,
     g_out: &mut Graph<u32, DnaString, Directed, u32>,
     inv: &mut Vec<u32>,
@@ -34,23 +34,6 @@ pub fn debruijn_to_petgraph_hyperbasevector<K: Kmer>(
     let mut edges: Vec<(i32, bool, DnaString)> = Vec::with_capacity(2 * num_nodes);
     let mut edge_to_fw: Vec<i32> = Vec::with_capacity(num_nodes);
     let mut edge_to_rc: Vec<i32> = Vec::with_capacity(num_nodes);
-
-    // Dump the deBruijn graph.
-
-    /*
-    for i in 0 .. num_nodes {
-        let node = g_in.get_node(i);
-        let seq = node.sequence();
-        println!( "\n{} = {}", i, seq.to_string() );
-        for j in 0..node.r_edges().len() {
-            let rnode = node.r_edges()[j];
-            let e2 = rnode.0;
-            println!( "==> {}, {:?}, {}", e2, rnode.1, rnode.2 );
-        }
-    }
-    */
-
-    // Proceed.
 
     let mut pal = Vec::<bool>::new();
     for i in 0..num_nodes {
@@ -140,81 +123,26 @@ pub fn debruijn_to_petgraph_hyperbasevector<K: Kmer>(
     }
 }
 
-// ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-// HYPERBASEVECTOR DEFINITION
-// ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-// A HyperBasevector is a constant k and a digraph whose edges represent DNA
-// sequences of length >= k, such that if two edges e1 and e2 abut at a vertex v,
-// like so, u --e1--> v --e2--> w, then the last k-1 bases of e1 equal the first
-// k-1 bases of e2.  We implement a HyperBasevector here using the graph structure
-// in the petgraph crate.
-
+/// A HyperBasevector is a constant k and a digraph whose edges represent DNA
+/// sequences of length >= k, such that if two edges e1 and e2 abut at a vertex v,
+/// like so, u --e1--> v --e2--> w, then the last k-1 bases of e1 equal the first
+/// k-1 bases of e2.  We implement a HyperBasevector here using the graph structure
+/// in the petgraph crate.
+#[derive(Default)]
 pub struct HyperBasevector {
     pub k: i32,
     pub g: Graph<u32, DnaString, Directed, u32>,
 }
 
 impl HyperBasevector {
-    pub fn new() -> HyperBasevector {
-        HyperBasevector {
-            k: 0,
-            g: Graph::new(),
-        }
-    }
-
-    // Return the number of kmers in an edge.
-
+    /// Return the number of kmers in an edge.
     pub fn kmers(&self, e: u32) -> usize {
         self.g[EdgeIndex::<u32>::new(e as usize)].len() - self.k as usize + 1
     }
 
-    // Return the number of bases in an edge.
-
-    pub fn bases(&self, e: u32) -> usize {
+    /// Return the number of bases in an edge.
+    fn bases(&self, e: u32) -> usize {
         self.g[EdgeIndex::<u32>::new(e as usize)].len()
-    }
-
-    // =============================================================================
-    // Test for uniqueness of kmers.  This tests to see if a kmer appears at most
-    // once in the graph.  This is not a requirement for a HyperBasevector.
-    // =============================================================================
-
-    pub fn test_unique(&self) {
-        let mut edges = Vec::<DnaString>::new();
-        for e in 0..self.g.edge_count() {
-            edges.push(self.g.edge_obj(e as u32).clone());
-        }
-        let mut kmers_plus = Vec::<(Kmer20, i32, i32)>::new();
-        make_kmer_lookup_20_single(&edges, &mut kmers_plus);
-        let mut i: i64 = 0;
-        let mut dups = 0;
-        while i < kmers_plus.len() as i64 {
-            let j = next_diff1_3(&kmers_plus, i as usize) as i64;
-            if j - i > 1 {
-                if dups == 0 {
-                    println!("\ntest_unique failed");
-                    println!(
-                        "the kmer {} appears in edges {} and {}",
-                        kmers_plus[i as usize].0.to_string(),
-                        kmers_plus[i as usize].1,
-                        kmers_plus[i as usize + 1].1
-                    );
-                }
-                dups += j - i - 1;
-            }
-            i = j;
-        }
-        if dups > 0 {
-            println!("of {} kmers, {} are duplicated", kmers_plus.len(), dups);
-            panic!("bailing because test failed");
-        }
-    }
-}
-
-impl Default for HyperBasevector {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -227,7 +155,7 @@ impl Default for HyperBasevector {
 // reads to each edge, represented by their "ids".  One can also keep track of
 // actual paths for each read, but we do not do that here because tracking ids is
 // sufficient for our purposes.
-
+#[derive(Default)]
 pub struct Hyper {
     pub h: HyperBasevector,
     pub inv: Vec<u32>,
@@ -262,96 +190,9 @@ impl Hyper {
         s
     }
 
-    // =============================================================================
-    // Print the graph, component by component.
-    // =============================================================================
-
-    pub fn print(&self) {
-        let mut comp = Vec::<Vec<u32>>::new();
-        self.h.g.components_e(&mut comp);
-        for (j, comp_j) in comp.into_iter().enumerate() {
-            println!("\nCOMPONENT {}", j + 1);
-            for e in comp_j {
-                let v = self.h.g.to_left(e);
-                let w = self.h.g.to_right(e);
-                let b: DnaString = self.h.g[EdgeIndex::<u32>::new(e as usize)].clone();
-                println!(
-                    "\n{} ==(e={},len={},supp={})==> {}",
-                    v,
-                    e,
-                    b.len() - self.h.k as usize + 1,
-                    self.supp(e as usize),
-                    w
-                );
-                println!("{}", b.to_string());
-            }
-        }
-    }
-
-    // ============================================================================================
-    // Print the graph, component by component, with edge annotations.
-    //
-    // require_ann: if true, only show components having annotations.
-    // hide_seq: if true, and there is an annotation on an edge, don't print the sequence
-    // ============================================================================================
-
-    pub fn print_with_annotations(&self, ann: &[String], require_ann: bool, hide_seq: bool) {
-        let mut comp = Vec::<Vec<u32>>::new();
-        self.h.g.components_e(&mut comp);
-        let mut n = 0;
-        for comp_j in comp {
-            let mut have_ann = false;
-            for e in &comp_j {
-                if !ann[*e as usize].is_empty() {
-                    have_ann = true;
-                }
-            }
-            if require_ann && !have_ann {
-                continue;
-            }
-            n += 1;
-            println!("\nCOMPONENT {n}");
-            for e in comp_j {
-                let e = e as usize;
-                let v = self.h.g.to_left(e as u32);
-                let w = self.h.g.to_right(e as u32);
-                let b: DnaString = self.h.g[EdgeIndex::<u32>::new(e)].clone();
-                println!(
-                    "\n{} ==(e={},len={},supp={})==> {}\n",
-                    v,
-                    e,
-                    b.len() - self.h.k as usize + 1,
-                    self.supp(e),
-                    w
-                );
-                if !ann[e].is_empty() {
-                    print!("{}", ann[e]);
-                    if !hide_seq {
-                        println!();
-                    }
-                }
-                if !hide_seq || ann[e].is_empty() {
-                    println!("{}", b.to_string());
-                }
-            }
-        }
-    }
-
     // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
     // UTILITY FUNCTIONS
     // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-    // =============================================================================
-    // Create a new Hyper.
-    // =============================================================================
-
-    pub fn new() -> Hyper {
-        Hyper {
-            h: HyperBasevector::new(),
-            inv: Vec::new(),
-            ids: Vec::new(),
-        }
-    }
 
     // =============================================================================
     // Create a new Hyper from data.
@@ -364,7 +205,7 @@ impl Hyper {
 
         // Build deBruijn graph.
 
-        pub type Kmer1 = kmer::Kmer20;
+        pub type Kmer1 = Kmer20;
         let mut seqs = Vec::new();
         for r in reads {
             seqs.push((r.clone(), Exts::empty(), 0));
@@ -477,9 +318,6 @@ impl Hyper {
         for e in 0..self.h.g.edge_count() {
             unique_sort(&mut self.ids[e]);
         }
-        // self.h.test_unique();   // turn on if you want sanity check
-        // self.test_involution(); // turn on if you want sanity check
-        // self.test_overlaps();   // turn on if you want sanity check
     }
 
     // =============================================================================
@@ -499,7 +337,7 @@ impl Hyper {
     // Normally you would want to call kill_edges instead.
     // =============================================================================
 
-    pub fn kill_edges_raw(&mut self, dels: &[u32]) {
+    fn kill_edges_raw(&mut self, dels: &[u32]) {
         // Symmetrize and unique sort dels.
 
         let mut dels2 = dels.to_vec();
@@ -721,84 +559,6 @@ impl Hyper {
         }
     }
 
-    // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-    // FUNCTIONS INTENDED MOSTLY FOR DEBUGGING
-    // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-    // =============================================================================
-    // Test the involution to see if it is valid.
-    // =============================================================================
-
-    #[allow(dead_code)]
-    fn test_involution(&self) {
-        assert_eq!(self.h.g.edge_count(), self.inv.len());
-        for e in 0..self.h.g.edge_count() {
-            if self.inv[e] >= self.h.g.edge_count() as u32 {
-                println!(
-                    "inv[{}] = {}, but graph has only {} edges.",
-                    e,
-                    self.inv[e],
-                    self.h.g.edge_count()
-                );
-                panic!("Involution test failed.");
-            }
-            assert_eq!(self.inv[self.inv[e] as usize], e as u32);
-            let t = self.h.g[EdgeIndex::<u32>::new(e)].rc().to_string();
-            assert_eq!(
-                self.h.g[EdgeIndex::<u32>::new(self.inv[e] as usize)].to_string(),
-                t
-            );
-        }
-        let mut homomorphism_fails = Vec::<(usize, usize)>::new();
-        let mut oks = 0;
-        for v in 0..self.h.g.node_count() {
-            for j1 in 0..self.h.g.n_to(v) {
-                let e1 = self.h.g.e_to(v, j1);
-                let re1 = self.inv[e1];
-                for j2 in 0..self.h.g.n_from(v) {
-                    let e2 = self.h.g.e_from(v, j2);
-                    let re2 = self.inv[e2];
-                    if self.h.g.to_right(re2) != self.h.g.to_left(re1) {
-                        homomorphism_fails.push((e1, e2));
-                    } else {
-                        oks += 1;
-                    }
-                }
-            }
-        }
-        if !homomorphism_fails.is_empty() {
-            println!("\ntest_involution failed at homomorphism condition");
-            println!(
-                "there were {} fails and {} oks",
-                homomorphism_fails.len(),
-                oks
-            );
-            let (e1, e2) = (homomorphism_fails[0].0, homomorphism_fails[0].1);
-            let (re1, re2) = (self.inv[e1], self.inv[e2]);
-            println!("first has e1 = {e1}, e2 = {e2}, re1 = {re1}, re2 = {re2}");
-            panic!("bailing because of test_involution failure");
-        }
-    }
-
-    // =============================================================================
-    // Test to see if overlap condition is satisfied.
-    // =============================================================================
-
-    #[allow(dead_code)]
-    fn test_overlaps(&self) {
-        for v in 0..self.h.g.node_count() {
-            for j1 in 0..self.h.g.n_to(v) {
-                let b1 = self.h.g.edge_obj(self.h.g.e_to(v, j1) as u32);
-                let n1 = b1.len();
-                let k = self.h.k as usize;
-                for j2 in 0..self.h.g.n_from(v) {
-                    let b2 = self.h.g.edge_obj(self.h.g.e_from(v, j2) as u32);
-                    assert_eq!(b1.slice(n1 - (k - 1), n1), b2.slice(0, k - 1));
-                }
-            }
-        }
-    }
-
     // =============================================================================
     // Compute a checksum.  This will produce the same answers for two isomorphic
     // graphs.  Optionally, this captures the info in the supporting reads.  This
@@ -806,7 +566,7 @@ impl Hyper {
     // can be easily implemented in another language.
     // =============================================================================
 
-    pub fn checksum_main(&self, use_reads: bool) -> u64 {
+    fn checksum_main(&self, use_reads: bool) -> u64 {
         let mut s: u64 = 0;
         for v in 0..self.h.g.node_count() {
             let n = self.h.g.n_to(v);
@@ -869,73 +629,5 @@ impl Hyper {
 
     pub fn checksum(&self) -> u64 {
         self.checksum_main(true)
-    }
-
-    pub fn checksum_hbv_only(&self) -> u64 {
-        self.checksum_main(false)
-    }
-
-    // =============================================================================
-    // Print component sizes, in an abbreviated form, where the size of each
-    // component is the number of edges in it.
-    // =============================================================================
-
-    #[allow(dead_code)]
-    fn print_comp_sizes(&mut self) {
-        let mut comp = Vec::<Vec<u32>>::new();
-        self.h.g.components_e(&mut comp);
-        let mut sizes = Vec::<usize>::new();
-        for c in comp {
-            sizes.push(c.len());
-        }
-        reverse_sort(&mut sizes);
-        print!("component sizes = [");
-        let mut j = 0;
-        loop {
-            if j == sizes.len() {
-                break;
-            }
-            let k = next_diff(&sizes, j);
-            if j > 0 {
-                print!(", ");
-            }
-            print!("{}^{}", sizes[j], k - j);
-            j = k;
-        }
-        println!("]");
-    }
-
-    // =============================================================================
-    // Return total read support, intended as a sort of checksum.
-    // =============================================================================
-
-    #[allow(dead_code)]
-    fn total_supp(&mut self) -> usize {
-        let mut total = 0;
-        for e in 0..self.h.g.edge_count() {
-            total += self.ids[e].len();
-        }
-        total
-    }
-
-    // =============================================================================
-    // Return number of zero-support edges.
-    // =============================================================================
-
-    #[allow(dead_code)]
-    fn zero_supp_edges(&mut self) -> usize {
-        let mut z = 0;
-        for e in 0..self.h.g.edge_count() {
-            if self.supp(e) == 0 {
-                z += 1;
-            }
-        }
-        z
-    }
-}
-
-impl Default for Hyper {
-    fn default() -> Self {
-        Self::new()
     }
 }

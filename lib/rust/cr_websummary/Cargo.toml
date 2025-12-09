@@ -14,9 +14,6 @@ workspace = true
 [dependencies.itertools]
 workspace = true
 
-[dependencies.log]
-workspace = true
-
 [dependencies.martian-filetypes]
 workspace = true
 
@@ -44,6 +41,9 @@ workspace = true
 [dependencies.statrs]
 workspace = true
 
+[dependencies.strum]
+workspace = true
+
 [dependencies.tenx-websummary]
 features = ['derive']
 workspace = true
@@ -54,15 +54,21 @@ workspace = true
 [dependencies.toml]
 workspace = true
 
+[dependencies.vdj_reference]
+path = '../vdj_reference'
+
 [dependencies.websummary_derive]
 path = '../websummary_derive'
 
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'cr_websummary'
 publish = false
 version = '0.1.0'

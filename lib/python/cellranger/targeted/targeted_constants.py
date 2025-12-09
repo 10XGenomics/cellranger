@@ -99,13 +99,5 @@ class TargetingMethod(NamedTuple):
 
 ALL_TARGETING_METHODS = list(TARGETING_METHOD_FILE_NAMES.keys())
 
-# List of gene/probe ID prefixes that are excluded from the filtered_feature_bc_matrix.
-# Ensure that the corresponding Python and Rust constants are identical.
-EXCLUDED_PROBE_ID_PREFIXES = (
-    b"DEPRECATED",
-    b"Hum-",
-    b"IGNORE",
-    b"NC-",
-    b"VAR_",
-    b"VDJ_",
-)
+# Deprecated probes are excluded from the filtered_feature_bc_matrix.h5.
+DEPRECATED_PROBE_ID_PREFIX = b"DEPRECATED_"

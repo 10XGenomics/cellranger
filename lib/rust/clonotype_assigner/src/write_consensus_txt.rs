@@ -1,4 +1,5 @@
 //! WriteConsensusTxt stage code
+#![expect(missing_docs)]
 
 use crate::assigner::ProtoBinFile;
 use crate::write_concat_ref_outs::{FastaFaiFile, FastaFile};
@@ -7,11 +8,10 @@ use anyhow::Result;
 use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::tabular_file::CsvFile;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use string_utils::stringme;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ConsensusAnnotationCsvRow {
@@ -143,8 +143,8 @@ impl MartianMain for WriteConsensusTxt {
                     cdr2_nt: cdr2_region.as_ref().map(|r| &r.nt_seq).cloned(),
                     fwr3: fwr3_region.as_ref().map(|r| &r.aa_seq).cloned(),
                     fwr3_nt: fwr3_region.as_ref().map(|r| &r.nt_seq).cloned(),
-                    cdr3: stringme(&nucleotide_to_aminoacid_sequence(&cdr3_nt, 0)),
-                    cdr3_nt: stringme(&cdr3_nt),
+                    cdr3: String::from_utf8(nucleotide_to_aminoacid_sequence(&cdr3_nt, 0)).unwrap(),
+                    cdr3_nt: String::from_utf8(cdr3_nt).unwrap(),
                     fwr4: fwr4_region.as_ref().map(|r| &r.aa_seq).cloned(),
                     fwr4_nt: fwr4_region.as_ref().map(|r| &r.nt_seq).cloned(),
                     reads: reads as usize,

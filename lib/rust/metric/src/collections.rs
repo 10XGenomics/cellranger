@@ -1,7 +1,8 @@
 //! This module implements the `Metric` and `JsonReport` trait
 //! for common collections (`Vec`, `HashMap`)
+#![deny(missing_docs)]
 
-use crate::{join_metric_name, JsonReport, JsonReporter, Metric, ToMetricPrefix};
+use crate::{JsonReport, JsonReporter, Metric, ToMetricPrefix, join_metric_name};
 use itertools::zip_eq;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -110,8 +111,8 @@ impl<K: ToString, V: Serialize> JsonReport for (K, V) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::count_metric::CountMetric;
     use crate::TxHashMap;
+    use crate::count_metric::CountMetric;
     use std::collections::BTreeMap;
 
     #[test]

@@ -251,7 +251,7 @@ def get_qvs(qual: str | bytes | None) -> numpy.ndarray[int, numpy.dtype[numpy.by
     if qual is None:
         return None
 
-    return numpy.fromstring(qual, dtype=numpy.byte) - ILLUMINA_QUAL_OFFSET
+    return numpy.frombuffer(ensure_binary(qual), dtype=numpy.byte) - ILLUMINA_QUAL_OFFSET
 
 
 @overload
@@ -266,7 +266,7 @@ def get_bases_qual(qual: str | bytes | None, cutoff: int) -> int | None:
     if qual is None:
         return None
 
-    qvs = numpy.fromstring(qual, dtype=numpy.byte) - ILLUMINA_QUAL_OFFSET
+    qvs = numpy.frombuffer(ensure_binary(qual), dtype=numpy.byte) - ILLUMINA_QUAL_OFFSET
     return numpy.count_nonzero(qvs[qvs > cutoff])
 
 
@@ -282,7 +282,7 @@ def get_min_qual(qual: str | bytes | None) -> int | None:
     if qual is None or len(qual) == 0:
         return None
 
-    return numpy.fromstring(qual, dtype=numpy.byte).min() - ILLUMINA_QUAL_OFFSET
+    return numpy.frombuffer(ensure_binary(qual), dtype=numpy.byte).min() - ILLUMINA_QUAL_OFFSET
 
 
 @overload
@@ -297,7 +297,7 @@ def get_expected_errors(qual: str | bytes | None) -> float | None:
     if qual is None or len(qual) == 0:
         return None
 
-    qvs = numpy.fromstring(qual, dtype=numpy.byte) - ILLUMINA_QUAL_OFFSET
+    qvs = numpy.frombuffer(ensure_binary(qual), dtype=numpy.byte) - ILLUMINA_QUAL_OFFSET
     perr = 10.0 ** (-qvs / 10.0)
     return perr.sum()
 

@@ -1,18 +1,23 @@
+#![expect(missing_docs)]
 use crate::{ChartWithHelp, PlotlyChart, RawChartWithHelp, TitleWithHelp};
-use cr_types::TargetingMethod;
-use metric::{TxHashMap, TxHashSet};
+use cr_types::{GenomeName, LibraryType, TargetingMethod};
+use metric::{AsMetricPrefix, TxHashMap, TxHashSet};
+use plotly::Layout;
 use plotly::common::{Anchor, Line, Mode};
 use plotly::layout::{Axis, HoverMode, Legend, Margin};
 use plotly::traces::Scatter;
-use plotly::Layout;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 // CONSTANTS / LABELS
 
 const BARCODE_RANK_PLOT_TITLE: &str = "Barcode Rank Plot";
 const BARCODE_RANK_PLOT_HELP_TEXT: &str = "The plot shows filtered UMI counts mapped to each GEM barcode. Barcode-cell associations can be determined by UMI count or expression profile, or removed by Protein Aggregate Detection and Filtering and/or High Occupancy GEM Filtering steps. Therefore, some regions of the graph contain both cell-associated and background-associated barcodes. When present, Gene Expression data is used to identify these barcode populations. The color of the graph is based on the local density of barcodes that are cell-associated in these regions. Hovering over the plot displays the total number and percentage of barcodes in that region called as cells along with the number of UMI counts for those barcodes and barcode rank, ordered in descending order of UMI counts.";
+
+const BARNYARD_BIPLOT_TITLE: &str = "Barnyard Count Bi-plot";
+const BARNYARD_BIPLOT_HELP_TEXT: &str = "The plot shows the UMI counts of each species for each cell. Cells are classified as singlets belonging to one species or as multiplets.";
 
 const SEQUENCING_SATURATION_PLOT_X_LABEL: &str = "Mean Reads per Cell";
 const SEQUENCING_SATURATION_PLOT_Y_LABEL: &str = "Sequencing Saturation";
@@ -46,19 +51,25 @@ pub fn sequencing_saturation_layout(x_label: &str, y_label: &str) -> Layout {
     standard_layout(x_label, y_label).y_axis(Axis::new().title(y_label).range(vec![0.0, 1.0]))
 }
 
-pub fn format_jibes_biplots(plot: &Value, feature: &str) -> RawChartWithHelp {
+pub fn format_jibes_biplots(plot: Box<RawValue>, feature: &str) -> RawChartWithHelp {
     RawChartWithHelp {
-        plot: plot.clone(),
+        plot,
         help: TitleWithHelp {
             title: format!("Biplots of {feature} UMI Counts"),
-            help: format!("The plot shows the relationships between {feature} UMI counts for cells. Each point is a cell and the X and Y axes are UMI counts for a given {feature} in the log10 scale. The {feature}s on the axes can be changed with the selector. The cells which are not confidently assigned to {feature}s are indicated. The number of cells has been downsampled to a maximum count of 100,000."),
+            help: format!(
+                "The plot shows the relationships between {feature} UMI counts for cells. Each point is a cell and the X and Y axes are UMI counts for a given {feature} in the log10 scale. The {feature}s on the axes can be changed with the selector. The cells which are not confidently assigned to {feature}s are indicated. The number of cells has been downsampled to a maximum count of 100,000."
+            ),
         },
     }
 }
 
-pub fn format_umi_on_umap_plot(plot: &Value, library_type: &str, title: &str) -> RawChartWithHelp {
+pub fn format_umi_on_umap_plot(
+    plot: Box<RawValue>,
+    library_type: &str,
+    title: &str,
+) -> RawChartWithHelp {
     RawChartWithHelp {
-        plot: plot.clone(),
+        plot,
         help: TitleWithHelp {
             help: format!(
                 "Shown here are the total {library_type} UMI counts for each cell-barcode. The axes correspond to the 2-dimensional embedding produced by the UMAP algorithm over the {library_type} features. In this space, pairs of cells that are close to each other have more similar {library_type} profiles than cells that are distant from each other. The display is limited to a random subset of cells."
@@ -68,9 +79,9 @@ pub fn format_umi_on_umap_plot(plot: &Value, library_type: &str, title: &str) ->
     }
 }
 
-pub fn format_tags_on_umap_plot(plot: &Value, library_type: &str) -> RawChartWithHelp {
+pub fn format_tags_on_umap_plot(plot: Box<RawValue>, library_type: &str) -> RawChartWithHelp {
     RawChartWithHelp {
-        plot: plot.clone(),
+        plot,
         help: TitleWithHelp {
             help: format!(
                 "Shown here are the tag assignments for each cell-barcode. The axes correspond to the 2-dimensional embedding produced by the UMAP algorithm over {library_type} features. In this space, pairs of cells that are close to each other have more similar {library_type} profiles than cells that are distant from each other. The display is limited to a random subset of cells."
@@ -80,9 +91,9 @@ pub fn format_tags_on_umap_plot(plot: &Value, library_type: &str) -> RawChartWit
     }
 }
 
-pub fn format_histogram(plot: &Value, feature: &str) -> RawChartWithHelp {
+pub fn format_histogram(plot: Box<RawValue>, feature: &str) -> RawChartWithHelp {
     RawChartWithHelp {
-        plot: plot.clone(),
+        plot,
         help: TitleWithHelp {
             help: format!(
                 "Histogram of {feature} UMI counts per cell, for each {feature}.  The X-axis is the UMI counts in the log scale, while the Y-axis is the number of cells."
@@ -92,12 +103,22 @@ pub fn format_histogram(plot: &Value, feature: &str) -> RawChartWithHelp {
     }
 }
 
-pub fn format_barcode_rank_plot(plot: &PlotlyChart, library: &str) -> ChartWithHelp {
-    ChartWithHelp {
-        plot: plot.clone(),
+pub fn format_barcode_rank_plot(plot: Box<RawValue>, library: &str) -> RawChartWithHelp {
+    RawChartWithHelp {
+        plot,
         help: TitleWithHelp {
             help: BARCODE_RANK_PLOT_HELP_TEXT.to_string(),
             title: format!("{library} {BARCODE_RANK_PLOT_TITLE}"),
+        },
+    }
+}
+
+pub fn format_barnyard_biplot(plot: Box<RawValue>, library: &str) -> RawChartWithHelp {
+    RawChartWithHelp {
+        plot,
+        help: TitleWithHelp {
+            help: BARNYARD_BIPLOT_HELP_TEXT.to_string(),
+            title: format!("{library} {BARNYARD_BIPLOT_TITLE}"),
         },
     }
 }
@@ -132,10 +153,17 @@ pub enum PlotType {
 }
 
 // TODO: Get rid of this and create a simple deserializeable data structure representing this data inside subsample.py and pass that forward
+// Note: these metrics originate in /lib/python/cellranger/subsample.py:calculate_subsampling_metrics
 pub fn library_sequencing_saturation_plot_from_metrics(
+    library_type: LibraryType,
     metrics: &TxHashMap<String, Value>,
 ) -> ChartWithHelp {
-    let re = r"^multi_raw_rpc_(\d+)_subsampled_duplication_frac$";
+    let re = {
+        let (prefix, sep) = library_type
+            .as_metric_prefix()
+            .map_or(("", ""), |prefix| (prefix, "_"));
+        format!(r"^{prefix}{sep}multi_raw_rpc_(\d+)_subsampled_duplication_frac$")
+    };
     let get_xy_data = |re: Regex| -> (Vec<f64>, Vec<f64>) {
         let mut xy_data: Vec<(f64, f64)> = vec![(0.0, 0.0)];
         xy_data.extend(
@@ -160,15 +188,17 @@ pub fn library_sequencing_saturation_plot_from_metrics(
 
     let help_text = LIBRARY_SEQUENCING_SATURATION_PLOT_HELP_TEXT;
 
-    let re = Regex::new(re).unwrap();
+    let re = Regex::new(&re).unwrap();
     let (x_data, y_data) = get_xy_data(re);
     let layout = sequencing_saturation_layout(
         SEQUENCING_SATURATION_PLOT_X_LABEL,
         SEQUENCING_SATURATION_PLOT_Y_LABEL,
     );
-    let data = vec![Scatter::new(x_data, y_data)
-        .mode(Mode::Lines)
-        .line(Line::new().width(3.0))];
+    let data = vec![
+        Scatter::new(x_data, y_data)
+            .mode(Mode::Lines)
+            .line(Line::new().width(3.0)),
+    ];
     ChartWithHelp {
         plot: PlotlyChart::with_layout_and_data(layout.show_legend(false), data),
         help: TitleWithHelp {
@@ -181,7 +211,7 @@ pub fn library_sequencing_saturation_plot_from_metrics(
 // TODO: Get rid of this and create a simple deserializeable data structure representing this data inside subsample.py and pass that forward
 pub fn sample_median_genes_plot_from_metrics(
     metrics: &TxHashMap<String, Value>,
-    genomes: TxHashSet<String>,
+    genomes: TxHashSet<GenomeName>,
     plot_type: PlotType,
     targeting_method: Option<TargetingMethod>,
 ) -> ChartWithHelp {
@@ -190,7 +220,7 @@ pub fn sample_median_genes_plot_from_metrics(
 
 pub fn library_median_genes_plot_from_metrics(
     metrics: &TxHashMap<String, Value>,
-    genomes: TxHashSet<String>,
+    genomes: TxHashSet<GenomeName>,
     plot_type: PlotType,
     targeting_method: Option<TargetingMethod>,
 ) -> ChartWithHelp {
@@ -199,7 +229,7 @@ pub fn library_median_genes_plot_from_metrics(
 
 fn median_genes_plot_from_metrics(
     metrics: &TxHashMap<String, Value>,
-    genomes: TxHashSet<String>,
+    genomes: TxHashSet<GenomeName>,
     plot_type: PlotType,
     targeting_method: Option<TargetingMethod>,
     is_sample: bool,
@@ -215,15 +245,15 @@ fn median_genes_plot_from_metrics(
             r"^(.+)_raw_rpc_(\d+)_subsampled_filtered_bcs_median_unique_genes_detected_ontarget$",
         )
     };
-    let get_xy_data = move |re: Regex| -> TxHashMap<&str, Vec<(f64, f64)>> {
-        let mut xy_data: TxHashMap<&str, Vec<(f64, f64)>> = TxHashMap::default();
+    let get_xy_data = move |re: Regex| -> TxHashMap<GenomeName, Vec<(f64, f64)>> {
+        let mut xy_data: TxHashMap<GenomeName, Vec<(f64, f64)>> = TxHashMap::default();
 
         for (metric_name, metric_value) in metrics {
             if let Some(cap) = re.captures(metric_name) {
-                let genome = cap.get(1).unwrap().as_str();
+                let genome = GenomeName::from(cap.get(1).unwrap().as_str());
                 // don't want to plot "multi" genome
                 // also skips "ANTIBODY_", "MULTIPLEXING",
-                if !genomes.contains(genome) {
+                if !genomes.contains(&genome) {
                     continue;
                 }
 
@@ -237,7 +267,7 @@ fn median_genes_plot_from_metrics(
     };
 
     fn make_scatter_data(
-        xy_data: TxHashMap<&str, Vec<(f64, f64)>>,
+        xy_data: TxHashMap<GenomeName, Vec<(f64, f64)>>,
         label_suffix: &str,
     ) -> Vec<Scatter<f64, f64>> {
         xy_data

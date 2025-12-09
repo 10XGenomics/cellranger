@@ -100,7 +100,7 @@ def parse_parameters(filename):
         reader = csv.reader(row for row in f if not row.startswith("#"))
         for i, row in enumerate(reader, start=1):
             if len(row) != 2:
-                martian.exit("Row %d is incorrectly formatted (must have exactly 2 columns)" % i)
+                martian.exit(f"Row {i} is incorrectly formatted (must have exactly 2 columns)")
             name = row[0].strip().lower()
             value = row[1].strip()
             if name not in ANALYSIS_PARAMS:

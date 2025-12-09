@@ -1,6 +1,7 @@
+#![deny(missing_docs)]
 use itertools::Itertools;
 use ndarray::prelude::*;
-use ndarray::{concatenate, Array1, NdFloat, Zip};
+use ndarray::{Array1, NdFloat, Zip, concatenate};
 use num::FromPrimitive;
 
 /// Local helper function that computes the dot product between
@@ -191,11 +192,9 @@ where
 mod tests {
     use super::*;
     use assert_approx_eq::assert_approx_eq;
-    use ndarray::Array;
-    use ndarray_rand::rand_distr::{StandardNormal, Uniform};
-    use ndarray_rand::RandomExt;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::SmallRng;
+    use rand_distr::{Distribution, StandardNormal, Uniform};
 
     impl<F> PiecewiseLinearModel<F>
     where
@@ -217,9 +216,11 @@ mod tests {
         predictor: &impl Fn(f64) -> f64,
         state: u64,
     ) -> (Array1<f64>, Array1<f64>) {
-        let mut rng = StdRng::seed_from_u64(state);
-        let x = Array::random_using(n_samples, Uniform::new(0., 10.), &mut rng);
-        let noise: Array1<f64> = Array::random_using(n_samples, StandardNormal, &mut rng);
+        let mut rng = SmallRng::seed_from_u64(state);
+        let x = Array1::from_shape_simple_fn(n_samples, || {
+            Uniform::new(0., 10.).unwrap().sample(&mut rng)
+        });
+        let noise = Array1::from_shape_simple_fn(n_samples, || StandardNormal.sample(&mut rng));
         (x.clone(), x.map(|&z| predictor(z)) + 0.25 * noise)
     }
 
@@ -240,9 +241,9 @@ mod tests {
         // Using assert_approx_eq! rather than assert_eq! as we're comparing
         // floating point numbers. Values returned in linux and macOS are
         // slightly different
-        assert_approx_eq!(fit_model.rss, 312.47644505361575);
-        assert_approx_eq!(fit_model.model.constant, 3.9995689041095446);
-        assert_approx_eq!(fit_model.model.slope, 0.9991637367907095);
-        assert_approx_eq!(fit_model.model.critical_point, 3.9993728477509705);
+        assert_approx_eq!(fit_model.rss, 307.9968939164967);
+        assert_approx_eq!(fit_model.model.constant, 4.00343817526408);
+        assert_approx_eq!(fit_model.model.slope, 0.9973188381679777);
+        assert_approx_eq!(fit_model.model.critical_point, 3.999602775977802);
     }
 }

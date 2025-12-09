@@ -1,11 +1,11 @@
+//! amino
 // Copyright (c) 2019 10x Genomics, Inc. All rights reserved.
+#![deny(missing_docs)]
 
-use debruijn::dna_string::DnaString;
 use debruijn::Mer;
-use string_utils::strme;
+use debruijn::dna_string::DnaString;
 
-// Test to see if a given DnaString has a start or stop codon at a given position.
-
+/// Test to see if a given DnaString has a start or stop codon at a given position.
 pub fn have_start(b: &DnaString, j: usize) -> bool {
     let (a, g, t) = (0u8, 2u8, 3u8);
     if b.get(j) == a && b.get(j + 1) == t && b.get(j + 2) == g {
@@ -14,6 +14,7 @@ pub fn have_start(b: &DnaString, j: usize) -> bool {
     false
 }
 
+/// Return whether position `j` is a stop codon
 pub fn have_stop(b: &DnaString, j: usize) -> bool {
     let (a, g, t) = (0u8, 2u8, 3u8);
     if b.get(j) == t && b.get(j + 1) == a && b.get(j + 2) == g {
@@ -28,6 +29,7 @@ pub fn have_stop(b: &DnaString, j: usize) -> bool {
     false
 }
 
+/// Convert a codon to an amino acid
 pub fn codon_to_aa(codon: &[u8]) -> u8 {
     assert!(codon.len() == 3);
 
@@ -96,12 +98,11 @@ pub fn codon_to_aa(codon: &[u8]) -> u8 {
         b"TAG" => b'*',
         b"TAA" => b'*',
         b"TGA" => b'*',
-        _ => panic!("Unexpected codon {}.", strme(codon)),
+        _ => panic!("Unexpected codon {}.", std::str::from_utf8(codon).unwrap()),
     }
 }
 
-// Convert a given DNA sequence to amino acids, starting at a given position.
-
+/// Convert a given DNA sequence to amino acids, starting at a given position.
 pub fn nucleotide_to_aminoacid_sequence(dna_seq: &[u8], start: usize) -> Vec<u8> {
     let mut a = Vec::<u8>::new();
     if dna_seq.len() >= 3 {

@@ -1,10 +1,11 @@
+#![expect(missing_docs)]
+use crate::{ChartWithHelp, PlotlyChart, TitleWithHelp};
 use anyhow::Result;
 use cr_types::clonotype::ClonotypeId;
-use cr_websummary::{PlotlyChart, RawChartWithHelp, TitleWithHelp};
 use hclust::{ClusterDirection, DistanceMetric, HierarchicalCluster, LeafOrdering, LinkageMethod};
 use itertools::Itertools;
-use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::tabular_file::CsvFile;
 use ndarray::Array2;
 use ordered_float::OrderedFloat;
 use plotly::common::{ColorBar, ColorScale, ColorScaleElement};
@@ -111,7 +112,7 @@ impl ClonotypeSpecificity {
 
         for ((clonotype_id, antigen), group_iter) in &rows
             .into_iter()
-            .group_by(|r| (r.clonotype_id(), r.antigen.clone()))
+            .chunk_by(|r| (r.clonotype_id(), r.antigen.clone()))
         {
             if let Some(clonotype_id) = clonotype_id {
                 let specificites: Vec<_> =
@@ -190,7 +191,7 @@ impl ClonotypeSpecificity {
             median_specificity,
         }
     }
-    fn clustermap(self) -> Option<RawChartWithHelp> {
+    fn clustermap(self) -> Option<ChartWithHelp> {
         if self.clonotype_sizes.is_empty() || self.antigens.is_empty() {
             return None;
         }
@@ -268,8 +269,8 @@ impl ClonotypeSpecificity {
             "staticPlot": false,
         });
 
-        Some(RawChartWithHelp {
-            plot: serde_json::to_value(&plot).unwrap(),
+        Some(ChartWithHelp {
+            plot,
             help: TitleWithHelp {
                 help: format!(
                     "The hierarchically-clustered heatmap shows the antigen specificity for \
@@ -286,7 +287,7 @@ impl ClonotypeSpecificity {
 
 pub fn clonotype_specificity_heatmap(
     antigen_specificity: CsvFile<AntigenSpecificityRow>,
-) -> Result<Option<RawChartWithHelp>> {
+) -> Result<Option<ChartWithHelp>> {
     Ok(ClonotypeSpecificity::new(antigen_specificity)?.clustermap())
 }
 

@@ -1,8 +1,9 @@
 // Possibly useful in the future -- these are currently unneccesary.
+#![expect(missing_docs)]
 
 use crate::telemetry::{CollectTelemetry, TelemetryCollector};
 use crate::utils::AllArgs;
-use crate::{check_deprecated_os, IntoExitCode};
+use crate::{IntoExitCode, check_deprecated_os};
 use anyhow::{Context, Result};
 use clap::parser::ValueSource;
 use clap::{CommandFactory, Parser};
@@ -12,9 +13,36 @@ use shell_escape::escape;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{File, read_to_string};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::LazyLock;
+
+/// Get the version from the environment, or a placeholder.
+pub fn get_version() -> &'static str {
+    &VERSION
+}
+
+static VERSION: LazyLock<String> =
+    LazyLock::new(|| read_version_file().unwrap_or_else(|| "<unknown version>".to_string()));
+
+/// Read the .version file if present.
+///
+/// If it cannot be loaded, or no version file is present, return None.
+fn read_version_file() -> Option<String> {
+    Some(
+        read_to_string(
+            env::current_exe()
+                .ok()?
+                .parent()?
+                .parent()?
+                .join(".version"),
+        )
+        .ok()?
+        .trim()
+        .to_string(),
+    )
+}
 
 /// Specfiy how commands initialize the environment.
 pub trait Initialize: Parser + CommandFactory + CollectTelemetry {
@@ -82,20 +110,20 @@ pub trait Initialize: Parser + CommandFactory + CollectTelemetry {
 
 /// Set CMDLINE to the command line arguments, needed to create the pipeline output file _cmdline.
 fn set_env_cmdline() {
-    let cmdline: Vec<_> = std::env::args().map(|x| escape(x.into())).collect();
-    std::env::set_var(COMMAND_LINE_ENV_VARIABLE_NAME, cmdline.join(" "));
+    let cmdline: Vec<_> = env::args().map(|x| escape(x.into())).collect();
+    unsafe { env::set_var(COMMAND_LINE_ENV_VARIABLE_NAME, cmdline.join(" ")) }
 }
 
 // Set COLUMNS to 80 when the terminal size is unknown.
 // Wrap the output of --help to 80 columns when the terminal size is unknown.
 // The default value of clap is 100.
 fn set_env_columns() {
-    if terminal_size::terminal_size().is_none() && std::env::var_os("COLUMNS").is_none() {
-        std::env::set_var("COLUMNS", "80");
+    if terminal_size::terminal_size().is_none() && env::var_os("COLUMNS").is_none() {
+        unsafe { env::set_var("COLUMNS", "80") }
     }
 }
 
-pub(crate) const TENX_COPYRIGHT: &str = "Copyright 2023 10x Genomics, Inc. All rights reserved.";
+pub(super) const TENX_COPYRIGHT: &str = "Copyright 2023 10x Genomics, Inc. All rights reserved.";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -149,36 +177,32 @@ fn new_path(base: &Path, rest: &str) -> PathBuf {
 impl EnvironmentMod {
     pub fn apply(&self, base_path: &Path) -> Result<()> {
         match &self.mod_type {
-            EnvModType::Set => {
-                env::set_var(&self.key, &self.value);
-            }
+            EnvModType::Set => unsafe { env::set_var(&self.key, &self.value) },
 
             EnvModType::Prepend => {
                 let mut paths: Vec<PathBuf> = vec![new_path(base_path, &self.value)];
                 paths.extend(get_paths(&self.key));
-                env::set_var(&self.key, env::join_paths(paths)?);
+                unsafe { env::set_var(&self.key, env::join_paths(paths)?) }
             }
 
             EnvModType::Append => {
                 let mut paths = get_paths(&self.key);
                 paths.push(new_path(base_path, &self.value));
-                env::set_var(&self.key, env::join_paths(paths)?);
+                unsafe { env::set_var(&self.key, env::join_paths(paths)?) }
             }
 
             EnvModType::Setaside => {
                 let setaside_key = format!("_TENX_{}", self.key);
                 let old_val = env::var_os(&self.key).unwrap_or_default();
-                env::set_var(setaside_key, old_val);
+                unsafe { env::set_var(setaside_key, old_val) }
                 if self.value.is_empty() {
-                    env::remove_var(&self.key);
+                    unsafe { env::remove_var(&self.key) }
                 } else {
-                    env::set_var(&self.key, &self.value);
+                    unsafe { env::set_var(&self.key, &self.value) }
                 }
             }
 
-            EnvModType::Unset => {
-                env::remove_var(&self.key);
-            }
+            EnvModType::Unset => unsafe { env::remove_var(&self.key) },
         }
 
         Ok(())
@@ -238,10 +262,10 @@ impl PkgEnv {
 
         let mut scriptdir = self.build_path.clone();
         scriptdir.push("bin");
-        env::set_var("TENX_SCRIPTDIR", scriptdir);
+        unsafe { env::set_var("TENX_SCRIPTDIR", scriptdir) }
 
         let subcmd = path.file_name().unwrap();
-        env::set_var("TENX_SUBCMD", subcmd);
+        unsafe { env::set_var("TENX_SUBCMD", subcmd) }
 
         let mut command = Command::new(path);
         for r in &args.input {
@@ -263,7 +287,7 @@ fn setup_env(
     tenx_version: String,
 ) -> Result<PkgEnv> {
     // Path of installation is one above the binary
-    let exe = std::env::current_exe()?;
+    let exe = env::current_exe()?;
     let exe_name = exe.file_name().unwrap().to_str().unwrap();
     let exe_dir = exe.parent().unwrap();
 
@@ -287,9 +311,11 @@ fn setup_env(
         .with_context(|| "error setting up pipeline environment")?;
 
     // additional environment needed by some subcommands
-    env::set_var("TENX_PRODUCT", &tenx_product);
-    env::set_var("TENX_VERSION", &tenx_version);
-    env::set_var("TENX_COPYRIGHT", TENX_COPYRIGHT);
+    unsafe {
+        env::set_var("TENX_PRODUCT", &tenx_product);
+        env::set_var("TENX_VERSION", &tenx_version);
+        env::set_var("TENX_COPYRIGHT", TENX_COPYRIGHT);
+    }
 
     Ok(PkgEnv {
         build_path: build_path.to_path_buf(),

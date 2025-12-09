@@ -76,12 +76,23 @@ def get_local_sseq_params(x: scipy.sparse.csc_matrix, group_a, group_b):
     sys.stdout.flush()
     both_conditions = np.concatenate([group_a, group_b])
     matrix_groups: scipy.sparse.csc_matrix = x[:, both_conditions]
+    return get_local_sseq_params_from_presubset_matrix(matrix_groups, len(group_a), len(group_b))
+
+
+def get_local_sseq_params_from_presubset_matrix(
+    matrix_groups: scipy.sparse.csc_matrix, len_group_a, len_group_b
+):
+    """Get SSEQ Params.
+
+    If matrix has already been subset down to concatenation of group A and B, use this method to avoid making another
+    copy.
+    """
     if not matrix_groups.has_sorted_indices:
         matrix_groups = matrix_groups.sorted_indices()
-    nbc = len(both_conditions)
-
-    new_group_a = np.fromiter(range(len(group_a)), dtype=int, count=len(group_a))
-    new_group_b = np.fromiter(range(len(group_a), nbc), dtype=int, count=nbc - len(group_a))
+    nbc = len_group_a + len_group_b
+    assert matrix_groups.shape[1] == nbc, "Bad Argument Passed!"
+    new_group_a = np.fromiter(range(len_group_a), dtype=int, count=len_group_a)
+    new_group_b = np.fromiter(range(len_group_a, nbc), dtype=int, count=nbc - len_group_a)
     return compute_sseq_params(matrix_groups), new_group_a, new_group_b, matrix_groups
 
 
@@ -97,7 +108,7 @@ def adjust_pvalue_bh(p):
     return qual[np.argsort(descending)]
 
 
-def sseq_differential_expression(x, cond_a, cond_b, sseq_params, big_count=900):
+def sseq_differential_expression(x, cond_a, cond_b, sseq_params, big_count=900, threads=1):
     """Run sSeq pairwise differential expression test.
 
     Args:
@@ -106,6 +117,7 @@ def sseq_differential_expression(x, cond_a, cond_b, sseq_params, big_count=900):
       cond_b (np.array(int)): Indices of cells in group B
       sseq_params (dict): Precomputed global parameters
       big_count (int): Use asymptotic approximation if both counts > this
+      threads (int): How many threads to use.
 
     Returns:
       pd.DataFrame: DE results for group A relative to group B.
@@ -114,7 +126,7 @@ def sseq_differential_expression(x, cond_a, cond_b, sseq_params, big_count=900):
     if not x.has_sorted_indices:
         x = x.sorted_indices()
     diff_exp_results = sseq_differential_expression_o3(
-        x, cond_a, cond_b, sseq_params, big_count
+        x, cond_a, cond_b, sseq_params, big_count, threads=threads
     )  # pylint: disable=invalid-name
     de_result = pd.DataFrame(
         {
@@ -161,7 +173,7 @@ def run_differential_expression(
         in_cluster = clusters == cluster
         group_a = np.flatnonzero(in_cluster)
         group_b = np.flatnonzero(np.logical_not(in_cluster))
-        print("Computing DE for cluster %d..." % cluster)
+        print(f"Computing DE for cluster {cluster}...")
         sys.stdout.flush()
 
         de_result = sseq_differential_expression(matrix.m, group_a, group_b, sseq_params)
@@ -200,9 +212,9 @@ def save_differential_expression_csv(
             ]
         elif cluster_names is None:
             diff_expression_header += [
-                "Cluster %d Mean Counts" % (i + 1),
-                "Cluster %d Log2 fold change" % (i + 1),
-                "Cluster %d Adjusted p value" % (i + 1),
+                f"Cluster {i+1} Mean Counts",
+                f"Cluster {i+1} Log2 fold change",
+                f"Cluster {i+1} Adjusted p value",
             ]
         else:
             diff_expression_header += [
@@ -230,9 +242,9 @@ def save_differential_expression_csv_from_features(
     n_clusters = de.data.shape[1] // 3
     for i in range(n_clusters):
         diff_expression_header += [
-            "Cluster %d Mean Counts" % (i + 1),
-            "Cluster %d Log2 fold change" % (i + 1),
-            "Cluster %d Adjusted p value" % (i + 1),
+            f"Cluster {i+1} Mean Counts",
+            f"Cluster {i+1} Log2 fold change",
+            f"Cluster {i+1} Adjusted p value",
         ]
 
     analysis_io.save_matrix_csv(

@@ -133,7 +133,10 @@ ANTIBODY_CELL_CALLING_METRIC_KEYS = [
     "ANTIBODY_multi_transcriptome_total_raw_reads_per_filtered_bc",
 ]
 
-CELL_CALLING_ALARM_KEYS = ["filtered_bcs_conf_mapped_barcoded_reads_cum_frac"]
+CELL_CALLING_ALARM_KEYS = [
+    "filtered_bcs_conf_mapped_barcoded_reads_cum_frac",
+]
+
 TARGETED_CELL_CALLING_ALARM_KEYS_HC = [
     "filtered_bcs_conf_mapped_barcoded_reads_cum_frac",
     FILTERED_BCS_TRANSCRIPTOME_UNION,
@@ -152,7 +155,11 @@ SEQUENCING_METRIC_KEYS = [
     "read_bases_with_q30_frac",
     "read2_bases_with_q30_frac",
     "umi_bases_with_q30_frac",
+    "umis_per_mm_sq_tissue",  # SD specific
+    "read_per_mm_sq_tissue",  # SD specific
     "square_008um.bins_under_tissue_frac",  # HD specific
+    "square_008um.umis_per_mm_sq_tissue",  # HD specific
+    "square_008um.read_per_mm_sq_tissue",  # HD specific
 ]
 
 TARGETED_SEQUENCING_METRIC_KEYS = [
@@ -167,7 +174,11 @@ TARGETED_SEQUENCING_METRIC_KEYS = [
     "read_bases_with_q30_frac",
     "read2_bases_with_q30_frac",
     "umi_bases_with_q30_frac",
+    "umis_per_mm_sq_tissue",  # SD specific
+    "read_per_mm_sq_tissue",  # SD specific
     "square_008um.bins_under_tissue_frac",  # HD specific
+    "square_008um.umis_per_mm_sq_tissue",  # HD specific
+    "square_008um.read_per_mm_sq_tissue",  # HD specific
 ]
 
 SEQUENCING_ALARM_KEYS = [
@@ -263,11 +274,22 @@ TEMP_LIG_MAPPING_KEYS = [
     "multi_transcriptome_half_mapped_reads_frac",
     "multi_transcriptome_split_mapped_reads_frac",
 ]
-
-MAPPING_ALARMS = [
-    "transcriptome_conf_mapped_reads_frac",
-    "antisense_reads_frac",
+SEGMENTATION_METRIC_ALARMS = [
+    "num_nuclei_too_large",
+    "tissue_image_um_per_pixel",
+    "filtered_cells",
 ]
+
+SEGMENTATION_FAILURE_ALARMS = ["no_segmented_cells_detected"]
+
+MAPPING_ALARMS = (
+    [
+        "transcriptome_conf_mapped_reads_frac",
+        "antisense_reads_frac",
+    ]
+    + SEGMENTATION_METRIC_ALARMS
+    + SEGMENTATION_FAILURE_ALARMS
+)
 
 TARGETED_MAPPING_ALARMS = [
     "multi_transcriptome_targeted_conf_mapped_reads_frac",
@@ -280,7 +302,12 @@ TEMP_LIG_MAPPING_ALARMS = [
     "multi_transcriptome_half_mapped_reads_frac",
     "multi_transcriptome_split_mapped_reads_frac",
 ]
-HD_TEMP_LIG_MAPPING_ALARMS = TEMP_LIG_MAPPING_ALARMS + ["estimated_gdna_content"]
+HD_TEMP_LIG_MAPPING_ALARMS = (
+    TEMP_LIG_MAPPING_ALARMS
+    + ["estimated_gdna_content"]
+    + SEGMENTATION_METRIC_ALARMS
+    + SEGMENTATION_FAILURE_ALARMS
+)
 
 
 def get_empty_rank_plot():
@@ -441,9 +468,11 @@ def _get_chemistry_description(
         assay = "Targeted"
     else:
         assay = "3'"
-    sanitised_chemistry_description = {"Visium HD v1": "Visium HD H1 Slide"}.get(
-        chemistry_description, chemistry_description
-    )
+    # FIXME: better to change the description in chemistry_defs.json
+    sanitised_chemistry_description = {
+        "Visium HD v1": "Visium HD H1 Slide",
+        "Visium HD v1 - 3'": "Visium HD H1 Slide",
+    }.get(chemistry_description, chemistry_description)
     return f"{sanitised_chemistry_description} - {assay}"
 
 
@@ -467,8 +496,7 @@ def _add_throughput_to_chemistry(chemistry_desc: str, sample_data: SampleData) -
     return chemistry_with_throughput
 
 
-# pylint: disable=too-many-branches
-def pipeline_info_table(
+def pipeline_info_table(  # noqa: PLR0912, pylint: disable=too-many-statements,too-many-locals,too-many-branches
     sample_data: SampleData,
     sample_properties: SampleProperties,
     pipeline: str,
@@ -557,7 +585,7 @@ def pipeline_info_table(
         ):
             rows.append(["Feature Reference", os.path.basename(sample_properties.feature_ref_path)])
         if sample_properties.disable_ab_aggregate_detection:
-            rows.append(["Antibody Aggregate Filtering", "Disabled"])
+            rows.append(["Aggregate Filtering", "Disabled"])
 
     # Find references in the summary
     if isinstance(sample_properties, AggrCountSampleProperties) and not sample_properties.genomes:
@@ -776,6 +804,19 @@ def pipeline_info_table(
         }
         to_return[ALARMS].extend([itk_error_alarm])
 
+    if isinstance(sample_properties, CountSampleProperties) and sample_properties.grabcut_failed:
+        if ALARMS not in to_return:
+            to_return[ALARMS] = []
+        grabcut_failed_alarm = {
+            "formatted_value": None,
+            "title": "Tissue Detection",
+            "message": "CytAssist tissue detection metrics indicate a possible poor detection. "
+            "Review your tissue detection carefully. If tissue detection performs poorly, perform it manually via "
+            "<a href='https://www.10xgenomics.com/support/software/loupe-browser/latest' target='_blank' title='Loupe Browser' rel='noopener noreferrer'>Loupe Browser</a>.",
+            "level": WARNING_THRESHOLD,
+        }
+        to_return[ALARMS].extend([grabcut_failed_alarm])
+
     # If Isotype Normalization was used
     if sample_data.summary.get("ANTIBODY_isotype_normalized") is not None:
         rows.append(["Isotype Normalization", sample_data.summary["ANTIBODY_isotype_normalized"]])
@@ -903,6 +944,10 @@ def mapping_table(metadata, sample_data, species_list):
             alarm_keys = HD_TEMP_LIG_MAPPING_ALARMS
     else:
         alarm_keys = MAPPING_ALARMS
+    # If segmentation was disabled for some reason make sure to remove
+    # segmentation alarm associated metrics
+    if sample_data.segmentation_metrics is None:
+        alarm_keys = [x for x in alarm_keys if x not in SEGMENTATION_METRIC_ALARMS]
 
     return create_table_with_alarms(
         "mapping",

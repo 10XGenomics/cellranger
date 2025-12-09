@@ -1,4 +1,5 @@
 //! Martian stage MAKE_CORRECTION_MAP
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use barcode::BarcodeConstruct;
@@ -7,7 +8,7 @@ use cr_types::chemistry::{BarcodeExtraction, ChemistryDef, ChemistryDefs, Chemis
 use cr_types::{BcSegmentCountFormat, LibraryType};
 use itertools::Itertools;
 use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use metric::TxHashMap;
@@ -30,6 +31,7 @@ pub struct MakeCorrectionMapStageOutputs {
     correction_map: Option<CorrectionMapFormat>,
 }
 
+/// Martian stage MAKE_CORRECTION_MAP
 pub struct MakeCorrectionMap;
 
 fn is_two_part_joint_extraction(chemistry_def: &ChemistryDef) -> bool {

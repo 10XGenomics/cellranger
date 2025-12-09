@@ -1,17 +1,18 @@
 //! Martian stage COMPUTE_ANTIGEN_VDJ_METRICS
+#![deny(missing_docs)]
 
-use crate::align_metrics::{BarcodeKind, BarcodeMetrics, LibFeatThenBarcodeOrder, VisitorMetrics};
 use crate::BarcodeMetricsShardFile;
+use crate::align_metrics::{BarcodeKind, BarcodeMetrics, LibFeatThenBarcodeOrder, VisitorMetrics};
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::FeatureBarcodeType;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric::{MeanMetric, SimpleHistogram, TxHashSet};
+use metric::{Histogram, MeanMetric, SimpleHistogram, TxHashSet};
 use serde::{Deserialize, Serialize};
 use shardio::ShardReader;
 
@@ -58,6 +59,7 @@ impl RawMetrics {
     }
 }
 
+/// Martian stage COMPUTE_ANTIGEN_VDJ_METRICS
 pub struct ComputeAntigenVdjMetrics;
 
 #[make_mro(mem_gb = 4, volatile = strict)]

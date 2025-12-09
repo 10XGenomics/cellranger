@@ -1,10 +1,13 @@
 //! Martian stage PICK_BEAM_ANALYZER
+#![deny(missing_docs)]
 
 use super::compute_antigen_vdj_metrics::AntigenVdjMetricsFormat;
 use crate::utils::hard_link_martianfile;
 use anyhow::Result;
+use cr_types::SampleAssignment;
+use cr_websummary::multi::antigen::AntigenSpecificityRow;
 use martian::{MartianMain, MartianRover};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use serde::{Deserialize, Serialize};
@@ -12,7 +15,7 @@ use std::collections::HashMap;
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct BeamAnalyzerOutputs {
-    pub antigen_specificity_scores: Option<CsvFile<()>>,
+    pub antigen_specificity_scores: Option<CsvFile<AntigenSpecificityRow>>,
     pub antigen_assignment: Option<CsvFile<()>>,
     pub clonotype_concordance: Option<CsvFile<()>>,
     pub exact_subclonotype_concordance: Option<CsvFile<()>>,
@@ -61,22 +64,34 @@ impl BeamAnalyzerOutputs {
                 .transpose()?,
         })
     }
+
+    fn is_empty(&self) -> bool {
+        self.antigen_specificity_scores.is_none()
+            && self.antigen_assignment.is_none()
+            && self.clonotype_concordance.is_none()
+            && self.exact_subclonotype_concordance.is_none()
+            && self.specificity_summary.is_none()
+            && self.antigen_vdj_metrics_json.is_none()
+            && self.antigen_vdj_metrics_bin.is_none()
+            && self.per_barcode.is_none()
+    }
 }
 
 /// The Martian stage inputs.
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct PickBeamAnalyzerStageInputs {
-    pub vdj_t: Option<HashMap<String, Option<BeamAnalyzerOutputs>>>,
-    pub vdj_t_gd: Option<HashMap<String, Option<BeamAnalyzerOutputs>>>,
-    pub vdj_b: Option<HashMap<String, Option<BeamAnalyzerOutputs>>>,
+    pub vdj_t: Option<HashMap<SampleAssignment, Option<BeamAnalyzerOutputs>>>,
+    pub vdj_t_gd: Option<HashMap<SampleAssignment, Option<BeamAnalyzerOutputs>>>,
+    pub vdj_b: Option<HashMap<SampleAssignment, Option<BeamAnalyzerOutputs>>>,
 }
 
 /// The Martian stage outputs.
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct PickBeamAnalyzerStageOutputs {
-    pub output: HashMap<String, Option<BeamAnalyzerOutputs>>,
+    pub output: HashMap<SampleAssignment, Option<BeamAnalyzerOutputs>>,
 }
 
+/// Martian stage PICK_BEAM_ANALYZER
 pub struct PickBeamAnalyzer;
 
 #[make_mro(volatile = strict)]
@@ -85,8 +100,8 @@ impl MartianMain for PickBeamAnalyzer {
     type StageOutputs = PickBeamAnalyzerStageOutputs;
 
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
-        let mut output: HashMap<String, Option<BeamAnalyzerOutputs>> = HashMap::new();
-        let inputs: Vec<HashMap<String, Option<BeamAnalyzerOutputs>>> =
+        let mut output: HashMap<SampleAssignment, Option<BeamAnalyzerOutputs>> = HashMap::new();
+        let inputs: Vec<HashMap<SampleAssignment, Option<BeamAnalyzerOutputs>>> =
             vec![args.vdj_t, args.vdj_t_gd, args.vdj_b]
                 .into_iter()
                 .flatten()
@@ -95,13 +110,14 @@ impl MartianMain for PickBeamAnalyzer {
             let mut options: Vec<_> = inputs
                 .iter()
                 .filter_map(|inputs| inputs[sample].clone())
+                .filter(|beam_analyzer| !beam_analyzer.is_empty())
                 .collect();
             assert!(options.len() <= 1);
             output.insert(
-                sample.to_string(),
+                sample.clone(),
                 options
                     .pop()
-                    .map(|outs| outs.hard_link(&rover))
+                    .map(|beam_analyzer| beam_analyzer.hard_link(&rover))
                     .transpose()?,
             );
         }

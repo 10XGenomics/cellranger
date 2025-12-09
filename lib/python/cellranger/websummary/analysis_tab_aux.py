@@ -195,7 +195,7 @@ def gdna_table(metadata, sample_data, species_list) -> BarnyardPanel | None:
     return BarnyardPanel(chart, data)
 
 
-def barnyard_table(metadata, sample_data, sample_properties, species_list):
+def barnyard_table(metadata, sample_data, species_list):
     """Barnyard table and barnyard plot."""
     if (
         len(species_list) <= 1
@@ -205,6 +205,12 @@ def barnyard_table(metadata, sample_data, sample_properties, species_list):
     ):
         return None
 
+    gems = _generate_barnyard_gem_metrics(metadata, sample_data, species_list)
+    plot = generate_barnyard_counts_plot(sample_data)
+    return BarnyardPanel(plot, gems)
+
+
+def _generate_barnyard_gem_metrics(metadata, sample_data, species_list):
     metric_keys = [
         "filtered_bcs_observed_all",
         "filtered_bcs_inferred_multiplets",
@@ -217,6 +223,18 @@ def barnyard_table(metadata, sample_data, sample_properties, species_list):
 
     helptext = metadata.gen_metric_helptext(metric_keys) + BARNYARD_PLOT_HELP
     gems["help"] = {"title": "GEM Partitions", "data": helptext}
+    return gems
+
+
+def generate_barnyard_counts_plot(sample_data):
+    """Generate a plot showing the distribution of UMI counts across GEMs."""
+    chart = initialize_barnyard_biplot_chart()
+    plot = cr_webshim.plot_barnyard_barcode_counts(chart, None, sample_data)
+    return plot
+
+
+def initialize_barnyard_biplot_chart():
+    """Initialize a barnyard biplot chart."""
     chart = {
         "config": pltly.PLOT_CONFIG,
         "layout": {
@@ -258,8 +276,8 @@ def barnyard_table(metadata, sample_data, sample_properties, species_list):
             },
         ],
     }
-    plot = cr_webshim.plot_barnyard_barcode_counts(chart, sample_properties, sample_data)
-    return BarnyardPanel(plot, gems)
+
+    return chart
 
 
 def targeted_table(metadata, sample_data, species_list, is_spatial=False):

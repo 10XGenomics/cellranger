@@ -1,9 +1,10 @@
 //!
 //! ALign reads to a contig
+#![deny(missing_docs)]
 
-use bio::alignment::pairwise::{self, banded, MatchParams};
-use bio::alignment::sparse::{find_kmer_matches_seq2_hashed, hash_kmers, HashMapFx};
 use bio::alignment::Alignment;
+use bio::alignment::pairwise::{self, MatchParams, banded};
+use bio::alignment::sparse::{HashMapFx, find_kmer_matches_seq2_hashed, hash_kmers};
 pub type Scoring = pairwise::Scoring<MatchParams>;
 
 pub struct ContigAligner<'a> {

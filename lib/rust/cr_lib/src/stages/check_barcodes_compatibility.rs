@@ -1,4 +1,4 @@
-//! # CHECK_BARCODES_COMPATIBILITY
+//! Martian stage CHECK_BARCODES_COMPATIBILITY
 //!
 //! This stage checks that barcodes from different libraries are compatible.
 //!
@@ -52,24 +52,25 @@
 //!   TotalSeqA. A consequence of this is that the cellranger output for TotalSeqA Antibody only 3' v3
 //!   will **not be barcode compatible** with a GEX only run from the same gem well.
 //! - There needs to be a GEX library if there are >1 library types.
+#![deny(missing_docs)]
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{Result, anyhow, ensure};
 use barcode::{BarcodeConstruct, BcSegSeq, Whitelist};
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::sample_def::SampleDef;
-use cr_types::LibraryType;
+use cr_types::{ERROR_CODE_INFO, LibraryType};
 use fastq_set::filenames::FindFastqs;
 use fastq_set::read_pair::{ReadPart, RpRange};
 use fastq_set::read_pair_iter::ReadPairIter;
-use itertools::{process_results, Itertools};
+use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
-use metric::{Metric, SimpleHistogram, TxHashMap, TxHashSet};
-use parameters_toml::min_barcode_similarity;
+use martian_derive::{MartianStruct, make_mro};
+use metric::{Histogram, Metric, SimpleHistogram, TxHashMap, TxHashSet};
 use serde::{Deserialize, Serialize};
 
 const MAX_READS_BARCODE_COMPATIBILITY: usize = 1_000_000;
 const ROBUST_FRACTION_THRESHOLD: f64 = 0.925;
+const MIN_BARCODE_SIMILARITY: f64 = 0.1;
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct CheckBarcodesCompatibilityStageInputs {
@@ -81,10 +82,10 @@ pub struct CheckBarcodesCompatibilityStageInputs {
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct, PartialEq, Eq)]
 pub struct CheckBarcodesCompatibilityStageOutputs {}
 
-// This is our stage struct
+/// Martian stage CHECK_BARCODES_COMPATIBILITY
 pub struct CheckBarcodesCompatibility;
 
-pub(crate) fn sample_valid_barcodes(
+pub fn sample_valid_barcodes(
     sample_def: &SampleDef,
     barcode_range: RpRange,
     wl: &Whitelist,
@@ -101,11 +102,8 @@ pub(crate) fn sample_valid_barcodes(
                 .map(BcSegSeq::from_bytes)
         })
         .take(MAX_READS_BARCODE_COMPATIBILITY)
-        .filter_map_ok(|seq| wl.match_to_whitelist(seq, true));
-
-    Ok(process_results(barcode_iter, |iter| {
-        SimpleHistogram::from_iter_owned(iter)
-    })?)
+        .filter_map_ok(|seq| wl.match_to_whitelist_allow_one_n(seq, true));
+    barcode_iter.process_results(|iter| SimpleHistogram::from_iter_owned(iter))
 }
 
 /// Calculate the robust cosine similarity of two barcode lists.
@@ -116,11 +114,11 @@ pub(crate) fn sample_valid_barcodes(
 ///
 /// Panics if the histograms is empty
 fn robust_cosine_similarity(c1: &SimpleHistogram<BcSegSeq>, c2: &SimpleHistogram<BcSegSeq>) -> f64 {
-    let Some(thresh1) = stats::nx::nx(c1.raw_counts(), ROBUST_FRACTION_THRESHOLD) else {
+    let Some(thresh1) = stats::compute_nx(c1.raw_counts(), ROBUST_FRACTION_THRESHOLD) else {
         // Empty counts => 0 similarity
         return 0.0;
     };
-    let Some(thresh2) = stats::nx::nx(c2.raw_counts(), ROBUST_FRACTION_THRESHOLD) else {
+    let Some(thresh2) = stats::compute_nx(c2.raw_counts(), ROBUST_FRACTION_THRESHOLD) else {
         // Empty counts => 0 similarity
         return 0.0;
     };
@@ -138,7 +136,6 @@ fn robust_cosine_similarity(c1: &SimpleHistogram<BcSegSeq>, c2: &SimpleHistogram
         .sqrt();
 
     let dot_prod: f64 = c1
-        .distribution()
         .iter()
         .map(|(bc, c)| (c.count().min(thresh1) * c2.get(bc).min(thresh2)) as f64)
         .sum();
@@ -157,7 +154,7 @@ impl MartianMain for CheckBarcodesCompatibility {
         if args
             .chemistry_defs
             .values()
-            .any(|x| matches!(x.barcode_whitelist(), BarcodeConstruct::Segmented(_)))
+            .any(|x| matches!(x.barcode_whitelist_spec(), BarcodeConstruct::Segmented(_)))
         {
             return Ok(CheckBarcodesCompatibilityStageOutputs {});
         }
@@ -178,11 +175,7 @@ impl MartianMain for CheckBarcodesCompatibility {
         let mut per_lib_bc_histogram = TxHashMap::default();
         for sdef in &args.sample_def {
             let chem = &args.chemistry_defs[&sdef.library_type.unwrap()];
-            let whitelist = chem
-                .barcode_whitelist()
-                .gel_bead()
-                .as_source()?
-                .as_whitelist()?;
+            let whitelist = chem.barcode_whitelist_source()?.gel_bead().as_whitelist()?;
             let this_hist =
                 sample_valid_barcodes(sdef, chem.barcode_range().gel_bead(), &whitelist)?;
             per_lib_bc_histogram
@@ -195,14 +188,13 @@ impl MartianMain for CheckBarcodesCompatibility {
 
         // -----------------------------------------------------------------------------------------
         // Check similarity with the GEX library.
-        let min_barcode_similarity = *min_barcode_similarity()?;
         for (lib_type, this_hist) in per_lib_bc_histogram {
             let similarity = robust_cosine_similarity(&gex_hist, &this_hist);
             println!("Similarity to GEX: {lib_type} - {similarity:?}");
             if args.check_library_compatibility {
                 ensure!(
-                    similarity >= min_barcode_similarity,
-                    incompatible_message(LibraryType::Gex, lib_type),
+                    similarity >= MIN_BARCODE_SIMILARITY,
+                    incompatible_message(LibraryType::Gex, lib_type, similarity),
                 );
             }
         }
@@ -213,10 +205,15 @@ impl MartianMain for CheckBarcodesCompatibility {
 
 const MISSING_GEX: &str = "Gene expression data is required if there are multiple library types.";
 
-fn incompatible_message(lib_0_type: LibraryType, lib_1_type: LibraryType) -> anyhow::Error {
+/// Return the error message for libraries with insufficient barcode overlap.
+fn incompatible_message(
+    lib_0_type: LibraryType,
+    lib_1_type: LibraryType,
+    similarity: f64,
+) -> Error {
     anyhow!(
-        "Barcodes from the [{lib_0_type}] library and the [{lib_1_type}] library have \
-         insufficient overlap. \
+        "TXRNGR10006: Barcodes from the [{lib_0_type}] library and the [{lib_1_type}] library have \
+         insufficient overlap: {similarity:.4} < {MIN_BARCODE_SIMILARITY}. \
          This usually indicates the libraries originated from different cells or samples. \
          This error can usually be fixed by providing correct FASTQ files from the same \
          sample. If you are certain the input libraries are matched, you can bypass \
@@ -224,7 +221,7 @@ fn incompatible_message(lib_0_type: LibraryType, lib_1_type: LibraryType) -> any
          [gene-expression] section of your multi config CSV if using `cellranger multi` \
          or passing the --check-library-compatibility=false argument if using \
          `cellranger count`. If you have questions regarding this error or your results, \
-         please contact support@10xgenomics.com."
+         please contact support@10xgenomics.com. {ERROR_CODE_INFO}",
     )
 }
 
@@ -384,7 +381,12 @@ mod barcode_compatibility_tests {
             check_library_compatibility: true,
         };
         assert_eq!(
-            incompatible_message(LibraryType::Gex, LibraryType::Antibody).to_string(),
+            incompatible_message(
+                LibraryType::Gex,
+                LibraryType::Antibody,
+                0.00013808299955230403,
+            )
+            .to_string(),
             CheckBarcodesCompatibility
                 .test_run_tmpdir(args)
                 .unwrap_err()

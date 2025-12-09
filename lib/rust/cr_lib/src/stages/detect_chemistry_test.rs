@@ -1,12 +1,13 @@
 //! Martian stage DETECT_CHEMISTRY_TEST
+#![deny(missing_docs)]
 
 use crate::stages::detect_chemistry::{DetectChemistry, DetectChemistryStageInputs};
 use anyhow::Result;
-use cr_types::chemistry::ChemistryName;
 use cr_types::LibraryType;
+use cr_types::chemistry::ChemistryName;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use metric::TxHashMap;
@@ -35,6 +36,7 @@ pub struct ChunkOutputs {
     chunk_outputs: TxHashMap<String, Option<TxHashMap<LibraryType, ChemistryName>>>,
 }
 
+/// Martian stage DETECT_CHEMISTRY_TEST
 pub struct DetectChemistryTest;
 
 const ITEMS_PER_CHUNK: usize = 100;

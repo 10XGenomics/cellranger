@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import cellranger.rna.library as rna_library
 import cellranger.websummary.sample_properties as wsp
 import cellranger.websummary.violin_plots as violin_plots
-from cellranger.analysis.singlegenome import TSNE_NAME, UMAP_NAME, Projection
+from cellranger.analysis.singlegenome import UMAP_NAME, Projection
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
 from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC, TARGETING_METHOD_TL
 from cellranger.webshim.common import load_sample_data
@@ -205,8 +205,7 @@ def _add_gdna_to_websummary(ws_data: WebSummaryData, g_table: BarnyardPanel) -> 
 
 def _build_analysis_tab_common(
     metadata,
-    sample_data,
-    pipeline,
+    sample_data: SampleData,
     species_list,
     sample_properties,
     ws_data,
@@ -249,7 +248,9 @@ def _build_analysis_tab_common(
         )
 
 
-def _build_antibody_tab_common(sample_data, sample_properties, ws_data, *, projection: Projection):
+def _build_antibody_tab_common(
+    sample_data: SampleData, sample_properties, ws_data, *, projection: Projection
+):
     """Code to create antibody tab shared by spatial and single cell."""
     alarm_list = ws_data.alarms
     antibody_tab = ws_data.antibody_tab
@@ -288,7 +289,7 @@ def _build_antibody_tab_common(sample_data, sample_properties, ws_data, *, proje
     )
 
 
-def _build_antigen_tab_common(sample_data, sample_properties, ws_data):
+def _build_antigen_tab_common(sample_data, ws_data):
     """Code to create antibody tab shared by spatial and single cell."""
     alarm_list = ws_data.alarms
     antigen_tab = ws_data.antigen_tab
@@ -312,6 +313,7 @@ def _build_diagnostic_values(sample_data, ws_data):
         "i2_bases_with_q30_frac",
         "low_support_umi_reads_frac",
         "corrected_bc_frac",
+        "hd_layout_offset",
     ]
     mets = {}
     for met in diagnostic_metrics:
@@ -348,12 +350,11 @@ def build_web_summary_data_common(
         regist_images,
         sample_defs,
     )
-    if FILTERED_BCS_TRANSCRIPTOME_UNION in sample_data.summary:
+    if sample_data.summary is not None and FILTERED_BCS_TRANSCRIPTOME_UNION in sample_data.summary:
         # if the sample is not Ab only build the GEX tab
         _build_analysis_tab_common(
             metadata,
             sample_data,
-            pipeline,
             species_list,
             sample_properties,
             wsd,
@@ -363,7 +364,7 @@ def build_web_summary_data_common(
     if sample_data.antibody_histograms is not None:
         _build_antibody_tab_common(sample_data, sample_properties, wsd, projection=projection)
     if sample_data.antigen_histograms is not None:
-        _build_antigen_tab_common(sample_data, sample_properties, wsd)
+        _build_antigen_tab_common(sample_data, wsd)
     _build_diagnostic_values(sample_data, wsd)
 
     for fb in FEATURE_BARCODINGS:
@@ -441,6 +442,17 @@ def build_web_summary_html_sc_and_aggr(
         batch_correction_table(metadata, sample_data, species_list),
     )
 
+    # If cell annotation could have been run but the user chose not to, add info to the web summary.
+    if sample_properties.cell_annotation_viable_but_not_requested:
+        web_sum_data.alarms.append(
+            {
+                "formatted_value": None,
+                "title": "Automated cell type annotation is now available for Cell Ranger!",
+                "message": """For details on how to run cell type annotation and which species we have it available for, visit our <a href='https://10xgen.com/cr-cell-annotation-pipeline' target='_blank'
+            title='Cell Type Annotation' rel='noopener noreferrer'>support page</a>.</p>""",
+                "level": INFO_THRESHOLD,
+            }
+        )
     # t-SNE/UMAP plot appears as a constant left plot in the Cell Ranger
     # clustering selector
     if web_sum_data.clustering_selector:
@@ -451,17 +463,6 @@ def build_web_summary_html_sc_and_aggr(
             library_type=rna_library.GENE_EXPRESSION_LIBRARY_TYPE,
             tag_type=None,
         )
-        if pipeline == PIPELINE_AGGR and projection == UMAP_NAME:
-            web_sum_data.alarms.extend(
-                [
-                    {
-                        "formatted_value": None,
-                        "title": "UMAP Projection",
-                        "message": """UMAP projection is now the default for Cellranger Aggr. Run cellranger aggr with --enable-tsne=true to enable t-SNE projection.""",
-                        "level": INFO_THRESHOLD,
-                    }
-                ]
-            )
     if web_sum_data.antibody_clustering_selector:
         web_sum_data.antibody_clustering_selector.left_plots = umi_on_projection_plot(
             sample_data,
@@ -472,7 +473,7 @@ def build_web_summary_html_sc_and_aggr(
         )
 
     # Barnyard
-    b_table = barnyard_table(metadata, sample_data, sample_properties, species_list)
+    b_table = barnyard_table(metadata, sample_data, species_list)
     if b_table:
         web_sum_data.analysis_tab["barnyard"] = b_table
     return web_sum_data
@@ -491,6 +492,7 @@ def build_web_summary_html_sc(
         metadata = TargetedMetricAnnotations()
     else:
         metadata = MetricAnnotations(intron_mode_alerts=sample_properties.include_introns)
+
     command = CELLRANGER_COMMAND_NAME
     web_sum_data = build_web_summary_html_sc_and_aggr(
         sample_properties,
@@ -498,7 +500,7 @@ def build_web_summary_html_sc(
         pipeline,
         metadata,
         command,
-        projection=TSNE_NAME,
+        projection=UMAP_NAME,
         sample_defs=sample_defs,
     )
     # to circumvent self._check_valid

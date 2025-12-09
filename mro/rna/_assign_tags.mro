@@ -21,77 +21,64 @@ pipeline _ASSIGN_TAGS(
     in  json               multi_graph,
     in  int                gem_well,
     in  float              min_assignment_confidence,
-    in  string             throughput,
+    in  string             inferred_throughput,
     in  json               inferred_throughputs,
     out AssignTagsOuts     assign_tags_outs,
 )
 {
     call MULTIPLEXING_METHOD(
-        multi_graph = self.multi_graph,
+        * = self,
     )
 
     call CALL_TAGS_MARGINAL(
-        filtered_barcodes   = self.filtered_barcodes,
-        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        throughput          = self.throughput,
         multiplexing_method = MULTIPLEXING_METHOD.multiplexing_method,
+        throughput          = self.inferred_throughput,
         library_type        = null,
+        *                   = self,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )
 
     call CALL_TAGS_JIBES(
-        marginal_tag_calls_per_cell = CALL_TAGS_MARGINAL.marginal_tag_calls_per_cell,
-        filtered_barcodes           = self.filtered_barcodes,
-        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        molecule_info               = self.molecule_info,
-        marginal_tag_frequencies    = CALL_TAGS_MARGINAL.marginal_tag_frequencies,
-        throughput                  = self.throughput,
-        min_assignment_confidence   = self.min_assignment_confidence,
         multiplexing_method         = MULTIPLEXING_METHOD.multiplexing_method,
+        marginal_tag_calls_per_cell = CALL_TAGS_MARGINAL.marginal_tag_calls_per_cell,
+        marginal_tag_frequencies    = CALL_TAGS_MARGINAL.marginal_tag_frequencies,
+        throughput                  = self.inferred_throughput,
         library_type                = null,
+        *                           = self,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )
 
     call CALL_TAGS_RTL(
-        chemistry_defs             = self.chemistry_defs,
-        raw_feature_bc_matrix      = self.raw_feature_bc_matrix,
         filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
-        multi_graph                = self.multi_graph,
+        *                          = self,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_rtl,
     )
 
     call CALL_TAGS_OH(
-        chemistry_defs             = self.chemistry_defs,
-        raw_feature_bc_matrix      = self.raw_feature_bc_matrix,
         filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
+        *                          = self,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_oh,
     )
 
     call DETERMINE_SAMPLE_ASSIGNMENTS(
-        barcodes_per_tag      = [
+        barcodes_per_tag     = [
             CALL_TAGS_JIBES.cells_per_tag,
             CALL_TAGS_RTL.barcodes_per_tag,
             CALL_TAGS_OH.barcodes_per_tag,
         ],
-        force_sample_barcodes = self.force_sample_barcodes,
-        filtered_barcodes     = self.filtered_barcodes,
-        multi_graph           = self.multi_graph,
-        non_singlet_barcodes  = CALL_TAGS_JIBES.non_singlet_barcodes,
-        gem_well              = self.gem_well,
-        raw_feature_bc_matrix = self.raw_feature_bc_matrix,
+        non_singlet_barcodes = CALL_TAGS_JIBES.non_singlet_barcodes,
+        *                    = self,
     )
 
     call COMPUTE_EXTRA_MULTIPLEXING_METRICS(
-        molecule_info        = self.molecule_info,
-        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        multi_graph          = self.multi_graph,
+        multiplexing_method  = MULTIPLEXING_METHOD.multiplexing_method,
         sample_cell_barcodes = DETERMINE_SAMPLE_ASSIGNMENTS.sample_cell_barcodes,
         non_singlet_barcodes = DETERMINE_SAMPLE_ASSIGNMENTS.non_singlet_barcodes,
-        multiplexing_method  = MULTIPLEXING_METHOD.multiplexing_method,
+        *                    = self,
     ) using (
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )

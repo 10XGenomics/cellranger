@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use anyhow::{Error, Result};
 use serde::Serialize;
 use std::str::FromStr;

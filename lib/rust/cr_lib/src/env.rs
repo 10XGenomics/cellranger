@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use std::env;
 
 /// Return the software product name, for example "Cell Ranger" or "Space Ranger"

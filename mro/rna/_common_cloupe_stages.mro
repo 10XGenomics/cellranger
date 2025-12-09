@@ -4,6 +4,7 @@
 
 filetype cloupe;
 filetype csv;
+filetype geojson;
 filetype json;
 filetype h5;
 filetype txt;
@@ -30,12 +31,16 @@ stage CLOUPE_PREPROCESS(
     in  string   hd_slide_name,
     in  json     loupe_map,
     in  string   product_type,
+    in  json     cells_per_batch,
     in  json     cells_per_sample,
     in  json     cells_per_tag,
     in  json     cells_per_protospacer,
     in  csv      spatial_enrichment,
     in  path     spatial_deconvolution_path,
     in  bool     disable_cloupe,
+    in  string   matrix_type,
+    in  h5       spatial_cell_segment_mask,
+    in  geojson  spatial_cell_segment_geojson,
     out cloupe   output_for_cloupe,
     out json     gem_group_index_json,
     src py       "stages/cloupe/cloupe_preprocess",

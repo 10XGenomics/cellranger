@@ -1,9 +1,11 @@
-//!
 //! This module defines the `PercentMetric` struct. As the name implies, this struct
 //! is geared toward tracking percentages. Internally it is represented using a
 //! numerator and denominator counter.
+#![deny(missing_docs)]
 
 use crate::{CountMetric, JsonReport, JsonReporter, Metric};
+use metric_derive::Metric;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Use this struct to keep track of metrics which can be represented
@@ -183,7 +185,7 @@ mod tests {
         assert!(p1 == p);
     }
 
-    proptest! {
+    proptest::proptest! {
         #[test]
         fn prop_test_percent_metric_add_and_addassign(
             x1 in any::<u32>(),

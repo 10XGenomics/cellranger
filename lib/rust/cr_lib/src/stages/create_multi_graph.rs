@@ -1,11 +1,12 @@
 //! Martian stage CREATE_MULTI_GRAPH
 //! Create the multiplexing sample graph.
 //! This stage requires information from both the multi config CSV and chemistry detection.
+#![deny(missing_docs)]
 use super::detect_chemistry::DetectedProbeBarcodePairingFile;
 use anyhow::Result;
 use cr_types::CrMultiGraph;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use multi::config::MultiConfigCsvFile;
@@ -26,6 +27,7 @@ pub struct CreateMultiGraphStageOutputs {
     pub multi_graph: CrMultiGraphFile,
 }
 
+/// Martian stage CREATE_MULTI_GRAPH
 pub struct CreateMultiGraph;
 
 #[make_mro(volatile = strict)]

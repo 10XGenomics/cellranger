@@ -9,9 +9,12 @@ workspace = true
 proc-macro = true
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'metric_derive'
 publish = false
 version = '0.1.0'

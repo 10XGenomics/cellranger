@@ -5,7 +5,6 @@
 
 import json
 
-import cellranger.report as cr_report
 import cellranger.webshim.common as cr_webshim
 import cellranger.websummary.vdj as vdj_web
 from cellranger.analysis.singlegenome import TSNE_NAME
@@ -14,26 +13,16 @@ from cellranger.websummary.sample_properties import SampleDataPaths, VdjSamplePr
 
 __MRO__ = """
 stage SUMMARIZE_VDJ_REPORTS(
-    in  string       sample_id,
-    in  string       sample_desc,
+    in  json         metrics_summary_json,
     in  ChemistryDef vdj_chemistry_def,
-    in  json[]       summaries,
-    in  int          total_read_pairs,
     in  json         cell_barcodes,
     in  csv          clonotype_summary,
-    in  csv          barcode_support,
-    in  string       receptor,
-    in  int          n50_n50_rpu,
-    out string       receptor,
-    out json         metrics_summary_json,
     out csv          metrics_summary_csv,
     out html         web_summary,
     out json         web_summary_data,
     src py           "stages/vdj/summarize_reports",
 ) split (
-) retain (
-    metrics_summary_json,
-)
+) 
 """
 
 
@@ -51,31 +40,22 @@ def main(args, outs):
 
 
 def join(args, outs, chunk_defs, chunk_outs):
-    sample_info = {
-        "sample_id": args.sample_id,
-        "sample_desc": args.sample_desc,
-        "chain_type": args.receptor,
-        # Hack to pass this metric at the per-sample level, CELLRANGER-7783
-        "VDJ_total_read_pairs": args.total_read_pairs,
-        "n50_n50_rpu": args.n50_n50_rpu,
-    }
-
-    cr_report.merge_jsons(args.summaries, outs.metrics_summary_json, dicts=[sample_info])
 
     sample_data_paths = SampleDataPaths(
-        summary_path=outs.metrics_summary_json,
+        summary_path=args.metrics_summary_json,
         vdj_clonotype_summary_path=args.clonotype_summary,
-        vdj_barcode_support_path=args.barcode_support,
         vdj_cell_barcodes_path=args.cell_barcodes,
+        vdj_all_contig_annotations_csv_path=args.all_contig_annotations_csv,
     )
 
-    outs.receptor = args.receptor
+    with open(args.metrics_summary_json) as f:
+        metrics_summary = json.load(f)
 
     sample_properties = VdjSampleProperties(
-        sample_id=args.sample_id,
-        sample_desc=args.sample_desc,
+        sample_id=metrics_summary["sample_id"],
+        sample_desc=metrics_summary["sample_desc"],
         chemistry_def=args.vdj_chemistry_def,
-        chain_type=outs.receptor,
+        chain_type=metrics_summary["chain_type"],
     )
     sample_data = cr_webshim.load_sample_data(
         sample_properties, sample_data_paths, projections=TSNE_NAME

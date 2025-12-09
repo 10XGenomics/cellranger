@@ -1,6 +1,10 @@
+#![expect(missing_docs)]
 use crate::constants::{ReadType, UmiType};
-use crate::{bam_utils, sw, utils};
+use crate::sw;
+#[cfg(test)]
+use crate::{bam_utils, utils};
 use debruijn::dna_string::DnaString;
+#[cfg(test)]
 use rust_htslib::bam;
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +53,8 @@ impl Read {
     /// NOTE: If the read sequence has any characters other than A, C, G, T (uppercase)
     /// then the flag "Quality check failed" will be set. This is done because
     /// we rely on a 2-bit encoding of bases and other characters cannot be handled properly.
-    pub fn from_bam_record(id: ReadType, umi: UmiType, record: &bam::record::Record) -> Read {
+    #[cfg(test)]
+    fn from_bam_record(id: ReadType, umi: UmiType, record: &bam::record::Record) -> Read {
         let read_name = String::from_utf8_lossy(record.qname()).into_owned();
         let seq_bytes = record.seq().as_bytes();
 
@@ -59,8 +64,7 @@ impl Read {
             .map(|(i, x)| utils::base_to_bits_hash(*x, &read_name, i))
             .collect();
         let seq_dna_string = DnaString::from_bytes(&v);
-
-        let read = Read {
+        Read {
             name: read_name,
             id,
             umi,
@@ -70,8 +74,7 @@ impl Read {
             seq: seq_dna_string,
             quals: record.qual().to_vec(),
             flags: record.flags(),
-        };
-        read
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -81,7 +84,8 @@ impl Read {
         self.seq.is_empty()
     }
 
-    pub fn to_bam_record(
+    #[cfg(test)]
+    fn to_bam_record(
         &self,
         alignment: &Option<sw::AlignmentPacket>,
         mate_alignment: &Option<sw::AlignmentPacket>,
@@ -89,20 +93,8 @@ impl Read {
         bam_utils::read_to_bam_record(self, alignment, mate_alignment)
     }
 
-    pub fn to_bam_record_strip_augmented(
-        &self,
-        alignment: &Option<sw::AlignmentPacket>,
-        mate_alignment: &Option<sw::AlignmentPacket>,
-    ) -> bam::record::Record {
-        bam_utils::read_to_bam_record_opts(self, alignment, mate_alignment, true, true)
-    }
-
-    pub fn to_unmapped_bam_record(&self) -> bam::record::Record {
-        self.to_bam_record_strip_augmented(&None, &None)
-    }
-
     /// True if the provided alignment has an implied length equal to this read's length.
-    pub fn validate_alignment(&self, al_pack: &sw::AlignmentPacket) -> bool {
+    pub(super) fn validate_alignment(&self, al_pack: &sw::AlignmentPacket) -> bool {
         use bio::alignment::AlignmentOperation::{Ins, Match, Subst};
         let alignment = &al_pack.alignment;
         let mut cigar_len = alignment.xstart;

@@ -1,3 +1,5 @@
+//! multiconfig_converter
+#![deny(missing_docs)]
 use anyhow::Result;
 use multi::config::MultiConfigCsv;
 use serde_json::to_vec;
@@ -14,7 +16,7 @@ fn safe_convert_multi_csv(input: &[u8]) -> Result<Vec<u8>> {
 ///
 /// * `buffer`: a destination buffer to write the resulting content to.
 /// * `buf_len`: the size of the buffer.  Content will only be written to the
-///              buffer if this is greater than or equal to the return value.
+///   buffer if this is greater than or equal to the return value.
 /// * `input`: The input data to process.
 /// * `input_len`: The number of bytes in `input`.
 ///
@@ -36,7 +38,7 @@ fn safe_convert_multi_csv(input: &[u8]) -> Result<Vec<u8>> {
 /// bytes, unless `buf_len` is zero.
 ///
 /// The `input` array must contain at least `input_len` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn convert_multi_config(
     buffer: *mut u8,
     buf_len: usize,

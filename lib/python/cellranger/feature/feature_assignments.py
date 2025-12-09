@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 from collections.abc import MutableMapping
 from doctest import testmod
 from functools import cmp_to_key
@@ -78,20 +79,40 @@ class CellsPerFeature(MutableMapping):
             f.write(safe_jsonify(self._data, pretty=True))
 
     @staticmethod
-    def load_from_file(filename: str | bytes) -> CellsPerFeature:
+    def load_from_file(filename: str | bytes | None) -> CellsPerFeature:
         """Load the data from a file.
 
         Args:
             filename: the file to load from
 
         Returns:
-            a new CallsPerFeature object
+            a new CallsPerFeature object. If filename is None, returns an empty object.
         """
         if filename is None:
             return CellsPerFeature.from_dictionary({})
         with open(filename) as f:
             data = json.load(f)
         return CellsPerFeature.from_dictionary(data)
+
+    @staticmethod
+    def estimate_mem_gb(filename: str | bytes | None) -> float:
+        """Crudely estimate the memory needed to load this file.
+
+        For the moment this is just the raw size of the file on disk times
+        an approximate scaling factor.  The scaling factor comes from two things:
+            - the memory overhead of the JSON data structures, about 3.25
+            - the fact that after we load the JSON, we re-process all of the
+                data into bytes; this leads to some additional overhead, observed
+                to be about 20% for one test data set.
+
+        FIXME: this is very inefficient for large data sets.
+
+        Returns:
+            float of the approximate required memory in GiB
+        """
+        if filename is None:
+            return 0.0
+        return os.path.getsize(filename) * 3.25 * 1.2 / 1024**3
 
     @staticmethod
     def from_dictionary(data: dict[str | bytes, list[str | bytes]]) -> CellsPerFeature:

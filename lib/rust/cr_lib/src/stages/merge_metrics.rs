@@ -1,10 +1,11 @@
-//! Martian stage MergeMetrics
-//! Combine the summary.json files of the MatrixComputer substages.
+//! Martian stage MERGE_METRICS
+//! Merge metrics JSON files.
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use cr_types::MetricsFile;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
 use metric::{JsonReporter, Metric};
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ pub struct MergeMetricsStageOutputs {
     pub summary: MetricsFile,
 }
 
-/// Output the summary metrics CSV file `metrics_summary.csv`.
+/// Martian stage MERGE_METRICS
 pub struct MergeMetrics;
 
 /// Combine the summary.json files of the MatrixComputer substages.

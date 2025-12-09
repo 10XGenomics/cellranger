@@ -7,15 +7,24 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Self
 
 import martian
-from typing_extensions import Self
 
 from cellranger.chemistry import (
     CHEMISTRY_SC3P_LT,
     ChemistryDef,
     ChemistryDefs,
     get_primary_chemistry_def,
+)
+from cellranger.spatial.segmentation_constants import (
+    FILTERED_CELLS,
+    FRACTION_COUNTS_PER_CELL,
+    FRACTION_READS_IN_CELLS,
+    MEAN_READS_PER_CELL,
+    MEDIAN_CELL_AREA,
+    MEDIAN_COUNTS_PER_CELL,
+    MEDIAN_GENES_PER_CELL,
 )
 from cellranger.version import get_version
 
@@ -71,6 +80,32 @@ class CytassistRunProperties:
         )
 
 
+@dataclass
+class SegmentationProperties:
+    filtered_cells: int
+    mean_reads_per_cell: int
+    median_counts_per_cell: int
+    median_genes_per_cell: int
+    median_cell_area: int
+    fraction_counts_per_cell: float
+    fraction_reads_in_cells: float
+
+    @classmethod
+    def from_json(cls, json_path: str | bytes) -> Self:
+        with open(json_path) as f:
+            metadata = json.load(f)
+
+        return cls(
+            filtered_cells=(metadata.get(FILTERED_CELLS, 0)),
+            mean_reads_per_cell=(metadata.get(MEAN_READS_PER_CELL, 0)),
+            median_counts_per_cell=(metadata.get(MEDIAN_COUNTS_PER_CELL, 0)),
+            median_genes_per_cell=(metadata.get(MEDIAN_GENES_PER_CELL, 0)),
+            median_cell_area=(metadata.get(MEDIAN_CELL_AREA, 0)),
+            fraction_counts_per_cell=(metadata.get(FRACTION_COUNTS_PER_CELL, 0)),
+            fraction_reads_in_cells=(metadata.get(FRACTION_READS_IN_CELLS, 0)),
+        )
+
+
 # pylint: disable=too-many-instance-attributes
 class CountSampleProperties(SampleProperties):
     """Sample properties for Count, Aggr, Reanalyze, Spatial web summaries."""
@@ -93,6 +128,8 @@ class CountSampleProperties(SampleProperties):
     is_visium_hd: bool | None
     cmdline: str | None
     itk_error_string: str | None
+    grabcut_failed: bool
+    cell_annotation_viable_but_not_requested: bool
 
     # pylint: disable=too-many-locals
     def __init__(
@@ -100,6 +137,7 @@ class CountSampleProperties(SampleProperties):
         sample_id,
         sample_desc,
         genomes,
+        *,
         version_from_git=False,
         is_spatial=False,
         target_set=None,
@@ -118,6 +156,8 @@ class CountSampleProperties(SampleProperties):
         is_visium_hd=False,
         cmdline=None,
         itk_error_string=None,
+        grabcut_failed=False,
+        cell_annotation_viable_but_not_requested=False,
     ):
         super().__init__(sample_id, sample_desc, version_from_git=version_from_git)
         self.genomes = genomes
@@ -138,6 +178,8 @@ class CountSampleProperties(SampleProperties):
         self.is_visium_hd = is_visium_hd
         self.cmdline = cmdline
         self.itk_error_string = itk_error_string
+        self.grabcut_failed = grabcut_failed
+        self.cell_annotation_viable_but_not_requested = cell_annotation_viable_but_not_requested
 
     @property
     def is_targeted(self):
@@ -154,10 +196,12 @@ class ExtendedCountSampleProperties(CountSampleProperties):
     reference_path: str
     chemistry_defs: ChemistryDefs
     cytassist_run_properties: CytassistRunProperties | None
+    segmentation_properties: SegmentationProperties | None
 
     # pylint: disable=too-many-locals
     def __init__(
         self,
+        *,
         sample_id,
         sample_desc,
         genomes,
@@ -183,6 +227,9 @@ class ExtendedCountSampleProperties(CountSampleProperties):
         cmdline=None,
         cytassist_run_metrics=None,
         itk_error_string=None,
+        grabcut_failed=False,
+        segmentation_metrics=None,
+        cell_annotation_viable_but_not_requested=False,
     ):
         super().__init__(
             sample_id,
@@ -206,14 +253,20 @@ class ExtendedCountSampleProperties(CountSampleProperties):
             is_visium_hd=is_visium_hd,
             cmdline=cmdline,
             itk_error_string=itk_error_string,
+            grabcut_failed=grabcut_failed,
         )
         self.reference_path = reference_path
         self.chemistry_defs = chemistry_defs
         self.disable_ab_aggregate_detection = disable_ab_aggregate_detection
+        self.cell_annotation_viable_but_not_requested = cell_annotation_viable_but_not_requested
         if cytassist_run_metrics:
             self.cytassist_run_properties = CytassistRunProperties.from_json(cytassist_run_metrics)
         else:
             self.cytassist_run_properties = None
+        if segmentation_metrics:
+            self.segmentation_properties = SegmentationProperties.from_json(segmentation_metrics)
+        else:
+            self.segmentation_properties = None
 
     def chemistry_description(self) -> str:
         """Return the chemistry description of the primary chemistry."""
@@ -230,6 +283,7 @@ class AggrCountSampleProperties(CountSampleProperties):
 
     def __init__(
         self,
+        *,
         sample_id,
         sample_desc,
         genomes,
@@ -275,6 +329,7 @@ class SampleDataPaths:  # pylint: disable=too-many-instance-attributes
     def __init__(
         self,
         summary_path=None,
+        *,
         barcode_summary_path=None,
         analysis_path=None,
         filtered_barcodes_path=None,
@@ -287,8 +342,8 @@ class SampleDataPaths:  # pylint: disable=too-many-instance-attributes
         antigen_histograms_path=None,
         antigen_treemap_path=None,
         vdj_clonotype_summary_path=None,
-        vdj_barcode_support_path=None,
         vdj_cell_barcodes_path=None,
+        vdj_all_contig_annotations_csv_path=None,
     ):
         assert filtered_barcodes_path is None or vdj_cell_barcodes_path is None
         self.summary_path = summary_path
@@ -304,8 +359,8 @@ class SampleDataPaths:  # pylint: disable=too-many-instance-attributes
         self.antigen_histograms_path = antigen_histograms_path
         self.antigen_treemap_path = antigen_treemap_path
         self.vdj_clonotype_summary_path = vdj_clonotype_summary_path
-        self.vdj_barcode_support_path = vdj_barcode_support_path
         self.vdj_cell_barcodes_path = vdj_cell_barcodes_path
+        self.vdj_all_contig_annotations_csv_path = vdj_all_contig_annotations_csv_path
 
 
 class CellTypeDataPaths:  # pylint: disable=too-many-instance-attributes

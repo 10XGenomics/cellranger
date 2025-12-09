@@ -1,4 +1,5 @@
 //! Metric implementation for f64 and i64
+#![deny(missing_docs)]
 
 use crate::{JsonReport, JsonReporter, Metric};
 

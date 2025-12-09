@@ -4,8 +4,7 @@ test = false
 
 [dependencies]
 assert_approx_eq = '1'
-base64 = '0.13'
-ndarray-rand = '0.14'
+base64 = '0.22'
 num = '0.4'
 slice-group-by = '0.3'
 
@@ -46,15 +45,12 @@ workspace = true
 workspace = true
 
 [dependencies.fastq_set]
-workspace = true
+path = '../fastq_set'
 
 [dependencies.file_diff]
 workspace = true
 
 [dependencies.flate2]
-workspace = true
-
-[dependencies.fxhash]
 workspace = true
 
 [dependencies.hdf5]
@@ -70,9 +66,6 @@ workspace = true
 path = '../json_report_derive'
 
 [dependencies.lazy_static]
-workspace = true
-
-[dependencies.libc]
 workspace = true
 
 [dependencies.log]
@@ -93,6 +86,9 @@ path = '../metric'
 [dependencies.metric_derive]
 path = '../metric_derive'
 
+[dependencies.minimap2]
+workspace = true
+
 [dependencies.multi]
 path = '../multi'
 
@@ -100,17 +96,13 @@ path = '../multi'
 workspace = true
 
 [dependencies.orbit]
-branch = 'master'
-git = 'https://github.com/10XGenomics/orbit'
+workspace = true
 
 [dependencies.ordered-float]
 workspace = true
 
 [dependencies.par_proc]
 path = '../par_proc'
-
-[dependencies.parameters_toml]
-path = '../parameters_toml'
 
 [dependencies.parquet]
 workspace = true
@@ -121,9 +113,6 @@ workspace = true
 [dependencies.rand]
 workspace = true
 
-[dependencies.rand_chacha]
-workspace = true
-
 [dependencies.rayon]
 workspace = true
 
@@ -131,6 +120,9 @@ workspace = true
 workspace = true
 
 [dependencies.rust-htslib]
+workspace = true
+
+[dependencies.rustix]
 workspace = true
 
 [dependencies.serde]
@@ -145,13 +137,16 @@ workspace = true
 [dependencies.shardio]
 workspace = true
 
+[dependencies.souporcell]
+path = '../souporcell'
+
+[dependencies.sprs]
+workspace = true
+
 [dependencies.stats]
 path = '../stats'
 
 [dependencies.strum]
-workspace = true
-
-[dependencies.strum_macros]
 workspace = true
 
 [dependencies.tempfile]
@@ -173,6 +168,9 @@ path = '../tx_annotation'
 [dependencies.umi]
 path = '../umi'
 
+[dependencies.vartrix]
+path = '../vartrix'
+
 [dependencies.vdj_reference]
 path = '../vdj_reference'
 
@@ -191,10 +189,13 @@ tenx_source_available = []
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
 default-run = 'cr_lib'
-edition = '2021'
+edition = '2024'
 name = 'cr_lib'
 publish = false
 version = '0.1.0'

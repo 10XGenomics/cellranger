@@ -2,73 +2,96 @@
 ---
 config_version: 1
 product: cellranger
-version: "9.0.1"
+version: "10.0.0"
 
 groups:
   os_stats:
     when: command
   hardware_stats:
     when: command
-  count_args:
-    when: command
+
+  count_success:
+    when: success
     subcommands:
       - count
-  vdj_args:
-    when: command
-    subcommands:
-      - vdj
-  aggr_args:
-    when: command
-    subcommands:
-      - aggr
-  mkref_args:
-    when: command
-    subcommands:
-      - mkref
-      - mkvdjref
-  multi_config:
-    when: command
+    globs:
+      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
+  multi_success:
+    when: success
     subcommands:
       - multi
-  failure:
+    globs:
+      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
+  vdj_success:
+    when: success
+    subcommands:
+      - vdj
+    globs:
+      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
+  aggr_success:
+    when: success
+    subcommands:
+      - aggr
+    globs:
+      aggr_metrics: "SC_RNA_AGGREGATOR_CS/COUNT_AGGR/SC_RNA_AGGREGATOR/SUMMARIZE_AGGREGATED_REPORTS/fork0/files/summary.json"
+  annotate_success:
+    when: success
+    subcommands:
+      - annotate
+  reanalyze_success:
+    when: success
+    subcommands:
+      - reanalyze
+  mkvdjref_success:
+    when: success
+    subcommands:
+      - mkvdjref
+  mkfastq_success:
+    when: success
+    subcommands:
+      - mkfastq
+  mkref_success:
+    when: success
+    subcommands:
+      - mkref
+
+  count_failure:
     when: failure
     subcommands:
       - count
+  multi_failure:
+    when: failure
+    subcommands:
       - multi
+  vdj_failure:
+    when: failure
+    subcommands:
       - vdj
+  aggr_failure:
+    when: failure
+    subcommands:
       - aggr
+  annotate_failure:
+    when: failure
+    subcommands:
       - annotate
+  reanalyze_failure:
+    when: failure
+    subcommands:
       - reanalyze
+  mkvdjref_failure:
+    when: failure
+    subcommands:
       - mkvdjref
+  mkfastq_failure:
+    when: failure
+    subcommands:
       - mkfastq
+  mkref_failure:
+    when: failure
+    subcommands:
       - mkref
-  pipeline_success:
-    when: success
-    subcommands:
-      - count
-      - multi
-      - vdj
-      - aggr
-      - annotate
-      - reanalyze
-      - mkvdjref
-      - mkfastq
-      - mkref
-  detected_chemistry:
-    when: success
-    subcommands:
-      - count
-      - multi
-    globs:
-      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
-  library_metrics:
-    when: success
-    subcommands:
-      - count
-      - multi
-      - vdj
-    globs:
-      lib_metrics: "SC_*/SC_MULTI_CORE/MULTI_REPORTER/SUMMARIZE_REPORTS/fork0/files/metrics_summary_json.json"
+
   library_metrics_vdj:
     when: success
     subcommands:
@@ -172,6 +195,10 @@ presets:
         exp: "(?i)^mfrp-crispr$"
       - key: mfrp-47
         exp: "(?i)^mfrp-47$"
+      - key: mfrp-96-r1
+        exp: "(?i)^mfrp-96-r1$"
+      - key: mfrp-96-rna-r2
+        exp: "(?i)^mfrp-96-rna-r2$"
       - key: mfrp-uncollapsed
         exp: "(?i)^mfrp-uncollapsed$"
       - key: mfrp-rna-r1
@@ -184,8 +211,39 @@ presets:
         exp: "(?i)^mfrp-r1-48-uncollapsed$"
       - key: mfrp-r1-no-trim-r2
         exp: "(?i)^mfrp-r1-no-trim-r2$"
+      - key: flex-v2-96-r1
+        exp: "(?i)^flex-v2-96-r1$"
+      - key: flex-v2-96-rna-r2
+        exp: "(?i)^flex-v2-96-rna-r2$"
+      - key: flex-v2-r1
+        exp: "(?i)^flex-v2-r1$"
+      - key: flex-v2-rna-r2
+        exp: "(?i)^flex-v2-rna-r2$"
+      - key: flex-v2-ab-r2:45
+        exp: "(?i)^flex-v2-ab-r2:45$"
+      - key: flex-v2-ab-r2:64
+        exp: "(?i)^flex-v2-ab-r2:64$"
+      - key: flex-v2-crispr-r2:1
+        exp: "(?i)^flex-v2-crispr-r2:1$"
+      - key: flex-v2-singleplex
+        exp: "(?i)^flex-v2-singleplex$"
       - key: arc-v1
         exp: "(?i)^arc-v1$"
+      # Chemistry sets
+      - key: mfrp
+        exp: "(?i)^mfrp$"
+      - key: mfrp-r1
+        exp: "(?i)^mfrp-r1$"
+      - key: flex-v2-r2
+        exp: "(?i)^flex-v2-r2$"
+      - key: sc3pv3
+        exp: "(?i)^sc3pv3$"
+      - key: sc3pv3ht
+        exp: "(?i)^sc3pv3ht$"
+      - key: sc3pv4
+        exp: "(?i)^sc3pv4$"
+      - key: sc3pv4ocm
+        exp: "(?i)^sc3pv4ocm$"
       - key: unknown
         exp: ".*"
 
@@ -196,8 +254,24 @@ metrics:
     groups:
       - os_stats
       - hardware_stats
-      - failure
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     recent_count: os_stats
     values:
       exponential:
@@ -276,8 +350,24 @@ metrics:
       which: pipestance
       property: type
     groups:
-      - pipeline_success
-      - failure
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     preset: filesystem
 
   - name: process_ulimit
@@ -322,7 +412,6 @@ metrics:
         vendor_id\s*:\s*(\S*)
     groups:
       - hardware_stats
-      - pipeline_success
     values:
       match:
         - exp: "(?i:Intel)"
@@ -344,7 +433,24 @@ metrics:
     # technically this is vCPU count - 1, because they're numbered from 0.
     groups:
       - hardware_stats
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     file_content:
       path: /proc/cpuinfo
       last_line: >-
@@ -391,7 +497,24 @@ metrics:
   - name: memory
     groups:
       - hardware_stats
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     file_content:
       path: /proc/meminfo
       line: >-
@@ -403,10 +526,28 @@ metrics:
 
   # Failure information
   - name: failed_stage
-    groups: failure
+    groups:
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     special: failed_stage
   - name: error
-    groups: ["failure"]
+    groups:
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     file_content:
       path: _errors
       stage_relative: true
@@ -420,88 +561,148 @@ metrics:
           key: python exception
         - exp: "not queued or running"
           key: cluster failure
+        - exp: "TXRNGR10001"
+        - exp: "TXRNGR10002"
+        - exp: "TXRNGR10003"
+        - exp: "TXRNGR10004"
+        - exp: "TXRNGR10005"
+        - exp: "TXRNGR10006"
+        - exp: "TXRNGR10007"
+        - exp: "TXRNGR10008"
+        - exp: "TXRNGR10009"
+        - exp: "TXRNGR10010"
+        - exp: "TXRNGR10011"
+        - exp: "TXRNGR10012"
+        - exp: "TXRNGR10013"
+        - exp: "TXRNGR10014"
+        - exp: "TXRNGR10015"
+        - exp: "TXRNGR10017"
+        - exp: "TXRNGR10019"
+        - exp: "TXRNGR10020"
 
   - name: subcommand
     groups:
-      - failure
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     special: subcommand
 
   # count CLI args
 
   - name: expect_cells
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --expect-cells
     values:
       float: true
 
   - name: force_cells
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --force-cells
     values:
       float: true
 
   - name: create_bam
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --create-bam
     values:
       boolean: true
 
   - name: no_bam
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --no-bam
     values:
       boolean: true
 
   - name: nosecondary
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --nosecondary
     values:
       boolean: true
 
   - name: r1_length
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --r1-length
     values:
       float: true
 
   - name: r2_length
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --r2-length
     values:
       float: true
 
   - name: include_introns
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --include-introns
     values:
       boolean: true
 
   - name: chemistry
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --chemistry
     preset: chemistry
 
   - name: no_libraries
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --no-libraries
     values:
       boolean: true
 
   - name: check_library_compatibility
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --check-library-compatibility
     values:
       boolean: true
 
   - name: filter_aggregates
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --filter-aggregates
     values:
       boolean: true
 
   - name: min-crispr-umi
-    groups: count_args
+    groups:
+      - count_success
+      - count_failure
     flag: --min-crispr-umi
     values:
       float: true
@@ -509,19 +710,25 @@ metrics:
   # vdj CLI args
 
   - name: denovo
-    groups: vdj_args
+    groups:
+      - vdj_success
+      - vdj_failure
     flag: --denovo
     values:
       boolean: true
 
   - name: skip_clonotyping
-    groups: vdj_args
+    groups:
+      - vdj_success
+      - vdj_failure
     flag: --skip-clonotyping
     values:
       boolean: true
 
   - name: chain
-    groups: vdj_args
+    groups:
+      - vdj_success
+      - vdj_failure
     flag: --chain
     values:
       match:
@@ -537,13 +744,21 @@ metrics:
   # shared mkref args
 
   - name: memgb
-    groups: mkref_args
+    groups:
+      - mkref_success
+      - mkref_failure
+      - mkvdjref_success
+      - mkvdjref_failure
     flag: --memgb
     values:
       float: true
 
   - name: nthreads
-    groups: mkref_args
+    groups:
+      - mkref_success
+      - mkref_failure
+      - mkvdjref_success
+      - mkvdjref_failure
     flag: --nthreads
     values:
       float: true
@@ -551,7 +766,9 @@ metrics:
   # aggr CLI args
 
   - name: normalize
-    groups: aggr_args
+    groups:
+      - aggr_success
+      - aggr_failure
     flag: --normalize
     values:
       match:
@@ -561,19 +778,25 @@ metrics:
           exp: ^none$
 
   - name: nosecondary
-    groups: aggr_args
+    groups:
+      - aggr_success
+      - aggr_failure
     flag: --normalize
     values:
       boolean: true
 
   - name: min-crispr-umi
-    groups: aggr_args
+    groups:
+      - aggr_success
+      - aggr_failure
     flag: --min-crispr-umi
     values:
       float: true
 
   - name: enable-tsne
-    groups: aggr_args
+    groups:
+      - aggr_success
+      - aggr_failure
     flag: --enable-tsne
     values:
       boolean: true
@@ -581,7 +804,9 @@ metrics:
   # multi config CSV in JSON format
 
   - name: emptydrops_minimum_umis
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -592,7 +817,9 @@ metrics:
       float: true
 
   - name: global_minimum_umis
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -603,7 +830,9 @@ metrics:
       float: true
 
   - name: gene_expression_r1_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -614,7 +843,9 @@ metrics:
       float: true
 
   - name: gene_expression_r2_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -625,7 +856,9 @@ metrics:
       float: true
 
   - name: chemistry
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -635,7 +868,9 @@ metrics:
     preset: chemistry
 
   - name: expect_cells
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -646,7 +881,9 @@ metrics:
       float: true
 
   - name: force_cells
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -657,7 +894,9 @@ metrics:
       float: true
 
   - name: nosecondary
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -668,7 +907,9 @@ metrics:
       boolean: true
 
   - name: include_introns
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -679,7 +920,9 @@ metrics:
       boolean: true
 
   - name: check_library_compatibility
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -690,7 +933,9 @@ metrics:
       boolean: true
 
   - name: aligner
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -705,7 +950,9 @@ metrics:
           exp: ^star$
 
   - name: create_bam
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -716,7 +963,9 @@ metrics:
       boolean: true
 
   - name: filter_probes
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -727,7 +976,9 @@ metrics:
       boolean: true
 
   - name: filter_high_occupancy_gems
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -738,7 +989,9 @@ metrics:
       boolean: true
 
   - name: min_assignment_confidence
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -749,7 +1002,9 @@ metrics:
       float: true
 
   - name: skip_cell_annotation
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -759,8 +1014,62 @@ metrics:
     values:
       boolean: true
 
+  - name: detect_chemistry_sample_reads
+    groups:
+      - multi_success
+      - multi_failure
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - detect_chemistry_sample_reads
+    values:
+      float: true
+
+  - name: detect_chemistry_total_reads
+    groups:
+      - multi_success
+      - multi_failure
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - detect_chemistry_total_reads
+    values:
+      float: true
+
+  - name: umi_min_read_length
+    groups:
+      - multi_success
+      - multi_failure
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - umi_min_read_length
+    values:
+      float: true
+
+  - name: min_major_probe_bc_frac
+    groups:
+      - multi_success
+      - multi_failure
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - gene_expression
+        - min_major_probe_bc_frac
+    values:
+      float: true
+
   - name: feature_r1_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -771,7 +1080,9 @@ metrics:
       float: true
 
   - name: feature_r2_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -782,7 +1093,9 @@ metrics:
       float: true
 
   - name: filter_aggregates
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -793,7 +1106,9 @@ metrics:
       boolean: true
 
   - name: min_crispr_umi
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -803,8 +1118,23 @@ metrics:
     values:
       float: true
 
+  - name: crispr_probe_barcode_location
+    groups:
+      - multi_success
+      - multi_failure
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - feature
+        - crispr_probe_barcode_location
+    values:
+      float: true
+
   - name: r1_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -815,7 +1145,9 @@ metrics:
       float: true
 
   - name: r2_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -826,7 +1158,9 @@ metrics:
       float: true
 
   - name: multiplet_filter
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -837,7 +1171,9 @@ metrics:
       boolean: true
 
   - name: shared_contig_filter
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -848,7 +1184,9 @@ metrics:
       boolean: true
 
   - name: umi_baseline_filter
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -859,7 +1197,9 @@ metrics:
       boolean: true
 
   - name: min_contig_length
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -870,7 +1210,9 @@ metrics:
       float: true
 
   - name: skip_clonotyping
-    groups: multi_config
+    groups:
+      - multi_success
+      - multi_failure
     file_content:
       flag: --csv
       converter: multicsv
@@ -880,18 +1222,55 @@ metrics:
     values:
       boolean: true
 
+  - name: max_reads_per_barcode
+    groups:
+      - multi_success
+      - multi_failure
+    file_content:
+      flag: --csv
+      converter: multicsv
+      json_path:
+        - vdj
+        - max_reads_per_barcode
+    values:
+      float: true
+
   # collect for all pipelines on success
   - name: runtime
     groups:
-      - pipeline_success
-      - failure
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     special: runtime
     values:
       float: true
 
   - name: core_hours
     groups:
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
     file_content:
       path: _perf
       json_path:
@@ -903,7 +1282,15 @@ metrics:
 
   - name: utime
     groups:
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
     file_content:
       path: _perf
       json_path:
@@ -915,7 +1302,15 @@ metrics:
 
   - name: disk_hwm
     groups:
-      - pipeline_success
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
     file_content:
       path: _perf
       json_path:
@@ -927,8 +1322,24 @@ metrics:
 
   - name: jobmode
     groups:
-      - pipeline_success
-      - failure
+      - count_success
+      - multi_success
+      - vdj_success
+      - aggr_success
+      - annotate_success
+      - reanalyze_success
+      - mkvdjref_success
+      - mkfastq_success
+      - mkref_success
+      - count_failure
+      - multi_failure
+      - vdj_failure
+      - aggr_failure
+      - annotate_failure
+      - reanalyze_failure
+      - mkvdjref_failure
+      - mkfastq_failure
+      - mkref_failure
     mro_flag: --jobmode
     values:
       match:
@@ -941,7 +1352,9 @@ metrics:
 
   # result of chemistry detection at the per-library level
   - name: GEX_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -950,7 +1363,9 @@ metrics:
         - name
     preset: chemistry
   - name: ANTIBODY_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -959,7 +1374,9 @@ metrics:
         - name
     preset: chemistry
   - name: ANTIGEN_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -968,7 +1385,9 @@ metrics:
         - name
     preset: chemistry
   - name: CRISPR_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -977,7 +1396,9 @@ metrics:
         - name
     preset: chemistry
   - name: MULTIPLEXING_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -986,7 +1407,9 @@ metrics:
         - name
     preset: chemistry
   - name: Custom_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -995,7 +1418,9 @@ metrics:
         - name
     preset: chemistry
   - name: VDJ_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -1004,7 +1429,9 @@ metrics:
         - name
     preset: chemistry
   - name: VDJ_B_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -1013,7 +1440,9 @@ metrics:
         - name
     preset: chemistry
   - name: VDJ_T_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -1022,7 +1451,9 @@ metrics:
         - name
     preset: chemistry
   - name: VDJ_T_GD_chemistry
-    groups: detected_chemistry
+    groups:
+      - count_success
+      - multi_success
     file_content:
       path: ${lib_metrics}
       json_path:
@@ -1031,606 +1462,956 @@ metrics:
         - name
     preset: chemistry
 
-  # pipeline metrics
+  # aggr pipeline metrics
+  - name: samples_count
+    groups:
+      - aggr_success
+    file_content:
+      path: ${aggr_metrics}
+      json_path: samples_count
+    values:
+      float: true
+  # count/multi/vdj pipeline metrics
   - name: chemistry_name
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: chemistry_name
     preset: chemistry
   - name: ANTIBODY_bc_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_bc_bases_with_q30_frac
     values:
       float: true
   - name: ANTIBODY_bc_bases_with_q30_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_bc_bases_with_q30_in_gel_bead_frac
     values:
       float: true
   - name: ANTIBODY_bc_bases_with_q30_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_bc_bases_with_q30_in_probe_frac
     values:
       float: true
   - name: ANTIBODY_feature_reads_in_cells
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_feature_reads_in_cells
     values:
       float: true
   - name: ANTIBODY_filtered_bcs_transcriptome_union
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_filtered_bcs_transcriptome_union
     values:
       float: true
   - name: ANTIBODY_frac_feature_reads_usable
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_frac_feature_reads_usable
     values:
       float: true
   - name: ANTIBODY_good_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_good_bc_frac
     values:
       float: true
   - name: ANTIBODY_good_bc_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_good_bc_in_gel_bead_frac
     values:
       float: true
   - name: ANTIBODY_good_bc_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_good_bc_in_probe_frac
     values:
       float: true
   - name: ANTIBODY_good_umi_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_good_umi_frac
     values:
       float: true
   - name: ANTIBODY_multi_cdna_pcr_dupe_reads_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_multi_cdna_pcr_dupe_reads_frac
     values:
       float: true
   - name: ANTIBODY_read_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_read_bases_with_q30_frac
     values:
       float: true
   - name: ANTIBODY_reads_lost_to_aggregate_GEMs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_reads_lost_to_aggregate_GEMs
     values:
       float: true
   - name: ANTIBODY_reads_per_cell
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_reads_per_cell
     values:
       float: true
   - name: ANTIBODY_recognized_feature_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_recognized_feature_bc_frac
     values:
       float: true
   - name: ANTIBODY_total_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_total_read_pairs
     values:
       float: true
   - name: ANTIBODY_umi_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_umi_bases_with_q30_frac
     values:
       float: true
   - name: ANTIBODY_unprocessed_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIBODY_unprocessed_read_pairs
     values:
       float: true
   - name: ANTIGEN_bc_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_bc_bases_with_q30_frac
     values:
       float: true
   - name: ANTIGEN_bc_bases_with_q30_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_bc_bases_with_q30_in_gel_bead_frac
     values:
       float: true
   - name: ANTIGEN_bc_bases_with_q30_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_bc_bases_with_q30_in_probe_frac
     values:
       float: true
   - name: ANTIGEN_feature_reads_in_cells
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_feature_reads_in_cells
     values:
       float: true
   - name: ANTIGEN_good_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_good_bc_frac
     values:
       float: true
   - name: ANTIGEN_good_umi_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_good_umi_frac
     values:
       float: true
   - name: ANTIGEN_multi_cdna_pcr_dupe_reads_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_multi_cdna_pcr_dupe_reads_frac
     values:
       float: true
   - name: ANTIGEN_read_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_read_bases_with_q30_frac
     values:
       float: true
   - name: ANTIGEN_reads_per_cell
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_reads_per_cell
     values:
       float: true
   - name: ANTIGEN_total_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_total_read_pairs
     values:
       float: true
   - name: ANTIGEN_umi_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_umi_bases_with_q30_frac
     values:
       float: true
   - name: ANTIGEN_unprocessed_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: ANTIGEN_unprocessed_read_pairs
     values:
       float: true
   - name: CRISPR_bc_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_bc_bases_with_q30_frac
     values:
       float: true
   - name: CRISPR_bc_bases_with_q30_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_bc_bases_with_q30_in_gel_bead_frac
     values:
       float: true
   - name: CRISPR_bc_bases_with_q30_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_bc_bases_with_q30_in_probe_frac
     values:
       float: true
   - name: CRISPR_feature_bc_extracted_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_feature_bc_extracted_frac
     values:
       float: true
   - name: CRISPR_feature_reads_in_cells
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_feature_reads_in_cells
     values:
       float: true
   - name: CRISPR_frac_feature_reads_usable
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_frac_feature_reads_usable
     values:
       float: true
   - name: CRISPR_good_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_good_bc_frac
     values:
       float: true
   - name: CRISPR_good_bc_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_good_bc_in_gel_bead_frac
     values:
       float: true
   - name: CRISPR_good_bc_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_good_bc_in_probe_frac
     values:
       float: true
   - name: CRISPR_good_umi_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_good_umi_frac
     values:
       float: true
   - name: CRISPR_multi_cdna_pcr_dupe_reads_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_multi_cdna_pcr_dupe_reads_frac
     values:
       float: true
   - name: CRISPR_read_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_read_bases_with_q30_frac
     values:
       float: true
   - name: CRISPR_reads_per_cell
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_reads_per_cell
     values:
       float: true
   - name: CRISPR_recognized_feature_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_recognized_feature_bc_frac
     values:
       float: true
   - name: CRISPR_total_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_total_read_pairs
     values:
       float: true
   - name: CRISPR_umi_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_umi_bases_with_q30_frac
     values:
       float: true
   - name: CRISPR_unprocessed_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_unprocessed_read_pairs
     values:
       float: true
   - name: CRISPR_unrecognized_feature_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: CRISPR_unrecognized_feature_bc_frac
     values:
       float: true
   - name: Custom_bc_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_bc_bases_with_q30_frac
     values:
       float: true
   - name: Custom_bc_bases_with_q30_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_bc_bases_with_q30_in_gel_bead_frac
     values:
       float: true
   - name: Custom_bc_bases_with_q30_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_bc_bases_with_q30_in_probe_frac
     values:
       float: true
   - name: Custom_feature_reads_in_cells
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_feature_reads_in_cells
     values:
       float: true
   - name: Custom_good_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_good_bc_frac
     values:
       float: true
   - name: Custom_good_umi_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_good_umi_frac
     values:
       float: true
   - name: Custom_multi_cdna_pcr_dupe_reads_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_multi_cdna_pcr_dupe_reads_frac
     values:
       float: true
   - name: Custom_read_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_read_bases_with_q30_frac
     values:
       float: true
   - name: Custom_reads_per_cell
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_reads_per_cell
     values:
       float: true
   - name: Custom_total_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_total_read_pairs
     values:
       float: true
   - name: Custom_umi_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_umi_bases_with_q30_frac
     values:
       float: true
   - name: Custom_unprocessed_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: Custom_unprocessed_read_pairs
     values:
       float: true
   - name: MULTIPLEXING_bc_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_bc_bases_with_q30_frac
     values:
       float: true
   - name: MULTIPLEXING_bc_bases_with_q30_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_bc_bases_with_q30_in_gel_bead_frac
     values:
       float: true
   - name: MULTIPLEXING_bc_bases_with_q30_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_bc_bases_with_q30_in_probe_frac
     values:
       float: true
   - name: MULTIPLEXING_feature_reads_in_cells
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_feature_reads_in_cells
     values:
       float: true
   - name: MULTIPLEXING_good_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_good_bc_frac
     values:
       float: true
   - name: MULTIPLEXING_good_umi_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_good_umi_frac
     values:
       float: true
   - name: MULTIPLEXING_multi_cdna_pcr_dupe_reads_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_multi_cdna_pcr_dupe_reads_frac
     values:
       float: true
   - name: MULTIPLEXING_read_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_read_bases_with_q30_frac
     values:
       float: true
   - name: MULTIPLEXING_reads_per_cell
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_reads_per_cell
     values:
       float: true
   - name: MULTIPLEXING_total_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_total_read_pairs
     values:
       float: true
   - name: MULTIPLEXING_umi_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_umi_bases_with_q30_frac
     values:
       float: true
   - name: MULTIPLEXING_unprocessed_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: MULTIPLEXING_unprocessed_read_pairs
     values:
       float: true
   - name: bc_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: bc_bases_with_q30_frac
     values:
       float: true
   - name: bc_bases_with_q30_in_gel_bead_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: bc_bases_with_q30_in_gel_bead_frac
     values:
       float: true
   - name: bc_bases_with_q30_in_probe_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: bc_bases_with_q30_in_probe_frac
     values:
       float: true
   - name: filtered_bcs_transcriptome_union
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: filtered_bcs_transcriptome_union
     values:
       float: true
   - name: good_bc_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: good_bc_frac
     values:
       float: true
   - name: good_umi_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: good_umi_frac
     values:
       float: true
   - name: multi_cdna_pcr_dupe_reads_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: multi_cdna_pcr_dupe_reads_frac
     values:
       float: true
   - name: read_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: read_bases_with_q30_frac
     values:
       float: true
   - name: reads_per_cell
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: reads_per_cell
     values:
       float: true
+  - name: sample_tags_count
+    groups:
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: sample_tags_count
+    values:
+      float: true
+  - name: sample_multiplexing_method
+    groups:
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: sample_multiplexing_method
+    values:
+      match:
+        - exp: None
+        - exp: RTL
+        - exp: OH
+        - exp: CMO
+        - exp: Hashtag
+  - name: samples_with_any_singlets
+    groups:
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: samples_with_any_singlets
+    values:
+      float: true
   - name: total_cell_associated_partitions
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: total_cell_associated_partitions
     values:
       float: true
   - name: total_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: total_read_pairs
     values:
       float: true
   - name: umi_bases_with_q30_frac
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: umi_bases_with_q30_frac
     values:
       float: true
   - name: unprocessed_read_pairs
-    groups: library_metrics
+    groups:
+      - count_success
+      - multi_success
+      - vdj_success
     file_content:
       path: ${lib_metrics}
       json_path: unprocessed_read_pairs
+    values:
+      float: true
+  - name: raw_matrix_barcodes_count
+    groups:
+      - count_success
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: raw_matrix_barcodes_count
+    values:
+      float: true
+  - name: raw_matrix_features_count
+    groups:
+      - count_success
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: raw_matrix_features_count
+    values:
+      float: true
+  - name: raw_matrix_nonzero_entries_count
+    groups:
+      - count_success
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: raw_matrix_nonzero_entries_count
+    values:
+      float: true
+  - name: filtered_matrix_barcodes_count
+    groups:
+      - count_success
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: filtered_matrix_barcodes_count
+    values:
+      float: true
+  - name: filtered_matrix_features_count
+    groups:
+      - count_success
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: filtered_matrix_features_count
+    values:
+      float: true
+  - name: filtered_matrix_nonzero_entries_count
+    groups:
+      - count_success
+      - multi_success
+    file_content:
+      path: ${lib_metrics}
+      json_path: filtered_matrix_nonzero_entries_count
     values:
       float: true
 
@@ -2052,6 +2833,472 @@ metrics:
       json_path: total_singlets
     values:
       float: true
+  - name: sample_tags_count
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: sample_tags_count
+    values:
+      float: true
+  - name: sample_multiplexing_method
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: sample_multiplexing_method
+    values:
+      match:
+        - exp: None
+        - exp: RTL
+        - exp: OH
+        - exp: CMO
+        - exp: Hashtag
+  - name: sample_tags
+    groups: sample_metrics
+    file_content:
+      path: ${sample_metrics}
+      json_path: sample_tags
+    values:
+      match:
+        - key: None
+          exp: ^$
+        - key: multiple_tags
+          exp: \|
+        # Flex v2 tags
+        - exp: A-A01
+        - exp: A-A02
+        - exp: A-A03
+        - exp: A-A04
+        - exp: A-A05
+        - exp: A-A06
+        - exp: A-A07
+        - exp: A-A08
+        - exp: A-A09
+        - exp: A-A10
+        - exp: A-A11
+        - exp: A-A12
+        - exp: A-B01
+        - exp: A-B02
+        - exp: A-B03
+        - exp: A-B04
+        - exp: A-B05
+        - exp: A-B06
+        - exp: A-B07
+        - exp: A-B08
+        - exp: A-B09
+        - exp: A-B10
+        - exp: A-B11
+        - exp: A-B12
+        - exp: A-C01
+        - exp: A-C02
+        - exp: A-C03
+        - exp: A-C04
+        - exp: A-C05
+        - exp: A-C06
+        - exp: A-C07
+        - exp: A-C08
+        - exp: A-C09
+        - exp: A-C10
+        - exp: A-C11
+        - exp: A-C12
+        - exp: A-D01
+        - exp: A-D02
+        - exp: A-D03
+        - exp: A-D04
+        - exp: A-D05
+        - exp: A-D06
+        - exp: A-D07
+        - exp: A-D08
+        - exp: A-D09
+        - exp: A-D10
+        - exp: A-D11
+        - exp: A-D12
+        - exp: A-E01
+        - exp: A-E02
+        - exp: A-E03
+        - exp: A-E04
+        - exp: A-E05
+        - exp: A-E06
+        - exp: A-E07
+        - exp: A-E08
+        - exp: A-E09
+        - exp: A-E10
+        - exp: A-E11
+        - exp: A-E12
+        - exp: A-F01
+        - exp: A-F02
+        - exp: A-F03
+        - exp: A-F04
+        - exp: A-F05
+        - exp: A-F06
+        - exp: A-F07
+        - exp: A-F08
+        - exp: A-F09
+        - exp: A-F10
+        - exp: A-F11
+        - exp: A-F12
+        - exp: A-G01
+        - exp: A-G02
+        - exp: A-G03
+        - exp: A-G04
+        - exp: A-G05
+        - exp: A-G06
+        - exp: A-G07
+        - exp: A-G08
+        - exp: A-G09
+        - exp: A-G10
+        - exp: A-G11
+        - exp: A-G12
+        - exp: A-H01
+        - exp: A-H02
+        - exp: A-H03
+        - exp: A-H04
+        - exp: A-H05
+        - exp: A-H06
+        - exp: A-H07
+        - exp: A-H08
+        - exp: A-H09
+        - exp: A-H10
+        - exp: A-H11
+        - exp: A-H12
+        - exp: B-A01
+        - exp: B-A02
+        - exp: B-A03
+        - exp: B-A04
+        - exp: B-A05
+        - exp: B-A06
+        - exp: B-A07
+        - exp: B-A08
+        - exp: B-A09
+        - exp: B-A10
+        - exp: B-A11
+        - exp: B-A12
+        - exp: B-B01
+        - exp: B-B02
+        - exp: B-B03
+        - exp: B-B04
+        - exp: B-B05
+        - exp: B-B06
+        - exp: B-B07
+        - exp: B-B08
+        - exp: B-B09
+        - exp: B-B10
+        - exp: B-B11
+        - exp: B-B12
+        - exp: B-C01
+        - exp: B-C02
+        - exp: B-C03
+        - exp: B-C04
+        - exp: B-C05
+        - exp: B-C06
+        - exp: B-C07
+        - exp: B-C08
+        - exp: B-C09
+        - exp: B-C10
+        - exp: B-C11
+        - exp: B-C12
+        - exp: B-D01
+        - exp: B-D02
+        - exp: B-D03
+        - exp: B-D04
+        - exp: B-D05
+        - exp: B-D06
+        - exp: B-D07
+        - exp: B-D08
+        - exp: B-D09
+        - exp: B-D10
+        - exp: B-D11
+        - exp: B-D12
+        - exp: B-E01
+        - exp: B-E02
+        - exp: B-E03
+        - exp: B-E04
+        - exp: B-E05
+        - exp: B-E06
+        - exp: B-E07
+        - exp: B-E08
+        - exp: B-E09
+        - exp: B-E10
+        - exp: B-E11
+        - exp: B-E12
+        - exp: B-F01
+        - exp: B-F02
+        - exp: B-F03
+        - exp: B-F04
+        - exp: B-F05
+        - exp: B-F06
+        - exp: B-F07
+        - exp: B-F08
+        - exp: B-F09
+        - exp: B-F10
+        - exp: B-F11
+        - exp: B-F12
+        - exp: B-G01
+        - exp: B-G02
+        - exp: B-G03
+        - exp: B-G04
+        - exp: B-G05
+        - exp: B-G06
+        - exp: B-G07
+        - exp: B-G08
+        - exp: B-G09
+        - exp: B-G10
+        - exp: B-G11
+        - exp: B-G12
+        - exp: B-H01
+        - exp: B-H02
+        - exp: B-H03
+        - exp: B-H04
+        - exp: B-H05
+        - exp: B-H06
+        - exp: B-H07
+        - exp: B-H08
+        - exp: B-H09
+        - exp: B-H10
+        - exp: B-H11
+        - exp: B-H12
+        - exp: C-A01
+        - exp: C-A02
+        - exp: C-A03
+        - exp: C-A04
+        - exp: C-A05
+        - exp: C-A06
+        - exp: C-A07
+        - exp: C-A08
+        - exp: C-A09
+        - exp: C-A10
+        - exp: C-A11
+        - exp: C-A12
+        - exp: C-B01
+        - exp: C-B02
+        - exp: C-B03
+        - exp: C-B04
+        - exp: C-B05
+        - exp: C-B06
+        - exp: C-B07
+        - exp: C-B08
+        - exp: C-B09
+        - exp: C-B10
+        - exp: C-B11
+        - exp: C-B12
+        - exp: C-C01
+        - exp: C-C02
+        - exp: C-C03
+        - exp: C-C04
+        - exp: C-C05
+        - exp: C-C06
+        - exp: C-C07
+        - exp: C-C08
+        - exp: C-C09
+        - exp: C-C10
+        - exp: C-C11
+        - exp: C-C12
+        - exp: C-D01
+        - exp: C-D02
+        - exp: C-D03
+        - exp: C-D04
+        - exp: C-D05
+        - exp: C-D06
+        - exp: C-D07
+        - exp: C-D08
+        - exp: C-D09
+        - exp: C-D10
+        - exp: C-D11
+        - exp: C-D12
+        - exp: C-E01
+        - exp: C-E02
+        - exp: C-E03
+        - exp: C-E04
+        - exp: C-E05
+        - exp: C-E06
+        - exp: C-E07
+        - exp: C-E08
+        - exp: C-E09
+        - exp: C-E10
+        - exp: C-E11
+        - exp: C-E12
+        - exp: C-F01
+        - exp: C-F02
+        - exp: C-F03
+        - exp: C-F04
+        - exp: C-F05
+        - exp: C-F06
+        - exp: C-F07
+        - exp: C-F08
+        - exp: C-F09
+        - exp: C-F10
+        - exp: C-F11
+        - exp: C-F12
+        - exp: C-G01
+        - exp: C-G02
+        - exp: C-G03
+        - exp: C-G04
+        - exp: C-G05
+        - exp: C-G06
+        - exp: C-G07
+        - exp: C-G08
+        - exp: C-G09
+        - exp: C-G10
+        - exp: C-G11
+        - exp: C-G12
+        - exp: C-H01
+        - exp: C-H02
+        - exp: C-H03
+        - exp: C-H04
+        - exp: C-H05
+        - exp: C-H06
+        - exp: C-H07
+        - exp: C-H08
+        - exp: C-H09
+        - exp: C-H10
+        - exp: C-H11
+        - exp: C-H12
+        - exp: D-A01
+        - exp: D-A02
+        - exp: D-A03
+        - exp: D-A04
+        - exp: D-A05
+        - exp: D-A06
+        - exp: D-A07
+        - exp: D-A08
+        - exp: D-A09
+        - exp: D-A10
+        - exp: D-A11
+        - exp: D-A12
+        - exp: D-B01
+        - exp: D-B02
+        - exp: D-B03
+        - exp: D-B04
+        - exp: D-B05
+        - exp: D-B06
+        - exp: D-B07
+        - exp: D-B08
+        - exp: D-B09
+        - exp: D-B10
+        - exp: D-B11
+        - exp: D-B12
+        - exp: D-C01
+        - exp: D-C02
+        - exp: D-C03
+        - exp: D-C04
+        - exp: D-C05
+        - exp: D-C06
+        - exp: D-C07
+        - exp: D-C08
+        - exp: D-C09
+        - exp: D-C10
+        - exp: D-C11
+        - exp: D-C12
+        - exp: D-D01
+        - exp: D-D02
+        - exp: D-D03
+        - exp: D-D04
+        - exp: D-D05
+        - exp: D-D06
+        - exp: D-D07
+        - exp: D-D08
+        - exp: D-D09
+        - exp: D-D10
+        - exp: D-D11
+        - exp: D-D12
+        - exp: D-E01
+        - exp: D-E02
+        - exp: D-E03
+        - exp: D-E04
+        - exp: D-E05
+        - exp: D-E06
+        - exp: D-E07
+        - exp: D-E08
+        - exp: D-E09
+        - exp: D-E10
+        - exp: D-E11
+        - exp: D-E12
+        - exp: D-F01
+        - exp: D-F02
+        - exp: D-F03
+        - exp: D-F04
+        - exp: D-F05
+        - exp: D-F06
+        - exp: D-F07
+        - exp: D-F08
+        - exp: D-F09
+        - exp: D-F10
+        - exp: D-F11
+        - exp: D-F12
+        - exp: D-G01
+        - exp: D-G02
+        - exp: D-G03
+        - exp: D-G04
+        - exp: D-G05
+        - exp: D-G06
+        - exp: D-G07
+        - exp: D-G08
+        - exp: D-G09
+        - exp: D-G10
+        - exp: D-G11
+        - exp: D-G12
+        - exp: D-H01
+        - exp: D-H02
+        - exp: D-H03
+        - exp: D-H04
+        - exp: D-H05
+        - exp: D-H06
+        - exp: D-H07
+        - exp: D-H08
+        - exp: D-H09
+        - exp: D-H10
+        - exp: D-H11
+        - exp: D-H12
+        # Flex v1
+        - exp: BC001
+        - exp: BC002
+        - exp: BC003
+        - exp: BC004
+        - exp: BC005
+        - exp: BC006
+        - exp: BC007
+        - exp: BC008
+        - exp: BC009
+        - exp: BC010
+        - exp: BC011
+        - exp: BC012
+        - exp: BC013
+        - exp: BC014
+        - exp: BC015
+        - exp: BC016
+        - exp: AB001
+        - exp: AB002
+        - exp: AB003
+        - exp: AB004
+        - exp: AB005
+        - exp: AB006
+        - exp: AB007
+        - exp: AB008
+        - exp: AB009
+        - exp: AB010
+        - exp: AB011
+        - exp: AB012
+        - exp: AB013
+        - exp: AB014
+        - exp: AB015
+        - exp: AB016
+        # OCM
+        - exp: OB1
+        - exp: OB2
+        - exp: OB3
+        - exp: OB4
+        # CMO
+        - exp: CMO301
+        - exp: CMO302
+        - exp: CMO303
+        - exp: CMO304
+        - exp: CMO305
+        - exp: CMO306
+        - exp: CMO307
+        - exp: CMO308
+        - exp: CMO309
+        - exp: CMO310
+        - exp: CMO311
+        - exp: CMO312
 
   # VDJ sample-level metrics
 

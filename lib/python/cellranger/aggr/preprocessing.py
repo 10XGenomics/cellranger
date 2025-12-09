@@ -73,8 +73,7 @@ def check_molecule_info_version_split(args):
                     )
         elif file_version < 2:
             martian.exit(
-                "The molecule info HDF5 file (%s, version: %d) was produced by an older software version. Reading these files is unsupported."
-                % (mc_h5, file_version)
+                f"The molecule info HDF5 file ({mc_h5}, version: {file_version}) was produced by an older software version. Reading these files is unsupported."
             )
         elif file_version == 2:
             # CRv1.3-generated files lack essential metrics introduced in CRv2 (force_cells, conf_mapped_filtered_bc_reads)

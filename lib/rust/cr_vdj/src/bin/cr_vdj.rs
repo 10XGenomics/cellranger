@@ -1,49 +1,5 @@
-// Warning groups (as of rust 1.55)
-#![deny(
-    future_incompatible,
-    nonstandard_style,
-    rust_2018_compatibility,
-    rust_2021_compatibility,
-    rust_2018_idioms,
-    unused
-)]
-// Other warnings (as of rust 1.55)
-#![deny(
-    asm_sub_register,
-    bad_asm_style,
-    bindings_with_variant_name,
-    clashing_extern_declarations,
-    confusable_idents,
-    const_item_mutation,
-    deprecated,
-    deref_nullptr,
-    drop_bounds,
-    dyn_drop,
-    exported_private_dependencies,
-    function_item_references,
-    improper_ctypes,
-    improper_ctypes_definitions,
-    incomplete_features,
-    inline_no_sanitize,
-    invalid_value,
-    irrefutable_let_patterns,
-    large_assignments,
-    mixed_script_confusables,
-    non_shorthand_field_patterns,
-    no_mangle_generic_items,
-    overlapping_range_endpoints,
-    renamed_and_removed_lints,
-    stable_features,
-    temporary_cstring_as_ptr,
-    trivial_bounds,
-    type_alias_bounds,
-    uncommon_codepoints,
-    unconditional_recursion,
-    unknown_lints,
-    unnameable_test_items,
-    unused_comparisons,
-    while_true
-)]
+//! cr_vdj
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use docopt::Docopt;
@@ -81,6 +37,7 @@ fn main() -> Result<()> {
         cr_vdj::copy_vdj_reference::CopyVdjReference,
         cr_vdj::summarize_vdj_filters::SummarizeVdjFilters,
         cr_vdj::create_barcode_csv::CreateBarcodeCsv,
+        cr_vdj::make_vdj_plots::MakeVdjPlots,
         clonotype_assigner::Assigner,
         clonotype_assigner::write_clonotype_outs::WriteClonotypeOuts,
         clonotype_assigner::fill_clonotype_info::FillClonotypeInfo,
@@ -88,14 +45,13 @@ fn main() -> Result<()> {
         clonotype_assigner::write_concat_ref_outs::WriteConcatRefOuts,
         clonotype_assigner::write_consensus_bam::WriteConsensusBam,
         clonotype_assigner::write_consensus_txt::WriteConsensusTxt,
-        clonotype_assigner::run_enclone_aggr::RunEncloneAggr,
         vdj_asm_asm::Assembly,
         vdj_asm_asm::asm_call_cells::AsmCallCells,
         vdj_asm_asm::make_exact_clonotypes::MakeExactClonotypes,
         vdj_asm_asm::filter_exact_clonotypes::FilterExactClonotypes,
         vdj_asm_asm::airrfilter::AirrFilter,
         vdj_asm_asm::write_contig_outs::WriteContigOuts,
-        vdj_asm_asm::handle_gex_cells::HandleGexCells,
+        vdj_asm_asm::filter_sample_specific::FilterSampleSpecific,
         vdj_asm_asm::make_filter_switch::MakeFilterSwitch,
         vdj_asm_asm::merge_per_sample_annotations::MergePerSampleAnnotations,
         vdj_asm_asm::write_ann_csv::WriteAnnCsv,
@@ -108,7 +64,7 @@ fn main() -> Result<()> {
         let adapter = MartianAdapter::new(stage_registry);
 
         // Suppress any logging that would be emitted via crate log.
-        let adapter = adapter.log_level(martian::LevelFilter::Warn);
+        let adapter = adapter.log_level(LevelFilter::Warn);
 
         let retcode = adapter.run(args.arg_adapter);
         std::process::exit(retcode);

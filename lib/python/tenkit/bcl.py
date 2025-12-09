@@ -21,14 +21,11 @@ import martian
 
 @unique
 class Bcl2FastqVersion(Enum):
-    V1 = auto()
     V2 = auto()
 
     def __str__(self):
         # These used to be represented as old/new, preserving for error messages
-        if self == Bcl2FastqVersion.V1:
-            return "OLD"
-        elif self == Bcl2FastqVersion.V2:
+        if self == Bcl2FastqVersion.V2:
             return "NEW"
         else:
             raise RuntimeError()
@@ -281,15 +278,12 @@ class RTAVersionInformation:
         Will call martian.exit() with an error message if
         there isn't a compatible version available.
         """
-        # Try to get both, returns None  for v1/v2 if it doesn't work
-        v1 = _get_bcl2fastq_v1(hostname)
-        v2, v2_msg = _get_bcl2fastq_v2(hostname)
-        if v1 is None and v2 is None:
+        v2, msg = _get_bcl2fastq_v2(hostname)
+        if v2 is None:
             martian.exit(
-                "No valid bcl2fastq found on path. Recommended version of bcl2fastq is v2.20.\n"
+                f"No valid bcl2fastq found on path. Recommended version of bcl2fastq is v2.20.\n{msg}"
             )
-            raise SystemExit()
-        if v2 is not None:
+        else:
             v2x, v2y = [int(v2_part) for v2_part in v2.split(b".")][0:2]
 
         not_novaseq_x = self.sequencer != IlluminaSequencer.NovaSeqX
@@ -297,21 +291,10 @@ class RTAVersionInformation:
         if not_novaseq_x:
             x, y, z = [int(xi) for xi in self.rta_version.split(".")][0:3]
             if x == 1 and ((y < 18) or ((y == 18) and z < 54)):
-                # RTA <1.18.54
-                # must run 1.8.4
-                if v1 is not None:
-                    return Bcl2FastqVersion.V1, v1
-                else:
-                    msg = f"mkfastq requires bcl2fastq 1.8.4 for RTA version: {self.rta_version}"
-                    martian.exit(msg)
-                    raise SystemExit()
+                martian.exit("RTA versions prior to 1.18.54 are no longer supported.")
+
         # RTA >= 1.18.54 -> run 2.17 or higher
         # NovaSeq X -> run 2.20 or higher
-        if v2 is None:
-            msg = f"No valid bcl2fastq found on path. Recommended version of bcl2fastq is v2.20.\n\n{v2_msg}"
-            martian.exit(msg)
-            raise SystemExit()
-
         minv2y = 17 if not_novaseq_x else 20
         if v2x == 2 and v2y >= minv2y:
             return Bcl2FastqVersion.V2, v2
@@ -319,24 +302,6 @@ class RTAVersionInformation:
             martian.exit(
                 "Incorrect bcl2fastq version found: %s. Recommended version of bcl2fastq is v2.20."
             )
-            raise SystemExit()
-
-
-def _get_bcl2fastq_v1(hostname: str) -> str | None:
-    if shutil.which("configureBclToFastq.pl"):
-        if not shutil.which("perl"):
-            martian.log_info(
-                f"On machine: {hostname}, perl not found on PATH. (Required for configureBclToFastq.pl).  "
-                "This could indicate a newer bcl2fastq is being used."
-            )
-            return None
-        return "1.8.4"
-    else:
-        martian.log_info(
-            f"On machine: {hostname}, configureBclToFastq.pl not found on PATH.  "
-            "This could indicate a newer bcl2fastq is being used."
-        )
-        return None
 
 
 def _get_bcl2fastq_v2(hostname: str) -> tuple[bytes, None] | tuple[None, str]:
@@ -610,7 +575,7 @@ def get_bcl2fastq_read_type_map(
             # index is I7-only, so this goes first
             if read_name == barcode_read:
                 reads_counted += 1
-                read_map[read_name] = "R%d" % reads_counted
+                read_map[read_name] = f"R{reads_counted}"
             # ignore I2 if ignore_dual_index specified
             elif ignore_dual_index:
                 continue
@@ -618,5 +583,5 @@ def get_bcl2fastq_read_type_map(
                 read_map[read_name] = "I2"
         else:
             reads_counted += 1
-            read_map[read_name] = "R%d" % reads_counted
+            read_map[read_name] = f"R{reads_counted}"
     return read_map

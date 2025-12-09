@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+import cellranger.bam_constants as bam_constants
 import cellranger.constants as cr_constants
 import cellranger.h5_constants as h5_constants
-from cellranger.targeted.simple_utils import load_target_csv_metadata
 
 if TYPE_CHECKING:
     from pysam import AlignmentFile
@@ -43,16 +43,9 @@ def get_reference_genome_fasta(reference_path: str) -> str:
     return os.path.join(reference_path, cr_constants.REFERENCE_FASTA_PATH)
 
 
-def get_reference_genomes(
-    reference_path: str | None, target_set_path: str | None = None
-) -> list[str]:
-    """Return the genome names from the reference transcriptome, or target set, or ["NONE"]."""
-    if reference_path is not None:
-        return _load_reference_metadata_file(reference_path)[cr_constants.REFERENCE_GENOMES_KEY]
-    elif target_set_path is not None:
-        return [load_target_csv_metadata(target_set_path, "probe set")["reference_genome"]]
-    else:
-        return ["NONE"]
+def get_reference_genomes(reference_path: str) -> list[str]:
+    """Return the genome names from the reference transcriptome."""
+    return _load_reference_metadata_file(reference_path)[cr_constants.REFERENCE_GENOMES_KEY]
 
 
 def is_arc_reference(reference_path: str) -> bool:
@@ -71,7 +64,7 @@ def get_mem_gb_request_from_genome_fasta(reference_path: str) -> float:
     return np.ceil(
         max(
             h5_constants.MIN_MEM_GB,
-            cr_constants.BAM_CHUNK_SIZE_GB + max(1, 2 * int(genome_size_gb)),
+            bam_constants.BAM_CHUNK_SIZE_GB + max(1, 2 * int(genome_size_gb)),
         )
     )
 
@@ -108,7 +101,7 @@ def chunk_reference(
     chunks.append([])
 
     current_chunk_size = 0
-    while len(process):
+    while process:
         piece = process.pop()
         piece_size = piece[2] - piece[1]
         if current_chunk_size + piece_size < chunk_size:
@@ -126,4 +119,5 @@ def chunk_reference(
 
 
 def get_ref_name_from_genomes(genomes: Iterable[str]):
+    # Jira: CELLRANGER-9146: Use MULTI_GENOME_SEPARATOR instead of "_and_"
     return "_and_".join(genomes)

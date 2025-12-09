@@ -5,11 +5,11 @@ path = '../amino'
 [dependencies.anyhow]
 workspace = true
 
-[dependencies.bio_edit]
-path = '../bio_edit'
+[dependencies.bio]
+workspace = true
 
-[dependencies.enclone_core]
-path = '../enclone_core'
+[dependencies.debruijn]
+workspace = true
 
 [dependencies.enclone_proto]
 path = '../enclone_proto'
@@ -17,10 +17,31 @@ path = '../enclone_proto'
 [dependencies.equiv]
 path = '../equiv'
 
+[dependencies.graph_simple]
+path = '../graph_simple'
+
+[dependencies.io_utils]
+path = '../io_utils'
+
 [dependencies.itertools]
 workspace = true
 
+[dependencies.log]
+workspace = true
+
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.martian-filetypes]
+workspace = true
+
 [dependencies.permutation]
+workspace = true
+
+[dependencies.petgraph]
 workspace = true
 
 [dependencies.qd]
@@ -29,11 +50,20 @@ workspace = true
 [dependencies.rayon]
 workspace = true
 
+[dependencies.serde]
+workspace = true
+
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.string_utils]
+path = '../string_utils'
+
 [dependencies.vdj_ann]
 path = '../vdj_ann'
+
+[dependencies.vdj_types]
+path = '../vdj_types'
 
 [dependencies.vector_utils]
 path = '../vector_utils'
@@ -41,9 +71,16 @@ path = '../vector_utils'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'enclone_process'
 publish = false
 version = '0.1.0'
+
+[package.metadata]
+[package.metadata.cargo-machete]
+ignored = ['martian']

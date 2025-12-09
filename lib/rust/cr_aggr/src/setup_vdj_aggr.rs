@@ -1,12 +1,13 @@
 //! Martian stage SETUP_VDJ_AGGR
+#![expect(missing_docs)]
 
 use crate::parse_aggr_csv::VdjAggrCsvLibrary;
 use anyhow::Result;
+use enclone_process::Dataset;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::{JsonFile, JsonFormat};
-use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeWrite, LazyFileTypeIO, LazyWrite};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -14,20 +15,6 @@ use std::path::PathBuf;
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_proto::io::VdjProtoReader;
 use vdj_reference::VdjReceptor;
-
-#[derive(Debug, Clone, Serialize, Deserialize, MartianType)]
-pub struct EncloneMetaRow {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tcr: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tcrgd: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bcr: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    gex: Option<PathBuf>,
-    origin: String,
-    donor: String,
-}
 
 martian_filetype! { _EncloneProtoMeta, "em" }
 pub type EncloneProtoMetaFormat = JsonFormat<_EncloneProtoMeta, enclone_proto::types::Metadata>;
@@ -42,8 +29,7 @@ pub struct SetupVdjAggrStageInputs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct SetupVdjAggrStageOutputs {
-    pub contig_ann_json_files: Vec<JsonFile<Vec<ContigAnnotation>>>, // One per VdjAggrSampleDef
-    pub enclone_input_csv: CsvFile<EncloneMetaRow>,
+    pub origin_info: Vec<Dataset>,
     pub enclone_gem_well_meta: EncloneProtoMetaFormat,
     pub vdj_reference_path: PathBuf,
     pub combined_ann_json: JsonFile<Vec<ContigAnnotation>>,
@@ -56,8 +42,7 @@ pub struct SetupVdjAggrChunkInputs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct SetupVdjAggrChunkOutputs {
-    chunk_ann_json: JsonFile<Vec<ContigAnnotation>>,
-    enclone_meta_row: EncloneMetaRow,
+    dataset: Dataset,
     #[mro_type = "map"]
     enclone_gem_well_info: HashMap<u32, enclone_proto::types::GemWellInfo>,
 }
@@ -134,22 +119,11 @@ impl MartianStage for SetupVdjAggr {
             );
         }
 
-        let files_path = rover.files_path().to_path_buf();
-        let (bcr, tcr, tcrgd) = match args.receptor {
-            VdjReceptor::TR => (None, Some(files_path), None),
-            VdjReceptor::IG => (Some(files_path), None, None),
-            VdjReceptor::TRGD => (None, None, Some(files_path)),
-        };
-
         Ok(SetupVdjAggrChunkOutputs {
-            chunk_ann_json,
-            enclone_meta_row: EncloneMetaRow {
-                tcr,
-                tcrgd,
-                bcr,
-                gex: None,
-                origin: sdef.origin.clone(),
-                donor: sdef.donor.clone(),
+            dataset: Dataset {
+                file: chunk_ann_json,
+                donor_id: sdef.origin.clone(),
+                origin_id: sdef.donor.clone(),
             },
             enclone_gem_well_info,
         })
@@ -165,14 +139,6 @@ impl MartianStage for SetupVdjAggr {
         let vdj_reference_path: PathBuf = rover.make_path("reference");
         VdjProtoReader::read_reference(&args.libraries[0].vdj_contig_info)?
             .write_to_folder(&vdj_reference_path)?;
-
-        let enclone_input_csv: CsvFile<_> = rover.make_path("enclone_meta");
-        enclone_input_csv.write(
-            &chunk_outs
-                .iter()
-                .map(|co| co.enclone_meta_row.clone())
-                .collect(),
-        )?;
 
         let enclone_gem_well_meta: EncloneProtoMetaFormat =
             rover.make_path("enclone_gem_well_meta");
@@ -191,22 +157,20 @@ impl MartianStage for SetupVdjAggr {
             per_gem_well_info,
         })?;
 
-        let contig_ann_json_files: Vec<_> =
-            chunk_outs.into_iter().map(|co| co.chunk_ann_json).collect();
+        let origin_info: Vec<_> = chunk_outs.into_iter().map(|co| co.dataset).collect();
 
         // Create the merged annotation JSON. Would be better to use a binary format.
         let combined_ann_json: JsonFile<_> = rover.make_path("combined_contig_annotations");
         let mut contig_writer = combined_ann_json.lazy_writer()?;
-        for ann_json in &contig_ann_json_files {
-            for ann in ann_json.lazy_reader()? {
+        for dataset in &origin_info {
+            for ann in dataset.file.lazy_reader()? {
                 let ann: ContigAnnotation = ann?;
                 contig_writer.write_item(&ann)?;
             }
         }
 
         Ok(SetupVdjAggrStageOutputs {
-            contig_ann_json_files,
-            enclone_input_csv,
+            origin_info,
             enclone_gem_well_meta,
             vdj_reference_path,
             combined_ann_json,
@@ -243,8 +207,13 @@ mod tests {
         let tempdir = tempfile::tempdir()?;
         let write_outs = SetupVdjAggr.test_run(&tempdir, write_args)?;
         let mut expected_csv_rows = vec![String::from("bcr,origin,donor")];
-        for (i, ann_json) in write_outs.contig_ann_json_files.into_iter().enumerate() {
-            let anns: Vec<vdj_ann::annotate::ContigAnnotation> = ann_json.read()?;
+        for (i, ann_json) in write_outs
+            .origin_info
+            .into_iter()
+            .map(|ds| ds.file)
+            .enumerate()
+        {
+            let anns: Vec<ContigAnnotation> = ann_json.read()?;
             expected_csv_rows.push(format!(
                 "{},Origin,Donor",
                 ann_json.as_ref().parent().unwrap().display()
@@ -265,11 +234,6 @@ mod tests {
                 );
             }
         }
-
-        assert_eq!(
-            expected_csv_rows.join("\n"),
-            std::fs::read_to_string(write_outs.enclone_input_csv)?.trim_end()
-        );
 
         let donor = "Donor".to_string();
         let gw_info = |id: &str| enclone_proto::types::GemWellInfo {
@@ -317,17 +281,12 @@ mod tests {
         let tempdir = tempfile::tempdir()?;
         let write_outs = SetupVdjAggr.test_run(&tempdir, write_args)?;
         let mut expected_csv_rows = vec![String::from("tcr,origin,donor")];
-        for ann_json in write_outs.contig_ann_json_files {
+        for ds in write_outs.origin_info {
             expected_csv_rows.push(format!(
                 "{},Origin,Donor",
-                ann_json.as_ref().parent().unwrap().display()
+                ds.file.as_ref().parent().unwrap().display()
             ));
         }
-
-        assert_eq!(
-            expected_csv_rows.join("\n"),
-            std::fs::read_to_string(write_outs.enclone_input_csv)?.trim_end()
-        );
         Ok(())
     }
 

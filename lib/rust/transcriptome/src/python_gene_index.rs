@@ -1,11 +1,11 @@
 //! Datatypes for creating the GeneIndex class used in the
 //! python codebase from the reference GTF file.
+#![expect(missing_docs)]
 
 use crate::Transcriptome;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bio::io::fasta::IndexedReader;
 use bio_types::strand::ReqStrand;
-use itertools::Itertools;
 use ordered_float::NotNan;
 use serde::Serialize;
 use serde_json;
@@ -85,15 +85,12 @@ fn python_gene_index<R: Read + Seek>(
         }
 
         let mut gene_intervals = Vec::new();
-
         all_intervals.sort_by(|i, j| i.chrom.cmp(&j.chrom));
-        for (chrom, chrom_intervals) in &all_intervals.iter().group_by(|i| &i.chrom) {
-            let chrom_intervals: Vec<_> = chrom_intervals.collect();
+        for chrom_intervals in all_intervals.chunk_by(|x, y| x.chrom == y.chrom) {
             let start = chrom_intervals.iter().map(|i| i.start).min().unwrap();
             let end = chrom_intervals.iter().map(|i| i.end).max().unwrap();
-
             let gene_interval = Interval {
-                chrom: chrom.clone(),
+                chrom: chrom_intervals[0].chrom.clone(),
                 start,
                 end,
                 length: end - start,
@@ -156,8 +153,8 @@ fn python_gene_index<R: Read + Seek>(
 
 /// Open up an indexed fasta reader.  If the .fai isn't available, create it transiently on the fly
 /// using samtools.
-fn open_fasta_reader(path: &Path) -> Result<bio::io::fasta::IndexedReader<File>> {
-    if let Ok(r) = bio::io::fasta::IndexedReader::from_file(&path) {
+fn open_fasta_reader(path: &Path) -> Result<IndexedReader<File>> {
+    if let Ok(r) = IndexedReader::from_file(&path) {
         return Ok(r);
     }
 
@@ -177,10 +174,7 @@ fn open_fasta_reader(path: &Path) -> Result<bio::io::fasta::IndexedReader<File>>
         let fai = fa_symlink.with_extension("fa.fai");
         let index = bio::io::fasta::Index::from_file(&fai).unwrap();
         // load the original fasta file, using the in-memory index
-        Ok(bio::io::fasta::IndexedReader::with_index(
-            File::open(path)?,
-            index,
-        ))
+        Ok(IndexedReader::with_index(File::open(path)?, index))
     } else {
         bail!(
             "Unable to create fasta index file. {}",

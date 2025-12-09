@@ -1,6 +1,7 @@
 // Stage to quickly get the counts of UMIs and Reads per Barcode for valid
 // cell barcodes for a given feature type (e.g. AB, CMO, GEX), etc.
-//use strum_macros::EnumString;
+#![deny(missing_docs)]
+//use strum::EnumString;
 use cr_h5::molecule_info::{
     BarcodeIdxType, FullUmiCount, LibraryIdxType, MoleculeInfoIterator, MoleculeInfoReader,
 };
@@ -14,7 +15,7 @@ use std::str::FromStr;
 
 //  A struct that can be used to filter out barcodes from a Molecule Info that are not associated
 // with a spot and/or cell
-pub(crate) struct FilteredBarcodeFilter {
+pub(super) struct FilteredBarcodeFilter {
     filtered_barcodes: HashSet<(BarcodeIdxType, LibraryIdxType)>,
     // last valid bc_lib_group
     last_valid_bc_lib: (BarcodeIdxType, LibraryIdxType),
@@ -23,11 +24,10 @@ pub(crate) struct FilteredBarcodeFilter {
 }
 
 impl FilteredBarcodeFilter {
-    pub(crate) fn new(path: &Path) -> Self {
+    pub(super) fn new(path: &Path) -> Self {
         // Get Cell-Associated Barcodes
-        let bcs = MoleculeInfoReader::read_barcode_info(path)
-            .expect("Could not read barcode info")
-            .0;
+        let bcs = MoleculeInfoReader::read_barcode_info_pass_filter(path)
+            .expect("Could not read barcode info");
         let mut filtered_barcodes = HashSet::with_capacity(bcs.nrows());
         for cell_bc in bcs.axis_iter(Axis(0)) {
             filtered_barcodes.insert((cell_bc[0], cell_bc[1] as u16));
@@ -40,7 +40,7 @@ impl FilteredBarcodeFilter {
     }
     // Returns true if in the filtered barcodes
     #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn is_cell_or_spot(&mut self, bc_lib: (BarcodeIdxType, LibraryIdxType)) -> bool {
+    pub(super) fn is_cell_or_spot(&mut self, bc_lib: (BarcodeIdxType, LibraryIdxType)) -> bool {
         let is_cell: bool;
         if bc_lib == self.last_valid_bc_lib {
             is_cell = true;
@@ -107,7 +107,7 @@ impl FeatureCountsPerBarcode {
             );
         }
         // Get valid cell-barcodes
-        let num_barcodes = MoleculeInfoReader::read_barcodes(cur_path).unwrap().len();
+        let num_barcodes = MoleculeInfoReader::read_barcodes_size(cur_path).unwrap();
         let cell_associated_filter = FilteredBarcodeFilter::new(cur_path);
         // Create the vectors to hold the barcode read/umi counts
         let size = index - features[0].index + 1;
@@ -145,7 +145,7 @@ impl FeatureCountsPerBarcode {
 /// index in the count arrays corresponds to a given barcode.
 #[allow(clippy::type_complexity)]
 #[pyfunction]
-pub(crate) fn counts_per_barcode(
+pub(super) fn counts_per_barcode(
     _py: Python<'_>,
     mol_info_path: String,
     feature_type_str: String,

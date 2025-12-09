@@ -1,79 +1,35 @@
-// Warning groups (as of rust 1.55)
-#![deny(
-    future_incompatible,
-    nonstandard_style,
-    rust_2018_compatibility,
-    rust_2021_compatibility,
-    rust_2018_idioms,
-    unused
-)]
-// Other warnings (as of rust 1.55)
-#![deny(
-    asm_sub_register,
-    bad_asm_style,
-    bindings_with_variant_name,
-    clashing_extern_declarations,
-    confusable_idents,
-    const_item_mutation,
-    deprecated,
-    deref_nullptr,
-    drop_bounds,
-    dyn_drop,
-    elided_lifetimes_in_paths,
-    exported_private_dependencies,
-    function_item_references,
-    improper_ctypes,
-    improper_ctypes_definitions,
-    incomplete_features,
-    inline_no_sanitize,
-    invalid_value,
-    irrefutable_let_patterns,
-    large_assignments,
-    mixed_script_confusables,
-    non_shorthand_field_patterns,
-    no_mangle_generic_items,
-    overlapping_range_endpoints,
-    renamed_and_removed_lints,
-    stable_features,
-    temporary_cstring_as_ptr,
-    trivial_bounds,
-    type_alias_bounds,
-    uncommon_codepoints,
-    unconditional_recursion,
-    unknown_lints,
-    unnameable_test_items,
-    unused_comparisons,
-    while_true
-)]
+//! cr_types
+#![expect(missing_docs)]
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use csv_parser::CsvParser;
 use std::path::{Path, PathBuf};
 
 pub mod aggr;
 pub mod barcode_index;
-pub use barcode_index::*;
-mod bit_encode;
 pub mod cell_annotation;
 pub mod chemistry;
 pub mod clonotype;
 pub mod constants;
 pub mod csv_parser;
+pub mod filtered_barcodes;
+pub mod mempool;
+mod metrics_file;
 pub mod probe_set;
 pub mod reference;
 pub mod rna_read;
 pub mod sample_def;
 mod serde_helpers;
+pub mod spill_vec;
 pub mod target_panel_summary;
 pub mod types;
-pub use types::*;
-mod metrics_file;
-pub mod spill_vec;
 pub mod utils;
-pub use metrics_file::*;
-pub mod filtered_barcodes;
-pub mod mempool;
 pub mod websummary;
+
+pub use barcode_index::*;
+pub use fastq_set::ERROR_CODE_INFO;
+pub use metrics_file::*;
+pub use types::*;
 
 #[derive(Debug)]
 pub struct LegacyLibrariesEntry {
@@ -127,5 +83,5 @@ fn init() {
     // this ensures insta knows where to find its snap tests
     let cwd = std::env::current_dir().unwrap();
     let workspace_root = cwd.parent().unwrap();
-    std::env::set_var("INSTA_WORKSPACE_ROOT", workspace_root);
+    unsafe { std::env::set_var("INSTA_WORKSPACE_ROOT", workspace_root) }
 }

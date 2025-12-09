@@ -29,13 +29,15 @@ stage CALL_PROTOSPACERS(
 stage MEASURE_PERTURBATIONS(
     in  csv  protospacer_calls_per_cell,
     in  h5   filtered_feature_counts_matrix,
-    in  csv  feature_reference,
     in  bool by_feature,
-    in  bool ignore_multiples,
     out csv  perturbation_efficiencies,
     out path perturbation_effects_path,
     src py   "stages/feature/measure_perturbations",
 ) split (
+    in  int  chunk_start,
+    in  int  chunk_end,
+    out csv  chunk_perturbation_efficiencies,
+    out csv  chunk_perturbation_effects,
 ) using (
     volatile = strict,
 )
@@ -54,6 +56,5 @@ stage SUMMARIZE_CRISPR_ANALYSIS(
     out path crispr_analysis,
     src py   "stages/feature/summarize_crispr_analysis",
 ) using (
-    mem_gb   = 4,
     volatile = strict,
 )

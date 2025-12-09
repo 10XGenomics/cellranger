@@ -1,7 +1,10 @@
-use anyhow::{bail, Result};
+//! multi::cmo_set
+#![deny(missing_docs)]
+
+use anyhow::{Result, bail};
+use cr_types::GenomeName;
 use cr_types::reference::feature_reference::{FeatureDef, FeatureType};
 use cr_types::types::FeatureBarcodeType;
-use cr_types::GenomeName;
 use fastq_set::read_pair::WhichRead;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,10 +44,6 @@ impl CmoDef {
             feature_type: FeatureType::Barcode(feature_type),
             tags: HashMap::new(),
         }
-    }
-
-    pub fn is_equivalent(&self, fdef: &FeatureDef) -> bool {
-        self.read == fdef.read && self.pattern == fdef.pattern && self.sequence == fdef.sequence
     }
 }
 

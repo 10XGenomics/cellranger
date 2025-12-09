@@ -1,13 +1,13 @@
 //! Identify duplicate reads originating from the same molecule.
+#![expect(missing_docs)]
 
 use crate::read::{AnnotationInfo, ReadAnnotations, RecordAnnotation};
 use cr_types::probe_set::ProbeSetReference;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::RnaChunk;
 use cr_types::types::UmiCount;
-use itertools::Itertools;
 use rand::Rng;
-use rand_chacha::ChaCha20Rng;
+use rand::rngs::SmallRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -65,10 +65,6 @@ pub struct DupInfo {
     umi_count: Option<UmiCount>,
     is_umi_count: bool,
     pub is_low_support_umi: bool,
-    /// Was this read filtered because the number of reads
-    /// mapping to the (UMI, gene) within this barcode is
-    /// lower than the specified threshold.
-    pub is_filtered_target_umi: bool,
 }
 
 impl DupInfo {
@@ -90,16 +86,15 @@ fn determine_low_support_umigenes(
     let mut low_support_umigenes: HashSet<(UmiSeq, Gene)> = HashSet::new();
     let mut umigene_count_vec: Vec<_> = umigene_counts
         .iter()
-        .map(|x| ((x.0).0, &(x.0).1, x.1))
+        .map(|(&(umi, gene), &count)| (umi, gene, count))
         .collect();
     umigene_count_vec.sort();
-    for (umi, grouped) in &umigene_count_vec.iter().group_by(|x| x.0) {
-        let gene_counts: Vec<_> = grouped.collect();
-        if let Some((_umi, _gene, max_count)) = gene_counts.iter().max_by_key(|x| x.2) {
-            let max_is_tied = gene_counts.iter().filter(|x| x.2 == *max_count).count() >= 2;
-            for (_umi, gene, count) in gene_counts {
+    for gene_counts in umigene_count_vec.chunk_by(|x, y| x.0 == y.0) {
+        if let Some(&(umi, _gene, max_count)) = gene_counts.iter().max_by_key(|x| x.2) {
+            let max_is_tied = gene_counts.iter().filter(|x| x.2 == max_count).count() >= 2;
+            for &(_umi, gene, count) in gene_counts {
                 if max_is_tied || count < max_count {
-                    low_support_umigenes.insert((umi, *(*gene)));
+                    low_support_umigenes.insert((umi, gene));
                 }
             }
         }
@@ -153,18 +148,12 @@ impl DupBuilder {
             }
         }
     }
-    pub fn build(
-        self,
-        filter_umis: bool,
-        umi_correction: UmiCorrection,
-        targeted_umi_min_read_count: Option<u64>,
-    ) -> BarcodeDupMarker {
+    pub fn build(self, filter_umis: bool, umi_correction: UmiCorrection) -> BarcodeDupMarker {
         BarcodeDupMarker::new(
             self.umigene_counts,
             self.umigene_min_key,
             filter_umis,
             umi_correction,
-            targeted_umi_min_read_count,
         )
     }
 }
@@ -185,9 +174,6 @@ pub struct BarcodeDupMarker {
     low_support_umigenes: HashSet<(UmiSeq, Gene)>,
     umi_corrections: HashMap<(UmiSeq, Gene), UmiSeq>,
     umigene_min_key: HashMap<(UmiSeq, Gene), UmiSelectKey>,
-    /// If this is Some(r), we filter out (UMI, genes) pairs
-    /// with **less than** r reads and not include them in UMI counts.
-    targeted_umi_min_read_count: Option<u64>,
 }
 
 /// Technically, this is just a bool, but a code that looks like
@@ -204,7 +190,6 @@ impl BarcodeDupMarker {
         mut umigene_min_key: HashMap<(UmiSeq, Gene), UmiSelectKey>,
         filter_umis: bool,
         umi_correction: UmiCorrection,
-        targeted_umi_min_read_count: Option<u64>,
     ) -> Self {
         // Determine which UMIs need to be corrected
         let umi_corrections: HashMap<(UmiSeq, Gene), UmiSeq> = match umi_correction {
@@ -272,7 +257,6 @@ impl BarcodeDupMarker {
             umi_corrections,
             low_support_umigenes,
             umigene_min_key,
-            targeted_umi_min_read_count,
         }
     }
 
@@ -284,7 +268,7 @@ impl BarcodeDupMarker {
         probe_set_reference: Option<&Arc<ProbeSetReference>>,
         read_chunks: &[RnaChunk],
         barcode_subsample_rate: f64,
-        rng: &mut ChaCha20Rng,
+        rng: &mut SmallRng,
     ) -> Option<DupInfo> {
         if !annotation.umi_info.is_valid || !annotation.is_conf_mapped_to_feature() {
             return None;
@@ -308,22 +292,8 @@ impl BarcodeDupMarker {
 
         let read_count = self.umigene_counts[&corrected_key];
 
-        let is_filtered_target_umi = match self.targeted_umi_min_read_count {
-            // low support UMIs and low read count UMIs are disjoint
-            Some(threshold) => {
-                let target_set = feature_reference.target_set.as_ref().unwrap();
-                target_set.is_on_target(corrected_key.1 as u32)
-                    && read_count < threshold
-                    && !is_low_support_umi
-            }
-            None => false,
-        };
-
-        let sampling_factor = rng.gen_bool(barcode_subsample_rate);
-
-        let is_umi_count =
-            !is_low_support_umi && is_min_qname && !is_filtered_target_umi && sampling_factor;
-
+        let sampling_factor = rng.random_bool(barcode_subsample_rate);
+        let is_umi_count = !is_low_support_umi && is_min_qname && sampling_factor;
         let umi_count = if is_umi_count {
             let umi_type = match annotation.is_conf_mapped_unique_txomic() {
                 true => UmiType::Txomic,
@@ -358,7 +328,6 @@ impl BarcodeDupMarker {
             umi_count,
             is_umi_count,
             is_low_support_umi,
-            is_filtered_target_umi,
         })
     }
 }

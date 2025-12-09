@@ -1,13 +1,14 @@
 //! CreateClonotypeClustermap stage code
+#![expect(missing_docs)]
 
 use anyhow::Result;
-use cr_websummary::multi::antigen::{clonotype_specificity_heatmap, AntigenSpecificityRow};
-use cr_websummary::RawChartWithHelp;
+use cr_websummary::ChartWithHelp;
+use cr_websummary::multi::antigen::{AntigenSpecificityRow, clonotype_specificity_heatmap};
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeWrite;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
-use martian_filetypes::FileTypeWrite;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, MartianStruct)]
@@ -17,7 +18,7 @@ pub struct CreateClonotypeClustermapInputs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct CreateClonotypeClustermapOutputs {
-    antigen_clonotype_clustermap: Option<JsonFile<RawChartWithHelp>>,
+    antigen_clonotype_clustermap: Option<JsonFile<ChartWithHelp>>,
 }
 
 // This is our stage struct

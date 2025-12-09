@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use crate::fit_piecewise_linear_model::{EstimatedModel, PiecewiseLinearData};
 use crate::probe_barcode_matrix::ProbeCounts;
 use anyhow::Result;
@@ -8,10 +9,10 @@ use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::types::PROBE_IDX_SENTINEL_VALUE;
 use cr_types::utils::calculate_median_of_sorted;
 use cr_types::{CountShardFile, ProbeBarcodeCount};
-use itertools::{process_results, Itertools};
+use itertools::Itertools;
 use metric::{MeanMetric, TxHashMap, TxHashSet};
-use ndarray::prelude::*;
 use ndarray::Array2;
+use ndarray::prelude::*;
 use serde::Serialize;
 use shardio::ShardReader;
 use std::collections::{BTreeMap, HashMap};
@@ -118,33 +119,34 @@ pub fn compute_gdna_metrics(
 
     // Iterating over the mol info
     for full_umi_record in mol_info_iter {
-        match full_umi_record.umi_data.probe_idx {
-            //Making sure we have a real probe there
-            Some(probe_idx) if probe_idx != PROBE_IDX_SENTINEL_VALUE => {
-                assert!(probe_idx >= 0); // Probe IDX cant be -ve
-                let probe = probes[probe_idx as usize];
-                if probe.is_excluded_probe() {
-                    continue; // ignoring probes with prefixes we ignore
-                }
+        let Some(probe_idx) = full_umi_record.umi_data.probe_idx else {
+            continue;
+        };
+        if probe_idx == PROBE_IDX_SENTINEL_VALUE {
+            continue;
+        }
+        assert!(probe_idx >= 0);
+        let probe = probes[probe_idx as usize];
+        if probe.is_excluded_probe() {
+            continue;
+        }
 
-                total_number_of_umis += 1;
-                let gene_id = probe.gene.id.as_str();
-                if set_of_genes_with_spliced_unspliced_probes.contains(gene_id) {
-                    // only considering genes with both spliced and unspliced probes
-                    match &probes[probe_idx as usize].region {
-                        Some(ProbeRegion::Spliced) => {
-                            *num_spliced_umis_per_gene.get_mut(gene_id).unwrap() +=
-                                (1.0) / (num_spliced_probes_per_gene[gene_id] as f64);
-                        }
-                        Some(ProbeRegion::Unspliced) => {
-                            *num_unspliced_umis_per_gene.get_mut(gene_id).unwrap() +=
-                                (1.0) / (num_unspliced_probes_per_gene[gene_id] as f64);
-                        }
-                        _ => (),
-                    }
-                }
+        total_number_of_umis += 1;
+        let gene_id = probe.gene.id.as_str();
+        if !set_of_genes_with_spliced_unspliced_probes.contains(gene_id) {
+            continue;
+        }
+
+        match &probes[probe_idx as usize].region {
+            Some(ProbeRegion::Spliced) => {
+                *num_spliced_umis_per_gene.get_mut(gene_id).unwrap() +=
+                    1.0 / num_spliced_probes_per_gene[gene_id] as f64;
             }
-            _ => continue,
+            Some(ProbeRegion::Unspliced) => {
+                *num_unspliced_umis_per_gene.get_mut(gene_id).unwrap() +=
+                    1.0 / (num_unspliced_probes_per_gene[gene_id] as f64);
+            }
+            _ => (),
         }
     }
 
@@ -253,6 +255,7 @@ fn collate_probe_metrics(
             ref_sequence_name: probe.ref_sequence_name.clone(),
             ref_sequence_pos: probe.ref_sequence_pos,
             cigar_string: probe.cigar_string.clone(),
+            genome: probe.genome.clone(),
         })
         .collect())
 }
@@ -439,10 +442,9 @@ pub fn compute_gdna_corrected_median_genes_per_spot(
     // Iterate through the count shards
     let probe_barcode_reader: ShardReader<ProbeBarcodeCount> =
         ShardReader::open_set(probe_barcode_counts)?;
-    process_results(probe_barcode_reader.iter()?, |iter| {
-        // group by barcodes. Note that the count-shards are expected to be sorted
-        // by barcode
-        for (barcode, counts) in &iter.group_by(|x| x.barcode) {
+    probe_barcode_reader.iter()?.process_results(|iter| {
+        // group by barcodes. Note that the count-shards are expected to be sorted by barcode
+        for (barcode, counts) in &iter.chunk_by(|x| x.barcode) {
             // If barcode is not a filtered barcode, ignore it.
             if !filtered_barcodes.contains(&barcode) {
                 continue;

@@ -158,6 +158,7 @@ class BiplotsWithThresholding(React10X):  # pylint: disable=too-few-public-metho
         self,
         vectors,
         vector_names,
+        *,
         show_transparency_slider,
         show_thresholding_slider,
         threshold_values,

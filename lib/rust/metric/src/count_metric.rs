@@ -1,16 +1,17 @@
-//!
 //! This module defines the `CountMetric` struct. As the name implies, this struct
 //! is geared toward tracking counts, typically read counts. Internally it is
 //! represented using an `i64` variable.
+#![deny(missing_docs)]
 
 use crate::{JsonReport, JsonReporter, Metric};
+use serde::{Deserialize, Serialize};
 
 /// Use this struct to keep track of metrics which can be represented using
 /// a single `i64` variable
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Ord, PartialOrd)]
 #[serde(transparent)]
 pub struct CountMetric {
-    pub(crate) count: i64,
+    pub(super) count: i64,
 }
 
 impl Metric for CountMetric {
@@ -156,7 +157,7 @@ mod tests {
         assert!(merged == CountMetric::from(45));
     }
 
-    proptest! {
+    proptest::proptest! {
         #[test]
         fn prop_test_count_metric_add_and_addassign(
             x in any::<u32>(),

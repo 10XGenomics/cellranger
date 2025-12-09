@@ -2,15 +2,15 @@
 [dependencies.petgraph]
 workspace = true
 
-[dependencies.vector_utils]
-path = '../vector_utils'
-
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'graph_simple'
 publish = false
 version = '0.1.0'

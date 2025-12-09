@@ -1,4 +1,6 @@
+//! graph_simple
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![deny(missing_docs)]
 
 // Define generic digraph functions.
 //
@@ -8,86 +10,61 @@
 //
 // These functions seem unnecessarily specialized to u32.
 
-use petgraph::prelude::*;
 use petgraph::EdgeType;
+use petgraph::prelude::*;
 use std::collections::HashSet;
-use vector_utils::meet;
 
+/// A simple graph.
 pub trait GraphSimple<T> {
-    // =============================================================================
-    // Return the object associated to an edge id.
-    // =============================================================================
-
+    /// Return the object associated to an edge id.
     fn edge_obj(&self, e: u32) -> &T;
 
-    // =============================================================================
-    // Return the source or target of an edge.
-    // =============================================================================
-
+    /// Return the source of an edge.
     fn to_left(&self, e: u32) -> u32;
+
+    /// Return the target of an edge.
     fn to_right(&self, e: u32) -> u32;
 
-    // =============================================================================
-    // Return the number of edges exiting or entering a given vertex.
-    // =============================================================================
-
+    /// Return the number of edges exiting a given vertex.
     fn n_from(&self, v: usize) -> usize;
+
+    /// Return the number of edges entering a given vertex.
     fn n_to(&self, v: usize) -> usize;
 
-    // =============================================================================
-    // Return id of the nth vertex exiting or entering a given vertex id.
-    // Note that this is O(n).
-    // =============================================================================
-
+    /// Return id of the nth vertex exiting a given vertex id.
+    /// Note that this is O(n).
     fn v_from(&self, v: usize, n: usize) -> usize;
+
+    /// Return id of the nth vertex entering a given vertex id.
+    /// Note that this is O(n).
     fn v_to(&self, v: usize, n: usize) -> usize;
 
-    // =============================================================================
-    // Return id of the nth edge exiting or entering a given vertex id.
-    // Note that this is O(n).
-    // =============================================================================
-
+    /// Return id of the nth edge exiting a given vertex id.
+    /// Note that this is O(n).
     fn e_from(&self, v: usize, n: usize) -> usize;
+
+    /// Return id of the nth edge entering a given vertex id.
+    /// Note that this is O(n).
     fn e_to(&self, v: usize, n: usize) -> usize;
 
-    // =============================================================================
-    // Return the nth edge exiting or entering a given vertex id.
-    // Note that this is O(n).
-    // =============================================================================
-
-    fn o_from(&self, v: usize, n: usize) -> &T;
-    fn o_to(&self, v: usize, n: usize) -> &T;
-
-    // =============================================================================
-    // get_predecessors: find all vertices which have a directed path to a vertex
-    // in v.  This includes the vertices in v by definition.  Return a sorted list
-    // x.  get_successors: go the other way.
-    // get_predecessors1 and get_successors1: start from one vertex
-    // =============================================================================
-
+    /// get_predecessors: find all vertices which have a directed path to a vertex
+    /// in v. This includes the vertices in v by definition. Return a sorted list x.
     fn get_predecessors(&self, v: &[i32], x: &mut Vec<u32>);
+
+    /// start from one vertex.
     fn get_predecessors1(&self, v: i32, x: &mut Vec<u32>);
+
+    /// get_successors: go the other way.
     fn get_successors(&self, v: &[i32], x: &mut Vec<u32>);
+
+    /// start from one vertex.
     fn get_successors1(&self, v: i32, x: &mut Vec<u32>);
 
-    // =============================================================================
-    // Determine if there is a path from one vertex to another, allowing for the
-    // case of a zero length path, where the vertices are equal.
-    // =============================================================================
-
-    fn have_path(&self, v: i32, w: i32) -> bool;
-
-    // =============================================================================
-    // Find the connected components.  Each component is a sorted list of vertices.
-    // =============================================================================
-
+    /// Find the connected components.  Each component is a sorted list of vertices.
     fn components(&self, comp: &mut Vec<Vec<u32>>);
 
-    // =============================================================================
-    // Find the connected components as lists of edges.  Each component is an
-    // UNSORTED list of edges.
-    // =============================================================================
-
+    /// Find the connected components as lists of edges.  Each component is an
+    /// UNSORTED list of edges.
     fn components_e(&self, comp: &mut Vec<Vec<u32>>);
 }
 
@@ -157,14 +134,6 @@ where
         e.index()
     }
 
-    fn o_from(&self, v: usize, n: usize) -> &T {
-        self.edge_obj(self.e_from(v, n) as u32)
-    }
-
-    fn o_to(&self, v: usize, n: usize) -> &T {
-        self.edge_obj(self.e_to(v, n) as u32)
-    }
-
     fn get_predecessors(&self, v: &[i32], x: &mut Vec<u32>) {
         let mut check: Vec<u32> = Vec::new();
         let mut tov: HashSet<u32> = HashSet::new();
@@ -225,14 +194,6 @@ where
     fn get_successors1(&self, v: i32, x: &mut Vec<u32>) {
         let vs = vec![v];
         self.get_successors(&vs, x);
-    }
-
-    fn have_path(&self, v: i32, w: i32) -> bool {
-        let mut vsuc: Vec<u32> = Vec::new();
-        self.get_successors1(v, &mut vsuc);
-        let mut wpre: Vec<u32> = Vec::new();
-        self.get_predecessors1(w, &mut wpre);
-        meet(&vsuc, &wpre)
     }
 
     fn components(&self, comp: &mut Vec<Vec<u32>>) {

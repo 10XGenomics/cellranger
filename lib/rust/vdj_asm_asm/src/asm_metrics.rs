@@ -1,19 +1,20 @@
 //! AsmMetrics stage code
+#![expect(missing_docs)]
 
 use crate::assembly::{BarcodeDataFile, VdjPrimers};
-use anyhow::Result;
-use cr_types::chemistry::ChemistryDef;
+use anyhow::{Context, Result};
 use cr_types::MetricsFile;
-use io_utils::read_to_string_safe;
+use cr_types::chemistry::ChemistryDef;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, LazyFileTypeIO};
 use metric::JsonReporter;
 use serde::{Deserialize, Serialize};
+use std::fs::read_to_string;
 use std::path::PathBuf;
-use vdj_ann::refx::{make_vdj_ref_data_core, RefData};
-use vdj_asm_utils::barcode_data::{metrics_json, BarcodeData, BarcodeDataSum};
+use vdj_ann::refx::{RefData, make_vdj_ref_data_core};
+use vdj_asm_utils::barcode_data::{BarcodeData, BarcodeDataSum, metrics_json};
 use vdj_reference::VdjReceptor;
 
 martian_filetype!(TxtFile, "txt");
@@ -48,7 +49,9 @@ impl MartianMain for AsmMetrics {
         let is_bcr = args.receptor == Some(VdjReceptor::IG);
         let mut refdata = RefData::new();
         if let Some(ref ref_path) = args.vdj_reference_path {
-            let fasta = read_to_string_safe(format!("{}/fasta/regions.fa", ref_path.display()));
+            let fasta_path = ref_path.join("fasta/regions.fa");
+            let fasta = read_to_string(&fasta_path)
+                .with_context(|| fasta_path.to_string_lossy().to_string())?;
             make_vdj_ref_data_core(&mut refdata, &fasta, "", is_tcr, is_bcr, None);
         };
         let primers = VdjPrimers::new(

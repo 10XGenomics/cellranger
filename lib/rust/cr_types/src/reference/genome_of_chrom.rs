@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use crate::reference::reference_info::ReferenceInfo;
 use crate::types::GenomeName;
 use anyhow::Result;

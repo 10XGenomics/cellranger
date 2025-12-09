@@ -122,8 +122,9 @@ class NewGtfParser:
                 if len(row) != 9:
                     raise GtfParseError(
                         filename,
-                        "Invalid number of columns (%d, expect 9) in GTF line %d: %s"
-                        % (len(row), i + 1, "\t".join(row)),
+                        "Invalid number of columns ({}, expect 9) in GTF line {}: {}".format(
+                            len(row), i + 1, "\t".join(row)
+                        ),
                     )
 
                 start = int(row[3])
@@ -164,7 +165,7 @@ class NewGtfParser:
                 if strand not in cr_constants.STRANDS:
                     raise GtfParseError(
                         filename,
-                        "Invalid strand in GTF line %d: %s" % (i + 1, "\t".join(row)),
+                        "Invalid strand in GTF line {}: {}".format(i + 1, "\t".join(row)),
                     )
 
                 annotation = row[2]
@@ -200,26 +201,30 @@ class NewGtfParser:
         if "transcript_id" not in properties:
             raise GtfParseError(
                 filename,
-                "Property 'transcript_id' not found in GTF line %d: %s" % (i + 1, "\t".join(row)),
+                "Property 'transcript_id' not found in GTF line {}: {}".format(
+                    i + 1, "\t".join(row)
+                ),
             )
         if properties["transcript_id"] == "":
             raise GtfParseError(
                 filename,
-                "Property 'transcript_id' is empty in GTF line {:d}: {}".format(
+                "Property 'transcript_id' is empty in GTF line {}: {}".format(
                     i + 1, "\t".join(row)
                 ),
             )
         if ";" in properties["transcript_id"]:
             raise GtfParseError(
                 filename,
-                "Property 'transcript_id' has invalid character ';' in GTF line %d: %s"
-                % (i + 1, "\t".join(row)),
+                "Property 'transcript_id' has invalid character ';' in GTF line {}: {}".format(
+                    i + 1, "\t".join(row)
+                ),
             )
         if re.search(r"\s", properties["transcript_id"]) is not None:
             raise GtfParseError(
                 filename,
-                "Property 'transcript_id' has invalid whitespace character in GTF line %d: %s"
-                % (i + 1, "\t".join(row)),
+                "Property 'transcript_id' has invalid whitespace character in GTF line {}: {}".format(
+                    i + 1, "\t".join(row)
+                ),
             )
 
     @staticmethod
@@ -227,7 +232,7 @@ class NewGtfParser:
         if "gene_id" not in properties:
             raise GtfParseError(
                 filename,
-                "Property 'gene_id' not found in GTF line %d: %s" % (i + 1, "\t".join(row)),
+                "Property 'gene_id' not found in GTF line {}: {}".format(i + 1, "\t".join(row)),
             )
         if properties["gene_id"] == "":
             raise GtfParseError(
@@ -237,8 +242,9 @@ class NewGtfParser:
         if ";" in properties["gene_id"]:
             raise GtfParseError(
                 filename,
-                "Property 'gene_id' has invalid character ';' in GTF line %d: %s"
-                % (i + 1, "\t".join(row)),
+                "Property 'gene_id' has invalid character ';' in GTF line {}: {}".format(
+                    i + 1, "\t".join(row)
+                ),
             )
 
     def load_gtf(
@@ -364,14 +370,12 @@ class NewGtfParser:
             elif start_quote:
                 raise GtfParseError(
                     filename,
-                    "Error parsing GTF at line %d.  Parsed attribute began, but did not end with a quote.  Please ensure attributes that start with quotes end with them.\n Bad Attribute = %s"
-                    % (line_number, value),
+                    f"Error parsing GTF at line {line_number}.  Parsed attribute began, but did not end with a quote.  Please ensure attributes that start with quotes end with them.\n Bad Attribute = {value}",
                 )
             elif end_quote:
                 raise GtfParseError(
                     filename,
-                    "Error parsing GTF at line %d.  Parsed attribute ended, but did not begin with a quote.  Please ensure attributes that end with quotes end start with them.\n Bad Attribute = %s"
-                    % (line_number, value),
+                    f"Error parsing GTF at line {line_number}.  Parsed attribute ended, but did not begin with a quote.  Please ensure attributes that end with quotes end start with them.\n Bad Attribute = {value}",
                 )
             elif value.isdigit():
                 # unquoted integer
@@ -382,15 +386,13 @@ class NewGtfParser:
                 # but make sure we don't have any quotes in the value, this will bjork the rust parser
                 raise GtfParseError(
                     filename,
-                    "Error parsing GTF at line %d.  Parsed attribute had a quote in the middle of a value.  Please ensure quotes are only used to encapsulate attribute values.\n Bad Attribute Value = %s"
-                    % (line_number, value),
+                    f"Error parsing GTF at line {line_number}.  Parsed attribute had a quote in the middle of a value.  Please ensure quotes are only used to encapsulate attribute values.\n Bad Attribute Value = {value}",
                 )
 
             if '"' in key:
                 raise GtfParseError(
                     filename,
-                    "Error parsing GTF at line %d.  Parsed attribute had a quote in the middle of a key.  Please ensure quotes are only used to encapsulate attribute values.\n Bad Attribute Key = %s"
-                    % (line_number, value),
+                    f"Error parsing GTF at line {line_number}.  Parsed attribute had a quote in the middle of a key.  Please ensure quotes are only used to encapsulate attribute values.\n Bad Attribute Key = {value}",
                 )
             # make key unique if necessary
             if uniquify_keys and key in properties:
@@ -445,7 +447,7 @@ class GtfBuilder(NewGtfParser):
         print("Writing new genes GTF file (may take 10 minutes for a 1GB input GTF file)...")
         with open(self.out_gtf_fn, "w") as f:
             writer = csv.writer(
-                f, delimiter="\t", quoting=csv.QUOTE_NONE, quotechar="", lineterminator="\n"
+                f, delimiter="\t", quoting=csv.QUOTE_NONE, quotechar=None, lineterminator="\n"
             )
             for row, is_comment, properties in self.gtf_reader_iter(self.in_gtf_fn):
                 if is_comment:

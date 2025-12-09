@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use anyhow::{Context, Result};
 
 const CLONOTYPE_PREFIX: &str = "clonotype";
@@ -29,7 +30,7 @@ impl<'a> ClonotypeId<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for ClonotypeId<'a> {
+impl std::fmt::Display for ClonotypeId<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(sample_id) = self.sample_id {
             write!(f, "{sample_id}_")?;
@@ -45,7 +46,7 @@ fn parse_clonotype_number(s: &str) -> Result<usize> {
         .with_context(|| format!("invalid clonotype number: \"{s}\""))
 }
 
-impl<'a> ClonotypeId<'a> {
+impl ClonotypeId<'_> {
     pub fn consensus_name(&self, consensus_index: usize) -> String {
         format!("{self}_{CONSENSUS_PREFIX}_{consensus_index}")
     }

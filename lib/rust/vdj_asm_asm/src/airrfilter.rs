@@ -1,4 +1,5 @@
 //! AirrFilter stage code
+#![expect(missing_docs)]
 
 use anyhow::Result;
 use bio::io::fasta::Reader;
@@ -11,7 +12,7 @@ use bio::io::fasta::Reader;
 use martian::prelude::*;
 // Bring the procedural macros in scope:
 // #[derive(MartianStruct)], #[derive(MartianType)], #[make_mro], martian_filetype!
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::TsvFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};

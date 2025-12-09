@@ -1,13 +1,15 @@
 //! Martian stage RUN_UMAP
+#![expect(missing_docs)]
 
-use crate::io::{csv, h5};
-use crate::types::{EmbeddingResult, EmbeddingType, H5File};
 use crate::EXCLUDED_FEATURE_TYPES;
+use crate::io::{csv, h5};
+use crate::types::{EmbeddingResult, EmbeddingType, H5File, ReductionType};
 use anyhow::Result;
 use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::get_barcodes_between;
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, make_mro};
+use ndarray::Array2;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use umap_rs::dist::DistanceType;
@@ -18,26 +20,19 @@ const MIN_DIST: f64 = 0.3;
 const N_COMPONENTS: usize = 2;
 
 #[derive(Clone, Debug, Deserialize, MartianStruct)]
+
 pub struct UmapStageInputs {
     pub matrix_h5: H5File,
-    pub pca_h5: H5File,
+    pub reduction_h5: H5File,
     pub random_seed: Option<u64>,
     pub n_neighbors: Option<usize>,
-    pub input_pcs: Option<usize>,
+    pub input_dims: Option<usize>,
     pub max_dims: Option<usize>,
     pub min_dist: Option<f64>,
     pub metric: Option<String>,
-    pub implementation: UmapImplementation,
+    pub parallel: bool,
+    pub reduction_type: ReductionType,
 }
-
-#[derive(Serialize, Deserialize, MartianType, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum UmapImplementation {
-    Original,
-    Parallel,
-}
-
-use UmapImplementation::{Original, Parallel};
 
 #[derive(Clone, Debug, Serialize, MartianStruct)]
 pub struct UmapStageOutputs {
@@ -75,10 +70,7 @@ impl MartianStage for UmapStage {
         let (_nfeatures, ncells, _nnz) = h5::matrix_shape(&args.matrix_h5)?;
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
 
-        let threads = match args.implementation {
-            Original => 5,
-            Parallel => 4,
-        };
+        let threads = if args.parallel { 8 } else { 5 };
 
         for umap_dims in N_COMPONENTS..=args.max_dims.unwrap_or(N_COMPONENTS) {
             for (&feature_type, &count) in &feature_types {
@@ -109,10 +101,11 @@ impl MartianStage for UmapStage {
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs> {
         let (proj, barcodes) = {
-            let proj = h5::load_transformed_pca_matrix(
-                &args.pca_h5,
+            let proj = h5::load_transformed_matrix(
+                &args.reduction_h5,
                 chunk_args.feature_type,
-                args.input_pcs,
+                args.input_dims,
+                args.reduction_type,
             )?;
             let matrix = hdf5::File::open(&args.matrix_h5)?.group("matrix")?;
             let barcodes = get_barcodes_between(0, None, &matrix)?;
@@ -136,18 +129,18 @@ impl MartianStage for UmapStage {
             None,
         );
 
-        let embedding = match args.implementation {
-            Parallel => {
-                let mut state =
-                    umap.initialize_fit_parallelized(&proj, args.random_seed, rover.get_threads());
-                state.optimize_multithreaded(rover.get_threads());
-                state.embedding
-            }
-            Original => {
-                let mut state = umap.initialize_fit(&proj, args.random_seed, rover.get_threads());
-                state.optimize();
-                state.embedding
-            }
+        let embedding = if num_bcs < 3 {
+            eprintln!("WARNING: Too few barcodes. Generating a zero-filled embedding instead.");
+            Array2::zeros((num_bcs, chunk_args.umap_dims))
+        } else if args.parallel {
+            let mut state =
+                umap.initialize_fit_parallelized(&proj, args.random_seed, rover.get_threads());
+            state.optimize_multithreaded(rover.get_threads());
+            state.embedding
+        } else {
+            let mut state = umap.initialize_fit(&proj, args.random_seed, rover.get_threads());
+            state.optimize();
+            state.embedding
         };
 
         let result = EmbeddingResult::new(

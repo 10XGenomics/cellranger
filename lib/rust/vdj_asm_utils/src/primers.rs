@@ -1,4 +1,5 @@
 // Specify inner primers.
+#![expect(missing_docs)]
 //
 // Usage: inner_primers( species, class )
 //        - where species is either "human" or "mouse"
@@ -22,7 +23,7 @@
 // It would be better to maintain just one copy of this.
 
 use crate::constants::PRIMER_EXT_LEN;
-use tenkit2::pack_dna::reverse_complement;
+use crate::reverse_complement;
 use vdj_ann::refx::RefData;
 use vector_utils::{contains_at, unique_sort};
 

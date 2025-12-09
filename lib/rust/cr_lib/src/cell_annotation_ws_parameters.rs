@@ -1,6 +1,8 @@
+#![deny(missing_docs)]
 use anyhow::{Ok, Result};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::MartianStruct;
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tenx_websummary::components::{
@@ -8,21 +10,20 @@ use tenx_websummary::components::{
 };
 use tenx_websummary::{Alert, AlertLevel};
 
-const CELL_ANNOTATION_DISCLAIMER_STRING: &str = r#"<p><b>Important Note</b><br>
-Cell type annotation is currently in beta and relies on the Chan Zuckerberg CELL by GENE reference. 
+const CELL_ANNOTATION_DISCLAIMER_STRING: &str = r"<p><b>Important Note</b><br>
+Cell type annotation is currently in beta and relies on the Chan Zuckerberg CELL by GENE reference.
 As this reference is community-driven it may not cover all tissue types, which could impact your results. For further details, please visit the
 <a href='https://10xgen.com/cell-annotation' target='_blank' title='10x Support: Cell Annotation' rel='noopener noreferrer'>10x support site</a>.
-</p>"#;
+</p>";
 
-const CELL_ANNOTATION_BROAD_MODEL: &str =
-    "Annotation was performed using a model that was co-developed by 10x Genomics and the Cellarium AI Lab at the Data Sciences Platform of the Broad Institute.";
+const CELL_ANNOTATION_BROAD_MODEL: &str = "Annotation was performed using a model that was co-developed by 10x Genomics and the Cellarium AI Lab at the Data Sciences Platform of the Broad Institute.";
 
 const CELL_ANNOTATION_FAILURE_TITLE: &str = "No cell annotations produced!";
 
-const CELL_ANNOTATION_FAILURE_MESSAGE: &str = r#"<p>Please check your cellranger annotate logs. 
-If you wish to attempt cell type annotation again please use 
-<a href='https://www.10xgenomics.com/support/software/cell-ranger/latest/getting-started/cr-what-is-cell-ranger' 
-target='_blank' title='What is Cell Ranger' rel='noopener noreferrer'>cellranger annotate</a>.</p>"#;
+const CELL_ANNOTATION_FAILURE_MESSAGE: &str = r"<p>Please check your cellranger annotate logs.
+If you wish to attempt cell type annotation again please use
+<a href='https://www.10xgenomics.com/support/software/cell-ranger/latest/getting-started/cr-what-is-cell-ranger'
+target='_blank' title='What is Cell Ranger' rel='noopener noreferrer'>cellranger annotate</a>.</p>";
 
 const CELL_ANNOTATION_DE_WARN_TITLE: &str = "Cell type differential expression not run";
 const CELL_ANNOTATION_DE_WARN_MESSAGE: &str = "Too few cell types to run differential expression.";
@@ -37,16 +38,18 @@ The version of Cell Ranger used to generate this annotation.<br>
 The model used to generate cell type annotations.";
 
 const CELL_ANNOTATION_INTERACTIVE_BARCHART_TITLE: &str = "Cell Type Composition";
-const CELL_ANNOTATION_INTERACTIVE_BARCHART_HELP: &str = "This plot shows the major cell types in your sample. To view sub-type annotations, click on a bar. 
+const CELL_ANNOTATION_INTERACTIVE_BARCHART_HELP: &str = "This plot shows the major cell types in your sample. To view sub-type annotations, click on a bar.
 Only major classifications with at least 10 cells are shown.<br>
 <b>Left-hand bar chart</b>: This bar chart shows the annotated cell types on the y-axis and the number of barcodes annotated with them on the x-axis.<br>
-<b>Right-hand table</b>: This table shows the sub-types within a selected major cell type. Fractions of barcodes shown are the percentage of cells relative to 
+<b>Right-hand table</b>: This table shows the sub-types within a selected major cell type. Fractions of barcodes shown are the percentage of cells relative to
 this selected cell type—not the entire sample.";
 
 const CELL_ANNOTATION_VIOLIN_PLOT_TITLE: &str = "UMI distribution by cell type";
 const CELL_ANNOTATION_VIOLIN_PLOT_HELP: &str =
     "Box plot showing the distribution of (UMI+1) by annotated cell types.<br>
-    Only cell types with >= 10 barcodes included. Y-axis is log scale";
+    Only cell types with >= 10 barcodes included. If a cell type has more<br>
+    than 1000 barcodes associated with it the group is subsampled to 1000 barcodes.<br>
+    Minimum and maximum values are kept. Y-axis is log scale";
 
 const CELL_ANNOTATION_UMAP_PLOT_TITLE: &str = "UMAP projection of cell types";
 const CELL_ANNOTATION_UMAP_PLOT_HELP: &str =
@@ -57,29 +60,95 @@ const CELL_ANNOTATION_UMAP_PLOT_HELP: &str =
 const CELL_ANNOTATION_DIFFEXP_TITLE: &str = "Top Features by Cell Type";
 const CELL_ANNOTATION_DIFFEXP_HELP: &str =
     "Differential expression analysis identifies, for each cell type,  genes that are more highly expressed in that cell type relative to the rest of the sample.<br>
-    <b>Log2 Fold-Change (L2FC)</b>: An estimate of the log2 ratio of expression of a gene in a cell type to the mean of all other cell types. A value of 1 indicates 
+    <b>Log2 Fold-Change (L2FC)</b>: An estimate of the log2 ratio of expression of a gene in a cell type to the mean of all other cell types. A value of 1 indicates
     2-fold greater expression in the cell type of interest.<br>
     <b>P-Value</b>: A measure of the statistical significance of the expression difference, after correcting for multiple tests to avoid false positives.<br>
-    <b>How to use this table</b>: Click on any column to sort data by that feature. Genes not meeting our criteria (L2FC < 0 or FDR-adjusted p-value >= 0.10) 
+    <b>How to use this table</b>: Click on any column to sort data by that feature. Genes not meeting our criteria (L2FC < 0 or FDR-adjusted p-value >= 0.10)
     are shown in gray. For a complete look at the data, check the 'differential_expression.csv' files from our analysis pipeline.";
 
 const CELL_TYPING_CLOUPE_NAME: &str = "Cell Types";
 const CELL_TYPING_BETA_SUFFIX: &str = "(beta)";
-#[derive(Serialize, Deserialize, Clone)]
+
+#[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
+pub struct CellTypeWebSummaryBundle {
+    pub(super) cell_type_interactive_bar_chart: Option<JsonFile<Value>>,
+    pub(super) cell_types_box_plot: Option<JsonFile<Value>>,
+    pub(super) cell_types_umap_plot: Option<JsonFile<Value>>,
+    pub(super) diffexp: Option<JsonFile<DifferentialExpressionTable>>,
+    pub(super) cell_annotation_metrics: Option<JsonFile<CellAnnotationMetrics>>,
+}
+
+impl CellTypeWebSummaryBundle {
+    pub(super) fn read(&self) -> Result<CellTypeWebSummaryBundleValue> {
+        let cell_type_interactive_bar_chart = self
+            .cell_type_interactive_bar_chart
+            .as_ref()
+            .map(FileTypeRead::read)
+            .transpose()?;
+        let cell_types_box_plot = self
+            .cell_types_box_plot
+            .as_ref()
+            .map(FileTypeRead::read)
+            .transpose()?;
+        let cell_types_umap_plot = self
+            .cell_types_umap_plot
+            .as_ref()
+            .map(FileTypeRead::read)
+            .transpose()?;
+        let diffexp = self.diffexp.as_ref().map(FileTypeRead::read).transpose()?;
+        let cell_annotation_metrics = self
+            .cell_annotation_metrics
+            .as_ref()
+            .map(FileTypeRead::read)
+            .transpose()?;
+        Ok(CellTypeWebSummaryBundleValue {
+            cell_type_interactive_bar_chart,
+            cell_types_box_plot,
+            cell_types_umap_plot,
+            diffexp,
+            cell_annotation_metrics,
+        })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CellTypeWebSummaryBundleValue {
+    pub(super) cell_type_interactive_bar_chart: Option<Value>,
+    pub(super) cell_types_box_plot: Option<Value>,
+    pub(super) cell_types_umap_plot: Option<Value>,
+    pub(super) diffexp: Option<DifferentialExpressionTable>,
+    pub(super) cell_annotation_metrics: Option<CellAnnotationMetrics>,
+}
+
+impl CellTypeWebSummaryBundleValue {
+    pub(super) fn has_any_value(&self) -> bool {
+        [
+            self.cell_type_interactive_bar_chart.is_some(),
+            self.cell_types_box_plot.is_some(),
+            self.cell_types_umap_plot.is_some(),
+            self.diffexp.is_some(),
+            self.cell_annotation_metrics.is_some(),
+        ]
+        .iter()
+        .any(|x| *x)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CellAnnotationMetrics {
-    pub cell_annotation_model: String,
-    pub cell_annotation_tree_version_used: String,
-    pub cell_annotation_display_map_version_used: String,
-    pub cell_annotation_frac_returned_bcs: Option<f64>,
-    pub cell_annotation_success: Option<bool>,
-    pub cell_annotation_differential_expression: Option<bool>,
-    pub cell_annotation_beta_model: bool,
-    pub cell_annotation_model_developer: String,
-    pub pipeline_version: String,
+    pub(super) cell_annotation_model: String,
+    pub(super) cell_annotation_tree_version_used: String,
+    pub(super) cell_annotation_display_map_version_used: String,
+    pub(super) cell_annotation_frac_returned_bcs: Option<f64>,
+    pub(super) cell_annotation_success: Option<bool>,
+    pub(super) cell_annotation_differential_expression: Option<bool>,
+    pub(super) cell_annotation_beta_model: bool,
+    pub(super) cell_annotation_model_developer: String,
+    pub(super) pipeline_version: String,
 }
 
 impl CellAnnotationMetrics {
-    pub fn get_table(&self) -> Vec<(String, String)> {
+    fn get_table(&self) -> Vec<(String, String)> {
         vec![
             (
                 "Pipeline version".to_string(),
@@ -92,7 +161,7 @@ impl CellAnnotationMetrics {
         ]
     }
 
-    pub(crate) fn generate_disclaiming_banner(&self) -> Option<InlineHelp> {
+    pub(super) fn generate_disclaiming_banner(&self) -> Option<InlineHelp> {
         if self.cell_annotation_beta_model {
             let disclaimer = if self.cell_annotation_model_developer.contains("Broad") {
                 format!("{CELL_ANNOTATION_DISCLAIMER_STRING}\n{CELL_ANNOTATION_BROAD_MODEL}")
@@ -106,7 +175,7 @@ impl CellAnnotationMetrics {
         }
     }
 
-    pub(crate) fn generate_disclaimer_html_fragment(&self) -> Option<String> {
+    pub(super) fn generate_disclaimer_html_fragment(&self) -> Option<String> {
         if self.cell_annotation_beta_model {
             let disclaimer = if self.cell_annotation_model_developer.contains("Broad") {
                 format!("{CELL_ANNOTATION_DISCLAIMER_STRING}\n{CELL_ANNOTATION_BROAD_MODEL}")
@@ -120,7 +189,7 @@ impl CellAnnotationMetrics {
         }
     }
 
-    pub(crate) fn get_cloupe_track_name(&self) -> String {
+    pub(super) fn get_cloupe_track_name(&self) -> String {
         if self.cell_annotation_beta_model {
             format!("{CELL_TYPING_CLOUPE_NAME} {CELL_TYPING_BETA_SUFFIX}")
         } else {
@@ -129,12 +198,12 @@ impl CellAnnotationMetrics {
     }
 }
 
-pub(crate) fn generate_cell_type_barcharts_from_json(
+pub(super) fn generate_cell_type_barcharts_from_json(
     json_file: &JsonFile<Value>,
 ) -> Result<WithTitle<VegaLitePlot>> {
     generate_cell_type_barchart_from_value(json_file.read()?)
 }
-pub(crate) fn generate_cell_type_barchart_from_value(
+pub(super) fn generate_cell_type_barchart_from_value(
     value: Value,
 ) -> Result<WithTitle<VegaLitePlot>> {
     Ok(WithTitle {
@@ -151,12 +220,12 @@ pub(crate) fn generate_cell_type_barchart_from_value(
     })
 }
 
-pub(crate) fn generate_cell_type_violin_plot_from_json(
+pub(super) fn generate_cell_type_violin_plot_from_json(
     json_file: &JsonFile<Value>,
 ) -> Result<WithTitle<VegaLitePlot>> {
     generate_cell_type_violin_plot_from_value(json_file.read()?)
 }
-pub(crate) fn generate_cell_type_violin_plot_from_value(
+pub(super) fn generate_cell_type_violin_plot_from_value(
     value: Value,
 ) -> Result<WithTitle<VegaLitePlot>> {
     Ok(WithTitle {
@@ -173,12 +242,12 @@ pub(crate) fn generate_cell_type_violin_plot_from_value(
     })
 }
 
-pub(crate) fn generate_cell_type_umap_plot_from_json(
+pub(super) fn generate_cell_type_umap_plot_from_json(
     json_file: &JsonFile<Value>,
 ) -> Result<WithTitle<VegaLitePlot>> {
     generate_cell_type_umap_plot_from_value(json_file.read()?)
 }
-pub(crate) fn generate_cell_type_umap_plot_from_value(
+pub(super) fn generate_cell_type_umap_plot_from_value(
     value: Value,
 ) -> Result<WithTitle<VegaLitePlot>> {
     Ok(WithTitle {
@@ -195,12 +264,12 @@ pub(crate) fn generate_cell_type_umap_plot_from_value(
     })
 }
 
-pub(crate) fn generate_cell_type_diffexp_from_json(
+pub(super) fn generate_cell_type_diffexp_from_json(
     json_file: &JsonFile<DifferentialExpressionTable>,
 ) -> Result<WithTitle<DifferentialExpressionTable>> {
     generate_cell_type_diffexp_from_value(json_file.read()?)
 }
-pub(crate) fn generate_cell_type_diffexp_from_value(
+pub(super) fn generate_cell_type_diffexp_from_value(
     value: DifferentialExpressionTable,
 ) -> Result<WithTitle<DifferentialExpressionTable>> {
     Ok(WithTitle {
@@ -213,7 +282,7 @@ pub(crate) fn generate_cell_type_diffexp_from_value(
     })
 }
 
-pub(crate) fn generate_cell_type_metrics(
+pub(super) fn generate_cell_type_metrics(
     cell_annotation_metrics: CellAnnotationMetrics,
 ) -> Result<WithTitle<TableMetric>> {
     Ok(WithTitle {
@@ -228,7 +297,7 @@ pub(crate) fn generate_cell_type_metrics(
     })
 }
 
-pub(crate) fn generate_cell_type_parameter_table(
+pub(super) fn generate_cell_type_parameter_table(
     cell_annotation_metrics: CellAnnotationMetrics,
 ) -> Result<TableMetric> {
     Ok(TableMetric {
@@ -236,7 +305,7 @@ pub(crate) fn generate_cell_type_parameter_table(
     })
 }
 
-pub(crate) fn generate_cas_failure_alert() -> Alert {
+pub(super) fn generate_cas_failure_alert() -> Alert {
     Alert {
         level: AlertLevel::Error,
         title: CELL_ANNOTATION_FAILURE_TITLE.to_string(),
@@ -245,7 +314,7 @@ pub(crate) fn generate_cas_failure_alert() -> Alert {
     }
 }
 
-pub(crate) fn generate_cas_de_warn_alert() -> Alert {
+pub(super) fn generate_cas_de_warn_alert() -> Alert {
     Alert {
         level: AlertLevel::Error,
         title: CELL_ANNOTATION_DE_WARN_TITLE.to_string(),
@@ -254,7 +323,7 @@ pub(crate) fn generate_cas_de_warn_alert() -> Alert {
     }
 }
 
-pub(crate) fn generate_cas_bc_mismatch_alert(alert_string: String) -> Alert {
+pub(super) fn generate_cas_bc_mismatch_alert(alert_string: String) -> Alert {
     Alert {
         level: AlertLevel::Warn,
         title: CELL_ANNOTATION_BC_MISMATCH_WARN_TITLE.to_string(),

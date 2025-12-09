@@ -1,6 +1,7 @@
+#![deny(missing_docs)]
 use barcode::Barcode;
-use cr_types::filtered_barcodes::{FilteredBarcodesCsv, FilteredBarcodesCsvRow};
 use cr_types::GenomeName;
+use cr_types::filtered_barcodes::{FilteredBarcodesCsv, FilteredBarcodesCsvRow};
 use itertools::Itertools;
 use martian_filetypes::bin_file::BincodeFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
@@ -86,11 +87,12 @@ impl FilteredBarcodes {
         self.sorted_barcodes.len()
     }
 
+    #[pyo3(signature = (genome=None))]
     pub fn sorted_barcode_indices<'py>(
         &self,
         py: Python<'py>,
         genome: Option<&GenomeNameStr>,
-    ) -> &'py PyArray1<usize> {
+    ) -> Bound<'py, PyArray1<usize>> {
         let genome_choice = self.genome_choice(genome);
         PyArray1::from_iter(
             py,
@@ -102,21 +104,21 @@ impl FilteredBarcodes {
         )
     }
 
-    pub fn index_of_barcode(&self, barcode: &PyAny) -> usize {
+    pub fn index_of_barcode(&self, barcode: &Bound<'_, PyAny>) -> usize {
         self._index_of_barcode(barcode)
             .unwrap_or_else(|| panic!("Could not find index for barcode: {barcode}"))
     }
 
-    pub fn per_genome_barcodes(
+    pub fn per_genome_barcodes<'py>(
         &self,
-        py: Python<'_>,
-    ) -> HashMap<GenomeNameString, Vec<Py<PyBytes>>> {
+        py: Python<'py>,
+    ) -> HashMap<GenomeNameString, Vec<Bound<'py, PyBytes>>> {
         let genome_to_barcodes = self
             .iter_barcode_genome_indices()
             .map(|(bc_idx, genome_idx)| {
                 (
                     genome_idx,
-                    PyBytes::new(py, self.sorted_barcodes[bc_idx].to_string().as_bytes()).into(),
+                    PyBytes::new(py, self.sorted_barcodes[bc_idx].to_string().as_bytes()),
                 )
             })
             .fold(
@@ -151,7 +153,8 @@ impl FilteredBarcodes {
     /// Returns true if the barcode is in the list of filtered barcodes for the given genome.
     ///
     /// NOTE: In the python code genome = "" is used to refer to all genomes.
-    pub fn contains(&self, barcode: &PyAny, genome: Option<&GenomeNameStr>) -> bool {
+    #[pyo3(signature = (barcode, genome=None))]
+    pub fn contains(&self, barcode: &Bound<'_, PyAny>, genome: Option<&GenomeNameStr>) -> bool {
         self._index_of_barcode(barcode).is_some_and(|bc_idx| {
             let genome_choice = self.genome_choice(genome);
             self.iter_genome_indices(bc_idx)
@@ -193,12 +196,12 @@ impl FilteredBarcodes {
         }
     }
 
-    fn _index_of_barcode(&self, barcode: &PyAny) -> Option<usize> {
+    fn _index_of_barcode(&self, barcode: &Bound<'_, PyAny>) -> Option<usize> {
         let barcode: Barcode = Self::parse_barcode(barcode).unwrap();
         self.sorted_barcodes.binary_search(&barcode).ok()
     }
 
-    fn parse_barcode(barcode_str_or_bytes: &PyAny) -> Result<Barcode> {
+    fn parse_barcode(barcode_str_or_bytes: &Bound<'_, PyAny>) -> Result<Barcode> {
         // Check if the input is a bytes object
         if let Ok(bytes) = barcode_str_or_bytes.extract::<&[u8]>() {
             return Ok(Barcode::from_bytes(bytes)?);

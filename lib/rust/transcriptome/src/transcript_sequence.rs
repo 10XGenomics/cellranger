@@ -1,13 +1,14 @@
+#![deny(missing_docs)]
 use crate::transcriptome::Exon;
 use anyhow::Result;
 use bio::io::fasta::IndexedReader;
 use bio_types::strand::ReqStrand;
-use itertools::process_results;
+use itertools::Itertools;
 use std::io::{Read, Seek};
 
 /// Construct a transcript sequence from a FASTA file, a strand, and a set of intervals
 /// The intervals must be ordered according to the order of the intervals on the genome
-pub(crate) fn get_transcript_sequence(
+pub(super) fn get_transcript_sequence(
     reader: &mut IndexedReader<impl Read + Seek>,
     contig: &str,
     exons: &[Exon],
@@ -17,7 +18,9 @@ pub(crate) fn get_transcript_sequence(
     let mut seq = Vec::with_capacity(size);
     for exon in exons {
         reader.fetch(contig, exon.start, exon.end)?;
-        process_results(reader.read_iter()?, |iter| seq.extend(iter))?;
+        reader
+            .read_iter()?
+            .process_results(|iter| seq.extend(iter))?;
     }
     assert_eq!(seq.len(), size);
     Ok(match strand {
@@ -28,7 +31,7 @@ pub(crate) fn get_transcript_sequence(
 
 /// Reverse complement DNA.
 fn revcomp_slice(dna: &mut [u8]) {
-    for i in 0..(dna.len() + 1) / 2 {
+    for i in 0..dna.len().div_ceil(2) {
         let j = dna.len() - 1 - i;
         let fst = bio::alphabets::dna::complement(dna[i]);
         let lst = bio::alphabets::dna::complement(dna[j]);
@@ -73,7 +76,7 @@ mod test {
         let rdr = File::open("/Users/patrick/refdata_cellranger/GRCh38-3.0.0/genes/genes.gtf")?;
         let txome = Transcriptome::from_reader(BufReader::new(rdr))?;
 
-        let mut fa = bio::io::fasta::IndexedReader::from_file(
+        let mut fa = IndexedReader::from_file(
             &"/Users/patrick/refdata_cellranger/GRCh38-3.0.0/fasta/genome.fa",
         )
         .unwrap();

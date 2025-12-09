@@ -10,11 +10,10 @@ from __future__ import annotations
 import csv
 import itertools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, Self
 
 import numpy as np
 from six import ensure_str
-from typing_extensions import Self
 
 if TYPE_CHECKING:
     import cellranger.matrix as cr_matrix
@@ -91,6 +90,23 @@ class DifferentialExpression(NamedTuple):
                 array_list_of_lists.append(list(map(float, row[2:])))
 
         return cls(data=np.array(array_list_of_lists))
+
+    @staticmethod
+    def get_number_of_clusters_from_csv(csv_path: str | bytes) -> int:
+        """Get number of clusters from a differential expression CSV."""
+        with open(csv_path) as f:
+            reader = csv.DictReader(f)
+            field_names = reader.fieldnames
+            if (
+                not field_names
+                or len(field_names) < 2
+                or DIFFEXP_TABLE_FEATURE_ID_KEY != field_names[0]
+                or DIFFEXP_TABLE_FEATURE_NAME_KEY != field_names[1]
+            ):
+                raise ValueError(
+                    f"CSV did not begin with fields {DIFFEXP_TABLE_FEATURE_ID_KEY} and {DIFFEXP_TABLE_FEATURE_NAME_KEY}"
+                )
+            return int((len(field_names) - 2) / 3)
 
 
 @dataclass

@@ -16,11 +16,11 @@ path = '../cr_types'
 [dependencies.debruijn]
 workspace = true
 
-[dependencies.enclone_ranger]
-path = '../enclone_ranger'
+[dependencies.enclone_process]
+path = '../enclone_process'
 
 [dependencies.fastq_set]
-workspace = true
+path = '../fastq_set'
 
 [dependencies.itertools]
 workspace = true
@@ -43,12 +43,6 @@ workspace = true
 [dependencies.strum]
 workspace = true
 
-[dependencies.strum_macros]
-workspace = true
-
-[dependencies.tenkit2]
-path = '../tenkit2'
-
 [dependencies.vdj_ann]
 path = '../vdj_ann'
 
@@ -64,9 +58,12 @@ path = '../vector_utils'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'vdj_filter_barcodes'
 publish = false
 version = '0.1.0'

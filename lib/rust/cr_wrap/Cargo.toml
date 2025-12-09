@@ -5,9 +5,8 @@ test = false
 [dependencies]
 dirs = '5'
 shell-escape = '0.1.5'
-terminal_size = '0.3'
-tiff = '0.9.1'
-url = '2.5.2'
+terminal_size = '0.4'
+url = '2.5.7'
 
 [dependencies.anyhow]
 workspace = true
@@ -27,15 +26,12 @@ path = '../cr_types'
 workspace = true
 
 [dependencies.fastq_set]
-workspace = true
+path = '../fastq_set'
 
 [dependencies.hex]
 workspace = true
 
 [dependencies.itertools]
-workspace = true
-
-[dependencies.libc]
 workspace = true
 
 [dependencies.metric]
@@ -68,15 +64,21 @@ workspace = true
 [dependencies.thiserror]
 workspace = true
 
+[dependencies.tiff]
+workspace = true
+
 [dependencies.vdj_reference]
 path = '../vdj_reference'
 
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'cr_wrap'
 publish = false
 version = '0.1.0'

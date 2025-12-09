@@ -42,6 +42,6 @@ class BarcodeFilterResults(Metrics):
     ) -> dict[str, int | float]:
         sample_prefix = "_" + sample if sample else ""
         return {
-            "gem_group_%d%s_%s_%s" % (i, sample_prefix, key, method): value
+            f"gem_group_{i}{sample_prefix}_{key}_{method}": value
             for key, value in self.__dict__.items()
         }

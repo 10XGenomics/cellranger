@@ -1,8 +1,9 @@
-use crate::arc::types::{validate_distance, MAX_CLUSTERS_RANGE};
+#![expect(missing_docs)]
+use crate::arc::types::{MAX_CLUSTERS_RANGE, validate_distance};
 use crate::mrp_args::MrpArgs;
-use crate::utils::{validate_id, CliPath};
-use anyhow::{anyhow, bail, Context, Result};
-use clap::{self, value_parser, Parser};
+use crate::utils::{CliPath, validate_id};
+use anyhow::{Context, Result, anyhow, bail};
+use clap::{self, Parser, value_parser};
 use csv::StringRecord;
 use ordered_float::NotNan;
 use serde::{self, Deserialize, Serialize};
@@ -124,7 +125,7 @@ impl AggrDefs {
             if ri == 0 {
                 header = rec.clone();
                 for (i, h) in rec.iter().enumerate() {
-                    if non_metadata_cols.iter().any(|&x| x == h) {
+                    if non_metadata_cols.contains(&h) {
                         continue;
                     }
                     metadata_indices.push(i);
@@ -153,13 +154,12 @@ impl AggrDefs {
             aggr_defs.push(row);
         }
         if aggr_defs.is_empty() {
-            bail!("Unable to read provided csv: {:?}\nNo records found", path,);
+            bail!("Unable to read provided csv: {path:?}\nNo records found");
         }
         for col in &metadata_names {
             if aggr_defs.iter().all(|adef| adef.metadata[col].is_empty()) {
                 bail!(
-                    "Error processing aggr CSV: metadata column `{}` has empty entries in every row.",
-                    col
+                    "Error processing aggr CSV: metadata column `{col}` has empty entries in every row."
                 );
             }
         }

@@ -1,15 +1,16 @@
 //! Martian stage RUN_HIERARCHICAL_CLUSTERING
+#![expect(missing_docs)]
 
 use crate::hclust_utils::get_cluster_representatives;
 use crate::io::{csv, h5};
 use crate::types::{ClusteringResult, ClusteringType, H5File};
 use anyhow::Result;
-use cr_types::reference::feature_reference::FeatureType;
 use cr_types::FeatureBarcodeType;
+use cr_types::reference::feature_reference::FeatureType;
 use hclust::{ClusterDirection, DistanceMetric, HierarchicalCluster, LinkageMethod};
 use hdf5_io::matrix::read_adaptive_csr_matrix;
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::default::Default;
@@ -53,7 +54,7 @@ impl MartianStage for HierarchicalClusteringStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let mem_gib = (4.0 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()) as isize;
+        let mem_gib = (6.0 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()) as isize;
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
 
         Ok(ACTIVE_FEATURE_TYPES
@@ -81,8 +82,8 @@ impl MartianStage for HierarchicalClusteringStage {
         rayon::ThreadPoolBuilder::new()
             .num_threads(rover.get_threads())
             .build_global()?;
-        let retained = Some(chunk_args.feature_type.to_string());
-        let (matrix, _) = read_adaptive_csr_matrix(&args.matrix_h5, retained.as_deref(), None)?;
+        let retained = Some(chunk_args.feature_type.as_str());
+        let (matrix, _) = read_adaptive_csr_matrix(&args.matrix_h5, retained, None)?;
 
         let graphclust_results = h5::load_clustering(
             &args.graph_clusters_h5,

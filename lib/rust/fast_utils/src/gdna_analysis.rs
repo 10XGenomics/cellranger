@@ -1,9 +1,10 @@
+#![deny(missing_docs)]
 use crate::barcode_counter::FilteredBarcodeFilter;
 use cr_h5::molecule_info::MoleculeInfoIterator;
+use cr_types::TargetingMethod;
 use cr_types::probe_set::ProbeSetReference;
 use cr_types::target_panel_summary::{TargetPanelSummary, TargetPanelSummaryFormat};
 use cr_types::types::PROBE_IDX_SENTINEL_VALUE;
-use cr_types::TargetingMethod;
 use itertools::Itertools;
 use martian_filetypes::FileTypeRead;
 use pyo3::prelude::*;
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 
 #[allow(clippy::type_complexity)]
 #[pyfunction]
-pub(crate) fn count_umis_per_probe(
+pub(super) fn count_umis_per_probe(
     _py: Python<'_>,
     mol_info_path: PathBuf,
     target_panel_summary_path: PathBuf,

@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use anyhow::Result;
 use martian::prelude::{MartianFileType, MartianRover};
 use std::path::Path;
@@ -45,22 +46,22 @@ pub mod estimate_mem {
     /// Return the total number of valid barcodes from a metrics JSON.
     /// This is computed by the BARCODE_CORRECTION stage as the size of the union
     /// set of the barcodes of all library types including barcodes_under_tissue.*
-    pub fn get_total_barcodes_detected(metrics: &HashMap<String, Value>) -> isize {
+    pub fn get_total_barcodes_detected(metrics: &HashMap<String, Value>) -> usize {
         metrics
             .get("total_barcodes_detected")
             .and_then(Value::as_u64)
-            .unwrap() as isize
+            .unwrap() as usize
     }
 
     /// Return the memory requirement for a data structure given barcode_count,
     /// bytes_per_barcode, and offset.
     pub fn barcode_mem_gib(
-        barcodes_count: isize,
-        bytes_per_barcode: isize,
-        offset_gib: isize,
+        barcodes_count: usize,
+        bytes_per_barcode: usize,
+        offset_gib: usize,
     ) -> isize {
         let mem_bytes = bytes_per_barcode * barcodes_count;
 
-        offset_gib + mem_bytes / 1024 / 1024 / 1024
+        (offset_gib + mem_bytes / 1024 / 1024 / 1024) as isize
     }
 }

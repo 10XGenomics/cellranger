@@ -5,7 +5,7 @@
 
 """Postprocess the cell type diff expression generated.
 
-Rewrite the header of the cell types diff expression csv to have the celltypes 
+Rewrite the header of the cell types diff expression csv to have the celltypes
 and generate the figure for websummary.
 """
 
@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 import martian
 
 from cellranger.analysis.analysis_types import DifferentialExpressionWithFeatures
+from cellranger.cell_typing.broad_tenx.cas_postprocessing import LOW_UMI_BARCODE_KEY
 from cellranger.websummary.analysis_tab_core import diffexp_table
 from cellranger.websummary.react_components import ReactComponentEncoder
 
@@ -88,13 +89,20 @@ def main(args, outs):
     diffexp_with_features = DifferentialExpressionWithFeatures.from_diffexp_csv(diffexp_csv_path)
     cell_types_list = sorted(cell_types_map, key=lambda x: cell_types_map[x])
 
+    diff_table = diffexp_table(
+        diffexp_with_features=diffexp_with_features,
+        cluster_names=cell_types_list,
+    )
+
+    # Don't display the 'Low UMI Barcode' column in the websummary
+    diff_table["columns"] = [
+        col for col in diff_table["columns"] if col.get("Header") != f"{LOW_UMI_BARCODE_KEY}"
+    ]
+
     diffexp_table_dict = DifferentialExpressionTable(
         table=json.loads(
             json.dumps(
-                diffexp_table(
-                    diffexp_with_features=diffexp_with_features,
-                    cluster_names=cell_types_list,
-                ),
+                diff_table,
                 cls=ReactComponentEncoder,
             )
         )

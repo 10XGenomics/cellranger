@@ -1,0 +1,664 @@
+# --------------------------------------------------------------------------------------------------
+# VDJ-T -> Enrichment
+# --------------------------------------------------------------------------------------------------
+[vdj_t_enrichment_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_t_enrichment_metrics.conditions]
+    vdj_receptor = "TR"
+
+    [vdj_t_enrichment_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [vdj_t_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to any V(D)J gene"
+
+        [[vdj_t_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac.alerts]]
+        error_threshold = 0.4
+        warn_threshold = 0.5
+        warn_title = "Low Fraction of Reads Mapped to Any V(D)J Gene."
+        detail = "Ideal > 50%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+    [vdj_t_enrichment_metrics.TRA_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRA"
+
+    [vdj_t_enrichment_metrics.TRB_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRB"
+
+[vdj_t_sample_enrichment_metrics]
+tier = "Cells"
+
+    [vdj_t_sample_enrichment_metrics.conditions]
+    vdj_receptor = "TR"
+    is_read_multiplexed = true
+
+    [vdj_t_sample_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to any V(D)J gene"
+
+        [[vdj_t_sample_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac.alerts]]
+        error_threshold = 0.4
+        warn_threshold = 0.5
+        warn_title = "Low Fraction of Reads Mapped to Any V(D)J Gene."
+        detail = "Ideal > 50%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+    [vdj_t_sample_enrichment_metrics.TRA_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRA"
+
+    [vdj_t_sample_enrichment_metrics.TRB_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRB"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-T-GD -> Enrichment
+# --------------------------------------------------------------------------------------------------
+[vdj_tgd_enrichment_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_tgd_enrichment_metrics.conditions]
+    vdj_receptor = "TR_GD"
+
+    [vdj_tgd_enrichment_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [vdj_tgd_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to any V(D)J gene"
+
+        [[vdj_tgd_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac.alerts]]
+        if_metric_is = "less_than_or_equal"
+        warn_threshold = 0.4
+        warn_title = "Low Fraction of Reads Mapped to Any V(D)J Gene."
+        detail = "Ideal > 40%. This can indicate poor specificity of the V(D)J enrichment or the use of the wrong germline reference. Application performance may be affected."
+
+    [vdj_tgd_enrichment_metrics.TRG_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRG"
+
+    [vdj_tgd_enrichment_metrics.TRD_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRD"
+
+[vdj_tgd_sample_enrichment_metrics]
+tier = "Cells"
+
+    [vdj_tgd_sample_enrichment_metrics.conditions]
+    vdj_receptor = "TR_GD"
+    is_read_multiplexed = true
+
+    [vdj_tgd_sample_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to any V(D)J gene"
+
+        [[vdj_tgd_sample_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac.alerts]]
+        if_metric_is = "less_than_or_equal"
+        warn_threshold = 0.4
+        warn_title = "Low Fraction of Reads Mapped to Any V(D)J Gene."
+        detail = "Ideal > 40%. This can indicate poor specificity of the V(D)J enrichment or the use of the wrong germline reference. Application performance may be affected."
+
+    [vdj_tgd_sample_enrichment_metrics.TRG_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRG"
+
+    [vdj_tgd_sample_enrichment_metrics.TRD_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to TRD"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-B -> Enrichment
+# --------------------------------------------------------------------------------------------------
+[vdj_b_enrichment_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_b_enrichment_metrics.conditions]
+    vdj_receptor = "IG"
+
+    [vdj_b_enrichment_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [vdj_b_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to any V(D)J gene"
+
+        [[vdj_b_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac.alerts]]
+        error_threshold = 0.4
+        warn_threshold = 0.5
+        warn_title = "Low Fraction of Reads Mapped to Any V(D)J Gene."
+        detail = "Ideal > 50%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+    [vdj_b_enrichment_metrics.IGH_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to IGH"
+
+    [vdj_b_enrichment_metrics.IGK_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to IGK"
+
+    [vdj_b_enrichment_metrics.IGL_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to IGL"
+
+[vdj_b_sample_enrichment_metrics]
+tier = "Cells"
+
+    [vdj_b_sample_enrichment_metrics.conditions]
+    vdj_receptor = "IG"
+    is_read_multiplexed = true
+
+
+    [vdj_b_sample_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to any V(D)J gene"
+
+        [[vdj_b_sample_enrichment_metrics.multi_vdj_recombinome_mapped_reads_frac.alerts]]
+        error_threshold = 0.4
+        warn_threshold = 0.5
+        warn_title = "Low Fraction of Reads Mapped to Any V(D)J Gene."
+        detail = "Ideal > 50%. This can indicate poor specificity of the V(D)J enrichment, use of the wrong germline reference, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+    [vdj_b_sample_enrichment_metrics.IGH_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to IGH"
+
+    [vdj_b_sample_enrichment_metrics.IGK_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to IGK"
+
+    [vdj_b_sample_enrichment_metrics.IGL_vdj_recombinome_mapped_reads_frac]
+    type = "Percent"
+    header = "Reads mapped to IGL"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ Denovo -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_noref_library_cell_metric]
+tier = "Library"
+
+    [vdj_noref_library_cell_metric.conditions]
+    has_vdj_reference = false
+
+    [vdj_noref_library_cell_metric.vdj_filtered_bcs]
+    type = "usize"
+    header = "VDJ cells"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-T -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_t_library_cell_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_t_library_cell_metrics.conditions]
+    vdj_receptor = "TR"
+    has_vdj_reference = true
+
+    [vdj_t_library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [vdj_t_library_cell_metrics.vdj_filtered_bcs]
+    header = "VDJ Cells"
+    type = "usize"
+
+        [[vdj_t_library_cell_metrics.vdj_filtered_bcs.alerts]]
+        error_threshold = 0
+        warn_threshold = 10
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [vdj_t_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning pair"
+    extract = "placeholder"
+
+        [[vdj_t_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Cells with productive V-J spanning pair"
+        detail = "Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected"
+
+    [vdj_t_library_cell_metrics.TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (TRA, TRB) pair"
+    extract = "placeholder"
+
+    [vdj_t_library_cell_metrics.TRA_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRA contig"
+    extract = "placeholder"
+
+    [vdj_t_library_cell_metrics.TRB_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRB contig"
+    extract = "placeholder"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-T G/D -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_tgd_library_cell_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_tgd_library_cell_metrics.conditions]
+    vdj_receptor = "TR_GD"
+    has_vdj_reference = true
+
+    [vdj_tgd_library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [vdj_tgd_library_cell_metrics.vdj_filtered_bcs]
+    header = "VDJ Cells"
+    type = "usize"
+
+        [[vdj_tgd_library_cell_metrics.vdj_filtered_bcs.alerts]]
+        error_threshold = 0
+        warn_threshold = 10
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [vdj_tgd_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning pair"
+    extract = "placeholder"
+
+    [vdj_tgd_library_cell_metrics.TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (TRG, TRD) pair"
+    extract = "placeholder"
+
+    [vdj_tgd_library_cell_metrics.TRG_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRG contig"
+    extract = "placeholder"
+
+    [vdj_tgd_library_cell_metrics.TRD_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRD contig"
+    extract = "placeholder"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-B -> Cell Calling Quality
+# --------------------------------------------------------------------------------------------------
+[vdj_b_library_cell_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_b_library_cell_metrics.conditions]
+    vdj_receptor = "IG"
+    has_vdj_reference = true
+
+    [vdj_b_library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [vdj_b_library_cell_metrics.vdj_filtered_bcs]
+    header = "VDJ Cells"
+    type = "usize"
+
+        [[vdj_b_library_cell_metrics.vdj_filtered_bcs.alerts]]
+        error_threshold = 0
+        warn_threshold = 10
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Ideal >= 10. This usually indicates poor cell quality, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [vdj_b_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning pair"
+    extract = "placeholder"
+
+        [[vdj_b_library_cell_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Cells with Productive V-J Spanning Pair"
+        detail = "Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected"
+
+    [vdj_b_library_cell_metrics.IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (IGK, IGH) pair"
+    extract = "placeholder"
+
+    [vdj_b_library_cell_metrics.IGL_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (IGL, IGH) pair"
+    extract = "placeholder"
+
+    [vdj_b_library_cell_metrics.IGH_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive IGH contig"
+    extract = "placeholder"
+
+    [vdj_b_library_cell_metrics.IGK_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive IGK contig"
+    extract = "placeholder"
+
+    [vdj_b_library_cell_metrics.IGL_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive IGL contig"
+    extract = "placeholder"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ -> Metrics Per Physical Library
+# --------------------------------------------------------------------------------------------------
+[vdj_physical_library_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [vdj_physical_library_metrics.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [vdj_physical_library_metrics.VDJ_total_read_pairs]
+    type = "usize"
+    header = "Number of reads"
+
+    [vdj_physical_library_metrics.vdj_good_bc_frac]
+    type = "Percent"
+    header = "Valid barcodes"
+
+        [[vdj_physical_library_metrics.vdj_good_bc_frac.alerts]]
+        error_threshold = 0.75
+        warn_threshold = 0.85
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 85%. This usually indicates a quality issue with the Ilumina R1 read. Application performance may be affected."
+
+    [vdj_physical_library_metrics.vdj_total_raw_read_pairs_per_filtered_bc]
+    type = "FloatAsInt"
+    header = "Mean reads per cell"
+
+    [vdj_physical_library_metrics.vdj_assemblable_read_pairs_per_filtered_bc]
+    type = "FloatAsInt"
+    header = "Mean used reads per cell"
+
+    [vdj_physical_library_metrics.vdj_filtered_bcs_cum_frac]
+    type = "Percent"
+    header = "Fraction reads in cells"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ -> Hero metrics (all receptors)
+# --------------------------------------------------------------------------------------------------
+[vdj_sample_hero_metrics]
+tier = "Cells"
+
+    [vdj_sample_hero_metrics.vdj_filtered_bcs]
+    type = "usize"
+    header = "VDJ cells"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ -> Hero metrics (all receptors, with a reference)
+# --------------------------------------------------------------------------------------------------
+[vdj_sample_hero_metrics_with_reference]
+tier = "Cells"
+
+    [vdj_sample_hero_metrics_with_reference.conditions]
+    has_vdj_reference = true
+
+    [vdj_sample_hero_metrics_with_reference.multi_vdj_assembly_contig_pair_productive_full_len_bc_count]
+    type = "usize"
+    header = "Number of cells with productive V-J spanning pair"
+
+
+# --------------------------------------------------------------------------------------------------
+# VDJ -> Hero metrics (all receptors, non-cell-multiplexed)
+# --------------------------------------------------------------------------------------------------
+[vdj_non_cmo_sample_hero_metrics]
+tier = "Cells"
+
+    [vdj_non_cmo_sample_hero_metrics.conditions]
+    has_vdj_reference = true
+    is_cell_multiplexed = false
+
+    [vdj_non_cmo_sample_hero_metrics.vdj_filtered_bcs_cum_frac]
+    type = "Percent"
+    header = "Fraction reads in cells"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ T -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[vdj_t_sample_hero_metrics]
+tier = "Cells"
+
+    [vdj_t_sample_hero_metrics.conditions]
+    vdj_receptor = "TR"
+    has_vdj_reference = true
+
+    [vdj_t_sample_hero_metrics.TRA_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median TRA UMIs per Cell"
+
+        [[vdj_t_sample_hero_metrics.TRA_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "Zero Median TRA UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with extremely low TRA expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+    [vdj_t_sample_hero_metrics.TRB_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median TRB UMIs per Cell"
+
+        [[vdj_t_sample_hero_metrics.TRB_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "Zero Median TRB UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with extremely low TRB expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+# --------------------------------------------------------------------------------------------------
+# VDJ T G/D -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[vdj_tgd_sample_hero_metrics]
+tier = "Cells"
+
+    [vdj_tgd_sample_hero_metrics.conditions]
+    vdj_receptor = "TR_GD"
+    has_vdj_reference = true
+
+    [vdj_tgd_sample_hero_metrics.TRG_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median TRG UMIs per Cell"
+
+        [[vdj_tgd_sample_hero_metrics.TRG_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "Zero Median TRG UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with extremely low TRG expression, poor cell quality, low yield from the RT reaction, or low efficiency of the TRG primers."
+
+    [vdj_tgd_sample_hero_metrics.TRD_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median TRD UMIs per Cell"
+
+        [[vdj_tgd_sample_hero_metrics.TRD_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "Zero Median TRD UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with extremely low TRD expression, poor cell quality, low yield from the RT reaction, or low efficiency of the TRG primers."
+
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-B -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[vdj_b_sample_hero_metrics]
+tier = "Cells"
+
+    [vdj_b_sample_hero_metrics.conditions]
+    vdj_receptor = "IG"
+    has_vdj_reference = true
+
+    [vdj_b_sample_hero_metrics.IGH_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median IGH UMIs per Cell"
+
+        [[vdj_b_sample_hero_metrics.IGH_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "Zero Median IGH UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with extremely low IGH expression, poor cell quality, low yield from the RT reaction, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected."
+
+    [vdj_b_sample_hero_metrics.IGK_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median IGK UMIs per Cell"
+
+        [[vdj_b_sample_hero_metrics.IGK_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        warn_threshold = 0
+        warn_title = "Zero Median IGK UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with exclusive expression of paired IGH and IGL chains, or it could be due to cells with extremely low IGK expression, poor quality, low yield from the RT reaction, or the use of unsupported chemistry (e.g., Single Cell 3' for V(D)J assembly). The warning should be interpreted in the context of productive V-J spanning pairing rate."
+
+    [vdj_b_sample_hero_metrics.IGL_vdj_assembly_umis_per_cell_median]
+    type = "FloatAsInt"
+    extract = "optional"
+    header = "Median IGL UMIs per Cell"
+
+        [[vdj_b_sample_hero_metrics.IGL_vdj_assembly_umis_per_cell_median.alerts]]
+        if_metric_is = "less_than_or_equal"
+        warn_threshold = 0
+        warn_title = "Zero Median IGL UMIs per Cell"
+        detail = "Ideal > 0. This can indicate cells with exclusive expression of paired IGH and IGK chains, or it could be due to cells with extremely low IGL expression, poor quality, low yield from the RT reaction, or the use of unsupported chemistry (e.g., Single Cell 3' for V(D)J assembly). The warning should be interpreted in the context of productive V-J spanning pairing rate."
+
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-T -> Annotation
+# --------------------------------------------------------------------------------------------------
+[vdj_t_sample_annotation_metrics]
+tier = "Cells"
+
+    [vdj_t_sample_annotation_metrics.conditions]
+    vdj_receptor = "TR"
+    has_vdj_reference = true
+
+    [vdj_t_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning pair"
+    extract = "placeholder"
+
+        [[vdj_t_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Cells with productive V-J spanning pair"
+        detail = "Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected"
+
+    [vdj_t_sample_annotation_metrics.TRA_TRB_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (TRA, TRB) pair"
+    extract = "placeholder"
+
+    [vdj_t_sample_annotation_metrics.TRA_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRA contig"
+    extract = "placeholder"
+
+    [vdj_t_sample_annotation_metrics.TRB_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRB contig"
+    extract = "placeholder"
+
+    [vdj_t_sample_annotation_metrics.multi_raw_vdj_paired_clonotype_diversity]
+    type = "f64"
+    extract = "optional" # absent if we skipped clonotyping
+    header = "Paired clonotype diversity"
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-T G/D -> Annotation
+# --------------------------------------------------------------------------------------------------
+[vdj_tgd_sample_annotation_metrics]
+tier = "Cells"
+
+    [vdj_tgd_sample_annotation_metrics.conditions]
+    vdj_receptor = "TR_GD"
+    has_vdj_reference = true
+
+    [vdj_tgd_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning pair"
+    extract = "placeholder"
+
+    [vdj_tgd_sample_annotation_metrics.TRG_TRD_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (TRG, TRD) pair"
+    extract = "placeholder"
+
+    [vdj_tgd_sample_annotation_metrics.TRG_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRG contig"
+    extract = "placeholder"
+
+    [vdj_tgd_sample_annotation_metrics.TRD_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive TRD contig"
+    extract = "placeholder"
+
+    [vdj_tgd_sample_annotation_metrics.multi_raw_vdj_paired_clonotype_diversity]
+    type = "f64"
+    extract = "optional" # absent if we skipped clonotyping
+    header = "Paired clonotype diversity"
+
+
+# --------------------------------------------------------------------------------------------------
+# VDJ-B -> Annotation
+# --------------------------------------------------------------------------------------------------
+[vdj_b_sample_annotation_metrics]
+tier = "Cells"
+
+    [vdj_b_sample_annotation_metrics.conditions]
+    vdj_receptor = "IG"
+    has_vdj_reference = true
+
+    [vdj_b_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning pair"
+    extract = "placeholder"
+
+        [[vdj_b_sample_annotation_metrics.multi_vdj_assembly_contig_pair_productive_full_len_bc_frac.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Cells with Productive V-J Spanning Pair"
+        detail = "Ideal > 30%. This can indicate poor cell quality, low yield from the RT reaction, poor specificity of the V(D)J enrichment, poor sequencing quality, or the use of an unsupported chemistry type (e.g., using Single Cell 3' for V(D)J assembly). Application performance may be affected"
+
+    [vdj_b_sample_annotation_metrics.IGK_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (IGK, IGH) pair"
+    extract = "placeholder"
+
+    [vdj_b_sample_annotation_metrics.IGL_IGH_vdj_assembly_contig_pair_productive_full_len_bc_frac]
+    type = "Percent"
+    header = "Cells with productive V-J spanning (IGL, IGH) pair"
+    extract = "placeholder"
+
+    [vdj_b_sample_annotation_metrics.IGH_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive IGH contig"
+    extract = "placeholder"
+
+    [vdj_b_sample_annotation_metrics.IGK_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive IGK contig"
+    extract = "placeholder"
+
+    [vdj_b_sample_annotation_metrics.IGL_vdj_assembly_prod_cdr_bc_frac]
+    type = "Percent"
+    header = "Cells with productive IGL contig"
+    extract = "placeholder"
+
+    [vdj_b_sample_annotation_metrics.multi_raw_vdj_paired_clonotype_diversity]
+    type = "f64"
+    extract = "optional" # absent if we skipped clonotyping
+    header = "Paired clonotype diversity"

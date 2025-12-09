@@ -1,13 +1,17 @@
 //! Crate for dealing with UMI related types and functionalities.
+#![expect(missing_docs)]
+
 use fastq_set::squality::SQualityGen;
 use fastq_set::sseq::{HammingIterOpt, SSeqGen, SSeqOneHammingIter};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
-pub mod info;
+mod info;
+mod translation;
+
 pub use info::UmiInfo;
-pub mod translation;
+pub use translation::SplintToUmiTranslator;
 
 pub const MAX_UMI_LENGTH: usize = 16;
 pub type UmiSeq = SSeqGen<MAX_UMI_LENGTH>;

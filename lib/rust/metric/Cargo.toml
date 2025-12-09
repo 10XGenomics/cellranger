@@ -1,10 +1,6 @@
 [dependencies]
-serde_derive = '1'
-
 [dependencies.ahash]
-default-features = false
-features = ['std']
-version = '0.8'
+workspace = true
 
 [dependencies.anyhow]
 workspace = true
@@ -27,12 +23,18 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.stats]
+path = '../stats'
+
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 include = ['src/**/*']
 name = 'metric'
 publish = false

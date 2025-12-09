@@ -1,15 +1,19 @@
 //! Martian stage WRITE_POS_BAM
+#![deny(missing_docs)]
 
-use crate::{env, AlignShardFile, BamFile};
-use anyhow::{bail, Result};
+use crate::{BamFile, env};
+use anyhow::{Result, bail};
 use barcode::Barcode;
-use cr_bam::bam::{estimate_memory_for_range_gib, BamPosSort};
-use cr_types::rna_read::{make_library_info, RnaChunk};
+use cr_bam::bam::{BamPosSort, estimate_memory_for_range_gib};
+use cr_types::chemistry::ChemistryName;
+use cr_types::rna_read::{RnaChunk, make_library_info};
 use cr_types::types::{SampleAssignment, SampleBarcodes};
-use cr_types::{BarcodeToSample, SampleBarcodesFile};
+use cr_types::{
+    AlignShardFile, BaiIndexFile, BarcodeToSample, CsiIndexFile, SamHeaderFile, SampleBarcodesFile,
+};
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use metric::TxHashMap;
 use rust_htslib::bam::header::HeaderRecord;
 use rust_htslib::bam::record::Aux;
@@ -19,7 +23,7 @@ use shardio::ShardReader;
 use std::cmp::max;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 fn use_csi_instead_of_bai(header: Header) -> bool {
@@ -33,10 +37,10 @@ fn use_csi_instead_of_bai(header: Header) -> bool {
     let mut max_sq_len: u64 = 0;
     if let Some(seqs) = seqs_op {
         for seq in seqs {
-            if let Some(ln) = seq.get("LN") {
-                if let Ok(length) = ln.parse::<u64>() {
-                    max_sq_len = max_sq_len.max(length);
-                }
+            if let Some(ln) = seq.get("LN")
+                && let Ok(length) = ln.parse::<u64>()
+            {
+                max_sq_len = max_sq_len.max(length);
             }
         }
     }
@@ -82,9 +86,6 @@ pub fn concat_bams(paths: &[BamFile], out: &Path, threads: usize) -> Result<()> 
     }
 }
 
-martian_filetype! { BaiIndexFile, "bam.bai" }
-martian_filetype! { CsiIndexFile, "bam.csi" }
-
 /// Adapted from assemble_vdj
 pub fn index_bam(bam: &Path, bam_index: &Path, threads: usize, use_csi: bool) {
     let index_type = if use_csi { "-c" } else { "-b" };
@@ -108,7 +109,7 @@ pub struct WritePosBam;
 
 #[derive(Deserialize, Clone, MartianStruct)]
 pub struct StageInputs {
-    pub bam_header: Option<PathBuf>,
+    pub bam_header: Option<SamHeaderFile>,
     pub alignments: Vec<AlignShardFile>,
     pub read_chunks: Vec<RnaChunk>,
     pub target_set_name: Option<String>,
@@ -145,7 +146,7 @@ pub struct StageOutputs {
 }
 
 fn attach_read_group_tags<'a>(
-    header: &mut bam::Header,
+    header: &mut Header,
     read_chunks: impl IntoIterator<Item = &'a RnaChunk>,
 ) {
     for read_group in read_chunks.into_iter().map(|x| &x.read_group).unique() {
@@ -163,41 +164,46 @@ fn attach_read_group_tags<'a>(
 }
 
 /// Add BAM header comments that are used by bamtofastq.
-fn attach_bamtofastq_comments(header: &mut bam::Header, read_chunks: &[RnaChunk]) {
-    let bamtofastq_header_comments = read_chunks
+fn attach_bamtofastq_comments(header: &mut Header, read_chunks: &[RnaChunk]) {
+    let Some(bamtofastq_header_comments) = read_chunks
         .iter()
+        .filter(|x| x.chemistry.name != ChemistryName::Custom)
         .map(|x| x.chemistry.name.bamtofastq_headers())
         .unique()
-        .exactly_one()
-        .unwrap();
+        .at_most_one()
+        .unwrap()
+    else {
+        return;
+    };
     for comment in bamtofastq_header_comments {
         header.push_comment(comment.as_bytes());
     }
 }
 
 fn attach_library_info_comments(
-    header: &mut bam::Header,
+    header: &mut Header,
     read_chunks: &[RnaChunk],
     target_set_name: Option<&str>,
 ) {
     let library_infos = make_library_info(read_chunks, target_set_name);
     for info in library_infos {
-        let comment = format!(r#"library_info:{}"#, serde_json::to_string(&info).unwrap());
+        let comment = format!(r"library_info:{}", serde_json::to_string(&info).unwrap());
         header.push_comment(comment.as_bytes());
     }
 }
 
 fn attach_slide_serial_capture_area(
-    header: &mut bam::Header,
+    header: &mut Header,
     slide_serial_capture_area: Option<String>,
 ) {
     if let Some(capture_area) = slide_serial_capture_area {
-        let comment = format!(r#"slide_serial_capture_area:{capture_area}"#);
+        let comment = format!(r"slide_serial_capture_area:{capture_area}");
         header.push_comment(comment.as_bytes());
     }
 }
 
-pub fn make_header(
+/// Make a BAM header.
+pub fn make_bam_header(
     bam_header: Option<&Path>,
     read_chunks: &[RnaChunk],
     target_set_name: Option<&str>,
@@ -220,7 +226,7 @@ pub fn make_header(
     )?;
 
     let header_view = bam::HeaderView::from_bytes(&header);
-    let mut header = bam::Header::from_template(&header_view);
+    let mut header = Header::from_template(&header_view);
     // only the first of these is used in the `samtools cat` later
     if write_header {
         attach_read_group_tags(&mut header, read_chunks);
@@ -251,20 +257,25 @@ impl MartianStage for WritePosBam {
             .into_iter()
             .enumerate()
             .map(|(chunk_id, range)| {
-                let additional_mem_gib = if args.sample_barcodes.is_some() {
-                    1.5
+                let base_gib = if args.sample_barcodes.is_some() {
+                    // For MULTI_WRITE_PER_SAMPLE_BAM
+                    12
                 } else {
-                    1.0
+                    // For WRITE_POS_BAM
+                    4
                 };
-                let mem_gb = (additional_mem_gib + estimate_memory_for_range_gib(&range, &reader))
-                    .ceil() as isize;
+                let shardio_gib = estimate_memory_for_range_gib(&range, &reader);
+                let mem_gib = base_gib + shardio_gib.ceil() as isize;
+                println!("base_gib={base_gib},shardio_gib={shardio_gib},mem_gib={mem_gib}");
                 let write_header = chunk_id == 0;
                 (
                     ChunkInputs {
                         write_header,
                         range,
                     },
-                    Resource::with_mem_gb(mem_gb).threads(WRITE_BAM_THREADS),
+                    Resource::with_mem_gb(mem_gib)
+                        .vmem_gb(32 + 2 * mem_gib)
+                        .threads(WRITE_BAM_THREADS),
                 )
             })
             .collect::<StageDef<_>>()
@@ -281,7 +292,7 @@ impl MartianStage for WritePosBam {
         let barcode_to_sample = BarcodeToSample::construct(&sample_barcodes);
 
         // Read in the header text & initialize the BAM file with it.
-        let header = make_header(
+        let header = make_bam_header(
             args.bam_header.as_deref(),
             &args.read_chunks,
             args.target_set_name.as_deref(),
@@ -341,7 +352,7 @@ impl MartianStage for WritePosBam {
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
         //Determine the time of BAM index needed
-        let header: Header = make_header(
+        let header: Header = make_bam_header(
             args.bam_header.as_deref(),
             &args.read_chunks,
             args.target_set_name.as_deref(),
@@ -410,9 +421,9 @@ impl MartianStage for WritePosBam {
 mod tests {
     use super::*;
     use crate::testing::correctness::check_bam_file_correctness;
-    use cr_types::chemistry::{ChemistryDef, ChemistryName};
-    use cr_types::types::SampleAssignment::{Assigned, Unassigned};
     use cr_types::LibraryType;
+    use cr_types::chemistry::ChemistryDef;
+    use cr_types::types::SampleAssignment::{Assigned, Unassigned};
     use fastq_set::read_pair_iter::InputFastqs;
 
     fn get_test_chunk() -> RnaChunk {
@@ -432,6 +443,7 @@ mod tests {
             0,
             0,
         )
+        .expect("test setup failed")
     }
 
     #[test]
@@ -439,7 +451,9 @@ mod tests {
     fn test_fail_bam_comparison() {
         let chunk = get_test_chunk();
         let args = StageInputs {
-            bam_header: Some(PathBuf::from("test/multi/write_bam_multi/test1/bam_header")),
+            bam_header: Some(SamHeaderFile::from(
+                "test/multi/write_bam_multi/test1/bam_header.sam",
+            )),
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
@@ -470,7 +484,9 @@ mod tests {
     fn test_single_sample() {
         let chunk = get_test_chunk();
         let args = StageInputs {
-            bam_header: Some(PathBuf::from("test/multi/write_bam_multi/test1/bam_header")),
+            bam_header: Some(SamHeaderFile::from(
+                "test/multi/write_bam_multi/test1/bam_header.sam",
+            )),
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
@@ -503,7 +519,9 @@ mod tests {
         let chunk = get_test_chunk();
 
         let args = StageInputs {
-            bam_header: Some(PathBuf::from("test/multi/write_bam_multi/test1/bam_header")),
+            bam_header: Some(SamHeaderFile::from(
+                "test/multi/write_bam_multi/test1/bam_header.sam",
+            )),
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],

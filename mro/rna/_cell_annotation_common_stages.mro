@@ -37,7 +37,7 @@ stage CALL_CLOUD_CELL_TYPES(
     in  file            tenx_cloud_token_path,
     in  string          pipestance_type,
     in  bool            override_num_bc_limit,
-    in  cloupe          sample_cloupe,
+    in  bool            is_pd,
     out CellTypeResults cell_type_results,
     out bool            cas_success,
     out bool            disable_cas_ws,

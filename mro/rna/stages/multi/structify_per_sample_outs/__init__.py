@@ -5,7 +5,6 @@
 """A helper stage to put all of the per sample outputs together into a struct."""
 
 import os
-from shutil import copyfile
 from typing import Any
 
 import martian
@@ -60,9 +59,6 @@ struct SampleSlfeOuts(
     path    raw_matrix_mex,
     csv     filtered_barcodes,
     csv     aggregate_barcodes,
-    csv     feature_reference,
-    csv     target_panel,
-    csv     probe_set,
     csv     per_probe_metrics,
 )
 
@@ -72,9 +68,6 @@ stage STRUCTIFY_PER_SAMPLE_OUTS(
     in  SampleMoleculeInfo[] sample_molecule_infos,
     in  SampleMatrices[]     sample_matrices,
     in  json                 multi_graph,
-    in  csv                  feature_reference,
-    in  csv                  target_panel,
-    in  csv                  probe_set,
     out map<SampleSlfeOuts>  sample_outs,
     out bam                  unassigned_alignments,
     out bam.bai              unassigned_alignments_bai_index,
@@ -185,18 +178,6 @@ def link_sample_files(
 ) -> dict[str, Any]:
     """Copy or hardlink all sample-level files into stage outs."""
     sample_files = {}
-
-    for key, file in [
-        ("feature_reference", args.feature_reference),
-        ("target_panel", args.target_panel),
-        ("probe_set", args.probe_set),
-    ]:
-        if file is None:
-            sample_files[key] = None
-        else:
-            sample_files[key] = martian.make_path(sample + "_" + key)
-            copyfile(file, sample_files[key])
-
     sample_files["sample"] = sample
     if sample_bams is None:
         sample_files["bam_file"] = None

@@ -21,6 +21,15 @@ UNICODE_DTYPE_CHAR = np.dtype(np.str_).char
 STRING_DTYPE_CHARS = (STR_DTYPE_CHAR, UNICODE_DTYPE_CHAR)
 
 
+def estimate_mem_gib_for_dataset(dataset: h5py.Dataset) -> float:
+    """Estimate the amount of memory needed to load the provided h5py dataset.
+
+    This will only return a correct answer for datasets whose dtype is a fixed
+    size, but this is true for most all of the datasets created by cellranger.
+    """
+    return dataset.dtype.itemsize * len(dataset) / 1024**3
+
+
 def is_hdf5(filename, throw_exception=False):
     """A wrapper around h5py.is_hdf5, optionally can throw an exception.
 
@@ -83,9 +92,8 @@ def create_hdf5_string_dataset(group, name, data, **kwargs):
                             serialized to empty strings.
         **kwargs: Additional arguments to `create_dataset`.
     """
-    if data is None or hasattr(data, "__len__") and len(data) == 0:
-        dtype = np.dtype((np.bytes_, 1))
-        group.create_dataset(name, dtype=dtype)
+    if data is None or (hasattr(data, "__len__") and len(data) == 0):
+        group.create_dataset(name, data=[], dtype=np.dtype((np.bytes_, 1)))
         return
 
     assert (isinstance(data, np.ndarray) and data.dtype.char == STR_DTYPE_CHAR) or (
@@ -223,5 +231,8 @@ def combine_h5s_into_one(outfile: str | bytes, files_to_combine: Iterable[str | 
     assert isinstance(files_to_combine, list)
     with tables.open_file(ensure_str(outfile), "a") as out:
         for fname in files_to_combine:
-            with tables.open_file(ensure_str(fname), "r") as data:
-                data.copy_children(data.root, out.root, recursive=True)
+            try:
+                with tables.open_file(ensure_str(fname), "r") as data:
+                    data.copy_children(data.root, out.root, recursive=True)
+            except Exception as e:
+                raise RuntimeError(fname) from e

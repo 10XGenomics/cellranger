@@ -1,4 +1,5 @@
 //! Align homopolymer sequences.
+#![deny(missing_docs)]
 
 use std::cmp::max;
 use std::ops::Range;
@@ -8,11 +9,7 @@ fn construct_score_vector(nt: u8, seq: &[u8]) -> Vec<i64> {
     const MATCH_SCORE: i64 = 1;
     const MISMATCH_SCORE: i64 = -9;
     let scoring_function = |x| {
-        if x == nt {
-            MATCH_SCORE
-        } else {
-            MISMATCH_SCORE
-        }
+        if x == nt { MATCH_SCORE } else { MISMATCH_SCORE }
     };
 
     // Construct the score vector.

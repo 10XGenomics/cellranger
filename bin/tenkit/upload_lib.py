@@ -158,12 +158,12 @@ class FileReader(BinaryIO):
         sys.stdout.write("\r")
         sys.stdout.write(
             "{} [{}] {} {}  eta {} {}  ".format(
-                ("%d%%" % pctg).rjust(4),  # percentage
+                (f"{pctg}%").rjust(4),  # percentage
                 (("=" * (pctg // 3)) + ">").ljust(34),  # progress bar
                 pn(self.bcount).rjust(len(pn(self.bsize))),  # bytes sent
                 (f"{mbps:.2f}Mb/s").rjust(10),  # bitrate
-                ("%dm" % etam),  # eta min
-                ("%ds" % etas).rjust(3),  # eta sec
+                (f"{etam}m"),  # eta min
+                (f"{etas}s").rjust(3),  # eta sec
             )
         )
         sys.stdout.flush()

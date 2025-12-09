@@ -1,4 +1,5 @@
 //! Functions and traits useful for testing the martian stages
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use martian::prelude::*;

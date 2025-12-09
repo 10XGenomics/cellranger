@@ -1,3 +1,4 @@
+@include "cell_annotation_service.mro"
 @include "sc_multi_core.mro"
 @include "_cell_annotation_common_stages.mro"
 @include "_cr_lib_stages.mro"
@@ -10,14 +11,12 @@ struct CountInputsMinimal(
     csv                target_set,
     string             target_set_name,
     map<string>        chemistry_specs,
-    path               reference_path,
-    CellCalling        cell_calling_config,
+    ReferenceInfo      reference_info,
     int                r1_length,
     int                r2_length,
     bool               no_bam,
     bool               filter_probes,
     bool               no_secondary_analysis,
-    bool               no_target_umi_filter,
     csv                feature_reference,
     bool               include_introns,
     bool               check_library_compatibility,
@@ -29,6 +28,10 @@ struct CountInputsMinimal(
     string             tenx_cloud_token_path,
     string             cell_annotation_model,
     bool               skip_cell_annotation,
+    string             star_parameters,
+    int                umi_min_read_length,
+    string             aligner,
+    bool               no_minimap,
 )
 
 pipeline FULL_VDJ_INPUTS(
@@ -47,6 +50,7 @@ pipeline FULL_VDJ_INPUTS(
     out path         inner_enrichment_primers,
     out string       chain_type,
     out string       physical_library_id,
+    out int          max_reads_per_barcode,
 )
 {
     return (
@@ -97,11 +101,10 @@ pipeline FULL_COUNT_INPUTS(
     out string             target_set_name,
     out map[]              sample_def,
     out map<string>        chemistry_specs,
-    out ChemistryDef       custom_chemistry_def,
-    out path               reference_path,
+    out map<ChemistryDef>  custom_chemistry_defs,
+    out ReferenceInfo      reference_info,
     out json               gene_index,
     out map[]              primers,
-    out CellCalling        cell_calling_config,
     out float              subsample_rate,
     out int                initial_reads,
     out int                primer_initial_reads,
@@ -113,14 +116,13 @@ pipeline FULL_COUNT_INPUTS(
     out bool               no_bam,
     out bool               no_secondary_analysis,
     out bool               filter_probes,
-    out bool               no_target_umi_filter,
     out csv                feature_reference,
     out bool               include_exons,
     out bool               include_introns,
     out bool               skip_cell_annotation,
     out string             targeting_method,
     out string             aligner,
-    out map                genetic_demux_params,
+    out GeneticDemuxParams genetic_demux_params,
     out bool               check_library_compatibility,
     out string[]           count_allowed_chems,
     out string             throughput,
@@ -132,16 +134,18 @@ pipeline FULL_COUNT_INPUTS(
     out string             cell_annotation_model,
     out string             tenx_cloud_token_path,
     out bool               enable_tsne,
+    out bool               no_minimap,
+    out string             star_parameters,
+    out int                umi_min_read_length,
 )
 {
     call WRITE_GENE_INDEX(
-        reference_path = self.cs_inputs.reference_path,
+        reference_path = self.cs_inputs.reference_info.transcriptome_info.reference_path,
     )
 
     return (
-        aligner                 = null,
         annotations             = null,
-        custom_chemistry_def    = null,
+        custom_chemistry_defs   = {},
         gene_index              = WRITE_GENE_INDEX.gene_index,
         genetic_demux_params    = null,
         throughput              = null,
@@ -185,15 +189,35 @@ pipeline FULL_COUNT_INPUTS(
 }
 
 pipeline SC_MULTI_CS(
-    in  string               sample_id,
-    in  string               sample_desc,
-    in  FileOrBytes          config,
-    in  string               config_hash,
-    in  bool                 no_preflight,
-    out csv                  config           "Multi Config CSV",
-    out VdjRefFolder         vdj_reference    "V(D)J reference",
-    out MultiOutputsCS       multi,
-    out map<SampleOutputsCS> per_sample_outs,
+    in  bool                   no_preflight,
+    in  FileOrBytes            config,
+    in  string                 sample_desc,
+    in  string                 sample_id,
+    out bam                    unassigned_alignments            "Alignments from unassigned barcodes",
+    out bam.bai                unassigned_alignments_bai_index  "BAI Index for alignments from unassigned barcodes"  "unassigned_alignments.bam.bai",
+    out bam.csi                unassigned_alignments_csi_index  "CSI Index for alignments from unassigned barcodes"  "unassigned_alignments.bam.csi",
+    out cloupe                 raw_cloupe                       "Raw Loupe Browser file containing all molecules in the experiment",
+    out csv                    aggregate_barcodes               "Antibody and Antigen aggregate barcodes",
+    out csv                    barcode_sample_assignments       "Barcode sample assignment passed in the Multi configuration",
+    out csv                    config                           "Multi config CSV",
+    out csv                    feature_reference_csv            "Feature reference file"   "feature_reference.csv",
+    out csv                    probe_set                        "Probe set reference CSV",
+    out csv                    qc_library_metrics               "Library metrics CSV",
+    out csv                    qc_sample_metrics                "Sample metrics CSV",
+    out h5                     filtered_feature_bc_matrix_h5    "Filtered feature-barcode matrix for all samples in the experiment"  "filtered_feature_bc_matrix.h5",
+    out h5                     raw_feature_bc_matrix_h5         "Contains counts for all features and all barcodes in the experiment"  "raw_feature_bc_matrix.h5",
+    out h5                     raw_molecule_info_h5             "Molecule info file containing all molecules in the experiment"  "raw_molecule_info.h5",
+    out h5                     raw_probe_bc_matrix              "Contains counts for all probes and all barcodes in a FRP experiment",
+    out html                   qc_report                        "QC report for all samples in the experiment",
+    out path                   filtered_feature_bc_matrix_mex   "Filtered feature-barcode matrix for all samples in the experiment"  "filtered_feature_bc_matrix",
+    out path                   raw_feature_bc_matrix_mex        "Contains counts for all features and all barcodes in the experiment"  "raw_feature_bc_matrix",
+    out MultiplexingAnalysisCS multiplexing_analysis,
+    out MultiVdjOutputsCS      vdj_b,
+    out MultiVdjOutputsCS      vdj_t_gd,
+    out MultiVdjOutputsCS      vdj_t,
+    out VdjRefFolder           vdj_reference                    "V(D)J reference",
+    out map<SampleOutputsCS>   per_sample_outs,
+    out AggregatedCellTypes    cell_types                       "Aggregated Cell Types",
 )
 {
     call MULTI_PREFLIGHT(
@@ -207,7 +231,6 @@ pipeline SC_MULTI_CS(
         sample_id   = self.sample_id,
         sample_desc = self.sample_desc,
         config      = self.config,
-        config_hash = self.config_hash,
         params      = null,
         is_pd       = false,
     )
@@ -249,6 +272,12 @@ pipeline SC_MULTI_CS(
             "MFRP-Ab-R1",
             "MFRP-Ab-R2pos50",
             "MFRP-R1-48-uncollapsed",
+            "Flex-v2-R1",
+            "Flex-v2-RNA-R2",
+            "Flex-v2-Ab-R2:45",
+            "Flex-v2-Ab-R2:64",
+            "Flex-v2-CRISPR-R2:1",
+            "Flex-v2-singleplex",
             "ARC-v1",
         ],
     ) using (
@@ -260,7 +289,7 @@ pipeline SC_MULTI_CS(
         is_multi                    = true,
         tenx_cloud_token_path       = PARSE_MULTI_CONFIG.count_input.tenx_cloud_token_path,
         cell_annotation_model       = PARSE_MULTI_CONFIG.count_input.cell_annotation_model,
-        reference_path              = PARSE_MULTI_CONFIG.count_input.reference_path,
+        reference_path              = PARSE_MULTI_CONFIG.count_input.reference_info.transcriptome_info.reference_path,
         skip_cell_annotation        = PARSE_MULTI_CONFIG.basic_config.disable_annotate,
         cas_track_name              = null,
         cr_annotate_filtered_matrix = null,
@@ -272,16 +301,17 @@ pipeline SC_MULTI_CS(
     )
 
     call SC_MULTI_CORE(
-        common_input          = PARSE_MULTI_CONFIG.common_input,
-        count_input           = FULL_COUNT_INPUTS,
-        vdj_inputs            = FULL_VDJ_INPUTS,
-        vdj_gen_inputs        = PARSE_MULTI_CONFIG.vdj_gen_inputs,
-        basic_config          = PARSE_MULTI_CONFIG.basic_config,
-        multi_config          = PARSE_MULTI_CONFIG.config_file,
-        is_pd                 = false,
-        count_allowed_chems   = FULL_COUNT_INPUTS.count_allowed_chems,
-        count_pipestance_type = "SC_RNA_COUNTER_CS",
-        vdj_allowed_chems     = [
+        common_input              = PARSE_MULTI_CONFIG.common_input,
+        count_input               = FULL_COUNT_INPUTS,
+        count_cell_calling_config = PARSE_MULTI_CONFIG.count_cell_calling_config,
+        vdj_inputs                = FULL_VDJ_INPUTS,
+        vdj_gen_inputs            = PARSE_MULTI_CONFIG.vdj_gen_inputs,
+        basic_config              = PARSE_MULTI_CONFIG.basic_config,
+        multi_config              = PARSE_MULTI_CONFIG.config_file,
+        is_pd                     = false,
+        count_allowed_chems       = FULL_COUNT_INPUTS.count_allowed_chems,
+        count_pipestance_type     = "SC_RNA_COUNTER_CS",
+        vdj_allowed_chems         = [
             "SCVDJ_auto",
             "custom",
             "SCVDJ",
@@ -292,9 +322,13 @@ pipeline SC_MULTI_CS(
             "SCVDJ-v3-OCM",
             "SCVDJ-R2-OCM-v3",
         ],
-        is_multi              = true,
-        feature_config        = PARSE_MULTI_CONFIG.feature_config,
-        no_preflight          = self.no_preflight,
+        is_multi                  = true,
+        feature_config            = PARSE_MULTI_CONFIG.feature_config,
+        no_preflight              = self.no_preflight,
+    )
+
+    call AGGREGATE_CELL_ANNOTATIONS(
+        cell_types = SC_MULTI_CORE.cell_types,
     )
 
     call SANITIZE_MAP_CALLS(
@@ -322,6 +356,12 @@ pipeline SC_MULTI_CS(
         disabled = PARSE_MULTI_CONFIG.basic_config.disable_vdj,
     )
 
+    call PICK_BEAM_ANALYZER(
+        vdj_t    = SANITIZE_MAP_CALLS.vdj_t_analyzer.beam_analyzer,
+        vdj_t_gd = SANITIZE_MAP_CALLS.vdj_t_gd_analyzer.beam_analyzer,
+        vdj_b    = SANITIZE_MAP_CALLS.vdj_b_analyzer.beam_analyzer,
+    )
+
     call BUILD_VDJ_OUTPUTS_CS as LIB_VDJ_OUTS_CS(
         vdj_t_assembler    = SC_MULTI_CORE.multi_gw.vdj_t.assembler_outs,
         vdj_t_analyzer     = SC_MULTI_CORE.multi_gw.vdj_t.lib_level,
@@ -344,7 +384,7 @@ pipeline SC_MULTI_CS(
         vdj_t_outs                   = split PER_SAMPLE_VDJ_OUTS_CS.vdj_t_outs_cs,
         vdj_t_gd_outs                = split PER_SAMPLE_VDJ_OUTS_CS.vdj_t_gd_outs_cs,
         output_per_sample_raw_matrix = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.output_per_sample_raw_matrix,
-        beam_analyzer                = split SC_MULTI_CORE.beam_analyzer,
+        beam_analyzer                = split PICK_BEAM_ANALYZER.output,
         cell_types                   = split SC_MULTI_CORE.cell_types,
     )
 
@@ -355,33 +395,30 @@ pipeline SC_MULTI_CS(
     )
 
     return (
-        config          = PARSE_MULTI_CONFIG.config_file,
-        vdj_reference   = SC_MULTI_CORE.vdj_ref_out,
-        multi           = {
-            count: {
-                aggregate_barcodes:              GET_AGGREGATE_BARCODES_OUT.aggregate_barcodes,
-                feature_reference_csv:           SC_MULTI_CORE.multi_reporter.count_summary.feature_reference,
-                raw_cloupe:                      SC_MULTI_CORE.multi_reporter.cloupe,
-                raw_feature_bc_matrix_h5:        SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_h5,
-                raw_feature_bc_matrix_mex:       SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_mex,
-                raw_molecule_info_h5:            SC_MULTI_CORE.multi_gw.count.basic_counter_outs.molecule_info,
-                raw_probe_bc_matrix:             SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_probe_bc_matrix,
-                unassigned_alignments:           SC_MULTI_CORE.unassigned_bam,
-                unassigned_alignments_bai_index: SC_MULTI_CORE.unassigned_bai,
-                unassigned_alignments_csi_index: SC_MULTI_CORE.unassigned_csi,
-            },
-            multiplexing_analysis: {
-                assignment_confidence_table: SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.assignment_confidence_table,
-                barcode_sample_assignments:  PARSE_MULTI_CONFIG.barcode_sample_assignments,
-                cells_per_tag:               SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.cells_per_tag,
-                frp_gem_barcode_overlap:     SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.frp_gem_barcode_overlap,
-                tag_calls_per_cell:          SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.tag_calls_per_cell,
-                tag_calls_summary:           SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags.tag_calls_summary,
-            },
-            vdj_b:    LIB_VDJ_OUTS_CS.vdj_b_outs_cs,
-            vdj_t:    LIB_VDJ_OUTS_CS.vdj_t_outs_cs,
-            vdj_t_gd: LIB_VDJ_OUTS_CS.vdj_t_gd_outs_cs,
-        },
-        per_sample_outs = BUILD_SAMPLE_OUTS.sample_outs,
+        aggregate_barcodes            = GET_AGGREGATE_BARCODES_OUT.aggregate_barcodes,
+        barcode_sample_assignments    = PARSE_MULTI_CONFIG.barcode_sample_assignments,
+        config                        = PARSE_MULTI_CONFIG.config_file,
+        feature_reference_csv         = SC_MULTI_CORE.multi_reporter.count_summary.feature_reference,
+        filtered_feature_bc_matrix_h5 = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
+        filtered_feature_bc_matrix_mex = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.filtered_gene_bc_matrices_mex,
+        multiplexing_analysis         = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.assign_tags,
+        per_sample_outs               = BUILD_SAMPLE_OUTS.sample_outs,
+        probe_set                     = SC_MULTI_CORE.multi_gw.count.target_outs.target_panel_or_probe_set,
+        qc_library_metrics            = SC_MULTI_CORE.qc_library_metrics,
+        qc_sample_metrics             = SC_MULTI_CORE.qc_sample_metrics,
+        qc_report                     = SC_MULTI_CORE.qc_report,
+        raw_cloupe                    = SC_MULTI_CORE.multi_reporter.cloupe,
+        raw_feature_bc_matrix_h5      = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_h5,
+        raw_feature_bc_matrix_mex     = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_gene_bc_matrices_mex,
+        raw_molecule_info_h5          = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.molecule_info,
+        raw_probe_bc_matrix           = SC_MULTI_CORE.multi_gw.count.basic_counter_outs.raw_probe_bc_matrix,
+        unassigned_alignments         = SC_MULTI_CORE.unassigned_bam,
+        unassigned_alignments_bai_index = SC_MULTI_CORE.unassigned_bai,
+        unassigned_alignments_csi_index = SC_MULTI_CORE.unassigned_csi,
+        vdj_reference                 = SC_MULTI_CORE.vdj_ref_out,
+        vdj_b                         = LIB_VDJ_OUTS_CS.vdj_b_outs_cs,
+        vdj_t                         = LIB_VDJ_OUTS_CS.vdj_t_outs_cs,
+        vdj_t_gd                      = LIB_VDJ_OUTS_CS.vdj_t_gd_outs_cs,
+        cell_types                    = AGGREGATE_CELL_ANNOTATIONS.library_cell_types,
     )
 }

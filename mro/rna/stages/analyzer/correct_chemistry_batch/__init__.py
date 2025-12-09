@@ -364,19 +364,18 @@ def join(args, outs, chunk_defs, chunk_outs):
         aligned_dimred_matrix = aligned_dimred_matrix[barcode_reorder_index]
 
     # TODO: currently save the aligned matrix (dimred) into pca h5 format, for downstream analysis
-    library_type = args.library_type.lower().replace(" ", "_")
     aligned_pca = cr_pca.PCA(
         aligned_dimred_matrix, np.zeros(0), np.zeros(0), np.zeros(0), np.zeros(0)
     )
     pca_map = {aligned_dimred_matrix.shape[1]: aligned_pca}
-    cr_pca.save_pca2_h5(pca_map, outs.aligned_pca_h5, library_type=library_type)
+    cr_pca.save_pca_h5(pca_map, outs.aligned_pca_h5, library_type=args.library_type)
 
     # load the barcodes and feature info
     with open(args.matrix_barcode_feature_info, "rb") as fp:
         bc_feature_info = pickle.load(fp)
     bcs = bc_feature_info.get("barcodes")
 
-    cr_pca.save_pca2_csv(pca_map, bcs, outs.aligned_pca_csv, library_type=library_type)
+    cr_pca.save_pca2_csv(pca_map, bcs, outs.aligned_pca_csv, library_type=args.library_type)
 
     outs.aligned_pca = {
         "pca_h5": outs.aligned_pca_h5,

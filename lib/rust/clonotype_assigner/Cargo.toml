@@ -8,23 +8,17 @@ workspace = true
 [dependencies.bio]
 workspace = true
 
-[dependencies.cr_aggr]
-path = '../cr_aggr'
-
 [dependencies.cr_types]
 path = '../cr_types'
 
 [dependencies.csv]
 workspace = true
 
+[dependencies.enclone_process]
+path = '../enclone_process'
+
 [dependencies.enclone_proto]
 path = '../enclone_proto'
-
-[dependencies.enclone_ranger]
-path = '../enclone_ranger'
-
-[dependencies.io_utils]
-path = '../io_utils'
 
 [dependencies.martian]
 workspace = true
@@ -35,9 +29,6 @@ workspace = true
 [dependencies.martian-filetypes]
 workspace = true
 
-[dependencies.metric]
-path = '../metric'
-
 [dependencies.rayon]
 workspace = true
 
@@ -47,17 +38,11 @@ workspace = true
 [dependencies.serde]
 workspace = true
 
-[dependencies.serde_json]
-workspace = true
-
 [dependencies.string_utils]
 path = '../string_utils'
 
 [dependencies.vdj_ann]
 path = '../vdj_ann'
-
-[dependencies.vdj_ann_ref]
-path = '../vdj_ann_ref'
 
 [dependencies.vdj_asm_utils]
 path = '../vdj_asm_utils'
@@ -74,13 +59,12 @@ path = '../vector_utils'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'clonotype_assigner'
 publish = false
 version = '0.1.0'
-
-[package.metadata]
-[package.metadata.cargo-machete]
-ignored = ['metric', 'serde_json']

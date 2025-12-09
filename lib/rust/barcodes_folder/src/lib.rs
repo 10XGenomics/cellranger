@@ -1,13 +1,12 @@
 //! Crate for resolving paths from lib/python/{assay}/barcodes folder.
-//!
+#![deny(missing_docs)]
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use itertools::Itertools;
 use std::path::PathBuf;
 
-const PD_CANONICAL_SLIDE_NAME: &str = "visium_hd_rc1";
-const PD_XL_CANONICAL_SLIDE_NAME: &str = "visium_hd_rcxl1";
 const CS_CANONICAL_SLIDE_NAME: &str = "visium_hd_v1";
+const PD_CANONICAL_SLIDE_NAME: &str = "visium_hd_rc1";
 
 fn search_for_whitelist(
     whitelist_name: &str,
@@ -36,27 +35,31 @@ fn search_for_whitelist(
             return Some(p);
         }
     }
-
     None
 }
 
+/// Find a slide design file
 pub fn find_slide_design(slide_name: &str) -> Result<PathBuf> {
-    let fname = if slide_name == PD_CANONICAL_SLIDE_NAME || slide_name == CS_CANONICAL_SLIDE_NAME {
-        find_whitelist(PD_CANONICAL_SLIDE_NAME, false)
-            .or_else(|_|find_whitelist(CS_CANONICAL_SLIDE_NAME, false).or_else(|_| find_whitelist(PD_XL_CANONICAL_SLIDE_NAME, false)))
-            .context( format!("Could not find slide files for slide designs {CS_CANONICAL_SLIDE_NAME} or {PD_CANONICAL_SLIDE_NAME} or {PD_XL_CANONICAL_SLIDE_NAME}"))
-    } else if slide_name == PD_XL_CANONICAL_SLIDE_NAME {
-        find_whitelist(slide_name, false)
-            .context("Could not find slide files for XL RC1 slide design")
-    } else {
-        find_whitelist(slide_name, false)
+    let filename = match slide_name {
+        PD_CANONICAL_SLIDE_NAME | CS_CANONICAL_SLIDE_NAME => {
+            [PD_CANONICAL_SLIDE_NAME, CS_CANONICAL_SLIDE_NAME]
+                .into_iter()
+                .find_map(|name| find_whitelist(name, false).ok())
+                .map_or_else(|| find_whitelist(slide_name, false), Ok)
+                .context(format!(
+                    "Could not find slide files for slide designs \
+                     {CS_CANONICAL_SLIDE_NAME} or {PD_CANONICAL_SLIDE_NAME}"
+                ))
+        }
+        _ => find_whitelist(slide_name, false)
+            .with_context(|| format!("Could not find slide file for slide design {slide_name}")),
     }?;
-
-    if fname.extension().is_some_and(|ext| ext == "slide") {
-        Ok(fname)
-    } else {
-        bail!("Could not find slide design file for slide {}", slide_name)
-    }
+    ensure!(
+        filename.extension().unwrap() == "slide",
+        "Expected slide file: {}",
+        filename.display()
+    );
+    Ok(filename)
 }
 
 /// Find the path to a barcode whitelist file, given the whitelist name.
@@ -141,20 +144,18 @@ fn find_whitelist_in_folder(
     }
 
     bail!(
-        "Couldn't find the barcode whitelist {} (translation: {})in the following paths:\n{}",
-        whitelist_name,
-        translation,
+        "Couldn't find the barcode whitelist {whitelist_name} (translation: {translation}) \
+         in the following paths:\n{}",
         barcode_search_paths
             .iter()
             .enumerate()
             .map(|(i, p)| format!("{i} {:?}", exe_path.join(p)))
-            .join("\n")
+            .format("\n")
     )
 }
 
 #[cfg(test)]
 mod test {
-
     use super::*;
 
     #[test]
@@ -172,6 +173,16 @@ mod test {
     #[test]
     fn test_find_slide_design() {
         assert!(find_slide_design("737K-august-2016").is_err());
-        assert!(find_slide_design("visium_hd_rc1").is_ok());
+
+        if std::env::var_os("CARGO").is_none() {
+            // The slide design files are not available when run by cargo test.
+            assert_eq!(
+                find_slide_design("visium_hd_rc1")
+                    .unwrap()
+                    .extension()
+                    .unwrap(),
+                "slide"
+            );
+        }
     }
 }

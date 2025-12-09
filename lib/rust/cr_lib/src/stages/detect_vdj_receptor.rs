@@ -1,15 +1,16 @@
 //! Martian stage DETECT_VDJ_RECEPTOR
+#![deny(missing_docs)]
 
 use crate::detect_chemistry::chemistry_filter::detect_chemistry_units;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use cr_types::reference::feature_reference::{BeamMode, FeatureConfig, FeatureReferenceFile};
 use cr_types::sample_def::SampleDef;
-use cr_types::LibraryType;
+use cr_types::{ERROR_CODE_INFO, LibraryType};
 use fastq_set::read_pair::{ReadPart, WhichRead};
 use fastq_set::read_pair_iter::ReadPairIter;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use metric::TxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -43,7 +44,7 @@ pub struct DetectVdjReceptorStageOutputs {
     pub beam_mode: Option<BeamMode>,
 }
 
-// This is our stage struct
+/// Martian stage DETECT_VDJ_RECEPTOR
 pub struct DetectVdjReceptor;
 
 #[derive(Default)]
@@ -124,22 +125,20 @@ fn check_feature_ref_and_config(
         None
     };
     if let Some(beam) = beam_mode {
-        if let Some(feature_config) = feature_config {
-            if let Some(specificity_controls) = &feature_config.specificity_controls {
-                if beam_mode == Some(BeamMode::BeamAB) && specificity_controls.has_mhc_allele_column
-                {
-                    bail!(
-                        "[antigen-specificity] section of multi config CSV contains `mhc_allele` which is \
+        if let Some(feature_config) = feature_config
+            && let Some(specificity_controls) = &feature_config.specificity_controls
+        {
+            if beam_mode == Some(BeamMode::BeamAB) && specificity_controls.has_mhc_allele_column {
+                bail!(
+                    "[antigen-specificity] section of multi config CSV contains `mhc_allele` which is \
                     not supported by BCR Antigen Capture library (automatically detected based on VDJ chain detection)."
-                    );
-                }
-                if beam_mode == Some(BeamMode::BeamT) && !specificity_controls.has_mhc_allele_column
-                {
-                    bail!(
-                        "[antigen-specificity] section of multi config CSV does not contain `mhc_allele` which is \
+                );
+            }
+            if beam_mode == Some(BeamMode::BeamT) && !specificity_controls.has_mhc_allele_column {
+                bail!(
+                    "[antigen-specificity] section of multi config CSV does not contain `mhc_allele` which is \
                     required by TCR Antigen Capture library (automatically detected based on VDJ chain detection)."
-                    );
-                }
+                );
             }
         }
 
@@ -159,16 +158,7 @@ impl MartianMain for DetectVdjReceptor {
     type StageOutputs = DetectVdjReceptorStageOutputs;
     fn main(&self, args: Self::StageInputs, _rover: MartianRover) -> Result<Self::StageOutputs> {
         // -----------------------------------------------------------------------------------------
-        // A trivial case when we have no reference in denovo mode
-        if args.vdj_reference_path.is_none() {
-            return Ok(DetectVdjReceptorStageOutputs {
-                receptor: None,
-                beam_mode: None,
-            });
-        }
-
-        // -----------------------------------------------------------------------------------------
-        // Another trivial case when the receptor is explicitly specified. This is usually used as
+        // A trivial case when the receptor is explicitly specified. This is usually used as
         // a fallback when auto detection fails for some samples with low quality data.
         if let Some(force_receptor) = args.force_receptor {
             // "auto" and "all" will fail conversion here and fall-through
@@ -184,6 +174,15 @@ impl MartianMain for DetectVdjReceptor {
                     beam_mode,
                 });
             }
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Another trivial case when we have no reference in denovo mode
+        if args.vdj_reference_path.is_none() {
+            return Ok(DetectVdjReceptorStageOutputs {
+                receptor: None,
+                beam_mode: None,
+            });
         }
 
         let vdj_ref = VdjReference::from_reference_folder(&args.vdj_reference_path.unwrap())?;
@@ -222,9 +221,9 @@ impl MartianMain for DetectVdjReceptor {
             }
             per_unit_receptors.push(stats.compatible_receptor().with_context(|| {
                 anyhow!(
-                    "V(D)J Chain detection failed for {unit}.\n\n{stats}\n{}\n\
-                     {resolution_text}\n",
-                    ClassificationStats::help_text(),
+                    "TXRNGR10008: V(D)J Chain detection failed for {unit}.\n\
+                     {stats}\n{help_text}\n{resolution_text}\n{ERROR_CODE_INFO}",
+                    help_text = ClassificationStats::help_text(),
                 )
             })?);
             println!("{stats}");
@@ -260,7 +259,7 @@ mod tests {
     use cr_types::reference::feature_reference::SpecificityControls;
     use cr_types::sample_def::FastqMode;
     use dui_tests::stage_test::StageFailTest;
-    use dui_tests::{stage_fail_dui_test, DuiTest};
+    use dui_tests::{DuiTest, stage_fail_dui_test};
     use std::collections::HashMap;
     use strum::IntoEnumIterator;
 

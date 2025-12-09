@@ -1,10 +1,11 @@
 //! Martian stage GET_CHEMISTRY_DEF
 //! Load chemistry def from a chemistry name or a custom chemistry def
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use martian::{MartianMain, MartianRover};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 
 /// The Martian stage inputs.
@@ -20,6 +21,7 @@ pub struct StageOutputs {
     chemistry_def: ChemistryDef,
 }
 
+/// Martian stage GET_CHEMISTRY_DEF
 pub struct GetChemistryDef;
 
 #[make_mro(volatile = strict)]

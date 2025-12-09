@@ -157,7 +157,7 @@ def build_reference_fasta_from_fasta(
             # Enforce unique feature IDs
             if feat.feature_id in seen_ids:
                 raise VDJReferenceConstructionError(
-                    "Duplicate feature ID found in input FASTA: %d." % feat.feature_id
+                    f"Duplicate feature ID found in input FASTA: {feat.feature_id}."
                 )
             # Sanity check values
             if b" " in feat.region_type:
@@ -290,8 +290,7 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
     if len(values1) != len(REF_FASTA_FIELDS):
         raise VDJReferenceConstructionError(
             "First string in FASTA header (record ID) must consist of the "
-            'following %d fields separated by "|": %s. Found %d values: %s'
-            % (
+            'following {} fields separated by "|": {}. Found {} values: {}'.format(
                 len(REF_FASTA_FIELDS),
                 ", ".join(REF_FASTA_FIELDS),
                 len(values1),
@@ -303,8 +302,7 @@ def parse_fasta_entry(header: bytes, sequence: bytes) -> VdjAnnotationFeature:
     if len(values2) != len(REF_FASTA_AUX_FIELDS):
         raise VDJReferenceConstructionError(
             "Second string in FASTA header (description) must consist of the "
-            'following %d fields separated by "|": %s. Found %d values: %s'
-            % (
+            'following {} fields separated by "|": {}. Found {} values: {}'.format(
                 len(REF_FASTA_AUX_FIELDS),
                 ", ".join(REF_FASTA_AUX_FIELDS),
                 len(values2),

@@ -1,36 +1,9 @@
-#![deny(
-    missing_docs,
-    missing_copy_implementations,
-    non_upper_case_globals,
-    trivial_casts,
-    trivial_numeric_casts,
-    unsafe_code,
-    unstable_features,
-    unused_extern_crates,
-    unused_import_braces,
-    unused_qualifications
-)]
-
-//!
-//! This is documentation for the `metric` crate.
-//!
 //! This crate defines a number of data structures used for tracking
 //! various metrics in a pipeline. `Metric` trait forms the core of this
 //! crate and all the data structure which represents a metric implements
 //! this trait. The crate `metric_derive` allows one to derive the `Metric`
 //! trait. The data structures and their intended uses are noted below:
-//!
-//!
-
-#[macro_use]
-extern crate serde_derive;
-
-#[macro_use]
-extern crate metric_derive;
-
-#[cfg(test)]
-#[macro_use]
-extern crate proptest;
+#![deny(missing_docs)]
 
 use ahash::AHasher;
 use anyhow::{Context, Error};
@@ -38,24 +11,25 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::borrow::Borrow;
-use std::collections::{hash_map, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map};
 use std::fs::File;
 use std::hash::{BuildHasher, Hash};
 use std::io::{Read, Write};
 use std::iter::FromIterator;
 use std::path::Path;
 
-pub mod count_metric;
+mod collections;
+mod count_metric;
+mod histogram;
+mod mean_metric;
+mod num;
+mod option;
+mod percent_metric;
+
 pub use crate::count_metric::CountMetric;
-pub mod percent_metric;
-pub use crate::percent_metric::PercentMetric;
-pub mod histogram;
-pub use crate::histogram::SimpleHistogram;
-pub mod mean_metric;
+pub use crate::histogram::{Histogram, OrderedHistogram, SimpleHistogram};
 pub use crate::mean_metric::MeanMetric;
-pub mod collections;
-pub mod num;
-pub mod option;
+pub use crate::percent_metric::PercentMetric;
 
 /// A deterministic and fast hasher.
 #[derive(Clone, Copy, Default)]
@@ -113,6 +87,12 @@ pub trait AsMetricPrefix {
 impl AsMetricPrefix for Option<&str> {
     fn as_metric_prefix(&self) -> Option<&str> {
         *self
+    }
+}
+
+impl AsMetricPrefix for &str {
+    fn as_metric_prefix(&self) -> Option<&str> {
+        Some(*self)
     }
 }
 
@@ -439,6 +419,11 @@ impl IntoIterator for JsonReporter {
 }
 
 impl JsonReporter {
+    /// Get a reference to the underlying hash map.
+    pub fn inner(&self) -> &TxHashMap<String, Value> {
+        &self.hashmap
+    }
+
     /// Insert a new (key, value) pair into the JsonReporter. The key could be
     /// any type which can be casted into a `String` and value can be any type
     /// which can be casted into `serde_json::Value`
@@ -621,9 +606,26 @@ impl ::std::fmt::Display for JsonReporter {
     }
 }
 
+impl JsonReport for String {
+    fn to_json_reporter(&self) -> JsonReporter {
+        let mut reporter = JsonReporter::default();
+        reporter.insert("", self.as_str());
+        reporter
+    }
+}
+
+impl JsonReport for &str {
+    fn to_json_reporter(&self) -> JsonReporter {
+        let mut reporter = JsonReporter::default();
+        reporter.insert("", *self);
+        reporter
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metric_derive::Metric;
     use std::hash::Hasher;
 
     #[test]

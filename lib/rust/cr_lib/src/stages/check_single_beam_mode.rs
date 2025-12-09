@@ -1,10 +1,11 @@
 //! Martian stage CHECK_SINGLE_BEAM_MODE
+#![deny(missing_docs)]
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use cr_types::reference::feature_reference::BeamMode;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, MartianStruct)]
@@ -18,6 +19,7 @@ pub struct CheckSingleBeamModeStageOutputs {
     pub beam_mode: Option<BeamMode>,
 }
 
+/// Martian stage CHECK_SINGLE_BEAM_MODE
 pub struct CheckSingleBeamMode;
 
 #[make_mro(volatile = strict)]

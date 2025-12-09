@@ -1,18 +1,21 @@
 //! Martian stage MERGE_GEM_WELL_FILES
 //! Take in lists of matrix computer intermediary files for each GEM well
 //! Merge each into a single list for multi-GEM well
+#![deny(missing_docs)]
 
+use crate::BcUmiInfoShardFile;
 use crate::types::{BarcodeMetricsShardFile, FeatureReferenceFormat};
 use crate::utils::hard_link_martianfile;
-use crate::{AlignShardFile, BcUmiInfoShardFile};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
+use cr_types::AlignShardFile;
 use cr_types::rna_read::RnaChunk;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tx_annotation::read::AnnotationFiles;
 
+/// Martian stage MERGE_GEM_WELL_FILES
 pub struct MergeGemWellFiles;
 
 // intermediary matrix_computer files for a single gem well

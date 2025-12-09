@@ -29,8 +29,8 @@ import time
 
 import martian
 
-import cellranger.cell_typing.cloud_cas_client as cloud_client_lib
-import cellranger.cell_typing.cloud_cas_utils as cloud_cas_utils
+import cellranger.cell_typing.broad_tenx.cloud_cas_client as cloud_client_lib
+import cellranger.cell_typing.broad_tenx.cloud_cas_utils as cloud_cas_utils
 import cellranger.matrix as cr_matrix
 
 
@@ -175,10 +175,11 @@ def main(args, _outs):
             martian.exit(
                 f"Multi-genome references, {ref}, are not supported by cell annotation at this time."
             )
-        if num_bcs > 800000:
+        if num_bcs > cloud_cas_utils.MAX_BARCODE_THRESHOLD:
             martian.exit(
-                f"Filtered matrix file {args.cr_annotate_filtered_matrix} contains more barcodes than the maximum allowed threshold. "
-                "Cell Ranger Cell Annotation has a maximum limit of 800,000 barcodes."
+                f"""Filtered matrix file {args.cr_annotate_filtered_matrix} contains more barcodes than the maximum allowed threshold.
+                Cell Ranger Cell Annotation has a maximum limit of {cloud_cas_utils.MAX_BARCODE_THRESHOLD:,} barcodes.
+                """
             )
 
         # check if the cloupe file is valid

@@ -11,6 +11,7 @@ import collections
 import json
 import os
 from collections.abc import Sequence
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 import h5py
@@ -52,7 +53,7 @@ def get_plot_segment(start_index, end_index, sorted_bc, cell_barcodes: set[bytes
 
 
 def generate_counter_barcode_rank_plot_data(
-    cell_barcodes: set[bytes], barcode_summary, key, restrict_barcodes=None
+    cell_barcodes: set[bytes], barcode_summary, key, restrict_barcodes: set[bytes]
 ):
     """A helper function to generate the data required to generate the barcode rank.
 
@@ -71,27 +72,41 @@ def generate_counter_barcode_rank_plot_data(
         - barcode_summary: The barcode summary from the h5.
         - key: Specifies the entry to look up in barcode summary
             for getting the UMI counts
-        - restrict_barcodes: Optional list of cell barcodes to restrict to
+        - restrict_barcodes: Optional set of cell barcodes to restrict to; if
+            empty, include all barcodes.
     Output:
         - sorted_counts: UMI counts sorted in descending order
         - plot_segments: List of BarcodeRankPlotSegment
     """
     if restrict_barcodes:
-        restrict_indices = np.nonzero(np.isin(barcode_summary["bc_sequence"][:], restrict_barcodes))
+        bc_summary_seq = barcode_summary["bc_sequence"][:]
+        # numpy isin has up to 6x memory overhead and can't take advantage of
+        # the fact that we can provide set-based membership.
+        isin = np.full(bc_summary_seq.shape, False)
+        for i, bc in enumerate(bc_summary_seq):
+            if bc in restrict_barcodes:
+                isin[i] = True
+        restrict_indices = np.nonzero(isin)
         counts_per_bc = barcode_summary[key][:][restrict_indices]
-        barcode_sequences = barcode_summary["bc_sequence"][:][restrict_indices]
+        barcode_sequences = bc_summary_seq[restrict_indices]
     else:
         counts_per_bc = barcode_summary[key][:]
         barcode_sequences = barcode_summary["bc_sequence"][:]
 
     srt_order = compute_sort_order(counts_per_bc, barcode_sequences, cell_barcodes)
-    sorted_bc = barcode_sequences[srt_order]
-    sorted_counts = counts_per_bc[srt_order]
+
+    barcode_sequences = barcode_sequences[srt_order]
+    counts_per_bc = counts_per_bc[srt_order]
     del srt_order
 
-    plot_segments = compute_plot_segments(sorted_bc, sorted_counts, cell_barcodes)
+    # remove barcodes with 0 UMIs
+    nonzero_filter = counts_per_bc > 0
+    barcode_sequences = barcode_sequences[nonzero_filter]
+    counts_per_bc = counts_per_bc[nonzero_filter]
 
-    return sorted_counts, plot_segments
+    plot_segments = _compute_plot_segments(barcode_sequences, counts_per_bc, cell_barcodes)
+
+    return counts_per_bc, plot_segments
 
 
 class SampleData:
@@ -138,13 +153,15 @@ class SampleData:
             else None
         )
 
-        self.vdj_barcode_support = (
+        self.vdj_all_contig_annotations = (
             pd.read_csv(
-                ensure_str(sample_data_paths.vdj_barcode_support_path),
+                ensure_str(sample_data_paths.vdj_all_contig_annotations_csv_path),
                 converters={"barcode": ensure_binary},
-            )
-            if sample_data_paths.vdj_barcode_support_path
-            and os.path.getsize(sample_data_paths.vdj_barcode_support_path) != 0
+            )[["barcode", "umis"]]
+            .groupby("barcode", as_index=False)
+            .sum()
+            if sample_data_paths.vdj_all_contig_annotations_csv_path
+            and os.path.getsize(sample_data_paths.vdj_all_contig_annotations_csv_path) != 0
             else None
         )
 
@@ -173,6 +190,16 @@ class SampleData:
         self.isotype_scatter = load_antibody_data(sample_data_paths.isotype_scatter_path)
         self.gex_fbc_correlation_heatmap = load_antibody_data(
             sample_data_paths.gex_fbc_correlation_heatmap_path
+        )
+        self.segmentation_metrics = (
+            sample_properties.segmentation_properties
+            if isinstance(sample_properties, ExtendedCountSampleProperties)
+            else None
+        )
+        self.cytassist_run_metrics = (
+            sample_properties.cytassist_run_properties
+            if isinstance(sample_properties, ExtendedCountSampleProperties)
+            else None
         )
 
     def get_analysis(self, analysis_type):
@@ -207,21 +234,29 @@ class SampleData:
         """
         assert self.cell_barcodes is not None
         return generate_counter_barcode_rank_plot_data(
-            self.cell_barcodes, self.barcode_summary, key
+            self.cell_barcodes,
+            self.barcode_summary,
+            key,
+            restrict_barcodes=set(),
         )
 
     def vdj_barcode_rank_plot_data(self):
         """Generate the data required to generate the barcode rank plot for VDJ."""
         assert self.cell_barcodes is not None
-        counts_per_bc = self.vdj_barcode_support["count"].to_numpy()
+        counts_per_bc = self.vdj_all_contig_annotations["umis"].to_numpy()
         srt_order = compute_sort_order(
-            counts_per_bc, self.vdj_barcode_support["barcode"], self.cell_barcodes
+            counts_per_bc, self.vdj_all_contig_annotations["barcode"], self.cell_barcodes
         )
-        sorted_bc = self.vdj_barcode_support["barcode"].to_numpy()[srt_order]
+        sorted_bc = self.vdj_all_contig_annotations["barcode"].to_numpy()[srt_order]
         sorted_counts = counts_per_bc[srt_order]
         del srt_order
 
-        plot_segments = compute_plot_segments(sorted_bc, sorted_counts, self.cell_barcodes)
+        # remove barcodes with 0 UMIs
+        nonzero_filter = sorted_counts > 0
+        sorted_bc = sorted_bc[nonzero_filter]
+        sorted_counts = sorted_counts[nonzero_filter]
+
+        plot_segments = _compute_plot_segments(sorted_bc, sorted_counts, self.cell_barcodes)
         return sorted_counts, plot_segments
 
     def is_targeted(self):
@@ -241,13 +276,22 @@ def compute_sort_order(counts_per_bc, bc_sequences, cell_barcodes: set[bytes]):
     is_cell = np.full(len(counts_per_bc), False)
     for i, bc in enumerate(bc_sequences):
         is_cell[i] = bc in cell_barcodes
-    srt_order = sorted(
-        range(len(counts_per_bc)), key=lambda x: (counts_per_bc[x], is_cell[x]), reverse=True
-    )
-    return srt_order
+    srt_order = np.lexsort((is_cell, counts_per_bc))
+    # want largest counts first, so reverse the sort order
+    return srt_order[::-1]
 
 
-def compute_plot_segments(sorted_bc, sorted_counts, cell_barcodes: set[bytes]):
+def _compute_plot_segments(sorted_bc, sorted_counts, cell_barcodes: set[bytes]):
+    """Break up the barcode space into segments.
+
+    The first segment is a chunk of the top contiguous barcodes that are all called as cells.
+    The last segment is a chunk of all of the contiguous barcodes that are in the background.
+    The remaining middle segments are the ranked barcode region that contains a mix
+    of barcodes, some of which were called as cells, but some of which were not.
+
+    The primary purpose of these segments is to compute a cell density for the
+    segment which is represented by the color of the trace.
+    """
     # find the first barcode which is not a cell
     first_non_cell = len(sorted_bc)
     for i, bc in enumerate(sorted_bc):
@@ -262,40 +306,39 @@ def compute_plot_segments(sorted_bc, sorted_counts, cell_barcodes: set[bytes]):
             last_cell = i
             break
 
-    ranges = [0, first_non_cell, last_cell + 1, len(sorted_bc)]
-
-    plot_segments = []
+    plot_segments: list[BarcodeRankPlotSegment] = []
     plot_segments.append(
-        BarcodeRankPlotSegment(start=0, end=ranges[1], cell_density=1.0, legend=True)
-    )
-    plot_segments.append(
-        BarcodeRankPlotSegment(start=ranges[2], end=ranges[3], cell_density=0.0, legend=True)
+        BarcodeRankPlotSegment(start=0, end=first_non_cell, cell_density=1.0, legend=True)
     )
 
     # Subdivide the mixed section
-    mixed_segments = segment_log_plot_by_length(sorted_counts, ranges[1], ranges[2])
-    for i in range(len(mixed_segments) - 1):
-        plot_segments.append(
-            get_plot_segment(
-                mixed_segments[i], mixed_segments[i + 1], sorted_bc, cell_barcodes, legend=False
-            )
+    mixed_segments = _segment_log_plot_by_length(sorted_counts, first_non_cell, last_cell + 1)
+    if mixed_segments:
+        # We should always have returned at least a start and an end coordinate.
+        assert len(mixed_segments) > 1
+    for start, end in pairwise(mixed_segments):
+        plot_segments.append(get_plot_segment(start, end, sorted_bc, cell_barcodes, legend=False))
+
+    plot_segments.append(
+        BarcodeRankPlotSegment(
+            start=last_cell + 1, end=len(sorted_bc), cell_density=0.0, legend=True
         )
+    )
 
     return plot_segments
 
 
-def segment_log_plot_by_length(y_data, x_start, x_end):
-    """Given the extends of the mixed region [x_start, x_end), compute.
+def _segment_log_plot_by_length(
+    y_data, x_start, x_end, min_x_span: int = 20, segment_normalized_max_len: float = 0.02
+):
+    """Given the extent of the mixed region [x_start, x_end), compute.
 
     the x-indices that would divide the plot into segments of a
-    prescribed length (in pixel coordinates) with a minimum number
-    of barcodes in each segment
+    prescribed length (in pixel coordinates) with at least min_x_span
+    barcodes in each segment.
     """
-    if x_end <= x_start:
+    if x_end <= x_start or len(y_data) == 0:
         return []
-
-    SEGMENT_NORMALIZED_MAX_LEN = 0.02
-    MIN_X_SPAN = 20
 
     log_max_x = np.log(len(y_data))
     log_max_y = np.log(max(y_data))
@@ -310,7 +353,7 @@ def segment_log_plot_by_length(y_data, x_start, x_end):
         dx = (np.log(i) - np.log(last_i)) / log_max_x
         dy = (np.log(y_data[i]) - np.log(y_data[last_i])) / log_max_y
         this_segment_len += np.linalg.norm([dx, dy])
-        if this_segment_len >= SEGMENT_NORMALIZED_MAX_LEN and i > (segment_idx[-1] + MIN_X_SPAN):
+        if this_segment_len >= segment_normalized_max_len and i > (segment_idx[-1] + min_x_span):
             segment_idx.append(i + 1)
             this_segment_len = 0.0
 

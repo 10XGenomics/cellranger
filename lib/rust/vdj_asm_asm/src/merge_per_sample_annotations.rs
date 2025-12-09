@@ -1,13 +1,14 @@
 //! MergePerSampleAnnotations stage code
+#![expect(missing_docs)]
 use anyhow::Result;
 use cr_h5::count_matrix::BarcodeWithGemGroup;
-use cr_lib::read_level_multiplexing::map_multiplexing_seq_to_id;
+use cr_lib::map_multiplexing_seq_to_id;
 use cr_types::chemistry::ChemistryDef;
 use cr_types::{BarcodeMultiplexingType, ReadLevel};
 use hdf5::types::FixedAscii;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO, LazyWrite};
 use metric::TxHashMap;
@@ -31,7 +32,7 @@ pub struct MergePerSampleAnnotationsStageOutputs {
 
 pub struct MergePerSampleAnnotations;
 
-pub fn get_vdj_cells_per_tag_cell_level_multiplexing(
+fn get_vdj_cells_per_tag_cell_level_multiplexing(
     gex_cells_per_tag: Option<JsonFile<TxHashMap<String, HashSet<String>>>>,
     cell_bcs: &HashSet<String>,
 ) -> HashMap<String, usize> {
@@ -49,7 +50,7 @@ pub fn get_vdj_cells_per_tag_cell_level_multiplexing(
         .collect()
 }
 
-pub fn get_vdj_cells_per_tag_overhang_multiplexing(
+fn get_vdj_cells_per_tag_overhang_multiplexing(
     vdj_chemistry_def: ChemistryDef,
     cell_bcs: &HashSet<String>,
 ) -> HashMap<String, usize> {
@@ -70,7 +71,7 @@ pub fn get_vdj_cells_per_tag_overhang_multiplexing(
         .map(|v| (v.to_string().clone(), 0))
         .collect();
 
-    let vdj_cells_per_tag = cell_bcs
+    cell_bcs
         .iter()
         .map(|barcode| {
             map_multiplexing_seq_to_id(
@@ -82,8 +83,7 @@ pub fn get_vdj_cells_per_tag_overhang_multiplexing(
         .fold(vdj_cells_per_tag_initial, |mut acc, overhang_id| {
             *acc.entry(overhang_id.to_string()).or_insert(0) += 1;
             acc
-        });
-    vdj_cells_per_tag
+        })
 }
 
 #[make_mro]

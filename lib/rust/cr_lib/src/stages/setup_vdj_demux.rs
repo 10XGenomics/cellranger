@@ -1,10 +1,11 @@
-//! SetupVDJDemux stage code
+//! Martian stage SETUP_VDJ_DEMUX
+#![deny(missing_docs)]
 
 use crate::{GexMatrices, SampleMatrices};
 use anyhow::{Context, Result};
 use cr_types::{BarcodeMultiplexingType, CrMultiGraph, FingerprintFile};
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,7 @@ pub struct SetupVDJDemuxStageOutputs {
     pub multiplexing_method: Option<BarcodeMultiplexingType>,
 }
 
+/// Martian stage SETUP_VDJ_DEMUX
 pub struct SetupVDJDemux;
 
 #[make_mro]

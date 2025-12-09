@@ -16,10 +16,11 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
     in  string            receptor,
     in  FeatureConfig     feature_config,
     in  int               min_contig_length,
+    in  int               max_reads_per_barcode,
+    in  int               umi_min_read_length,
     out json              summary,
     out ReadShards        read_shards,
     out int[]             gem_groups,
-    out json              raw_barcode_counts,
     out json              corrected_barcode_counts,
     out int               n50_n50_rpu,
     out int               processed_read_pairs,
@@ -28,42 +29,38 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
     out tsv               summary_tsv,
     out tsv               umi_summary_tsv,
     out json              asm_contig_annotations,
-    out csv               barcode_support,
     out json[]            barcodes_in_chunks,
     out fastq             unmapped_sample_fastq,
     out int               total_read_pairs,
-    out arp.bincode       assemblable_reads_per_bc,
     out smf.json          sequencing_metrics,
     out bdf.bincode       barcode_brief,
     out bd.bincode        barcode_full,
 )
 {
     call MAKE_SHARD(
-        gem_well               = self.gem_well,
-        chemistry_defs         = self.chemistry_defs,
-        read_chunks            = self.chunks,
-        r1_length              = self.r1_length,
-        r2_length              = self.r2_length,
-        subsample_rate         = self.subsample_rate,
-        initial_read_pairs     = self.initial_reads,
-        reference_path         = null,
-        target_features        = null,
-        target_set             = null,
-        target_set_name        = null,
-        feature_reference_path = null,
-        feature_config         = self.feature_config,
+        gem_well            = self.gem_well,
+        chemistry_defs      = self.chemistry_defs,
+        read_chunks         = self.chunks,
+        r1_length           = self.r1_length,
+        r2_length           = self.r2_length,
+        subsample_rate      = self.subsample_rate,
+        initial_reads       = self.initial_reads,
+        reference_info      = null,
+        target_features     = null,
+        target_set          = null,
+        target_set_name     = null,
+        feature_reference   = null,
+        feature_config      = self.feature_config,
+        umi_min_read_length = self.umi_min_read_length,
     )
 
     call BARCODE_CORRECTION(
-        gem_well               = self.gem_well,
         barcode_counts         = MAKE_SHARD.barcode_counts,
         barcode_segment_counts = MAKE_SHARD.barcode_segment_counts,
         chemistry_defs         = self.chemistry_defs,
         invalid_uncorrected    = MAKE_SHARD.invalid,
         valid_read_metrics     = MAKE_SHARD.bc_correct_summary,
-        min_reads_to_report_bc = 1000,
         correction_map         = null,
-        barcodes_under_tissue  = null,
     )
 
     call RUST_BRIDGE(
@@ -71,8 +68,8 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         gem_well                 = self.gem_well,
         valid_uncorrected        = MAKE_SHARD.valid,
         valid_corrected          = BARCODE_CORRECTION.valid_corrected,
-        raw_barcode_counts       = MAKE_SHARD.barcode_counts,
         corrected_barcode_counts = BARCODE_CORRECTION.corrected_barcode_counts,
+        max_reads_per_barcode    = self.max_reads_per_barcode,
     )
 
     call ASSEMBLE_VDJ(
@@ -88,6 +85,7 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         total_read_pairs         = MAKE_SHARD.total_read_pairs,
         corrected_bc_counts      = RUST_BRIDGE.corrected_barcode_counts_json,
         min_contig_length        = self.min_contig_length,
+        max_reads_per_barcode    = self.max_reads_per_barcode,
     )
 
     call MERGE_METRICS(
@@ -106,7 +104,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
             valid_reads:     MAKE_SHARD.valid,
         },
         gem_groups               = RUST_BRIDGE.gem_groups,
-        raw_barcode_counts       = RUST_BRIDGE.raw_barcode_counts_json,
         corrected_barcode_counts = RUST_BRIDGE.corrected_barcode_counts_json,
         n50_n50_rpu              = RUST_BRIDGE.n50_n50_rpu,
         processed_read_pairs     = RUST_BRIDGE.processed_read_pairs,
@@ -115,11 +112,9 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         summary_tsv              = ASSEMBLE_VDJ.summary_tsv,
         umi_summary_tsv          = ASSEMBLE_VDJ.umi_summary_tsv,
         asm_contig_annotations   = ASSEMBLE_VDJ.contig_annotations,
-        barcode_support          = ASSEMBLE_VDJ.barcode_support,
         barcodes_in_chunks       = ASSEMBLE_VDJ.barcodes_in_chunks,
         unmapped_sample_fastq    = ASSEMBLE_VDJ.unmapped_sample_fastq,
         total_read_pairs         = MAKE_SHARD.total_read_pairs,
-        assemblable_reads_per_bc = ASSEMBLE_VDJ.assemblable_reads_per_bc,
         sequencing_metrics       = MAKE_SHARD.sequencing_metrics,
         barcode_brief            = ASSEMBLE_VDJ.barcode_brief,
         barcode_full             = ASSEMBLE_VDJ.barcode_full,

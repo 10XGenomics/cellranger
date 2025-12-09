@@ -1,5 +1,7 @@
 //! Martian stage CALL_TAGS_OH
 //! Assign cells to samples using their overhang.
+#![deny(missing_docs)]
+
 use crate::read_level_multiplexing::{
     get_barcodes_per_multiplexing_identifier, get_umi_per_multiplexing_identifier_for_feature_type,
 };
@@ -10,9 +12,9 @@ use cr_types::chemistry::ChemistryDefs;
 use cr_types::reference::feature_reference::FeatureType;
 use itertools::Itertools;
 use martian::prelude::{MartianMain, MartianRover};
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeWrite;
+use martian_filetypes::json_file::JsonFile;
 use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -88,12 +90,11 @@ impl MartianMain for CallTagsOH {
             })
             .collect();
 
-        if overhang_barcodes.is_empty() {
-            return Ok(Self::StageOutputs {
-                barcodes_per_tag: None,
-                summary: None,
-            });
-        }
+        // This stage is disabled for non-OCM data, so requires OCM barcodes
+        assert!(
+            !overhang_barcodes.is_empty(),
+            "no OCM barcodes found in chemistries"
+        );
 
         let (overhang_offset, overhang_length) = overhang_barcodes
             .values()
@@ -117,19 +118,16 @@ impl MartianMain for CallTagsOH {
             .unwrap()
             .as_translation_seq_to_id()?;
 
-        let matrix = args.raw_feature_bc_matrix.read()?;
-        let barcodes_per_overhang = get_barcodes_per_multiplexing_identifier(
-            &matrix,
-            &overhang_seq_to_id,
-            &overhang_range,
-        )?;
+        let matrix = args.raw_feature_bc_matrix.read_streaming()?;
+        let barcodes_per_overhang =
+            get_barcodes_per_multiplexing_identifier(&matrix, &overhang_seq_to_id, &overhang_range);
 
-        let filtered_matrix = args.filtered_feature_bc_matrix.read()?;
+        let filtered_matrix = args.filtered_feature_bc_matrix.read_streaming()?;
         let filtered_barcodes_per_overhang = get_barcodes_per_multiplexing_identifier(
             &filtered_matrix,
             &overhang_seq_to_id,
             &overhang_range,
-        )?;
+        );
 
         let barcodes_per_tag_file: JsonFile<_> = rover.make_path("barcodes_per_tag");
         barcodes_per_tag_file.write(&barcodes_per_overhang)?;
@@ -139,7 +137,7 @@ impl MartianMain for CallTagsOH {
             &overhang_seq_to_id,
             &overhang_range,
             FeatureType::Gene,
-        );
+        )?;
 
         let summary: JsonFile<_> = rover.make_path("summary");
 

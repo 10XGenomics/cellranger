@@ -1,4 +1,5 @@
 //! WriteClonotypeOuts stage code
+#![expect(missing_docs)]
 
 use crate::assigner::ProtoBinFile;
 use amino::nucleotide_to_aminoacid_sequence;
@@ -7,7 +8,7 @@ use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use enclone_proto::types::InvariantTCellAnnotation;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
 use serde::{Deserialize, Serialize};
@@ -16,11 +17,11 @@ use vdj_reference::VdjReceptor;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ClonotypesCsvRow {
-    clonotype_id: String,
-    frequency: usize,
-    proportion: f64,
-    cdr3s_aa: String,
-    cdr3s_nt: String,
+    pub clonotype_id: String,
+    pub frequency: usize,
+    pub proportion: f64,
+    pub cdr3s_aa: String,
+    pub cdr3s_nt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     inkt_evidence: Option<String>, // Will be None for B cells
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,7 +43,7 @@ pub struct WriteClonotypeOutsStageOutputs {
 // This is our stage struct
 pub struct WriteClonotypeOuts;
 
-pub fn invariant_evidence_display(evidences: &[InvariantTCellAnnotation]) -> String {
+fn invariant_evidence_display(evidences: &[InvariantTCellAnnotation]) -> String {
     let chain_evidence = |chain, gene, junction| -> Option<String> {
         match (gene, junction) {
             (true, true) => Some(format!("{chain}:gene+junction")),

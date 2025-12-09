@@ -1,9 +1,10 @@
+#![deny(missing_docs)]
+
 use crate::align_homopolymer::count_homopolymer_matches;
-use crate::stages::align_and_count;
-use crate::types::AnnSpillFormat;
+use crate::minimap2::{MinimapAligner, new_record};
 use anyhow::Result;
 use barcode::{Barcode, BarcodeContent};
-use cr_types::chemistry::ChemistryDefsExt;
+use cr_types::chemistry::ChemistryName;
 use cr_types::constants::ILLUMINA_QUAL_OFFSET;
 use cr_types::probe_set::ProbeSetReference;
 use cr_types::reference::feature_extraction::{FeatureData, FeatureExtractor};
@@ -11,13 +12,16 @@ use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::{RnaChunk, RnaRead};
 use cr_types::spill_vec::{SpillVec, SpillVecReader};
 use cr_types::types::LibraryType;
-use cr_types::FeatureBarcodeType;
-use fastq_set::adapter_trimmer::{Adapter, AdapterTrimmer, TrimResult};
+use cr_types::{AlignerParam, FeatureBarcodeType};
 use fastq_set::WhichRead;
+use fastq_set::adapter_trimmer::{Adapter, AdapterTrimmer, TrimResult};
 use martian::MartianFileType;
+use martian_derive::martian_filetype;
+use martian_filetypes::bin_file::BinaryFormat;
+use metric::TxHasher;
 use orbit::StarAligner;
+use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha20Rng;
 use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,9 +32,13 @@ use tx_annotation::mark_dups::{BarcodeDupMarker, DupBuilder, UmiCorrection};
 use tx_annotation::read::{ReadAnnotations, ReadAnnotator, RecordAnnotation};
 use umi::UmiInfo;
 
-const PD_FRAC_FB_READS_TO_ALIGN: f64 = 0.1; // PD only so shouldn't go in parameters.toml
+const PD_FRAC_FB_READS_TO_ALIGN: f64 = 0.1;
 pub const MAX_ANNOTATIONS_IN_MEM: usize = 250_000; // With ~2KB per item, this would be ~500MB
 
+martian_filetype! { AnnSpillFile, "ann.spill" }
+pub(crate) type AnnSpillFormat = BinaryFormat<AnnSpillFile, Vec<ReadAnnotations>>;
+
+/// Data associated with a single barcode
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct BarcodeSummary {
     library_type: LibraryType,
@@ -42,17 +50,21 @@ pub struct BarcodeSummary {
 }
 
 impl BarcodeSummary {
-    pub fn new(barcode: Barcode, library_type: LibraryType) -> Self {
+    /// Create a new barcode summary.
+    pub fn new(barcode: String, library_type: LibraryType) -> Self {
         BarcodeSummary {
             library_type,
-            barcode: barcode.to_string(),
+            barcode,
             reads: 0,
             umis: 0,
             candidate_dup_reads: 0,
             umi_corrected_reads: 0,
         }
     }
+
+    /// Observe one read.
     pub fn observe(&mut self, annotation: &ReadAnnotations) {
+        assert_eq!(self.barcode, annotation.read.barcode().to_string());
         self.reads += 1;
         if let Some(dup_info) = &annotation.dup_info {
             if !dup_info.is_low_support_umi {
@@ -77,8 +89,8 @@ struct Adapters {
 impl Adapters {
     /// Return new adapters.
     fn new() -> Self {
-        use fastq_set::adapter_trimmer::AdapterLoc;
         use fastq_set::WhichEnd;
+        use fastq_set::adapter_trimmer::AdapterLoc;
 
         /// PolyA sequence.
         const POLYA_SEQ: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -107,16 +119,22 @@ struct Trimmers<'a> {
     tso: AdapterTrimmer<'a>,
 
     /// Trimming parameters.
-    args: &'a align_and_count::StageInputs,
+    trim_polya_min_score: Option<i32>,
+    trim_tso_min_score: Option<i32>,
 }
 
 impl<'a> Trimmers<'a> {
     /// Return new adapter trimmers.
-    fn new(adapters: &'a Adapters, args: &'a align_and_count::StageInputs) -> Self {
+    fn new(
+        adapters: &'a Adapters,
+        trim_polya_min_score: Option<usize>,
+        trim_tso_min_score: Option<usize>,
+    ) -> Self {
         Trimmers {
             polya: AdapterTrimmer::new(&adapters.polya),
             tso: AdapterTrimmer::new(&adapters.tso),
-            args,
+            trim_polya_min_score: trim_polya_min_score.map(|v| v as i32),
+            trim_tso_min_score: trim_tso_min_score.map(|v| v as i32),
         }
     }
 
@@ -132,9 +150,9 @@ impl<'a> Trimmers<'a> {
 
     /// Align adapter sequence. Return the alignment score if it exceeds the threshold, and None otherwise.
     fn align(&mut self, seq: &[u8]) -> TrimResults {
-        let polya = if let Some(trim_polya_min_score) = self.args.trim_polya_min_score {
+        let polya = if let Some(trim_polya_min_score) = self.trim_polya_min_score {
             match self.polya.find(seq) {
-                Some(x) if x.score >= trim_polya_min_score as i32 => x,
+                Some(x) if x.score >= trim_polya_min_score => x,
                 _ => Self::new_nonmatch(seq.len()),
             }
         } else {
@@ -147,9 +165,9 @@ impl<'a> Trimmers<'a> {
             Some(ref x) => x.score,
             None => 0,
         };
-        let tso = if let Some(trim_tso_min_score) = self.args.trim_tso_min_score {
+        let tso = if let Some(trim_tso_min_score) = self.trim_tso_min_score {
             match tso_alignment {
-                Some(x) if x.score >= trim_tso_min_score as i32 => x,
+                Some(x) if x.score >= trim_tso_min_score => x,
                 _ => Self::new_nonmatch(seq.len()),
             }
         } else {
@@ -212,8 +230,38 @@ impl TrimResults {
 }
 
 #[derive(Clone)]
+pub enum Align {
+    Star(StarAligner),
+    Minimap2(MinimapAligner),
+}
+
+impl Align {
+    pub fn align_read(&mut self, name: &[u8], read: &[u8], qual: &[u8]) -> Vec<Record> {
+        match self {
+            Align::Star(r) => r.align_read(name, read, qual),
+            Align::Minimap2(r) => r.align_read(name, read, qual),
+        }
+    }
+
+    pub fn align_read_pair(
+        &mut self,
+        name: &[u8],
+        read1: &[u8],
+        qual1: &[u8],
+        read2: &[u8],
+        qual2: &[u8],
+    ) -> (Vec<Record>, Vec<Record>) {
+        match self {
+            Align::Star(r) => r.align_read_pair(name, read1, qual1, read2, qual2),
+            Align::Minimap2(_) => unimplemented!(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Aligner {
-    aligner: Option<StarAligner>,
+    // TODO: Add Hurtle as a variant of Align
+    aligner: Option<Align>,
     extractor: Arc<FeatureExtractor>,
     reference: Arc<FeatureReference>,
     annotator: Option<Arc<ReadAnnotator>>,
@@ -221,50 +269,38 @@ pub struct Aligner {
     read_chunks: Vec<RnaChunk>,
     filter_umis: bool,
     spill_folder: PathBuf,
-    targeted_umi_min_read_count: Option<u64>,
+}
+
+pub struct AlignmentOptions {
+    pub(crate) trim_polya_min_score: Option<usize>,
+    pub(crate) trim_tso_min_score: Option<usize>,
+    pub(crate) is_pd: bool,
 }
 
 /// Seeds an RNG using a barcode sequence
 ///
 /// used for deterministic random sampling of feature bc reads for txome alignment for PD metric
-fn barcode_seeded_rng(barcode: Barcode) -> ChaCha20Rng {
-    match barcode.content() {
-        BarcodeContent::Sequence(seq) => {
-            let mut pd_seed: [u8; 32] = [0; 32];
-            for (i, b) in seq.iter().enumerate() {
-                if i >= 32 {
-                    break;
-                }
-                pd_seed[i] = *b;
-            }
-            ChaCha20Rng::from_seed(pd_seed)
-        }
-        BarcodeContent::SpatialIndex(index) => {
-            let seed = ((index.row as u64) << 32) + index.col as u64;
-            ChaCha20Rng::seed_from_u64(seed)
-        }
-        BarcodeContent::CellName(cell_id) => {
-            let seed = cell_id.id as u64;
-            ChaCha20Rng::seed_from_u64(seed)
-        }
-    }
+fn barcode_seeded_rng(barcode: Barcode) -> SmallRng {
+    SmallRng::seed_from_u64(match barcode.content() {
+        BarcodeContent::Sequence(seq) => TxHasher::hash(seq),
+        BarcodeContent::SpatialIndex(index) => ((index.row as u64) << 32) + index.col as u64,
+        BarcodeContent::CellName(cell_id) => cell_id.id as u64,
+    })
 }
 
 impl Aligner {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        aligner: Option<StarAligner>,
+        aligner: Option<Align>,
         reference: FeatureReference,
         feature_dist: Vec<f64>,
         annotator: Option<ReadAnnotator>,
         read_chunks: Vec<RnaChunk>,
         spill_folder: PathBuf,
-        targeted_umi_min_read_count: Option<u64>,
         target_panel_reference: Option<ProbeSetReference>,
-    ) -> Result<Aligner> {
+    ) -> Result<Self> {
         let reference = Arc::new(reference);
-        let extractor = FeatureExtractor::new(reference.clone(), None, Some(feature_dist))?;
-
+        let extractor = FeatureExtractor::new(reference.clone(), Some(feature_dist))?;
         Ok(Aligner {
             aligner,
             extractor: Arc::new(extractor),
@@ -274,19 +310,28 @@ impl Aligner {
             filter_umis: true,
             spill_folder,
             target_panel_reference: target_panel_reference.map(Arc::new),
-            targeted_umi_min_read_count,
         })
     }
 
     /// Return a mutable referene to the aligner, which must exist.
-    fn aligner(&mut self) -> &mut StarAligner {
+    fn aligner(&mut self) -> &mut Align {
         self.aligner.as_mut().unwrap()
+    }
+
+    fn get_aligner_param(&self) -> AlignerParam {
+        match self.aligner {
+            Some(Align::Star(_)) => AlignerParam::Star,
+            Some(Align::Minimap2(_)) => AlignerParam::Minimap2,
+            None => AlignerParam::Hurtle,
+        }
     }
 
     /// Aligns, deduplicates and counts UMIs for all the reads in one barcode.
     pub fn process_barcode_se(
         &mut self,
-        args: &align_and_count::StageInputs,
+        chemistry_name: ChemistryName,
+        alignment_options: &AlignmentOptions,
+        no_bam: bool,
         barcode: Barcode,
         reads: impl IntoIterator<Item = Result<RnaRead>>,
         barcode_subsample_rate: f64,
@@ -299,9 +344,10 @@ impl Aligner {
         // First pass through the reads
         for read in reads {
             let read = read?;
-            let pd_align_feature_bc_read =
-                args.is_pd && self.aligner.is_some() && pd_rng.gen_bool(PD_FRAC_FB_READS_TO_ALIGN);
-            let ann = self.annotate_read(args, read, pd_align_feature_bc_read);
+            let pd_align_feature_bc_read = alignment_options.is_pd
+                && self.aligner.is_some()
+                && pd_rng.random_bool(PD_FRAC_FB_READS_TO_ALIGN);
+            let ann = self.annotate_read(read, alignment_options, no_bam, pd_align_feature_bc_read);
             dup_builder
                 .entry(ann.read.library_type)
                 .or_default()
@@ -309,7 +355,6 @@ impl Aligner {
             annotations.push(ann)?;
         }
 
-        let chemistry_name = args.chemistry_defs.primary().name;
         let dup_marker: HashMap<_, _> = dup_builder
             .into_iter()
             .map(|(library_type, builder)| {
@@ -323,7 +368,6 @@ impl Aligner {
                             true => UmiCorrection::Disable,
                             false => UmiCorrection::Enable,
                         },
-                        self.targeted_umi_min_read_count,
                     ),
                 )
             })
@@ -341,11 +385,7 @@ impl Aligner {
     }
 
     /// Map an RTL read to the target panel CSV reference.
-    fn align_probe_read(
-        &mut self,
-        args: &align_and_count::StageInputs,
-        read: RnaRead,
-    ) -> ReadAnnotations {
+    fn align_probe_read(&mut self, no_bam: bool, is_pd: bool, read: RnaRead) -> ReadAnnotations {
         let name = read.header().split(|c| *c == b' ').next().unwrap();
         let umi_info = UmiInfo::new(read.raw_umi_seq(), read.raw_umi_qual());
 
@@ -353,13 +393,11 @@ impl Aligner {
         let qual = read.r1_qual();
         let panel_ref = self.target_panel_reference.as_ref().unwrap();
         let mapped_probe = panel_ref.align_probe_read(seq);
-        let recs = if args.no_bam || args.reference_path.is_none() {
+        let recs = if no_bam || self.aligner.is_none() {
             let mut record = Aligner::new_unmapped_records(&read).0;
-            if let (true, Some(lhs), Some(rhs)) = (
-                args.is_pd,
-                mapped_probe.lhs_probe(),
-                mapped_probe.rhs_probe(),
-            ) {
+            if (no_bam || is_pd)
+                && let (Some(lhs), Some(rhs)) = (mapped_probe.lhs_probe(), mapped_probe.rhs_probe())
+            {
                 let lhs_index = panel_ref.probe_id_to_index(&lhs.probe_id) as i32;
                 let rhs_index = panel_ref.probe_id_to_index(&rhs.probe_id) as i64;
                 record.unset_unmapped();
@@ -376,11 +414,15 @@ impl Aligner {
 
     fn align_read(
         &mut self,
-        args: &align_and_count::StageInputs,
         read: RnaRead,
+        alignment_options: &AlignmentOptions,
     ) -> ReadAnnotations {
         let adapters = Adapters::new();
-        let mut trimmers = Trimmers::new(&adapters, args);
+        let mut trimmers = Trimmers::new(
+            &adapters,
+            alignment_options.trim_polya_min_score,
+            alignment_options.trim_tso_min_score,
+        );
 
         // Split the qname at the first space.
         let name = read.header().split(|c| *c == b' ').next().unwrap();
@@ -391,6 +433,11 @@ impl Aligner {
         let retain_range = trim_results.retain_range();
         let trimmed_seq = &read.r1_seq()[retain_range.clone()];
         let trimmed_qual = &read.r1_qual()[retain_range.clone()];
+
+        let is_minimap = self
+            .aligner
+            .as_ref()
+            .is_some_and(|a| matches!(a, Align::Minimap2(_)));
 
         match read.r2_seq() {
             Some(r2_seq) => {
@@ -415,7 +462,12 @@ impl Aligner {
                     read.r1_qual(),
                     &retain_range,
                 );
-                trim_results.add_tags(&mut recs1);
+
+                // Add adapter trimming tags.
+                // FIXME: ts tag is used by minimap2 for tracking transcript strand.
+                if !is_minimap {
+                    trim_results.add_tags(&mut recs1);
+                }
 
                 ReadAnnotations {
                     matched_tso: trim_results.matched_tso(),
@@ -440,9 +492,12 @@ impl Aligner {
                 );
 
                 // Add adapter trimming tags.
-                trim_results.add_tags(&mut read_recs);
+                // FIXME: ts tag is used by minimap2 for tracking transcript strand.
+                if !is_minimap {
+                    trim_results.add_tags(&mut read_recs);
+                }
 
-                if args.is_pd {
+                if alignment_options.is_pd {
                     // Add R1 polyT alignment matches BAM tag.
                     let r1_umi_end = read
                         .umi_ranges()
@@ -475,16 +530,17 @@ impl Aligner {
 
     fn annotate_read(
         &mut self,
-        args: &align_and_count::StageInputs,
         read: RnaRead,
+        alignment_options: &AlignmentOptions,
+        no_bam: bool,
         pd_align_feature_bc_read: bool,
     ) -> ReadAnnotations {
         match read.library_type {
             LibraryType::Gex => {
                 if self.target_panel_reference.is_some() {
-                    self.align_probe_read(args, read)
+                    self.align_probe_read(no_bam, alignment_options.is_pd, read)
                 } else {
-                    self.align_read(args, read)
+                    self.align_read(read, alignment_options)
                 }
             }
             LibraryType::FeatureBarcodes(_) => {
@@ -509,9 +565,13 @@ impl Aligner {
                         ),
                     ) => {
                         let (rec1, rec2) = Aligner::new_unmapped_records(&read);
-                        Some(RecordAnnotation::Unmapped(rec1, rec2))
+                        Some(RecordAnnotation::Unmapped(
+                            rec1,
+                            rec2,
+                            self.get_aligner_param(),
+                        ))
                     }
-                    (true, _) => Some(self.align_read(args, read.clone()).primary),
+                    (true, _) => Some(self.align_read(read.clone(), alignment_options).primary),
                     _ => None,
                 };
 
@@ -594,16 +654,6 @@ impl Aligner {
     }
 
     fn new_unmapped_records(read: &RnaRead) -> (Record, Option<Record>) {
-        fn new_record(name: &[u8], seq: &[u8], qual: &[u8]) -> Record {
-            let mut record = Record::new();
-            record.set(name, None, seq, qual);
-            record.set_tid(-1);
-            record.set_pos(-1);
-            record.set_unmapped();
-            record.set_mtid(-1);
-            record.set_mpos(-1);
-            record
-        }
         // split the qname at the first space
         let name = read.header().split(|c| *c == b' ').next().unwrap();
         let qual: Vec<_> = read
@@ -638,7 +688,7 @@ impl Aligner {
         let (rec1, rec2) = Aligner::new_unmapped_records(read);
         match self.extractor.match_read(read) {
             Some(data) => RecordAnnotation::FeatureExtracted(rec1, data, rec2),
-            None => RecordAnnotation::Unmapped(rec1, rec2),
+            None => RecordAnnotation::Unmapped(rec1, rec2, self.get_aligner_param()),
         }
     }
 }
@@ -650,7 +700,7 @@ pub struct AnnotationIter<'a> {
     feature_reference: &'a FeatureReference,
     probe_set_reference: Option<&'a Arc<ProbeSetReference>>,
     barcode_subsample_rate: f64,
-    rng: ChaCha20Rng,
+    rng: SmallRng,
 }
 
 impl<'a> AnnotationIter<'a> {
@@ -661,7 +711,7 @@ impl<'a> AnnotationIter<'a> {
         feature_reference: &'a FeatureReference,
         probe_set_reference: Option<&'a Arc<ProbeSetReference>>,
         barcode_subsample_rate: f64,
-        rng: ChaCha20Rng,
+        rng: SmallRng,
     ) -> Self {
         AnnotationIter {
             store,
@@ -675,7 +725,7 @@ impl<'a> AnnotationIter<'a> {
     }
 }
 
-impl<'a> Iterator for AnnotationIter<'a> {
+impl Iterator for AnnotationIter<'_> {
     type Item = Result<ReadAnnotations>;
 
     // next() is the only required method
@@ -708,10 +758,11 @@ impl<'a> Iterator for AnnotationIter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aligner::{barcode_seeded_rng, Aligner};
+    use crate::aligner::{Aligner, barcode_seeded_rng};
     use barcode::{Barcode, BcSeq};
+    use metric::TxHasher;
+    use rand::rngs::SmallRng;
     use rand::{Rng, SeedableRng};
-    use rand_chacha::ChaCha20Rng;
     use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
 
     #[test]
@@ -719,20 +770,15 @@ mod tests {
     fn test_barcode_seeded_rng() {
         // seed an RNG using a barcode sequence and get 3 random floats from it
         let mut bc_rng = barcode_seeded_rng(Barcode::with_seq(1, BcSeq::from_bytes(b"ACGT"), true));
-        let res1 = bc_rng.gen::<f64>();
-        let res2 = bc_rng.gen::<f64>();
-        let res3 = bc_rng.gen::<f64>();
+        let res1: f64 = bc_rng.random();
+        let res2: f64 = bc_rng.random();
+        let res3: f64 = bc_rng.random();
 
         // build the expected RNG and get 3 floats from it
-        let mut exp_seed = [0u8; 32];
-        exp_seed[0] = b'A';
-        exp_seed[1] = b'C';
-        exp_seed[2] = b'G';
-        exp_seed[3] = b'T';
-        let mut exp_rng: ChaCha20Rng = ChaCha20Rng::from_seed(exp_seed);
-        let exp1 = exp_rng.gen::<f64>();
-        let exp2 = exp_rng.gen::<f64>();
-        let exp3 = exp_rng.gen::<f64>();
+        let mut exp_rng = SmallRng::seed_from_u64(TxHasher::hash(b"ACGT"));
+        let exp1: f64 = exp_rng.random();
+        let exp2: f64 = exp_rng.random();
+        let exp3: f64 = exp_rng.random();
 
         // check that the generated random floats match
         assert_eq!(res1, exp1);

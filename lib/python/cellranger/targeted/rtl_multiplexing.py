@@ -78,7 +78,9 @@ def get_probe_bc_defn(barcode_def: list[dict[str, str | int]]) -> tuple[int | No
     return (gb_end, probe_end - gb_end)
 
 
-def get_probe_bc_whitelist(barcode_def: list[dict[str, dict[str, str]]]) -> dict:
+def get_probe_bc_whitelist(
+    barcode_def: list[dict[str, dict[str, str]]],
+) -> dict[str, str]:
     """Returns the whitelist spec of the probe barcodes.
 
     Args:

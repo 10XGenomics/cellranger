@@ -1,5 +1,6 @@
+#![expect(missing_docs)]
 use crate::reference::feature_reference::FeatureReference;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 use std::iter::zip;
 

@@ -247,25 +247,13 @@ def main(args, outs):
         # if there is only one file, just do a move
         file_info = tk_fasta.IlmnFastqFile(paths[0])
         if len(paths) == 1:
-            out_name = "%s_S0%s_L%03d_%s_%03d.fastq.gz" % (
-                ensure_str(file_info.prefix),
-                args.output_snum,
-                file_info.lane,
-                ensure_str(file_info.read),
-                file_info.group,
-            )
+            out_name = f"{ensure_str(file_info.prefix)}_S0{args.output_snum}_L{file_info.lane:03d}_{ensure_str(file_info.read)}_{file_info.group:03d}.fastq.gz"
             out_path = os.path.join(output_folder, os.path.basename(out_name))
             # TODO: Don't be evil
             os.rename(paths[0], out_path)
 
         else:
-            out_file = "%s_S0%s_L%03d_%s_%03d.fastq.gz" % (
-                ensure_str(file_info.prefix),
-                args.output_snum,
-                file_info.lane,
-                ensure_str(file_info.read),
-                file_info.group,
-            )
+            out_file = f"{ensure_str(file_info.prefix)}_S0{args.output_snum}_L{file_info.lane:03d}_{ensure_str(file_info.read)}_{file_info.group:03d}.fastq.gz"
             out_path = os.path.join(output_folder, os.path.basename(out_file))
             with open(out_path, "wb") as out_file:
                 log_subprocess.check_call(["cat"] + paths, stdout=out_file)
@@ -303,13 +291,7 @@ def join(args, outs, chunk_args, chunk_outs):
         merged_files = chunk_out.merged_file_paths
         for merged_file in merged_files:
             file_info = tk_fasta.IlmnFastqFile(merged_file)
-            out_name = "%s_S%s_L%03d_%s_%03d.fastq.gz" % (
-                ensure_str(file_info.prefix),
-                ensure_str(file_info.s[1:]),
-                file_info.lane,
-                ensure_str(file_info.read),
-                file_info.group,
-            )
+            out_name = f"{ensure_str(file_info.prefix)}_S{ensure_str(file_info.s[1:])}_L{file_info.lane:03d}_{ensure_str(file_info.read)}_{file_info.group:03d}.fastq.gz"
             out_path = os.path.join(os.path.dirname(merged_file), os.path.basename(out_name))
             # TODO: Don't be evil
             os.rename(merged_file, out_path)

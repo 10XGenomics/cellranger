@@ -16,6 +16,7 @@ struct PcaOutputs(
 
 stage ANALYZER_PREFLIGHT(
     in  bool   no_secondary_analysis,
+    in  h5     molecule_info,
     in  h5     filtered_matrices_h5,
     in  csv    use_genes,
     in  csv    exclude_genes,
@@ -150,21 +151,6 @@ stage COMBINE_CLUSTERING(
     volatile = strict,
 )
 
-stage RUN_DIFFERENTIAL_EXPRESSION(
-    in  h5     matrix_h5,
-    in  h5     clustering_h5,
-    in  int    random_seed,
-    in  int    max_clusters,
-    in  bool   is_antibody_only,
-    out h5     diffexp_h5,
-    out path   diffexp_csv,
-    src py     "stages/analyzer/run_differential_expression",
-) split (
-    in  string clustering_key,
-) using (
-    volatile = strict,
-)
-
 stage SUMMARIZE_ANALYSIS(
     in  h5    matrix_h5,
     in  h5    pca_h5,
@@ -188,7 +174,6 @@ stage SUMMARIZE_ANALYSIS(
     out path  analysis_csv,
     out json  summary,
     src py    "stages/analyzer/summarize_analysis",
-) split (
 ) using (
     volatile = strict,
 )

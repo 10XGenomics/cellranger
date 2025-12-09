@@ -1,30 +1,33 @@
+//! This file contains code to annotate a contig, in the sense of finding alignments
+//! to VDJ reference contigs.  Also to find CDR3 sequences.  And some related things.
 // Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
-
-// This file contains code to annotate a contig, in the sense of finding alignments
-// to VDJ reference contigs.  Also to find CDR3 sequences.  And some related things.
+#![expect(missing_docs)]
 
 use crate::align::affine_align;
 use crate::refx::RefData;
-use crate::transcript::{is_productive_contig, ContigStatus};
+use crate::transcript::{ContigStatus, is_productive_contig};
 use amino::{have_start, nucleotide_to_aminoacid_sequence};
-use bio_edit::alignment::AlignmentOperation::{Del, Ins, Match, Subst, Xclip, Yclip};
+use bio::alignment::AlignmentOperation::{Del, Ins, Match, Subst, Xclip, Yclip};
 use debruijn::dna_string::{DnaString, DnaStringSlice};
 use debruijn::kmer::{Kmer12, Kmer20};
 use debruijn::{Mer, Vmer};
 use io_utils::{fwrite, fwriteln};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use stats_utils::percent_ratio;
 use std::cmp::{max, min};
 use std::fmt::Write as _;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use string_utils::{stringme, strme, TextUtils};
+use std::io::Write;
+use string_utils::TextUtils;
 use vdj_types::{VdjChain, VdjRegion};
 use vector_utils::{
-    bin_member, erase_if, lower_bound1_3, next_diff1_2, next_diff1_3, next_diff_any, reverse_sort,
-    unique_sort, VecUtils,
+    bin_member, erase_if, lower_bound1_3, next_diff_any, next_diff1_2, next_diff1_3, reverse_sort,
+    unique_sort,
 };
+
+// Return 100 * a / b
+fn percent_ratio(a: usize, b: usize) -> f64 {
+    100_f64 * a as f64 / b as f64
+}
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // START CODONS
@@ -1521,7 +1524,7 @@ fn find_indels_in_v_or_utr(
                 );
                 fwriteln!(log, "|del| = {}, |ins| = {}", del.len(), ins.len());
             }
-            if del.solo() && ins.is_empty() {
+            if del.len() == 1 && ins.is_empty() {
                 let (l, p, n) = (del[0].0, del[0].1, del[0].2);
                 if n != (p2 + len2 - p1) - (l2 + len2 - l1) {
                     continue;
@@ -1534,7 +1537,7 @@ fn find_indels_in_v_or_utr(
                 l2 = l;
                 p2 = p + n;
             }
-            if del.is_empty() && ins.solo() {
+            if del.is_empty() && ins.len() == 1 {
                 let (l, p, n) = (ins[0].0, ins[0].1, ins[0].2);
                 // ◼ This is buggy.  It fails if overflow detection is on.
                 if n + l1 + p2 != l2 + p1 {
@@ -2055,11 +2058,11 @@ fn annotate_j_for_ig_with_c_and_v(b_seq: &[u8], refdata: &RefData, annx: &mut Ve
         }
         let rt = refdata.rtype[t];
         if (0..3).contains(&rt) {
-            if refdata.segtype[t] == "V" {
+            if refdata.segtype[t] == b'V' {
                 igv = true;
-            } else if refdata.segtype[t] == "J" {
+            } else if refdata.segtype[t] == b'J' {
                 igj = true;
-            } else if refdata.segtype[t] == "C"
+            } else if refdata.segtype[t] == b'C'
                 && a.ref_start == 0
                 && a.tig_start >= J_TOT
                 && refdata.refs[t].len() >= J_TOT as usize
@@ -2125,12 +2128,12 @@ fn delete_d_if_chain_doesnt_match_v(refdata: &RefData, annx: &mut Vec<Alignment>
     let mut to_delete: Vec<bool> = vec![false; annx.len()];
     for i1 in 0..annx.len() {
         let t1 = annx[i1].ref_id as usize;
-        if !refdata.rheaders[t1].contains("segment") && refdata.segtype[t1] == "D" {
+        if !refdata.rheaders[t1].contains("segment") && refdata.segtype[t1] == b'D' {
             let mut have_v = false;
             for a in annx.iter() {
                 let t2 = a.ref_id as usize;
                 if !refdata.rheaders[t2].contains("segment")
-                    && refdata.segtype[t2] == "V"
+                    && refdata.segtype[t2] == b'V'
                     && refdata.rtype[t1] == refdata.rtype[t2]
                 {
                     have_v = true;
@@ -2167,13 +2170,13 @@ fn annotate_d_between_v_j(
             let rt = refdata.rtype[t];
             // IGH or TRB (or TRD in Gamma/delta mode)
             if rt == 0 || rt == 4 || rt == 5 {
-                if refdata.segtype[t] == "V" {
+                if refdata.segtype[t] == b'V' {
                     v = true;
                     vstop = ann.tig_start + ann.len;
                     v_rtype = rt;
-                } else if refdata.segtype[t] == "D" {
+                } else if refdata.segtype[t] == b'D' {
                     d = true;
-                } else if refdata.segtype[t] == "J" {
+                } else if refdata.segtype[t] == b'J' {
                     j = true;
                     jstart = ann.tig_start;
                 }
@@ -2213,7 +2216,7 @@ fn annotate_d_between_v_j(
                 }
             }
             erase_if(&mut results, &to_delete);
-            if results.solo() || results[0].0 < results[1].0 {
+            if results.len() == 1 || results[0].0 < results[1].0 {
                 let mut best_matches = 0;
                 for result in &results {
                     best_matches = max(best_matches, result.1);
@@ -2518,7 +2521,7 @@ fn retain_much_better_aligned_v_segment(rheaders: &[String], annx: &mut Vec<Alig
         }
         j = k;
     }
-    if !nonsimple && score.duo() && have_split {
+    if !nonsimple && score.len() == 2 && have_split {
         reverse_sort(&mut score);
         if score[0].0 >= score[1].0 + min_len_gain && score[1].1 == 1 {
             to_delete[score[1].3] = true;
@@ -2695,7 +2698,7 @@ pub fn print_some_annotations(
             refs[t].len(),
             mis
         );
-        if vstart.solo()
+        if vstart.len() == 1
             && (rheaders[t].contains("V-REGION") || rheaders[t].contains("L+V"))
             && (estart - vstart[0] - tstart) % 3 != 0
         {
@@ -2740,15 +2743,11 @@ pub fn print_annotations(
 // ◼ The interpretation of the tig slice is ugly.  See comments at
 // ◼ get_cdr3_using_ann.
 
-pub fn cdr3_motif_left() -> Vec<Vec<u8>> {
-    vec![
-        b"LQPEDSAVYY".to_vec(),
-        b"VEASQTGTYF".to_vec(),
-        b"ATSGQASLYL".to_vec(),
-    ]
+const fn cdr3_motif_left() -> &'static [&'static [u8; 10]; 3] {
+    &[b"LQPEDSAVYY", b"VEASQTGTYF", b"ATSGQASLYL"]
 }
-pub fn cdr3_motif_right() -> Vec<Vec<u8>> {
-    vec![b"LTFG.GTRVTV".to_vec(), b"LIWG.GSKLSI".to_vec()]
+const fn cdr3_motif_right() -> &'static [&'static [u8; 11]; 2] {
+    &[b"LTFG.GTRVTV", b"LIWG.GSKLSI"]
 }
 
 const CDR3_MIN_LEN: usize = 5;
@@ -2765,8 +2764,8 @@ pub struct CDR3Annotation {
 pub fn get_cdr3(contig: &DnaStringSlice<'_>) -> Vec<CDR3Annotation> {
     const MIN_TOTAL_CDR3_SCORE: usize = 10; // about as high as one can go
 
-    let left_motifs = cdr3_motif_left();
-    let right_motifs = cdr3_motif_right();
+    const LEFT_MOTIFS: &[&[u8; 10]; 3] = cdr3_motif_left();
+    const RIGHT_MOTIFS: &[&[u8; 11]; 2] = cdr3_motif_right();
 
     let contig_seq = contig.to_owned().to_ascii_vec();
 
@@ -2791,15 +2790,15 @@ pub fn get_cdr3(contig: &DnaStringSlice<'_>) -> Vec<CDR3Annotation> {
                 let last_f = amino_acid_seq.len() - RIGHT_FLANK_MIN_SCORE;
                 for right_motif_start_pos in first_f..last_f {
                     // Don't look further if the remaining part of the amino_acid_seq is to short to find the full right flank motif.
-                    if right_motif_start_pos + right_motifs[0].len() > amino_acid_seq.len() {
+                    if right_motif_start_pos + RIGHT_MOTIFS[0].len() > amino_acid_seq.len() {
                         break;
                     }
 
                     // Match the right flank and calculate the score.
                     let mut right_flank_score = 0;
-                    for right_motif_col in 0..right_motifs[0].len() {
+                    for right_motif_col in 0..RIGHT_MOTIFS[0].len() {
                         let mut hit = false;
-                        for right_motif_row in &right_motifs {
+                        for right_motif_row in RIGHT_MOTIFS {
                             if amino_acid_seq[right_motif_start_pos + right_motif_col]
                                 == right_motif_row[right_motif_col]
                             {
@@ -2817,15 +2816,14 @@ pub fn get_cdr3(contig: &DnaStringSlice<'_>) -> Vec<CDR3Annotation> {
                         // Check if there is a stop codon in the CDR3.
                         let stop_codon = (amino_acid_seq
                             [cdr3_start_pos + 1..right_motif_start_pos + 2 + 1])
-                            .iter()
-                            .any(|aa| *aa == b'*');
+                            .contains(&b'*');
 
                         // If there is no stop codon and there is room for the full left motif in the AA seq, match left flank.
-                        let ll = left_motifs[0].len();
+                        let ll = LEFT_MOTIFS[0].len();
                         if !stop_codon && cdr3_start_pos >= ll {
                             let mut left_flank_score = 0;
                             for left_motif_col in 0..ll {
-                                let hit = left_motifs.iter().any(|left_motif_row| {
+                                let hit = LEFT_MOTIFS.iter().any(|left_motif_row| {
                                     amino_acid_seq[cdr3_start_pos - ll + left_motif_col]
                                         == left_motif_row[left_motif_col]
                                 });
@@ -2888,7 +2886,7 @@ pub fn print_cdr3(tig: &DnaStringSlice<'_>, log: &mut Vec<u8>) {
         fwriteln!(
             log,
             "cdr3 = {} at {}, score = {} + {}",
-            strme(&cdr3.aa_seq),
+            std::str::from_utf8(&cdr3.aa_seq).unwrap(),
             cdr3.start_position_on_contig,
             cdr3.left_flank_score,
             cdr3.right_flank_score
@@ -2904,7 +2902,7 @@ pub fn print_cdr3(tig: &DnaStringSlice<'_>, log: &mut Vec<u8>) {
 // ◼ lowered to make BCR work, which suggests that measuring relative to the end
 // ◼ of the V segment is not right.
 
-pub fn cdr3_loc<'a>(
+fn cdr3_loc<'a>(
     contig: &'a DnaString,
     refdata: &RefData,
     ann: &[Annotation],
@@ -2952,8 +2950,11 @@ pub fn get_cdr3_using_ann(
     // of the actual CDR3.
     // ◼ Pretty ugly.  This should really be inside get_cdr3.
 
-    let start = max(0, window.start as isize - cdr3_motif_left()[0].ilen() * 3);
-    let mut stop = start + window.length as isize + cdr3_motif_right()[0].ilen() * 3;
+    let start = max(
+        0,
+        window.start as isize - cdr3_motif_left()[0].len() as isize * 3,
+    );
+    let mut stop = start + window.length as isize + cdr3_motif_right()[0].len() as isize * 3;
     if stop > tig.len() as isize {
         stop = tig.len() as isize;
     }
@@ -3006,7 +3007,7 @@ pub fn print_cdr3_using_ann(
         fwriteln!(
             log,
             "cdr3 = {} at {}, score = {} + {}",
-            strme(&cdr3.aa_seq),
+            std::str::from_utf8(&cdr3.aa_seq).unwrap(),
             cdr3.start_position_on_contig,
             cdr3.left_flank_score,
             cdr3.right_flank_score
@@ -3053,7 +3054,7 @@ impl AnnotationUnit {
     // Given one or two alignment entities as produced by annotate_seq, of the same
     // contig to the same reference sequence, produce an AnnotationUnit.
 
-    pub fn from_annotate_seq(
+    pub(super) fn from_annotate_seq(
         b: &DnaString,
         refdata: &RefData,
         ann: &[Annotation],
@@ -3189,7 +3190,7 @@ pub struct ClonotypeInfo {
 }
 
 impl ClonotypeInfo {
-    pub fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         ClonotypeInfo::default()
     }
 }
@@ -3253,12 +3254,9 @@ pub struct ContigAnnotation {
     pub info: ClonotypeInfo, // Empty initially, may be filled in later
 
     // state of the contig
-    pub high_confidence: bool,               // declared high confidence?
-    pub validated_umis: Option<Vec<String>>, // validated UMIs
-    pub non_validated_umis: Option<Vec<String>>, // non-validated UMIs
-    pub invalidated_umis: Option<Vec<String>>, // invalidated UMIs
-    pub is_cell: bool,                       // was the barcode declared a cell?
-    pub productive: Option<bool>,            // productive?  (null means not full length)
+    pub high_confidence: bool,    // declared high confidence?
+    pub is_cell: bool,            // was the barcode declared a cell?
+    pub productive: Option<bool>, // productive?  (null means not full length)
     #[serde(default = "set_true")]
     pub filtered: bool, // true and never changed (unused field)
     /// criteria used to asess productive status
@@ -3284,21 +3282,18 @@ impl ContigAnnotation {
     // collapsed in this process.
     #[allow(clippy::too_many_arguments)]
     pub fn from_annotate_seq(
-        b: &DnaString,                           // the contig
-        q: &[u8],                                // qual scores for the contig
-        tigname: &str,                           // name of the contig
-        refdata: &RefData,                       // reference data
-        ann: &[Annotation],                      // output of annotate_seq
-        nreads: usize,                           // number of reads assigned to contig
-        numis: usize,                            // number of umis assigned to contig
-        high_confidencex: bool,                  // declared high confidence?
-        validated_umis: Option<Vec<String>>,     // validated UMIs
-        non_validated_umis: Option<Vec<String>>, // non-validated UMIs
-        invalidated_umis: Option<Vec<String>>,   // invalidated UMIs
-        is_cellx: bool,                          // was the barcode declared a cell?
-        productivex: bool,                       // productive?
-        productive_criteria: ContigStatus,       // criteria used to asess productive status
-        jsupp: Option<JunctionSupport>,          // num reads, umis supporting junction
+        b: &DnaString,                     // the contig
+        q: &[u8],                          // qual scores for the contig
+        tigname: &str,                     // name of the contig
+        refdata: &RefData,                 // reference data
+        ann: &[Annotation],                // output of annotate_seq
+        nreads: usize,                     // number of reads assigned to contig
+        numis: usize,                      // number of umis assigned to contig
+        high_confidencex: bool,            // declared high confidence?
+        is_cellx: bool,                    // was the barcode declared a cell?
+        productivex: bool,                 // productive?
+        productive_criteria: ContigStatus, // criteria used to asess productive status
+        jsupp: Option<JunctionSupport>,    // num reads, umis supporting junction
     ) -> ContigAnnotation {
         let mut vstart = -1_i32;
         for a in ann {
@@ -3307,19 +3302,17 @@ impl ContigAnnotation {
                 vstart = a.tig_start;
             }
         }
-        let mut aa = String::new();
-        let mut stop = -1_i32;
-        let x = b.to_owned().to_ascii_vec();
-        if vstart >= 0 {
-            let y = nucleotide_to_aminoacid_sequence(&x, vstart as usize);
-            aa = stringme(&y);
-            for (i, y_i) in y.iter().enumerate() {
-                if *y_i == b'*' {
-                    stop = vstart + 3 * (i as i32);
-                    break;
-                }
-            }
-        }
+        let x = b.clone().to_ascii_vec();
+        let (aa, stop) = if vstart >= 0 {
+            let aa = nucleotide_to_aminoacid_sequence(&x, vstart as usize);
+            let stop = aa
+                .iter()
+                .find_position(|&&x| x == b'*')
+                .map_or(-1, |(i, _)| vstart + 3 * (i as i32));
+            (String::from_utf8(aa).unwrap(), stop)
+        } else {
+            (String::new(), -1)
+        };
         let (mut cdr3x, mut cdr3x_dna) = (String::new(), String::new());
         let (mut cdr3x_start, mut cdr3x_stop) = (-1_i32, -1_i32);
         let found_cdr3s = if !refdata.refs.is_empty() {
@@ -3329,7 +3322,7 @@ impl ContigAnnotation {
         };
         if !found_cdr3s.is_empty() {
             let cdr3 = found_cdr3s.first().unwrap();
-            cdr3x = stringme(&cdr3.aa_seq);
+            cdr3x = String::from_utf8(cdr3.aa_seq.clone()).unwrap();
             let start = cdr3.start_position_on_contig;
             for x_i in &x[start..start + 3 * cdr3x.len()] {
                 cdr3x_dna.push(*x_i as char);
@@ -3345,7 +3338,7 @@ impl ContigAnnotation {
             barcode: tigname.before("_").to_string(),
             contig_name: tigname.to_string(),
             sequence: b.to_string(),
-            quals: stringme(&qp),
+            quals: String::from_utf8(qp).unwrap(),
             fraction_of_reads_for_this_barcode_provided_as_input_to_assembly: None,
             read_count: nreads,
             umi_count: numis,
@@ -3382,9 +3375,6 @@ impl ContigAnnotation {
             clonotype: None,
             info: ClonotypeInfo::empty(),
             high_confidence: high_confidencex,
-            validated_umis,
-            non_validated_umis,
-            invalidated_umis,
             is_cell: is_cellx,
             productive: Some(productivex),
             productive_criteria: Some(productive_criteria),
@@ -3411,18 +3401,15 @@ impl ContigAnnotation {
     // Produce a ContigAnnotation from a sequence.
     #[allow(clippy::too_many_arguments)]
     pub fn from_seq(
-        b: &DnaString,                           // the contig
-        q: &[u8],                                // qual scores for the contig
-        tigname: &str,                           // name of the contig
-        refdata: &RefData,                       // reference data
-        nreads: usize,                           // number of reads assigned to contig
-        numis: usize,                            // number of umis assigned to contig
-        high_confidence: bool,                   // declared high confidence?
-        validated_umis: Option<Vec<String>>,     // validated UMIs
-        non_validated_umis: Option<Vec<String>>, // non-validated UMIs
-        invalidated_umis: Option<Vec<String>>,   // invalidated UMIs
-        is_cell: bool,                           // was the barcode declared a cell?
-        jsupp: Option<JunctionSupport>,          // num reads, umis supporting junction
+        b: &DnaString,                  // the contig
+        q: &[u8],                       // qual scores for the contig
+        tigname: &str,                  // name of the contig
+        refdata: &RefData,              // reference data
+        nreads: usize,                  // number of reads assigned to contig
+        numis: usize,                   // number of umis assigned to contig
+        high_confidence: bool,          // declared high confidence?
+        is_cell: bool,                  // was the barcode declared a cell?
+        jsupp: Option<JunctionSupport>, // num reads, umis supporting junction
     ) -> ContigAnnotation {
         let ann = annotate_seq(b, refdata, true, false, true);
         let (is_productive, productive_criteria) = is_productive_contig(b, refdata, &ann);
@@ -3435,24 +3422,11 @@ impl ContigAnnotation {
             nreads,
             numis,
             high_confidence,
-            validated_umis,
-            non_validated_umis,
-            invalidated_umis,
             is_cell,
             is_productive,
             productive_criteria,
             jsupp,
         )
-    }
-
-    // Output with four space indentation.  Ends with comma and newline.
-
-    pub fn write(&self, out: &mut BufWriter<File>) {
-        let buf = Vec::new();
-        let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
-        let mut ser = serde_json::Serializer::with_formatter(buf, formatter);
-        self.serialize(&mut ser).unwrap();
-        fwriteln!(out, "{},", String::from_utf8(ser.into_inner()).unwrap());
     }
 
     // Print.
@@ -3504,13 +3478,13 @@ fn check_full_length(v_ann: Option<&AnnotationUnit>, j_ann: Option<&AnnotationUn
 // This is done so as to produce at most one V, D, J and C, each.  Pairs of
 // alignment entities that are separated by an indel get collapsed in this process.
 
-pub fn make_annotation_units(
+fn make_annotation_units(
     b: &DnaString,
     refdata: &RefData,
     ann: &[Annotation],
 ) -> Vec<AnnotationUnit> {
     let mut x = Vec::<AnnotationUnit>::new();
-    let rtype = &["U", "V", "D", "J", "C"];
+    let rtype = b"UVDJC";
     for &rt in rtype {
         let mut locs = Vec::<(usize, usize, usize)>::new();
         let mut j = 0;
@@ -3533,10 +3507,10 @@ pub fn make_annotation_units(
                 len += ann[j + 1].match_len;
             }
             let mut score = len as usize;
-            if refdata.segtype[t] == "V" && ann[j].ref_start == 0 {
+            if refdata.segtype[t] == b'V' && ann[j].ref_start == 0 {
                 score += 1_000_000;
             }
-            if refdata.segtype[t] == "J"
+            if refdata.segtype[t] == b'J'
                 && (ann[j].ref_start + ann[j].match_len) as usize == refdata.refs[t].len()
             {
                 score += 1_000_000;
@@ -3566,7 +3540,8 @@ mod tests {
 
         let refdata = RefData::from_fasta(String::from(
             "test/inputs/test_no_internal_soft_clipping_ref.fa",
-        ));
+        ))
+        .unwrap();
         // println!("Loaded reference with {} entries", refdata.id.len());
 
         let contig_seq = DnaString::from_acgt_bytes("AGGAACTGCTCAGTTAGGACCCAGACGGAACCATGGAAGCCCCAGCGCAGCT\
@@ -3593,10 +3568,7 @@ mod tests {
             &refdata,
             120,
             2,
-            true, // high_confidence
-            None,
-            None,
-            None,
+            true,  // high_confidence
             false, // is_cell, should be changed to None
             None,
         );
@@ -3639,7 +3611,7 @@ mod tests {
         // CELLRANGER-6602
         const CONTIG_SEQ: &str = "CGAGCCCAGCACTGGAAGTCGCCGGTGTTTCCATTCGGTGATCAGCACTGAACACAGAGGACTCACCATGGAGTTTGGGCTGAGCTGGGTTTTCCTCGTTGCTCTTTTAAGAGGTGTCCAGTGTCAGGTGCAGCTGGTGGAGTCTGGGGGAGGCGTGGTCCAGCCTGGGAGGTCCCTGAGACTCTCCTGTGCAGCCTCTGGATTCACCTTCAGTAGATATGTTATGCACTGGGTCCGCCAGGCTCCAGGCAGGGGGCTGGAGTGGGTGGCACTTATCTCATCTGATGGAACTAATAAATACTACGCTGACTCCGTGAGGGGCCGGTTCACCATCTCCAGAGACAATTCCAAAGCCACGCTGTTTCTCCAAATGAACAGCCTGAGAGCCGAAGACACGGCCCTATATTACTCTGCGAAAGAAGTGAGGCATGAGTACGGTGAATACCGCGATGCATTTGATATCTGGGGCCAAGGGACAATGGTCACCGTGTCTTCAGCCTCCACCAAGGGCCCATCGGTCTTCCCCCTGGCACCCTCCTCCAAGAGCACCTCTGGGGGCACAGCGGCCCTGGGCTGCCTGGTCAAGGACTACTTCCCCGAACCGGTGACGGTGTCGTGGAACTCAGGCGCCCTGACCAGCGGCGTGCACACCTTCCCGGCTGTCCTACAGTCCTCAGGA";
 
-        let refdata = refx::RefData::from_fasta(String::from("test/inputs/tiny_ref.fa"));
+        let refdata = RefData::from_fasta(String::from("test/inputs/tiny_ref.fa")).unwrap();
 
         let contig_seq = DnaString::from_acgt_bytes(CONTIG_SEQ.as_bytes());
 
@@ -3657,9 +3629,6 @@ mod tests {
             100,
             10,
             true,
-            None,
-            None,
-            None,
             true,
             None,
         );

@@ -20,7 +20,6 @@ import cellranger.analysis.multigenome as cr_mga
 import cellranger.feature.feature_assigner as cr_fa
 import cellranger.feature.throughputs
 import cellranger.pandas_utils as pu
-import cellranger.rna.library as rna_library
 from cellranger.analysis.jibes_constants import (
     ASSIGNMENT_COL_NAME,
     ASSIGNMENT_PROB_COL_NAME,
@@ -32,7 +31,6 @@ from cellranger.analysis.jibes_constants import (
 from cellranger.analysis.jibes_data import JibesData
 from cellranger.analysis.jibes_py import JibesModelPy
 from cellranger.matrix import CountMatrix
-from cellranger.molecule_counter import FEATURE_IDX_COL_NAME, MoleculeCounter
 
 USE_PYO3 = True
 if USE_PYO3:
@@ -62,42 +60,6 @@ def get_valid_tags(tag_calls_per_cell_fn):
         assignment = ensure_binary(assignment)
         all_tags += assignment.split(cr_fa.FEATURE_SEPARATOR)
     return set(all_tags)
-
-
-def load_tag_counts_from_molecule_info(mol_info_file):
-    """Load all the read counts for the multiplexing library type from a molecule info file.
-
-    Each cell-associated barcode and return as a data frame following log10 transformation
-    along with a description of the features loaded.
-    :param mol_info_file: A path to a molecule info file.
-    :return: A tuple with a Pandas DataFrame and a Dictionary with Feature info.
-    """
-    with MoleculeCounter.open(mol_info_file, "r") as mc:
-        feature_indices = mc.feature_reference.get_indices_for_type(
-            rna_library.MULTIPLEXING_LIBRARY_TYPE
-        )
-        df = pu.mol_info_from_h5(
-            mc,
-            exclude_noncells=True,
-            with_umi=False,
-            with_barcode_seq=True,
-            with_gem_group=False,
-            with_library_idx=False,
-            filter_feature_idx=feature_indices,
-        )
-    feature_map = {}
-    for i in feature_indices:
-        feature_map[i] = mc.feature_reference.feature_defs[i]
-    grouped = df.groupby([_BARCODE, FEATURE_IDX_COL_NAME])
-    dfs = pd.DataFrame({_COUNT: grouped[pu.FEATURE_DF_COUNT_COL].sum()})
-    dfs = dfs.reset_index()
-    df = dfs.pivot(index=_BARCODE, columns=FEATURE_IDX_COL_NAME, values=_COUNT)
-    df = df.reset_index()
-    cnames = list(df.columns)[1:]
-    df.fillna({x: 0 for x in cnames}, inplace=True)
-    for col in cnames:
-        df[col] = np.log10(df[col] + 1)
-    return (df, feature_map)
 
 
 def create_initial_parameters(

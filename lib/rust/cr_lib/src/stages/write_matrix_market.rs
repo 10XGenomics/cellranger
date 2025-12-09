@@ -1,16 +1,17 @@
 //! Martian stage WRITE_MATRIX_MARKET.
+#![deny(missing_docs)]
 
 use crate::env;
 use crate::types::FeatureReferenceFormat;
-use crate::utils::estimate_mem::{barcode_mem_gib, get_total_barcodes_detected};
+use crate::utils::estimate_mem::barcode_mem_gib;
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
-use cr_types::types::{BarcodeIndexFormat, FeatureBarcodeCount};
-use cr_types::{BarcodeThenFeatureOrder, CountShardFile, MetricsFile};
+use cr_types::types::FeatureBarcodeCount;
+use cr_types::{BarcodeIndexOutput, BarcodeThenFeatureOrder, CountShardFile};
 use martian::{MartianFileType, MartianRover, MartianStage, MartianVoid, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::gzip_file::Gzip;
 use martian_filetypes::tabular_file::TsvFileNoHeader;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
@@ -52,7 +53,7 @@ impl MtxWriter {
         self.write_features_tsv(feature_ref)
     }
 
-    fn write_barcodes_tsv(&self, barcodes: &[Barcode]) -> Result<()> {
+    fn write_barcodes_tsv(&self, barcodes: impl Iterator<Item = Barcode>) -> Result<()> {
         let barcodes_path = self.folder.join("barcodes.tsv.gz");
         let mut barcodes_writer = BufWriter::new(flate2::write::GzEncoder::new(
             std::fs::File::create(barcodes_path)?,
@@ -113,7 +114,7 @@ impl MtxWriter {
                 writer,
                 "{} {} {}",
                 1 + count.feature_idx,
-                1 + barcode_index.get_index(&count.barcode),
+                1 + barcode_index.must_get(&count.barcode),
                 count.umi_count
             )?;
         }
@@ -123,6 +124,7 @@ impl MtxWriter {
     }
 }
 
+/// Martian stage WRITE_MATRIX_MARKET.
 /// Output the feature-barcode Matrix Market file `raw_feature_bc_matrix/matrix.mtx.gz`.
 pub struct WriteMatrixMarket;
 
@@ -130,8 +132,7 @@ pub struct WriteMatrixMarket;
 pub struct WriteMatrixMarketStageInputs {
     pub counts: Vec<CountShardFile>,
     pub feature_reference: FeatureReferenceFormat,
-    pub barcode_index: BarcodeIndexFormat,
-    pub barcode_correction_summary: MetricsFile,
+    pub barcode_index_output: BarcodeIndexOutput,
 }
 
 #[derive(Serialize, Deserialize, Clone, MartianStruct)]
@@ -151,7 +152,7 @@ impl MartianStage for WriteMatrixMarket {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let barcodes_count = get_total_barcodes_detected(&args.barcode_correction_summary.read()?);
+        let barcodes_count = args.barcode_index_output.num_barcodes;
         // bytes_per_barcode and offset_gib are empirically determined.
         let mem_gib = barcode_mem_gib(barcodes_count, 220, 2);
         println!("barcode_count={barcodes_count},mem_gib={mem_gib}");
@@ -174,7 +175,7 @@ impl MartianStage for WriteMatrixMarket {
         _chunk_outs: Vec<MartianVoid>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
-        let barcode_index = args.barcode_index.read()?;
+        let barcode_index = args.barcode_index_output.index.read()?;
         let feature_bc_matrix: PathBuf = rover.make_path("raw_feature_bc_matrix");
         let mtx_writer = MtxWriter::new(&feature_bc_matrix)?;
         mtx_writer.write_files(

@@ -1,11 +1,12 @@
 //! This tool is used the python code in lib/python/cellranger/reference.py to
 //! quickly load properties of the Genes and Transcripts from the GTF/ FASTA
 //! files.
+#![deny(missing_docs)]
 
 use std::path::Path;
 use transcriptome::python_gene_index;
 
-pub fn main() {
+fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() != 3 {

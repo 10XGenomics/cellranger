@@ -63,6 +63,8 @@ stage CALL_TAGS_MARGINAL(
     out json   tag_contaminant_info,
     src py     "stages/feature/call_tags_marginal",
 ) split (
+) using (
+    volatile = strict,
 )
 
 stage CALL_TAGS_JIBES(
@@ -108,8 +110,8 @@ stage DETERMINE_SAMPLE_ASSIGNMENTS(
     out map<json>          sample_summaries,
     out json               summary,
     src py                 "stages/multi/determine_sample_assignments",
+) split (
 ) using (
-    mem_gb   = 8,
     volatile = strict,
 )
 

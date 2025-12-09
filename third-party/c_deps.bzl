@@ -4,10 +4,6 @@ load(
     "@bazel_tools//tools/build_defs/repo:http.bzl",
     "http_archive",
 )
-load(
-    "@tenx_bazel_rules//rules:git_http_archive.bzl",
-    "github_http_archive",
-)
 
 def load_c_deps():
     """Loads c dependencies."""
@@ -62,12 +58,4 @@ def load_c_deps():
         ],
         sha256 = "83c66c7acb83e2b6b1e890bcb0cff916af500ab16900ab67d4dd48fb438bccbf",
         strip_prefix = "louvain-" + louvain_commit,
-    )
-
-    # tracking the "bazel" branch in 10xdev/graphviz
-    github_http_archive(
-        name = "com_github_10xdev_graphviz",
-        commit = "11a86ea0ca32a79d65102f90eae122dba203ddd6",
-        url = "https://github.com/10XDev/graphviz",
-        sha256 = "aa7842ce0d400277531ba89016218b6426c2245deee6b2668d72c25aa055c2ef",
     )

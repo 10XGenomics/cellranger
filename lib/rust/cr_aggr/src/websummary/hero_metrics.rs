@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use crate::websummary::{HeroMetric, PrettyMetric, Threshold};
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +39,7 @@ impl VdjAggrHeroMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::websummary::{check_eq_json, test_json_roundtrip};
+    use cr_vdj::{check_eq_json, test_json_roundtrip};
 
     #[test]
     fn test_hero_metrics_parse() {

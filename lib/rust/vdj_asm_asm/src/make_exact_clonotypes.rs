@@ -1,13 +1,14 @@
 //! MakeExactClonotypes stage code
+#![expect(missing_docs)]
 
 use anyhow::Result;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeWrite;
+use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
 use vdj_ann::annotate::ContigAnnotation;
-use vdj_asm_utils::exact_clonotyping::{generate_exact_clonotypes, ExactClonotype};
+use vdj_asm_utils::exact_clonotyping::{ExactClonotype, generate_exact_clonotypes};
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct MakeExactClonotypesStageInputs {

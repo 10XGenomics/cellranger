@@ -1,16 +1,14 @@
 // Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
-
-//!
 //! This crate defines the data structure that would represent the clonotypes
 //! computed by enclone.
-//!
+#![expect(missing_docs)]
 
 use vdj_ann::annotate::Region as AnnRegion;
 
 include!("./enclone.types.rs");
 
-impl From<&bio_edit::alignment::Alignment> for Alignment {
-    fn from(al: &bio_edit::alignment::Alignment) -> Self {
+impl From<&bio::alignment::Alignment> for Alignment {
+    fn from(al: &bio::alignment::Alignment) -> Self {
         Alignment {
             ref_start: al.ystart as u32,
             cigar: al.cigar(false),

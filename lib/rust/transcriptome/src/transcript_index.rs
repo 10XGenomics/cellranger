@@ -1,7 +1,8 @@
+#![expect(missing_docs)]
 use crate::transcriptome::Transcriptome;
 use anyhow::Result;
-use martian_filetypes::tabular_file::TsvFile;
 use martian_filetypes::LazyFileTypeIO;
+use martian_filetypes::tabular_file::TsvFile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 /// The quality offset for Illumina FASTQ files.
 pub const ILLUMINA_QUAL_OFFSET: u8 = 33;
 

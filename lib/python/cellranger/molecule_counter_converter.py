@@ -156,7 +156,7 @@ def convert_v2_to_v4(v2_mole_info_h5, out_v4_mole_info_h5):
             / total_reads_in_valid_barcodes
             * total_reads_in_gem_group
         )
-        extrapolated_transcriptomic_reads = int(round(extrapolated_transcriptomic_reads))
+        extrapolated_transcriptomic_reads = round(extrapolated_transcriptomic_reads)
 
         # per library, raw_read_pairs and usable_read_pairs info
         v2_metrics[mc.LIBRARIES_METRIC][str(lib_idx)] = {

@@ -1,33 +1,20 @@
+#![deny(missing_docs)]
 use cr_types::rna_read::RnaRead;
-use fastq_set::adapter_trimmer::{Adapter, AdapterLoc, ReadAdapterCatalog};
-use fastq_set::read_pair::WhichRead;
 use fastq_set::WhichEnd::{FivePrime, ThreePrime};
-use fxhash::FxHashMap;
-use metric::PercentMetric;
+use fastq_set::adapter_trimmer::{Adapter, AdapterLoc, ReadAdapterCatalog};
+use fastq_set::adapters::{
+    ILLUMINA_P5_RC, ILLUMINA_P7_RC, ILLUMINA_R1_RC, ILLUMINA_R2_RC, POLY_A, POLY_T, RT_PRIMER,
+    RT_PRIMER_RC, SPACER, SPACER_RC,
+};
+use fastq_set::read_pair::WhichRead;
+use metric::{PercentMetric, TxHashMap};
 
-const SPACER: &str = "TTTCTTATATGGG";
-const SPACER_RC: &str = "CCCATATAAGAAA";
-
-const RT_PRIMER: &str = "AAGCAGTGGTATCAACGCAGAGTACAT";
-const RT_PRIMER_RC: &str = "ATGTACTCTGCGTTGATACCACTGCTT";
-const POLY_A: &str = "AAAAAAAAAAAAAAAAAAAA";
-const POLY_T: &str = "TTTTTTTTTTTTTTTTTTTT";
-
-// const ILLUMINA_R1: &'static str = "ACACTCTTTCCCTACACGACGCTCTTCCGATCT";
-const ILLUMINA_R1_RC: &str = "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT";
-// const ILLUMINA_R2: &'static str = "GTGACTGGAGTTCAGACGTGTGCTCTTCCGATCT";
-const ILLUMINA_R2_RC: &str = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC";
-// const ILLUMINA_P5: &'static str = "AATGATACGGCGACCACCGAGATCT";
-const ILLUMINA_P5_RC: &str = "AGATCTCGGTGGTCGCCGTATCATT";
-// const ILLUMINA_P7: &'static str = "CAAGCAGAAGACGGCATACGAGAT";
-const ILLUMINA_P7_RC: &str = "ATCTCGTATGCCGTCTTCTGCTTG";
-
-pub fn get_vdj_adapters() -> FxHashMap<WhichRead, Vec<Adapter>> {
+pub(super) fn get_vdj_adapters() -> TxHashMap<WhichRead, Vec<Adapter>> {
     use AdapterLoc::{Anywhere, NonInternal};
     // The molecules which are sequenced looks like
     // P5-R1-BC-UMI-SPACER-INSERT-R2-SI-P7
 
-    let mut adapters = FxHashMap::default();
+    let mut adapters = TxHashMap::default();
 
     adapters.insert(
         WhichRead::R1,
@@ -58,16 +45,16 @@ pub fn get_vdj_adapters() -> FxHashMap<WhichRead, Vec<Adapter>> {
     adapters
 }
 
-pub struct VdjTrimmer<'a> {
+pub(super) struct VdjTrimmer<'a> {
     adapter_catalog: ReadAdapterCatalog<'a>,
-    metrics: FxHashMap<WhichRead, FxHashMap<String, PercentMetric>>,
+    metrics: TxHashMap<WhichRead, TxHashMap<String, PercentMetric>>,
 }
 
 impl<'a> VdjTrimmer<'a> {
-    pub fn new(adapter_map: &'a FxHashMap<WhichRead, Vec<Adapter>>) -> Self {
-        let mut metrics = FxHashMap::default();
+    pub(super) fn new(adapter_map: &'a TxHashMap<WhichRead, Vec<Adapter>>) -> Self {
+        let mut metrics = TxHashMap::default();
         for (&which_read, adapters) in adapter_map {
-            let mut adapter_frac = FxHashMap::default();
+            let mut adapter_frac = TxHashMap::default();
             for adapter in adapters {
                 adapter_frac.insert(adapter.name.clone(), PercentMetric::default());
             }
@@ -80,7 +67,7 @@ impl<'a> VdjTrimmer<'a> {
         }
     }
 
-    pub fn trim(&mut self, rna_read: &mut RnaRead) {
+    pub(super) fn trim(&mut self, rna_read: &mut RnaRead) {
         let adapter_positions = rna_read.trim_adapters(&mut self.adapter_catalog);
         for metrics in self.metrics.values_mut() {
             for (name, metric) in metrics {

@@ -1,0 +1,37 @@
+<!-- 
+ Note: this is strictly for local websummary development. This file won't ever
+ be used for production websummaries.
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Websummary Dev</title>
+
+  <script type="module">
+    // This is trying to mimic how a production-mode websummary works where we have
+    // all the websummary data injected into a `const data = {the-data}` variable in
+    // one script tag, while the rest of the websummary app itself (i.e. the React
+    // code), lives in another script tag.
+    try {
+      // The dev server serves files from 'public' at the root URL
+      const response = await fetch('/data.json');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      window.data = data;
+    } catch (error) {
+      console.error('Fatal: Could not load data.json for development.', error);
+    }
+  </script>
+
+</head>
+
+<body>
+  <div id="root"></div>
+</body>
+
+</html>

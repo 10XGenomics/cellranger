@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from functools import reduce
-from typing import AnyStr
 
 import h5py as h5
 import numpy as np
@@ -61,7 +60,7 @@ def _get_barcode_summary_h5_indices(summary_h5: h5.File, barcodes: list[bytes]):
     if len(barcodes) == 0:
         return np.zeros(0, dtype=int)
     max_len = max(len(bc) for bc in barcodes)
-    bc_arr = np.fromiter(barcodes, count=len(barcodes), dtype="S%d" % max_len)
+    bc_arr = np.fromiter(barcodes, count=len(barcodes), dtype=("S", max_len))
     return np.flatnonzero(np.isin(summary_h5["bc_sequence"][:], bc_arr))
 
 
@@ -380,7 +379,7 @@ def _report(
     return d
 
 
-def load_per_barcode_metrics(per_barcode_metrics_path: AnyStr) -> dict[bytes, int] | None:
+def load_per_barcode_metrics(per_barcode_metrics_path: str | bytes) -> dict[bytes, int] | None:
     """Return a dictionary of barcode to raw reads."""
     if not per_barcode_metrics_path:
         return None
@@ -394,8 +393,8 @@ def load_per_barcode_metrics(per_barcode_metrics_path: AnyStr) -> dict[bytes, in
 def report_genomes(
     matrix: cr_matrix.CountMatrix,
     reads_summary,
-    barcode_summary_h5_path: AnyStr,
-    per_barcode_metrics_path: AnyStr,
+    barcode_summary_h5_path: bytes | str,
+    per_barcode_metrics_path: bytes | str,
     recovered_cells,
     sample_bc_seqs,
     cell_bc_seqs,

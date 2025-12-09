@@ -2,7 +2,6 @@
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 #
 @include "_cr_lib_stages.mro"
-@include "_v1_pattern_fix.mro"
 
 filetype bam;
 filetype bam.bai;
@@ -10,7 +9,7 @@ filetype csv;
 filetype fastq;
 filetype json;
 filetype h5;
-filetype pickle;
+filetype pickle.gz;
 filetype bincode;
 
 struct ProbeBCDef(
@@ -26,10 +25,8 @@ stage FILTER_BARCODES(
     in  h5                matrices_h5,
     in  csv               barcode_correction_csv,
     in  bool              is_antibody_only,
-    in  path              reference_path,
     in  int[]             gem_groups,
-    in  CellCalling       config,
-    in  csv               target_set,
+    in  CellCalling       cell_calling_config,
     in  json              multi_graph,
     in  csv               per_barcode_metrics,
     in  bool              is_spatial,
@@ -52,13 +49,23 @@ stage FILTER_BARCODES(
     volatile = strict,
 )
 
+stage SUMMARIZE_H5_DIMS(
+    in  string prefix,
+    in  h5     matrix,
+    out json   summary,
+    src py     "stages/counter/summarize_h5_dims",
+) using (
+    mem_gb   = 2,
+    volatile = strict,
+)
+
 stage INFER_GEM_WELL_THROUGHPUT(
     in  map<ChemistryDef> chemistry_defs,
     in  string            throughput,
     in  h5                filtered_feature_counts_matrix,
-    in  path              reference_path,
+    in  ReferenceInfo     reference_info,
     in  h5                barcode_summary_h5,
-    out string            throughput,
+    out string            inferred_throughput,
     out json              inferred_throughputs,
     src py                "stages/feature/infer_gem_well_throughput",
 ) using (
@@ -94,7 +101,6 @@ stage SUMMARIZE_BASIC_REPORTS(
     in  json             matrix_computer_summary,
     in  h5               barcode_summary,
     in  CellCallingParam recovered_cells,
-    in  path             reference_path,
     in  json[]           summary_jsons,
     in  bool             sample_bcs_only,
     in  tps.json         target_panel_summary,
@@ -124,44 +130,17 @@ stage DISABLE_STAGES(
 )
 
 stage SUBSAMPLE_READS(
-    in  h5     molecule_info,
-    in  csv    filtered_barcodes,
-    in  string target_mode,
-    out json   summary,
-    src py     "stages/counter/subsample_reads",
+    in  h5        molecule_info,
+    in  csv       filtered_barcodes,
+    in  string    target_mode,
+    out json      summary,
+    src py        "stages/counter/subsample_reads",
 ) split (
-    in  int    chunk_start,
-    in  int    chunk_len,
-    in  map[]  subsample_info,
-    out pickle metrics,
+    in  int       chunk_start,
+    in  int       chunk_len,
+    in  map[]     subsample_info,
+    out pickle.gz metrics,
 ) using (
     mem_gb   = 4,
-    volatile = strict,
-)
-
-stage COMPUTE_CORRECTION_FACTOR(
-    in  V1PatternFixArgs v1_pattern_fix,
-    in  json             barcodes_under_tissue,
-    out float            correction_factor,
-    out json             affected_barcodes,
-    out bool             disable_downsampling,
-    src py               "stages/spatial/compute_correction_factor",
-) using (
-    volatile = strict,
-)
-
-stage DISABLE_CORRECTION_FACTOR(
-    in  V1PatternFixArgs v1_pattern_fix,
-    out bool             disable_correction_factor,
-    src py               "stages/spatial/disable_correction_factor",
-) using (
-    volatile = strict,
-)
-
-stage CHECK_CORRECTION_FACTOR(
-    in  V1PatternFixArgs v1_pattern_fix,
-    in  h5               filtered_fbm,
-    src py               "stages/spatial/check_correction_factor",
-) using (
     volatile = strict,
 )

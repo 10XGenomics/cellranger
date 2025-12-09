@@ -1,5 +1,6 @@
-use bio_edit::alignment::pairwise::Aligner;
-use bio_edit::alignment::Alignment;
+#![expect(missing_docs)]
+use bio::alignment::Alignment;
+use bio::alignment::pairwise::Aligner;
 use debruijn::dna_string::DnaString;
 
 /// Return a "standard" affine alignment of x to y.  This is intended to be

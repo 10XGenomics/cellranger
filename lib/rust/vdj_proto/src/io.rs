@@ -1,4 +1,3 @@
-//!
 //! Reading/Writing the vdj contig proto file which is used for VDJ aggr. This file contains
 //! metadata about the VDJ analysis, the VDJ reference and a list of annotated contigs.
 //!
@@ -28,7 +27,7 @@
 //! This follows the recommendation here: https://developers.google.com/protocol-buffers/docs/techniques#streaming
 //!
 //! The number of messages and the length are written in Big endian.
-//!
+#![expect(missing_docs)]
 
 use crate::types::vdj_proto_message::MessageContent;
 use crate::types::{BarcodeData, MetricsSummary, VdjMetadata, VdjProtoMessage, VdjReferenceRaw};
@@ -203,7 +202,7 @@ impl VdjProtoReader {
     /// any IO errors
     pub fn read_annotations(
         file_name: &Path,
-    ) -> Result<impl Iterator<Item = Result<vdj_ann::annotate::ContigAnnotation>>> {
+    ) -> Result<impl Iterator<Item = Result<vdj_ann::annotate::ContigAnnotation>> + use<>> {
         Ok(VdjProtoReader::new(file_name)?.filter_map(|message| {
             // We have a Result<VdjProtoMessage>
             match message {
@@ -220,7 +219,7 @@ impl VdjProtoReader {
 
     pub fn read_barcode_data(
         file_name: &Path,
-    ) -> Result<Option<impl Iterator<Item = Result<BarcodeData>>>> {
+    ) -> Result<Option<impl Iterator<Item = Result<BarcodeData>> + use<>>> {
         if Self::read_metadata(file_name)?.protobuf_version.is_empty() {
             Ok(None)
         } else {

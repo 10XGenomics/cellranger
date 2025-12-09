@@ -6,7 +6,6 @@ stage PCA_PREP(
     in  h5     matrix_h5,
     in  bool   is_antibody_only,
     in  bool   is_atac,
-    out float  mem_gb,
     out h5     filt_matrix,
     out string library_type,
     src py     "stages/analyzer/pca_prep",
@@ -19,7 +18,6 @@ stage POST_PCA(
     in  h5     matrix_h5,
     in  h5     filt_matrix_h5,
     in  npy    dimred_matrix_npy,
-    in  float  mem_gb,
     out pickle dimred_matrix,
     out pickle matrix_barcode_feature_info,
     src py     "stages/analyzer/post_pca",
@@ -58,7 +56,6 @@ pipeline RUN_BATCH_CORRECTION_PCA(
         matrix_h5         = self.matrix_h5,
         filt_matrix_h5    = PCA_PREP.filt_matrix,
         dimred_matrix_npy = RUN_PCA2.dimred_matrix,
-        mem_gb            = PCA_PREP.mem_gb,
     ) using (
         volatile = true,
     )

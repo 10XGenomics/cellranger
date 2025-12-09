@@ -1,12 +1,12 @@
-//!
 //! Corrects sequencing errors in barcodes, allowing up to one mismatch.
-//!
+#![deny(missing_docs)]
+
 use crate::whitelist::Whitelist;
 use crate::{BarcodeSegment, BarcodeSegmentState, BcSegQual, BcSegSeq};
-use metric::SimpleHistogram;
+use metric::{Histogram, SimpleHistogram};
 
 const BC_MAX_QV: u8 = 66; // This is the illumina quality value
-pub(crate) const BASE_OPTS: [u8; 4] = [b'A', b'C', b'G', b'T'];
+pub(super) const BASE_OPTS: [u8; 4] = [b'A', b'C', b'G', b'T'];
 type Of64 = ordered_float::NotNan<f64>;
 
 /// Implement the standard 10x barcode correction algorithm.
@@ -36,6 +36,7 @@ impl BarcodeCorrector {
         }
     }
 
+    /// Return the barcode whitelist.
     pub fn whitelist(&self) -> &Whitelist {
         &self.whitelist
     }
@@ -59,7 +60,7 @@ impl BarcodeCorrector {
         }
     }
 
-    // See comments in BarcodeCorrectionMethod
+    /// Return the corrected barcode and distance.
     fn correct_barcode_helper(
         &self,
         observed_segment: BarcodeSegment,
@@ -70,7 +71,9 @@ impl BarcodeCorrector {
     }
 }
 
+/// Correct a barcode.
 pub trait CorrectBarcode {
+    /// Return the corrected barcode and distance.
     fn correct_barcode(
         &self,
         whitelist: &Whitelist,
@@ -80,7 +83,8 @@ pub trait CorrectBarcode {
     ) -> Option<(BarcodeSegment, u16)>;
 }
 
-const BARCODE_CONFIDENCE_THRESHOLD: f64 = 0.975;
+/// The minimum likelihood threshold to accept a barcode correction.
+pub(crate) const BARCODE_CONFIDENCE_THRESHOLD: f64 = 0.975;
 
 /// Compute a posterior distribution over whitelist barcodes given:
 /// # A prior distribution over whitelist bacodes
@@ -153,18 +157,17 @@ impl CorrectBarcode for Posterior {
 
         let expected_errors: f64 = qual.map_or(0.0, |q| q.iter().copied().map(probability).sum());
 
-        if let Some((best_like, best_bc)) = best_option {
-            if expected_errors < self.max_expected_barcode_errors
-                && best_like / total_likelihood >= thresh
-            {
-                return Some((best_bc, 1)); // 1-Hamming distance
-            }
+        if let Some((best_like, best_bc)) = best_option
+            && expected_errors < self.max_expected_barcode_errors
+            && best_like / total_likelihood >= thresh
+        {
+            return Some((best_bc, 1)); // 1-Hamming distance
         }
         None
     }
 }
 
-pub fn probability(qual: u8) -> f64 {
+fn probability(qual: u8) -> f64 {
     //33 is the illumina qual offset
     let q = f64::from(qual);
     (10_f64).powf(-(q - 33.0) / 10.0)
@@ -174,7 +177,7 @@ pub fn probability(qual: u8) -> f64 {
 mod test {
     use super::*;
     use crate::BcSegSeq;
-    use metric::{SimpleHistogram, TxHashSet};
+    use metric::{Histogram, SimpleHistogram, TxHashSet};
     use proptest::proptest;
 
     fn posterior(
@@ -222,9 +225,10 @@ mod test {
                 .correct_barcode_helper(t1, Some(BcSegQual::from_bytes(&[34, 34, 34, 66, 66]))),
             None
         );
-        assert!(corrector
-            .correct_barcode(&mut t1, Some(BcSegQual::from_bytes(&[34, 34, 34, 66, 66])),)
-            .is_none());
+        assert_eq!(
+            corrector.correct_barcode(&mut t1, Some(BcSegQual::from_bytes(&[34, 34, 34, 66, 66]))),
+            None
+        );
         assert_eq!(
             t1,
             BarcodeSegment::with_sequence(b"AAAAA", BarcodeSegmentState::Invalid)
@@ -239,9 +243,11 @@ mod test {
                 .0,
             BarcodeSegment::new(b1.into(), BarcodeSegmentState::ValidAfterCorrection)
         );
-        assert!(corrector
-            .correct_barcode(&mut t2, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])),)
-            .is_some());
+        assert!(
+            corrector
+                .correct_barcode(&mut t2, Some(BcSegQual::from_bytes(&[66, 66, 66, 66, 40])))
+                .is_some()
+        );
         assert_eq!(
             t2,
             BarcodeSegment::new(b1.into(), BarcodeSegmentState::ValidAfterCorrection)

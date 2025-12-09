@@ -4,9 +4,10 @@
 //!
 //! The pool will never allocate more than the specified number of members,
 //! and requesting a member from the pool will block until one is available.
+#![expect(missing_docs)]
 
 use std::ops::{Deref, DerefMut};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 
 pub struct MemPool<T: Send> {
     recv: Receiver<T>,

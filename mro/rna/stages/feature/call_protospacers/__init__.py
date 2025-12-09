@@ -16,6 +16,8 @@ from collections.abc import Iterable
 from functools import reduce
 from statistics import median, pstdev
 
+import martian
+
 import cellranger.rna.library as rna_library
 from cellranger.feature.feature_assigner import GuideAssigner
 from cellranger.feature.utils import write_json_from_dict
@@ -44,28 +46,30 @@ stage CALL_PROTOSPACERS(
 
 
 def split(args):
-    num_features = CountMatrix.load_feature_ref_from_h5_file(
+    num_crispr_features = CountMatrix.load_feature_ref_from_h5_file(
         args.filtered_feature_counts_matrix
     ).get_count_of_feature_type(rna_library.CRISPR_LIBRARY_TYPE)
     _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(
         args.filtered_feature_counts_matrix
     )
-    mem_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1)
-    print(f"{num_features=},{num_barcodes=},{nnz=},{mem_gib=}")
+    mem_gib = 1 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1)
+    print(f"{num_crispr_features=},{num_barcodes=},{nnz=},{mem_gib=}")
 
     if num_barcodes == 0:
         return {"chunks": []}
 
-    num_chunks = min(100, num_features, math.ceil(max(num_features / 100, num_barcodes / 10_000)))
-    num_features_per_chunk = math.ceil(num_features / num_chunks)
+    num_chunks = min(
+        100, num_crispr_features, math.ceil(max(num_crispr_features / 100, num_barcodes / 10_000))
+    )
+    num_features_per_chunk = math.ceil(num_crispr_features / num_chunks)
     return {
         "chunks": [
             {
                 "chunk_start": start,
-                "chunk_end": min(num_features, start + num_features_per_chunk),
+                "chunk_end": min(num_crispr_features, start + num_features_per_chunk),
                 "__mem_gb": mem_gib,
             }
-            for start in range(0, num_features, num_features_per_chunk)
+            for start in range(0, num_crispr_features, num_features_per_chunk)
         ],
         "join": {"__mem_gb": mem_gib},
     }
@@ -112,8 +116,7 @@ def join(args, outs, _chunk_defs, chunk_outs):
     )
     num_cells = matrix.bcs_dim
     if num_cells == 0:
-        for out in outs.items():
-            setattr(outs, out, None)
+        martian.clear(outs)
         return
 
     # cells_per_protospacer.json

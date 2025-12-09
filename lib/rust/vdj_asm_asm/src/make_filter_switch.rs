@@ -1,6 +1,7 @@
+#![expect(missing_docs)]
 use anyhow::Result;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 use vdj_filter_barcodes::filter_log::FilterSwitch;
 

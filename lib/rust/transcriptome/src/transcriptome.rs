@@ -1,6 +1,7 @@
-use crate::parse_gtf::{parse_gtf_line, validate_gtf_line};
+#![expect(missing_docs)]
 use crate::Gene;
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use crate::parse_gtf::{parse_gtf_line, validate_gtf_line};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use bio::io::fasta::IndexedReader;
 use bio_types::strand::ReqStrand;
 use flate2::read::MultiGzDecoder;
@@ -42,6 +43,7 @@ pub struct Transcript {
     pub strand: ReqStrand,
     pub exons: Vec<Exon>,
     pub properties: Vec<(String, String)>,
+    pub cds: Vec<Cds>,
 }
 
 impl Transcript {
@@ -91,6 +93,32 @@ impl Transcript {
             return 0;
         }
         self.exons[self.exons.len() - 1].end
+    }
+
+    pub fn gene_name(&self) -> String {
+        self.properties
+            .iter()
+            .find(|(name, _)| name == "gene_name")
+            .map_or_else(
+                || panic!("gene_name not found in properties"),
+                |(_, id)| id.clone(),
+            )
+    }
+
+    pub fn transcript_type(&self) -> String {
+        self.properties
+            .iter()
+            .find_map(|(name, val)| (name == "transcript_type").then_some(val))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn thick_start(&self) -> u64 {
+        self.cds.first().map_or_else(|| self.start(), |c| c.start)
+    }
+
+    pub fn thick_end(&self) -> u64 {
+        self.cds.last().map_or_else(|| self.end(), |c| c.end)
     }
 }
 
@@ -153,6 +181,12 @@ impl Transcriptome {
             );
         }
     }
+
+    pub fn convert_to_bed12(&self) -> impl Iterator<Item = crate::bed12::Bed12Transcript> + '_ {
+        self.transcripts
+            .iter()
+            .map(crate::bed12::Bed12Transcript::from_tx)
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Ord, PartialOrd)]
@@ -168,6 +202,12 @@ impl Exon {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Ord, PartialOrd)]
+pub struct Cds {
+    pub start: u64,
+    pub end: u64,
 }
 
 /// Read a `Transcriptome` from a GTF file. Handles `gene`, `transcript` and `exon` GTF entries.
@@ -312,6 +352,7 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
                         strand,
                         exons: vec![],
                         properties: rec.all_attributes(),
+                        cds: vec![],
                     };
 
                     transcript_id_to_idx.insert(id, idx);
@@ -358,6 +399,7 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
                         strand,
                         exons: vec![],
                         properties: vec![],
+                        cds: vec![],
                     };
 
                     transcript_id_to_idx.insert(transcript_id, idx);
@@ -368,6 +410,57 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
             };
 
             transcripts[tx_idx.0 as usize].exons.push(exon);
+        } else if rec.feature_type == b"CDS" {
+            let cds = Cds { start, end };
+            let transcript_id = rec.get_attr("transcript_id")?;
+
+            let tx_idx = match transcript_id_to_idx.get(&transcript_id) {
+                None => {
+                    // the transcript hasn't been declared -- make a  dummy
+                    let gene_id = rec.get_attr("gene_id")?;
+                    let idx = TranscriptIdx(transcripts.len() as u32);
+
+                    let gene_idx = match gene_id_to_idx.get(&gene_id) {
+                        None => {
+                            // handle a missing gene for this tx
+                            let gene_name = rec
+                                .get_attr("gene_name")
+                                .unwrap_or_else(|_| gene_id.clone());
+                            let new_gene_idx = GeneIdx(genes.len() as u32);
+
+                            let gene = TranscriptomeGene {
+                                idx: new_gene_idx,
+                                id: gene_id.clone(),
+                                name: gene_name,
+                                properties: vec![],
+                            };
+                            genes_not_from_file.insert(gene_id.clone());
+                            gene_id_to_idx.insert(gene_id, new_gene_idx);
+                            genes.push(gene);
+                            new_gene_idx
+                        }
+                        Some(idx) => *idx,
+                    };
+
+                    let transcript = Transcript {
+                        idx,
+                        id: transcript_id.clone(),
+                        gene_idx,
+                        chrom: chrom.to_string(),
+                        strand,
+                        exons: vec![],
+                        properties: vec![],
+                        cds: vec![],
+                    };
+
+                    transcript_id_to_idx.insert(transcript_id, idx);
+                    transcripts.push(transcript);
+                    idx
+                }
+                Some(idx) => *idx,
+            };
+
+            transcripts[tx_idx.0 as usize].cds.push(cds);
         }
     }
 
@@ -378,6 +471,7 @@ fn load_from_gtf_reader(in_gtf: &mut dyn BufRead) -> Result<Transcriptome> {
     for tx in &mut transcripts {
         // Sort the exons so they're in coordinate order on the genome
         tx.exons.sort();
+        tx.cds.sort();
 
         // Tabulate the set of transcripts for each gene
         gene_to_transcripts
@@ -457,10 +551,12 @@ MD043-011_TRB1	Genbank	transcript	1	644	.	+	.	exon_number "1"; gbkey "CDS"; gene
 
         let txome = Transcriptome::from_reader(BufReader::new(gtf.as_bytes()))?;
         assert_eq!(txome.transcripts[0].exons.len(), 1);
-        assert!(txome.transcripts[0]
-            .properties
-            .iter()
-            .any(|(name, _)| name == "protein_id"));
+        assert!(
+            txome.transcripts[0]
+                .properties
+                .iter()
+                .any(|(name, _)| name == "protein_id")
+        );
         Ok(())
     }
 }

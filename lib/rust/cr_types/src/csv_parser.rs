@@ -1,4 +1,5 @@
-use anyhow::{anyhow, bail, Context, Result};
+#![expect(missing_docs)]
+use anyhow::{Context, Result, anyhow, bail};
 use csv::StringRecord;
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
@@ -95,7 +96,7 @@ impl CsvParser {
     pub fn try_parse_field<T>(&self, col: &str, expected: &str) -> Result<Option<T>>
     where
         T: FromStr,
-        Result<T, <T as FromStr>::Err>: anyhow::Context<T, <T as FromStr>::Err>,
+        Result<T, <T as FromStr>::Err>: Context<T, <T as FromStr>::Err>,
     {
         let i = self.col_map[col];
         let v = self.rows[self.line][i].trim();
@@ -121,7 +122,7 @@ impl CsvParser {
     pub fn parse_field<T>(&self, col: &str, expected: &str) -> Result<T>
     where
         T: FromStr,
-        Result<T, <T as FromStr>::Err>: anyhow::Context<T, <T as FromStr>::Err>,
+        Result<T, <T as FromStr>::Err>: Context<T, <T as FromStr>::Err>,
     {
         match self.try_parse_field(col, expected) {
             Err(e) => Err(e),
@@ -142,7 +143,7 @@ impl CsvParser {
     pub fn try_parse_many<T>(&self, col: &str, expected: &str) -> Result<Option<Vec<T>>>
     where
         T: FromStr,
-        Result<T, <T as FromStr>::Err>: anyhow::Context<T, <T as FromStr>::Err>,
+        Result<T, <T as FromStr>::Err>: Context<T, <T as FromStr>::Err>,
     {
         let col = self.col_map.get(col);
         if col.is_none() {
@@ -185,11 +186,11 @@ impl CsvParser {
             let v1 = vals[0].trim();
             let v2 = vals[1].trim();
 
-            if let Ok(start) = v1.parse::<usize>() {
-                if let Ok(end) = v2.parse::<usize>() {
-                    let range: Vec<usize> = (start..(end + 1)).collect();
-                    return Ok(Some(range));
-                }
+            if let Ok(start) = v1.parse::<usize>()
+                && let Ok(end) = v2.parse::<usize>()
+            {
+                let range: Vec<usize> = (start..(end + 1)).collect();
+                return Ok(Some(range));
             }
         }
 
@@ -225,11 +226,7 @@ impl CsvParser {
 
         let val = self.rows[self.line][*col].trim().to_string();
 
-        if val.as_str() == "" {
-            None
-        } else {
-            Some(val)
-        }
+        if val.as_str() == "" { None } else { Some(val) }
     }
 
     fn check_headers<T: AsRef<str>>(

@@ -1,21 +1,21 @@
+#![expect(missing_docs)]
 use crate::probe_barcode_matrix::ProbeCounts;
 use crate::utils::hard_link_martianfile;
 use anyhow::Error;
-use barcode::{barcode_string, Barcode};
+use barcode::{Barcode, barcode_string};
 use cr_h5::count_matrix::CountMatrixFile;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::RnaRead;
 use cr_types::{LibraryType, SampleAssignment};
-use cr_websummary::multi::tables::SequencingMetricsRow;
+use json_report_derive::JsonReport;
 use martian::MartianRover;
-use martian_derive::{martian_filetype, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, MartianType, martian_filetype};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::json_file::JsonFormat;
 use martian_filetypes::tabular_file::CsvFile;
 use metric::{PercentMetric, TxHashMap};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tx_annotation::read::ReadAnnotations;
 
 #[derive(Serialize, Deserialize, Clone, MartianType)]
 pub struct Primer {
@@ -27,17 +27,17 @@ pub struct Primer {
 #[derive(Deserialize)]
 pub struct AggregateBarcode {
     #[serde(with = "barcode_string")]
-    pub(crate) barcode: Barcode,
-    pub(crate) library_type: LibraryType,
-    #[allow(dead_code)]
+    pub(super) barcode: Barcode,
+    pub(super) library_type: LibraryType,
+    #[expect(dead_code)]
     umis: u64,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     umi_corrected_reads: u64,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     frac_corrected_reads: f64,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     frac_total_reads: f64,
-    pub(crate) frac_sample_reads: f64,
+    pub(super) frac_sample_reads: f64,
 }
 
 /// Produced by MULTI_WRITE_PER_SAMPLE_MATRICES, and consumed by STRUCTIFY_PER_SAMPLE_OUTS.
@@ -89,7 +89,7 @@ impl GexMatrices {
 }
 
 /// Sequencing metrics for a specific FASTQ ID.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, JsonReport)]
 pub struct SequencingMetrics {
     pub fastq_id: String,
     pub number_of_reads: usize,
@@ -102,34 +102,11 @@ pub struct SequencingMetrics {
     pub q30_read2: Option<PercentMetric>,
 }
 
-impl From<SequencingMetrics> for SequencingMetricsRow {
-    fn from(value: SequencingMetrics) -> Self {
-        SequencingMetricsRow {
-            fastq_id: Some(value.fastq_id),
-            number_of_reads: Some(value.number_of_reads),
-            unprocessed_reads: Some(value.unprocessed_reads),
-            q30_barcode: Some(value.q30_barcode.into()),
-            q30_gem_barcode: value.q30_gem_barcode.map(Into::into),
-            q30_probe_barcode: value.q30_probe_barcode.map(Into::into),
-            q30_umi: Some(value.q30_umi.into()),
-            q30_read1: Some(value.q30_read1.into()),
-            q30_read2: value.q30_read2.map(Into::into),
-        }
-    }
-}
-
 // Shardio file containing BcUmiInfo records, sorted by barcode
 martian_filetype!(BcUmiInfoShardFile, "bui");
 
-martian_filetype! { AnnSpillFile, "ann.spill" }
-pub type AnnSpillFormat = BinaryFormat<AnnSpillFile, Vec<ReadAnnotations>>;
-
 martian_filetype! { ReadSpillFile, "read.spill" }
-pub type ReadSpillFormat = BinaryFormat<ReadSpillFile, Vec<RnaRead>>;
-
-// Shardio file containing BAM Record objects from rust_htslib,
-// in position-sorted order
-martian_filetype!(AlignShardFile, "asf");
+pub(super) type ReadSpillFormat = BinaryFormat<ReadSpillFile, Vec<RnaRead>>;
 
 martian_filetype!(ReadShardFile, "shard");
 martian_filetype!(ReadPrefixCountFile, "rpc");
@@ -147,9 +124,10 @@ martian_filetype!(BcListFile, "bcl");
 martian_filetype!(_FeatureReferenceFile, "frf");
 pub type FeatureReferenceFormat = BinaryFormat<_FeatureReferenceFile, FeatureReference>;
 
-pub type PerLibrarySequencingMetrics = TxHashMap<LibraryType, Vec<SequencingMetrics>>;
+pub(super) type PerLibrarySequencingMetrics = TxHashMap<LibraryType, Vec<SequencingMetrics>>;
 
 martian_filetype!(_SequencingMetricsFile, "smf");
-pub type SequencingMetricsFormat = JsonFormat<_SequencingMetricsFile, PerLibrarySequencingMetrics>;
+pub(super) type SequencingMetricsFormat =
+    JsonFormat<_SequencingMetricsFile, PerLibrarySequencingMetrics>;
 
-martian_filetype!(SvgFile, "svg");
+martian_filetype! {HtmlFile, "html"}

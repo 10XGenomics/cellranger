@@ -4,7 +4,6 @@
 #
 
 
-import math
 import os
 import shutil
 import subprocess
@@ -16,10 +15,7 @@ import cellranger.constants as cr_constants
 import cellranger.matrix as cr_matrix
 import tenkit.log_subprocess as tk_subproc
 import tenkit.safe_json as tk_json
-from cellranger.spatial.data_utils import (
-    DARK_IMAGES_CHANNELS,
-    DARK_IMAGES_COLORIZED,
-)
+from cellranger.spatial.data_utils import DARK_IMAGES_CHANNELS, DARK_IMAGES_COLORIZED
 
 __MRO__ = """
 stage CLOUPE_PREPROCESS(
@@ -44,12 +40,17 @@ stage CLOUPE_PREPROCESS(
     in  string   hd_slide_name,
     in  json     loupe_map,
     in  string   product_type,
+    in  json     cells_per_batch,
     in  json     cells_per_sample,
     in  json     cells_per_tag,
     in  json     cells_per_protospacer,
+    in  json     cells_per_batch,
     in  csv      spatial_enrichment,
     in  path     spatial_deconvolution_path,
     in  bool     disable_cloupe,
+    in  str      matrix_type,
+    in  h5       spatial_cell_segment_mask,
+    in  geojson  spatial_cell_segment_geojson,
     out cloupe   output_for_cloupe,
     out json     gem_group_index_json,
     src py       "stages/cloupe/cloupe_preprocess",
@@ -136,29 +137,25 @@ def split(args):
     if do_not_make_cloupe(args):
         return {"chunks": []}
 
-    _num_features, num_barcodes, nnz = cr_matrix.CountMatrix.load_dims_from_h5(
+    num_features, num_barcodes, nnz = cr_matrix.CountMatrix.load_dims_from_h5(
         args.filtered_gene_bc_matrices_h5
     )
-    mem_gib_matrix = 80 * nnz / 1024**3
-    mem_gib_image = 2 if args.tissue_image_paths else 0
-    mem_gib = 3 + math.ceil(mem_gib_matrix) + mem_gib_image
-    print(f"{num_barcodes=},{nnz=},{mem_gib_matrix=},{mem_gib_image=},{mem_gib=}")
-
+    barcodes_gib = round(80 * num_barcodes / 1024**3, 1)
+    nnz_gib = round(80 * nnz / 1024**3, 1)
+    image_gib = 2 if args.tissue_image_paths else 0
+    mem_gib = 10 + barcodes_gib + nnz_gib + image_gib
+    print(
+        f"{num_features=},{num_barcodes=},{nnz=},{barcodes_gib=},{nnz_gib=},{image_gib=},{mem_gib=}"
+    )
     return {
         "chunks": [],
-        "join": {
-            "__mem_gb": mem_gib,
-            # crconverter requies additional VMEM.
-            "__vmem_gb": 3 + 2 * mem_gib,
-            "__threads": 2,
-        },
+        "join": {"__mem_gb": mem_gib, "__vmem_gb": 3 + 2 * mem_gib, "__threads": 2},
     }
 
 
 def join(args, outs, _chunk_defs, _chunk_outs):
     if do_not_make_cloupe(args):
-        outs.gem_group_index_json = None
-        outs.output_for_cloupe = None
+        martian.clear(outs)
         return
 
     call = [
@@ -188,6 +185,9 @@ def join(args, outs, _chunk_defs, _chunk_outs):
         spatial_product_type = "Visium" if args.hd_slide_name is None else "Visium-HD"
         call.extend(["--spatial-product-type", spatial_product_type])
 
+    if args.matrix_type:
+        call.extend(["--matrix-type", args.matrix_type])
+
     # assume whole thing if tissue positions present
     if args.tissue_positions:
         if args.dark_images == DARK_IMAGES_CHANNELS:
@@ -215,6 +215,11 @@ def join(args, outs, _chunk_defs, _chunk_outs):
             ]
         )
 
+    if args.spatial_cell_segment_mask:
+        call.extend(["--spatial-cell-segment-mask-path", args.spatial_cell_segment_mask])
+    if args.spatial_cell_segment_geojson:
+        call.extend(["--spatial-cell-segment-geojson-path", args.spatial_cell_segment_geojson])
+
     if args.image_page_names:
         call.extend(["--spatial-image-page-names", (",").join(args.image_page_names)])
 
@@ -224,6 +229,8 @@ def join(args, outs, _chunk_defs, _chunk_outs):
         call.extend(["--cells-per-tag", args.cells_per_tag])
     if args.cells_per_protospacer:
         call.extend(["--cells-per-protospacer", args.cells_per_protospacer])
+    if args.cells_per_batch:
+        call.extend(["--cells-per-batch", args.cells_per_batch])
     if args.spatial_enrichment:
         call.extend(["--spatial-enrichment", args.spatial_enrichment])
     if args.spatial_deconvolution_path:

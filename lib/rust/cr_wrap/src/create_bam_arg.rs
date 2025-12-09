@@ -1,4 +1,5 @@
-use anyhow::{bail, Result};
+#![expect(missing_docs)]
+use anyhow::{Result, bail};
 use clap::{ArgAction, Parser};
 
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]

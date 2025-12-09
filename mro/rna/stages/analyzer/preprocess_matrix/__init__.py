@@ -9,10 +9,15 @@ import numpy as np
 import cellranger.csv_io as cr_csv_io
 import cellranger.h5_constants as h5_constants
 import cellranger.matrix as cr_matrix
-import cellranger.rna.library as rna_library
 from cellranger import cell_calling_helpers
 from cellranger.library_constants import ATACSEQ_LIBRARY_TYPE
 from cellranger.logperf import LogPerf
+from cellranger.matrix import CountMatrix
+from cellranger.rna.library import (
+    ANTIBODY_LIBRARY_TYPE,
+    ANTIGEN_LIBRARY_TYPE,
+    GENE_EXPRESSION_LIBRARY_TYPE,
+)
 
 __MRO__ = """
 stage PREPROCESS_MATRIX(
@@ -127,7 +132,7 @@ def select_barcodes_and_features(
 
 def split(args):
     assert (not args.is_antibody_only) or (not args.get_peak_matrix)
-    matrix_mem_gb = cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
+    matrix_mem_gb = CountMatrix.get_mem_gb_from_matrix_h5(args.matrix_h5)
     return {"chunks": [], "join": {"__mem_gb": max(matrix_mem_gb, h5_constants.MIN_MEM_GB)}}
 
 
@@ -141,8 +146,15 @@ def join(args, outs, chunk_defs, chunk_outs):
     )
     outs.disable_correct_chemistry_batch = args.disable_correct_chemistry_batch
     outs.skip_multigenome_analysis = args.skip_multigenome_analysis
-    outs.skip_antibody_analysis = False
-    outs.skip_antigen_analysis = False
+    if args.matrix_h5:
+        with LogPerf("select"):
+            library_types = CountMatrix.load_library_types_from_h5_file(args.matrix_h5)
+        outs.skip_antibody_analysis = ANTIBODY_LIBRARY_TYPE not in library_types
+        outs.skip_antigen_analysis = ANTIGEN_LIBRARY_TYPE not in library_types
+    else:
+        library_types = None
+        outs.skip_antibody_analysis = True
+        outs.skip_antigen_analysis = True
     if args.skip:
         return
 
@@ -150,26 +162,29 @@ def join(args, outs, chunk_defs, chunk_outs):
         np.random.seed(args.random_seed)
 
     # detect barnyard
-    genomes = cr_matrix.CountMatrix.get_genomes_from_h5(args.matrix_h5)
+    genomes = CountMatrix.get_genomes_from_h5(args.matrix_h5)
     if len(genomes) > 1:
         outs.is_multi_genome = True
     else:
         outs.is_multi_genome = False
 
     with LogPerf("load"):
-        matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
+        matrix = CountMatrix.load_h5_file(args.matrix_h5)
 
     with LogPerf("select"):
-        library_type = rna_library.GENE_EXPRESSION_LIBRARY_TYPE
-        library_types = cr_matrix.CountMatrix.load_library_types_from_h5_file(args.matrix_h5)
-        is_antibody_only = args.is_antibody_only or (
-            rna_library.GENE_EXPRESSION_LIBRARY_TYPE not in library_types
-            and rna_library.ANTIBODY_LIBRARY_TYPE in library_types
-        )  # No GEX features found
-        if is_antibody_only:
-            library_type = rna_library.ANTIBODY_LIBRARY_TYPE
-        if args.get_peak_matrix:
-            library_type = ATACSEQ_LIBRARY_TYPE
+        assert library_types is not None
+        outs.is_antibody_only = args.is_antibody_only or (
+            ANTIBODY_LIBRARY_TYPE in library_types
+            and (
+                GENE_EXPRESSION_LIBRARY_TYPE not in library_types
+                or matrix.get_non_zero_entries_by_library_type(GENE_EXPRESSION_LIBRARY_TYPE) == 0
+            )
+        )
+        library_type = (
+            ATACSEQ_LIBRARY_TYPE
+            if args.get_peak_matrix
+            else ANTIBODY_LIBRARY_TYPE if outs.is_antibody_only else GENE_EXPRESSION_LIBRARY_TYPE
+        )
 
         matrix = select_barcodes_and_features(
             matrix,
@@ -196,8 +211,8 @@ def join(args, outs, chunk_defs, chunk_outs):
             "Count matrix is missing necessary attributes, possibly because it was produced by an old version of Cellranger."
         )
 
-        # chemistry = cr_matrix.CountMatrix.load_chemistry_from_h5(args.matrix_h5)
-        # bcs = cr_matrix.CountMatrix.load_bcs_from_h5(args.matrix_h5)
+        # chemistry = CountMatrix.load_chemistry_from_h5(args.matrix_h5)
+        # bcs = CountMatrix.load_bcs_from_h5(args.matrix_h5)
         # gem_groups = list(set(cr_utils.split_barcode_seq(bc)[1] for bc in bcs))
         # count_attrs = cr_matrix.make_matrix_attrs_count(args.sample_id, gem_groups, chemistry)
         # matrix_attrs.update(count_attrs)
@@ -235,10 +250,10 @@ def join(args, outs, chunk_defs, chunk_outs):
         return
 
     feature_cnts = matrix.get_count_of_feature_types()
-    ab_cnts = feature_cnts.get(rna_library.ANTIBODY_LIBRARY_TYPE, 0)
+    ab_cnts = feature_cnts.get(ANTIBODY_LIBRARY_TYPE, 0)
     if ab_cnts == 0:
         outs.skip_antibody_analysis = True
-    ag_cnts = feature_cnts.get(rna_library.ANTIGEN_LIBRARY_TYPE, 0)
+    ag_cnts = feature_cnts.get(ANTIGEN_LIBRARY_TYPE, 0)
     if ag_cnts == 0:
         outs.skip_antigen_analysis = True
     # Skip ANTIGEN_ANALYZER in SC_RNA_ANALYZER in aggr, it is called in VDJ AGGR
@@ -257,3 +272,4 @@ def join(args, outs, chunk_defs, chunk_outs):
         outs.disable_hierarchical_clustering = True
         outs.disable_correct_chemistry_batch = True
         outs.skip_multigenome_analysis = True
+        outs.skip_tsne = True

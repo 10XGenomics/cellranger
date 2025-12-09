@@ -1,3 +1,6 @@
+//! cr_lib::detect_chemistry
+#![deny(missing_docs)]
+
 pub(crate) mod chemistry_filter;
 pub(crate) mod errors;
 pub(crate) mod identity_check;

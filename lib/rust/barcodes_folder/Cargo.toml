@@ -11,9 +11,12 @@ workspace = true
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'barcodes_folder'
 publish = false
 version = '0.1.0'

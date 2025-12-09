@@ -35,6 +35,7 @@ stage CHECK_MOLECULE_INFO_VERSION(
     out map<string> antigen_specificity_controls,
     out csv         feature_reference,
     out bool        disable_antigen_aggr,
+    out bool        is_visium_hd,
     src py          "stages/aggregator/check_molecule_info_version",
 ) split (
     in  int         mol_h5_version,
@@ -85,8 +86,10 @@ def join(args, outs, chunk_defs, chunk_outs):
     outs.disable_antigen_aggr = True
     antigen_specificity_controls = {}  # {mhc_allele: control_feature_id}
     feature_ref = None
+    outs.is_visium_hd = False
     for sample_def in outs.updated_sample_defs:
         with cr_mol_counter.MoleculeCounter.open(sample_def[cr_constants.AGG_H5_FIELD], "r") as mc:
+            outs.is_visium_hd |= mc.is_visium_hd()
             if feature_ref is None:
                 feature_ref = mc.feature_reference
             for lib in mc.library_info:

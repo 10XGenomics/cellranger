@@ -62,6 +62,9 @@ workspace = true
 [dependencies.num-traits]
 workspace = true
 
+[dependencies.rand]
+workspace = true
+
 [dependencies.rayon]
 workspace = true
 
@@ -89,9 +92,12 @@ git = 'https://github.com/10XGenomics/scan-rs'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'cr_ana'
 publish = false
 version = '0.1.0'

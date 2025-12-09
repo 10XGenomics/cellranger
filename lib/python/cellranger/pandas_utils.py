@@ -17,7 +17,7 @@ from six import ensure_binary, ensure_str
 
 import cellranger.utils as cr_utils
 from cellranger import molecule_counter_extensions as cr_mce
-from cellranger.feature_ref import GENOME_FEATURE_TAG, FeatureReference
+from cellranger.feature_ref import FEATURE_TYPE, GENOME_FEATURE_TAG, FeatureReference
 from cellranger.molecule_counter import (
     BARCODE_IDX_COL_NAME,
     COUNT_COL_NAME,
@@ -25,6 +25,7 @@ from cellranger.molecule_counter import (
     GEM_GROUP_COL_NAME,
     LIBRARY_IDX_COL_NAME,
     MOLECULE_INFO_COLUMNS,
+    PROBE_IDX_COL_NAME,
     UMI_COL_NAME,
     UMI_TYPE_COL_NAME,
     BarcodeInfo,
@@ -32,7 +33,7 @@ from cellranger.molecule_counter import (
 )
 
 # column header string constants useful for building df
-FEATURE_REF_COLS = ["feature_type", "id", "name", "index"]
+FEATURE_REF_COLS = [FEATURE_TYPE, "id", "name", "index"]
 MOL_INFO_CELL_COL = "is_cell"
 IS_CELL_FORMAT_STRING = "{}_cells"
 FEATURE_DF_COUNT_COL = "num_reads"
@@ -201,7 +202,7 @@ def _get_is_cell(
     return None
 
 
-def _mol_info_df_from_h5(  # pylint: disable=too-many-arguments
+def _mol_info_df_from_h5(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     mc: MoleculeCounter,
     exclude_noncells: bool,
     exclude_cells: bool,
@@ -245,6 +246,7 @@ def _mol_info_df_from_h5(  # pylint: disable=too-many-arguments
         del mol_info_cols[GEM_GROUP_COL_NAME]
     if not with_umi_type:
         del mol_info_cols[UMI_TYPE_COL_NAME]
+    del mol_info_cols[PROBE_IDX_COL_NAME]
 
     for x in mol_info_cols:
         # skip if downsample was used
@@ -263,6 +265,7 @@ def _mol_info_df_from_h5(  # pylint: disable=too-many-arguments
 
 def mol_info_from_h5(  # pylint: disable=too-many-arguments
     mol_info,
+    *,
     exclude_noncells: bool = False,
     exclude_cells: bool = False,
     with_umi: bool = True,
@@ -748,7 +751,7 @@ def collapse_barcode_counts(
         del idx_mol
 
         # barcodes must be offset by num_bcs * gem_well_index in ordered_barcodes
-        bc_idx_offset = np.multiply(np.subtract(gg_indices, 1), num_barcodes)
+        bc_idx_offset = np.multiply(np.subtract(gg_indices, 1), np.uint64(num_barcodes))
         np.add.at(
             umi_counts_by_index,
             np.add(barcode_indices, bc_idx_offset),

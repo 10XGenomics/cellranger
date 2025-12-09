@@ -1,8 +1,9 @@
 //! HandleNoClonotyping stage code
+#![expect(missing_docs)]
 
 use anyhow::{Context, Result};
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
 use vdj_ann::annotate::ContigAnnotation;

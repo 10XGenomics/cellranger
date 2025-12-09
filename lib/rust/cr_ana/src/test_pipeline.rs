@@ -1,12 +1,13 @@
 //! Secondary analysis pipeline for testing
+#![deny(missing_docs)]
 
 use crate::stage_testing::run_stage;
 use crate::stages::pca::{PcaStage, PcaStageInputs};
-use crate::stages::umap::{UmapImplementation, UmapStage, UmapStageInputs};
-use crate::types::H5File;
+use crate::stages::umap::{UmapStage, UmapStageInputs};
+use crate::types::{H5File, ReductionType};
 use anyhow::Result;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -40,20 +41,23 @@ impl MartianMain for SecondaryTest {
             num_principal_comps: None,
             is_spatial: false,
             pca_map: None,
+            fixed_point_base: None,
+            fixed_point_exponent: None,
         };
         let pca_outs = run_stage(PcaStage, pca_args, &rover)?;
 
         println!("run umap");
         let umap_args = UmapStageInputs {
             matrix_h5: args.matrix_h5.clone(),
-            pca_h5: pca_outs.pca_h5,
+            reduction_h5: pca_outs.pca_h5,
             random_seed: None,
             n_neighbors: None,
-            input_pcs: None,
+            input_dims: None,
             max_dims: None,
             min_dist: None,
             metric: None,
-            implementation: UmapImplementation::Parallel,
+            parallel: true,
+            reduction_type: ReductionType::pca,
         };
 
         let umap_outs = run_stage(UmapStage, umap_args, &rover)?;

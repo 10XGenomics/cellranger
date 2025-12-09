@@ -1,4 +1,6 @@
+//! vdj_types
 // Copyright (c) 2021 10x Genomics, Inc. All rights reserved.
+#![expect(missing_docs)]
 
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
@@ -169,6 +171,20 @@ make_enum! {
     const_var_name: VDJ_REGIONS,
 }
 
+// FIXME: this isn't really a great place for this, but the current dep tree
+// just doesn't have one.
+/// Return the number of read pairs per barcode we should process.
+///
+/// In paired-end mode, one read pair counts as two reads.
+/// Use the default `MAX_READS_PER_BARCODE` if no override is provided.
+pub fn get_max_read_pairs_per_barcode(
+    is_paired_end: bool,
+    max_reads_per_barcode: Option<usize>,
+) -> usize {
+    let limit = max_reads_per_barcode.unwrap_or(80_000);
+    if is_paired_end { limit / 2 } else { limit }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,7 +271,7 @@ mod tests {
             let contig_chain = VdjContigChain::Single(chain);
             assert_eq!(contig_chain.to_string(), chain.to_string());
             let chain_str = serde_json::to_string(&chain).unwrap();
-            assert_eq!(serde_json::to_string(&contig_chain).unwrap(), chain_str,);
+            assert_eq!(serde_json::to_string(&contig_chain).unwrap(), chain_str);
             assert_eq!(
                 serde_json::from_str::<VdjContigChain>(&chain_str).unwrap(),
                 contig_chain,

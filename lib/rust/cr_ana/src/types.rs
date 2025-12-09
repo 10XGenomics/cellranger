@@ -1,7 +1,8 @@
-use anyhow::{anyhow, bail, Result};
-use cr_types::reference::feature_reference::FeatureType;
+#![deny(missing_docs)]
+use anyhow::{Result, anyhow, bail};
 use cr_types::FeatureBarcodeType;
-use martian_derive::{martian_filetype, MartianStruct};
+use cr_types::reference::feature_reference::FeatureType;
+use martian_derive::{MartianType, martian_filetype};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -10,20 +11,27 @@ use std::str::FromStr;
 
 martian_filetype!(H5File, "h5");
 
-#[derive(Debug, Serialize, Deserialize, MartianStruct)]
-pub struct Unit {}
+#[derive(Serialize, Deserialize, MartianType, Clone, Debug)]
+#[allow(non_camel_case_types)]
+pub enum ReductionType {
+    pca,
+    lsa,
+    plsa,
+    bcpca, // batch-corrected PCA
+    bclsa, // batch-corrected LSA
+}
 
-pub(crate) struct PcaResult<'a> {
-    pub components: Array2<f64>,
-    pub dispersion: Array1<f64>,
-    pub features_selected: Vec<&'a str>,
-    pub transformed_pca_matrix: Array2<f64>,
-    pub variance_explained: Array1<f64>,
-    pub key: String,
+pub(super) struct PcaResult<'a> {
+    pub(super) components: Array2<f64>,
+    pub(super) dispersion: Array1<f64>,
+    pub(super) features_selected: Vec<&'a str>,
+    pub(super) transformed_pca_matrix: Array2<f64>,
+    pub(super) variance_explained: Array1<f64>,
+    pub(super) key: String,
 }
 
 impl<'a> PcaResult<'a> {
-    pub(crate) fn new(
+    pub(super) fn new(
         components: Array2<f64>,
         dispersion: Array1<f64>,
         feature_type: FeatureType,
@@ -42,24 +50,24 @@ impl<'a> PcaResult<'a> {
             key,
         }
     }
-    pub(crate) fn csv_key(&self) -> String {
+    pub(super) fn csv_key(&self) -> String {
         format!("{}_components", self.key)
     }
-    pub(crate) fn h5_key(&self) -> String {
+    pub(super) fn h5_key(&self) -> String {
         format!("_{}", self.key)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "&str", into = "Cow<'static, str>")]
-pub enum ClusteringType {
+pub(super) enum ClusteringType {
     KMeans(usize),
     Louvain,
     Hierarchical(usize),
 }
 
 impl ClusteringType {
-    pub(crate) fn lc(&self) -> Cow<'static, str> {
+    pub(super) fn lc(&self) -> Cow<'static, str> {
         use ClusteringType::{Hierarchical, KMeans, Louvain};
         match self {
             KMeans(k) => Cow::Owned(format!("kmeans_{k}_clusters")),
@@ -67,7 +75,7 @@ impl ClusteringType {
             Hierarchical(num_clusters) => Cow::Owned(format!("hcluster_{num_clusters}_clusters")),
         }
     }
-    pub(crate) fn desc(&self) -> Cow<'static, str> {
+    pub(super) fn desc(&self) -> Cow<'static, str> {
         use ClusteringType::{Hierarchical, KMeans, Louvain};
         match self {
             KMeans(k) => Cow::Owned(format!("K-means (K={k})")),
@@ -105,7 +113,7 @@ impl FromStr for ClusteringType {
     }
 }
 
-impl<'a> TryFrom<&'a str> for ClusteringType {
+impl TryFrom<&str> for ClusteringType {
     type Error = anyhow::Error;
 
     fn try_from(s: &str) -> Result<Self> {
@@ -119,9 +127,9 @@ impl From<ClusteringType> for Cow<'static, str> {
     }
 }
 
-pub(crate) struct ClusteringKey {
-    pub clustering_type: ClusteringType,
-    pub feature_type: FeatureType,
+pub(super) struct ClusteringKey {
+    pub(super) clustering_type: ClusteringType,
+    pub(super) feature_type: FeatureType,
 }
 
 impl FromStr for ClusteringKey {
@@ -154,19 +162,19 @@ impl FromStr for ClusteringKey {
     }
 }
 
-pub(crate) struct ClusteringResult {
-    pub clustering_type: ClusteringType,
-    pub feature_type: FeatureType,
-    pub labels: Vec<i64>,
-    pub key: String,
+pub(super) struct ClusteringResult {
+    pub(super) clustering_type: ClusteringType,
+    pub(super) feature_type: FeatureType,
+    pub(super) labels: Vec<i64>,
+    pub(super) key: String,
 }
 
-pub(crate) fn clustering_key(clustering_type: ClusteringType, feature_type: FeatureType) -> String {
+pub(super) fn clustering_key(clustering_type: ClusteringType, feature_type: FeatureType) -> String {
     format!("{}_{}", feature_type.as_snake_case(), clustering_type.lc())
 }
 
 impl ClusteringResult {
-    pub(crate) fn new(
+    pub(super) fn new(
         clustering_type: ClusteringType,
         feature_type: FeatureType,
         labels: Vec<i64>,
@@ -180,34 +188,38 @@ impl ClusteringResult {
         }
     }
 
-    pub(crate) fn num_clusters(&self) -> i64 {
+    pub(super) fn num_clusters(&self) -> i64 {
         self.labels.iter().copied().max().unwrap_or(0)
     }
-    pub(crate) fn desc(&self) -> Cow<'static, str> {
+    pub(super) fn desc(&self) -> Cow<'static, str> {
         match self.feature_type {
             FeatureType::Gene => self.clustering_type.desc(),
+            FeatureType::Peaks => Cow::Owned(format!("Peaks {}", self.clustering_type.desc())),
             FeatureType::Barcode(FeatureBarcodeType::Antibody) => {
                 Cow::Owned(format!("Antibody {}", self.clustering_type.desc()))
             }
             FeatureType::Barcode(_) => unimplemented!(),
+            FeatureType::ProteinExpression => {
+                Cow::Owned(format!("Protein {}", self.clustering_type.desc()))
+            }
         }
     }
 }
 
-pub(crate) enum EmbeddingType {
+pub(super) enum EmbeddingType {
     Tsne,
     Umap,
 }
 
 impl EmbeddingType {
-    pub(crate) fn lc(&self) -> &'static str {
+    pub(super) fn lc(&self) -> &'static str {
         use EmbeddingType::{Tsne, Umap};
         match self {
             Tsne => "tsne",
             Umap => "umap",
         }
     }
-    pub(crate) fn uc(&self) -> &'static str {
+    pub(super) fn uc(&self) -> &'static str {
         use EmbeddingType::{Tsne, Umap};
         match self {
             Tsne => "TSNE",
@@ -216,16 +228,16 @@ impl EmbeddingType {
     }
 }
 
-pub(crate) struct EmbeddingResult<'a> {
-    pub barcodes: Vec<Cow<'a, String>>,
-    pub embedding: Array2<f64>,
-    pub embedding_type: EmbeddingType,
-    pub feature_type: FeatureType,
-    pub key: String,
+pub(super) struct EmbeddingResult<'a> {
+    pub(super) barcodes: Vec<&'a str>,
+    pub(super) embedding: Array2<f64>,
+    pub(super) embedding_type: EmbeddingType,
+    pub(super) feature_type: FeatureType,
+    pub(super) key: String,
 }
 
 impl<'a> EmbeddingResult<'a> {
-    pub(crate) fn new(
+    pub(super) fn new(
         barcodes: &'a [String],
         embedding: Array2<f64>,
         embedding_type: EmbeddingType,
@@ -234,7 +246,7 @@ impl<'a> EmbeddingResult<'a> {
         let dims = embedding.dim().1;
         let key = format!("{}_{dims}", feature_type.as_snake_case());
         EmbeddingResult {
-            barcodes: barcodes.iter().map(Cow::Borrowed).collect::<Vec<_>>(),
+            barcodes: barcodes.iter().map(String::as_str).collect(),
             embedding,
             embedding_type,
             feature_type,

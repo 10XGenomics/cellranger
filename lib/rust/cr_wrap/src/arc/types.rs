@@ -1,4 +1,5 @@
-use anyhow::{bail, ensure, Result};
+#![expect(missing_docs)]
+use anyhow::{Result, bail, ensure};
 use clap::{self, Parser};
 use ordered_float::NotNan;
 use serde::Serialize;

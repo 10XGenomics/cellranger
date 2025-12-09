@@ -28,7 +28,7 @@ def split(args):
 
     mem_gb = CountMatrix.get_mem_gb_from_matrix_h5(args.filtered_matrices_h5)
 
-    chunks = [{"__mem_gb": int(math.ceil(max(h5_constants.MIN_MEM_GB, mem_gb)))}]
+    chunks = [{"__mem_gb": math.ceil(max(h5_constants.MIN_MEM_GB, mem_gb))}]
     return {"chunks": chunks}
 
 

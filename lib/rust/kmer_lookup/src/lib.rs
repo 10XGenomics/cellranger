@@ -1,17 +1,17 @@
+//! kmer_lookup
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![deny(missing_docs)]
 
 // Kmer lookup.
 
-use debruijn::{
-    dna_string::DnaString,
-    kmer::{Kmer12, Kmer20},
-    Kmer, Mer, Vmer,
-};
+use debruijn::dna_string::DnaString;
+use debruijn::kmer::{Kmer12, Kmer20};
+use debruijn::{Kmer, Mer, Vmer};
 use vector_utils::{lower_bound1_3, upper_bound1_3};
 
 /// Given a vector of DnaStrings dv, create a sorted vector whose entries are
 /// (kmer, e, estart), where the kmer starts at position estart on dv[e].
-pub fn make_kmer_lookup_single<K: Kmer>(dv: &[DnaString], x: &mut Vec<(K, i32, i32)>) {
+fn make_kmer_lookup_single<K: Kmer>(dv: &[DnaString], x: &mut Vec<(K, i32, i32)>) {
     let sz = dv
         .iter()
         .filter(|b| b.len() >= K::k())
@@ -39,8 +39,7 @@ pub fn make_kmer_lookup_12_single(dv: &[DnaString], x: &mut Vec<(Kmer12, i32, i3
     make_kmer_lookup_single(dv, x);
 }
 
-// Determine if a sequence perfectly matches in forward orientation.
-
+/// Determine if a sequence perfectly matches in forward orientation.
 pub fn match_12(b: &DnaString, dv: &[DnaString], x: &[(Kmer12, i32, i32)]) -> bool {
     let y: Kmer12 = b.get_kmer(0);
     let low = lower_bound1_3(x, &y);

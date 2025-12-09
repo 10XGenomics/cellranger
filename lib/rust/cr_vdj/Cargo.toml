@@ -12,11 +12,17 @@ path = '../clonotype_assigner'
 [dependencies.cr_lib]
 path = '../cr_lib'
 
+[dependencies.cr_types]
+path = '../cr_types'
+
+[dependencies.cr_websummary]
+path = '../cr_websummary'
+
 [dependencies.docopt]
 workspace = true
 
-[dependencies.enclone_core]
-path = '../enclone_core'
+[dependencies.enclone_process]
+path = '../enclone_process'
 
 [dependencies.hdf5]
 workspace = true
@@ -39,10 +45,10 @@ path = '../metric'
 [dependencies.plotly]
 workspace = true
 
-[dependencies.rand]
+[dependencies.pretty_assertions]
 workspace = true
 
-[dependencies.rand_distr]
+[dependencies.rand]
 workspace = true
 
 [dependencies.serde]
@@ -54,7 +60,7 @@ workspace = true
 [dependencies.statrs]
 workspace = true
 
-[dependencies.strum_macros]
+[dependencies.strum]
 workspace = true
 
 [dependencies.tenx-websummary]
@@ -77,9 +83,12 @@ path = '../websummary_build'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'cr_vdj'
 publish = false
 version = '0.1.0'

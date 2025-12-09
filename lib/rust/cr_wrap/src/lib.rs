@@ -1,57 +1,10 @@
-// Warning groups (as of rust 1.55)
-#![deny(
-    future_incompatible,
-    nonstandard_style,
-    rust_2018_compatibility,
-    rust_2021_compatibility,
-    rust_2018_idioms,
-    unused
-)]
-// Other warnings (as of rust 1.55)
-#![deny(
-    asm_sub_register,
-    bad_asm_style,
-    bindings_with_variant_name,
-    clashing_extern_declarations,
-    confusable_idents,
-    const_item_mutation,
-    deprecated,
-    deref_nullptr,
-    drop_bounds,
-    dyn_drop,
-    elided_lifetimes_in_paths,
-    exported_private_dependencies,
-    function_item_references,
-    improper_ctypes,
-    improper_ctypes_definitions,
-    incomplete_features,
-    inline_no_sanitize,
-    invalid_value,
-    irrefutable_let_patterns,
-    large_assignments,
-    mixed_script_confusables,
-    non_shorthand_field_patterns,
-    no_mangle_generic_items,
-    overlapping_range_endpoints,
-    renamed_and_removed_lints,
-    stable_features,
-    temporary_cstring_as_ptr,
-    trivial_bounds,
-    type_alias_bounds,
-    uncommon_codepoints,
-    unconditional_recursion,
-    unknown_lints,
-    unnameable_test_items,
-    unused_comparisons,
-    while_true
-)]
+//! cr_wrap
+#![deny(missing_docs)]
 
-// handling pipeline environments
 pub mod arc;
 pub mod chemistry_arg;
 pub mod cloud;
 pub mod create_bam_arg;
-mod deprecated_os;
 pub mod env;
 pub mod fastqs;
 pub mod mkfastq;
@@ -61,10 +14,10 @@ pub mod shared_cmd;
 pub mod telemetry;
 pub mod utils;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use mrp_args::MrpArgs;
 use serde::Serialize;
-use std::fs::{create_dir, File};
+use std::fs::{File, create_dir};
 use std::io::Write;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
@@ -118,6 +71,7 @@ pub fn make_mro<T: Serialize>(call: &str, args: &T, pipeline_mro_file: &str) -> 
     Ok(mro_string)
 }
 
+/// Make an MRO file with a comment
 pub fn make_mro_with_comment<T: Serialize>(
     call: &str,
     args: &T,
@@ -158,8 +112,11 @@ fn call_mrg(msg: &str) -> Result<String> {
     Ok(result)
 }
 
+/// A Martian MRO file stored either in a string or a file.
 pub enum MroInvocation {
+    /// A Martian MRO file stored in a string.
     MroString(String),
+    /// A Martian MRO file stored in a file.
     File(PathBuf),
 }
 
@@ -198,7 +155,7 @@ pub fn execute_to_status(
     Ok(mrp_exit_status)
 }
 
-pub fn execute_any(
+fn execute_any(
     job_id: &str,
     invocation: MroInvocation,
     mrp_args: &MrpArgs,
@@ -245,7 +202,7 @@ fn run_mrp(job_id: &str, mro_path: &Path, mrp_args: &MrpArgs) -> Result<ExitStat
     if let Some(output_dir) = &mrp_args.output_dir {
         // Create output_dir to ensure that it is created successfully.
         match create_dir(output_dir) {
-            Ok(_) => (),
+            Ok(()) => (),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
             Err(error) => return Err(error).context(output_dir.clone()),
         }
@@ -281,6 +238,7 @@ fn run_tarmri(output_dir: &str, exit_status: ExitStatus) -> Result<ExitCode> {
         .into_exit_code())
 }
 
+/// Check for a deprecated OS
 pub fn check_deprecated_os() -> Result<()> {
     if std::env::var("TENX_IGNORE_DEPRECATED_OS")
         .map(|s| s != "0")

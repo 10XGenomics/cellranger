@@ -847,7 +847,7 @@ def transform_data_section(
                 if not sample_name_col_orig:
                     _overwrite_cell(output_row, sample_name_idx, "")
                 sample_id = input_row[sample_id_idx]
-                output_row[sample_id_idx] = "%s_%d" % (sample_id, idx + 1)
+                output_row[sample_id_idx] = f"{sample_id}_{idx + 1}"
 
                 # if Sample_Name blank, populate with sample_id without oligo seq
                 if not output_row[sample_name_idx]:

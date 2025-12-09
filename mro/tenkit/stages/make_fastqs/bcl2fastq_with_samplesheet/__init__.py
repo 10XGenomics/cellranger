@@ -154,61 +154,54 @@ def run_bcl2fastq(args, outs):
     new_environ = dict(os.environ)
     new_environ["LD_LIBRARY_PATH"] = os.environ["_TENX_LD_LIBRARY_PATH"]
 
-    if major_ver == tk_bcl.Bcl2FastqVersion.V1:
-        martian.exit(
-            "bcl2fastq 1.8.4 is not currently supported. Please install bcl2fastq 2.17 or higher."
+    if major_ver != tk_bcl.Bcl2FastqVersion.V2:
+        martian.exit("Unknown bcl2fastq version provided.")
+
+    if not os.path.exists(outs.interop_path):
+        os.makedirs(outs.interop_path)
+    if not os.path.exists(outs.fastq_path):
+        os.makedirs(outs.fastq_path)
+
+    # minimum-trimmed-read-length and mask-short-adapter-reads must be our call (SIs, UMIs)
+    min_read_length = min(x["read_length"] for x in read_info)
+    min_read_length = min(min_read_length, 8)
+
+    cmd = [
+        "bcl2fastq",
+        "--minimum-trimmed-read-length",
+        str(min_read_length),
+        "--mask-short-adapter-reads",
+        str(min_read_length),
+        "--create-fastq-for-index-reads",
+        "--ignore-missing-positions",
+        "--ignore-missing-filter",
+        "--ignore-missing-bcls",
+        #'-r', str(args.__threads), '-w', str(args.__threads),
+        "--use-bases-mask=" + use_bases_mask_val,
+        "-R",
+        args.run_path,
+        "--output-dir=" + output_dir,
+        "--interop-dir=" + interop_dir,
+        "--sample-sheet=" + args.samplesheet_path,
+    ]
+    cmd += remove_deprecated_args(args.bcl2fastq2_args, major_ver, full_ver)
+    outs.bcl2fastq_args = " ".join(cmd)
+
+    martian.log_info(f"Running bcl2fastq2: {outs.bcl2fastq_args}")
+
+    try:
+        ret = tk_proc.call(cmd, env=new_environ)
+    except OSError:
+        martian.throw(
+            "bcl2fastq not found on PATH -- make sure you've added it to your environment"
         )
-        raise SystemExit()
 
-    elif major_ver == tk_bcl.Bcl2FastqVersion.V2:
-        if not os.path.exists(outs.interop_path):
-            os.makedirs(outs.interop_path)
-        if not os.path.exists(outs.fastq_path):
-            os.makedirs(outs.fastq_path)
-
-        # minimum-trimmed-read-length and mask-short-adapter-reads must be our call (SIs, UMIs)
-        min_read_length = min(x["read_length"] for x in read_info)
-        if min_read_length > 8:
-            # ensure min is at sample-index, if extra base grabbed for QC purposes (I8n, for example)
-            min_read_length = 8
-
-        cmd = [
-            "bcl2fastq",
-            "--minimum-trimmed-read-length",
-            str(min_read_length),
-            "--mask-short-adapter-reads",
-            str(min_read_length),
-            "--create-fastq-for-index-reads",
-            "--ignore-missing-positions",
-            "--ignore-missing-filter",
-            "--ignore-missing-bcls",
-            #'-r', str(args.__threads), '-w', str(args.__threads),
-            "--use-bases-mask=" + use_bases_mask_val,
-            "-R",
-            args.run_path,
-            "--output-dir=" + output_dir,
-            "--interop-dir=" + interop_dir,
-            "--sample-sheet=" + args.samplesheet_path,
-        ]
-        cmd += remove_deprecated_args(args.bcl2fastq2_args, major_ver, full_ver)
-        outs.bcl2fastq_args = " ".join(cmd)
-
-        martian.log_info(f"Running bcl2fastq2: {outs.bcl2fastq_args}")
-
-        try:
-            ret = tk_proc.call(cmd, env=new_environ)
-        except OSError:
-            martian.throw(
-                "bcl2fastq not found on PATH -- make sure you've added it to your environment"
-            )
-
-        if ret > 0:
-            files_path = os.path.abspath(martian.make_path("_stderr"))
-            enclosing_path = os.path.dirname(os.path.dirname(files_path))
-            stderr_path = os.path.join(enclosing_path, b"_stderr")
-            martian.exit(
-                f"bcl2fastq exited with an error. You may have specified an invalid command-line option. See the full error here:\n{ensure_str(stderr_path)}"
-            )
-        elif ret < 0:
-            # subprocess.call returns negative code (on UNIX): bcl2fastq killed by external signal
-            martian.exit("bcl2fastq was killed with signal %d." % ret)
+    if ret > 0:
+        files_path = os.path.abspath(martian.make_path("_stderr"))
+        enclosing_path = os.path.dirname(os.path.dirname(files_path))
+        stderr_path = os.path.join(enclosing_path, b"_stderr")
+        martian.exit(
+            f"bcl2fastq exited with an error. You may have specified an invalid command-line option. See the full error here:\n{ensure_str(stderr_path)}"
+        )
+    elif ret < 0:
+        martian.exit(f"bcl2fastq was killed with signal {ret}.")

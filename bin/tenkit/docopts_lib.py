@@ -152,7 +152,7 @@ def main():
         for elem, value in arrays.items():
             del args[elem]
             args[elem + ",#"] = len(value)
-            args.update(("%s,%d" % (elem, i), v) for i, v in enumerate(value))
+            args.update((f"{elem},{i}", v) for i, v in enumerate(value))
         print(f"declare -A {name}")
         for elem, value in args.items():
             print(f"{name}[{shellquote(elem)}]={to_bash(value)}")

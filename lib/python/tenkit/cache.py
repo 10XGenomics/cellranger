@@ -9,12 +9,10 @@ import collections
 import os
 import resource
 from collections.abc import Callable
-from typing import BinaryIO, Generic, Literal, TextIO, TypeVar, overload
-
-_T_co = TypeVar("_T_co", bound=TextIO | BinaryIO, covariant=True)
+from typing import BinaryIO, Literal, TextIO, overload
 
 
-class FileHandleCache(Generic[_T_co]):
+class FileHandleCache[T_co: TextIO | BinaryIO]:
     """LRU cache for file handles."""
 
     @overload
@@ -45,24 +43,24 @@ class FileHandleCache(Generic[_T_co]):
                 str | bytes | os.PathLike[str] | os.PathLike[bytes],
                 str,
             ],
-            _T_co,
+            T_co,
         ] = open,
     ):
         self.mode = mode
         self.open_func: Callable[
-            [str | bytes | os.PathLike[str] | os.PathLike[bytes], str], _T_co
+            [str | bytes | os.PathLike[str] | os.PathLike[bytes], str], T_co
         ] = open_func
         self.config_max_files()
         self.have_opened: dict[str | bytes | os.PathLike[str] | os.PathLike[bytes], int] = {}
         self.open_files: collections.OrderedDict[
-            str | bytes | os.PathLike[str] | os.PathLike[bytes], _T_co
+            str | bytes | os.PathLike[str] | os.PathLike[bytes], T_co
         ] = collections.OrderedDict()
 
     def config_max_files(self) -> None:
         soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
         self.maxfiles = soft - 100
 
-    def get(self, fn: str | bytes) -> _T_co:
+    def get(self, fn: str | bytes) -> T_co:
         """Get the cached file object for the given file name, or create one.
 
         Note:
@@ -97,7 +95,7 @@ class FileHandleCache(Generic[_T_co]):
             self.open_files[fn] = fh
             return fh
 
-    def __enter__(self) -> FileHandleCache[_T_co]:
+    def __enter__(self) -> FileHandleCache[T_co]:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:

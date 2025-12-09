@@ -99,6 +99,7 @@ pipeline SC_VDJ_ASSEMBLER_CS(
                 chemistry_spec:           "SCVDJ_auto",
                 denovo:                   self.denovo,
                 inner_enrichment_primers: self.inner_enrichment_primers,
+                max_reads_per_barcode:    null,
                 physical_library_id:      null,
                 r1_length:                null,
                 r2_length:                null,
@@ -120,26 +121,28 @@ pipeline SC_VDJ_ASSEMBLER_CS(
     )
 
     call SC_MULTI_CORE(
-        common_input          = _STRUCTIFY.common_input,
-        count_input           = null,
-        vdj_inputs            = FULL_VDJ_INPUTS,
-        vdj_gen_inputs        = {
+        common_input              = _STRUCTIFY.common_input,
+        count_input               = null,
+        count_cell_calling_config = null,
+        vdj_inputs                = FULL_VDJ_INPUTS,
+        vdj_gen_inputs            = {
             filter_flags: {
                 multiplet_filter:     null,
                 shared_contig_filter: null,
                 umi_baseline_filter:  null,
             },
-            min_contig_length:  null,
-            reference_path:     null,
-            skip_clonotyping:   self.skip_clonotyping,
-            vdj_reference_path: self.vdj_reference_path,
+            min_contig_length:   null,
+            reference_path:      null,
+            skip_clonotyping:    self.skip_clonotyping,
+            umi_min_read_length: null,
+            vdj_reference_path:  self.vdj_reference_path,
         },
-        basic_config          = _STRUCTIFY.config,
-        multi_config          = null,
-        is_pd                 = false,
-        count_allowed_chems   = null,
-        count_pipestance_type = "SC_RNA_COUNTER_CS",
-        vdj_allowed_chems     = [
+        basic_config              = _STRUCTIFY.config,
+        multi_config              = null,
+        is_pd                     = false,
+        count_allowed_chems       = null,
+        count_pipestance_type     = "SC_RNA_COUNTER_CS",
+        vdj_allowed_chems         = [
             "SCVDJ_auto",
             "custom",
             "SCVDJ",
@@ -148,9 +151,9 @@ pipeline SC_VDJ_ASSEMBLER_CS(
             "SCVDJ-R1",
             "SCVDJ-v3",
         ],
-        is_multi              = false,
-        feature_config        = null,
-        no_preflight          = false,
+        is_multi                  = false,
+        feature_config            = null,
+        no_preflight              = false,
     )
 
     call BUILD_VDJ_OUTPUTS_CS(

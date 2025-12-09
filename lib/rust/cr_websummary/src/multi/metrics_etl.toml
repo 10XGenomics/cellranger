@@ -1,0 +1,1322 @@
+# --------------------------------------------------------------------------------------------------
+# Cell Statistics
+# --------------------------------------------------------------------------------------------------
+#
+# Shared by GEX, AB etc.
+[library_cell_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [library_cell_metrics.conditions]
+    sections = [
+        "Gene Expression",
+        "Antibody Capture",
+        "Antigen Capture",
+        "CRISPR Guide Capture",
+        "Custom Feature",
+    ]
+
+    [library_cell_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [library_cell_metrics.cell_associated_partitions]
+    type = "usize"
+    header = "Cells"
+    json_key = "total_cell_associated_partitions"
+
+        [[library_cell_metrics.cell_associated_partitions.alerts]]
+        error_threshold = 0
+        warn_threshold = 100
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Estimated number of cells is expected to be > 100. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+# --------------------------------------------------------------------------------------------------
+# GEX -> Mapping metrics
+# --------------------------------------------------------------------------------------------------
+[gex_library_mapping_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [gex_library_mapping_metrics.conditions]
+    sections = ["Gene Expression"]
+    is_rtl = false
+
+    [gex_library_mapping_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [gex_library_mapping_metrics.reads_in_library]
+    type = "usize"
+    header = "Number of reads in the library"
+    json_key = "total_read_pairs"
+
+    [gex_library_mapping_metrics.mapped_to_genome]
+    type = "Percent"
+    header = "Mapped to genome"
+    json_key = "multi_genome_mapped_reads_frac"
+
+    [gex_library_mapping_metrics.confidently_mapped_to_genome]
+    type = "Percent"
+    header = "Confidently mapped to genome"
+    json_key = "multi_genome_conf_mapped_reads_frac"
+
+    [gex_library_mapping_metrics.confidently_mapped_to_transcriptome]
+    type = "Percent"
+    header = "Confidently mapped to transcriptome"
+    json_key = "multi_transcriptome_conf_mapped_reads_frac"
+
+        [[gex_library_mapping_metrics.confidently_mapped_to_transcriptome.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Fraction Reads Confidently Mapped To Transcriptome"
+        detail = "Ideal > 30%. This can indicate use of the wrong reference transcriptome, a reference transcriptome with overlapping genes, poor library quality, poor sequencing quality, or reads shorter than the recommended minimum. Application performance may be affected."
+
+    [gex_library_mapping_metrics.confidently_mapped_to_intronic_regions]
+    type = "Percent"
+    header = "Confidently mapped to intronic regions"
+    json_key = "multi_intronic_conf_mapped_reads_frac"
+
+    [gex_library_mapping_metrics.confidently_mapped_to_exonic_regions]
+    type = "Percent"
+    header = "Confidently mapped to exonic regions"
+    json_key = "multi_exonic_conf_mapped_reads_frac"
+
+    [gex_library_mapping_metrics.confidently_mapped_to_intergenic_regions]
+    type = "Percent"
+    header = "Confidently mapped to intergenic regions"
+    json_key = "multi_intergenic_conf_mapped_reads_frac"
+
+    [gex_library_mapping_metrics.confidently_mapped_antisense]
+    type = "Percent"
+    header = "Confidently mapped antisense"
+    json_key = "multi_antisense_reads_frac"
+
+        [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
+        conditions = { include_introns = false }
+        error_threshold = 0.3
+        warn_threshold = 0.1
+        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
+        detail = "Ideal < 10% for single cell samples. High antisense mapping rate can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
+
+        [[gex_library_mapping_metrics.confidently_mapped_antisense.alerts]]
+        conditions = { include_introns = true }
+        error_threshold = 0.4
+        warn_threshold = 0.2
+        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
+        detail = "Ideal < 20%. Rates of up to 40% are common for single nuclei samples. Higher fraction of antisense reads may indicate use of an incorrect chemistry type, or an issue with the reference transcriptome."
+
+# --------------------------------------------------------------------------------------------------
+#  GEX (RTL) -> Mapping metrics
+# --------------------------------------------------------------------------------------------------
+[rtl_library_mapping_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [rtl_library_mapping_metrics.conditions]
+    sections = ["Gene Expression"]
+    is_rtl = true
+
+    [rtl_library_mapping_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [rtl_library_mapping_metrics.reads_in_library]
+    type = "usize"
+    header = "Number of reads in the library"
+    json_key = "total_read_pairs"
+
+    [rtl_library_mapping_metrics.reads_half_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads half-mapped to probe set"
+    json_key = "multi_transcriptome_half_mapped_reads_frac"
+
+        [[rtl_library_mapping_metrics.reads_half_mapped_to_probe_set.alerts]]
+        warn_threshold = 0.2
+        if_metric_is = "greater_than_or_equal"
+        warn_title = "High Fraction Reads Half-Mapped to Probe Set"
+        detail = "Ideal < 20%. This can indicate low RNA content in the sample, poor washing after probe hybridization, deviation from recommended protocol during probe hybridization, or suboptimal sample preparation."
+
+    [rtl_library_mapping_metrics.reads_split_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads split-mapped to probe set"
+    json_key = "multi_transcriptome_split_mapped_reads_frac"
+
+        [[rtl_library_mapping_metrics.reads_split_mapped_to_probe_set.alerts]]
+        warn_threshold = 0.2
+        if_metric_is = "greater_than_or_equal"
+        warn_title = "High Fraction Reads Split-Mapped to Probe Set"
+        detail = "Ideal < 20%. This can indicate low RNA content in the sample, poor washing after probe hybridization, deviation from recommended protocol during probe hybridization, or suboptimal sample preparation."
+
+    [rtl_library_mapping_metrics.reads_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads mapped to probe set"
+    json_key = "multi_transcriptome_mapped_reads_frac"
+
+    [rtl_library_mapping_metrics.reads_confidently_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads confidently mapped to probe set"
+    json_key = "multi_transcriptome_conf_mapped_reads_frac"
+
+        [[rtl_library_mapping_metrics.reads_confidently_mapped_to_probe_set.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.5
+        warn_title = "Low Fraction Reads Confidently Mapped to Probe Set"
+        detail = "Ideal > 50%. This can indicate low total expression, use of the wrong probe set, suboptimal sample preparation, or the use of input FASTQs from products other than Flex."
+
+
+    [rtl_library_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set]
+    type = "Percent"
+    header = "Reads confidently mapped to filtered probe set"
+    json_key = "multi_transcriptome_targeted_conf_mapped_reads_frac"
+
+        [[rtl_library_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.5
+        warn_title = "Low Fraction Reads Confidently Mapped to Filtered Probe Set"
+        detail = "Ideal > 50%. This can indicate low total expression, use of the wrong probe set, suboptimal sample preparation, high expression genes removed by filtering, or the use of input FASTQs from products other than Flex."
+
+[gdna_metrics]
+tier = "Library"
+
+    [gdna_metrics.conditions]
+    sections = ["Gene Expression"]
+    has_gdna = true
+
+    [gdna_metrics.estimated_gdna_content]
+    type = "Percent"
+    header = "Estimated UMIs from genomic DNA"
+
+    [gdna_metrics.estimated_gdna_unspliced_threshold]
+    type = "FloatAsInt"
+    header = "Estimated UMIs from genomic DNA per unspliced probe"
+
+# --------------------------------------------------------------------------------------------------
+# GEX -> Metrics Per Physical Library
+# --------------------------------------------------------------------------------------------------
+[gex_physical_library_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [gex_physical_library_metrics.conditions]
+    sections = ["Gene Expression"]
+
+    [gex_physical_library_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [gex_physical_library_metrics.number_of_reads]
+    type = "usize"
+    header = "Number of reads"
+    json_key = "total_read_pairs"
+
+    [gex_physical_library_metrics.valid_barcodes]
+    type = "Percent"
+    header = "Valid barcodes"
+    json_key = "good_bc_frac"
+
+        [[gex_physical_library_metrics.valid_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1 for Single Cell Universal 3' and 5', or either R1 or R2 for Flex. Application performance may be affected."
+
+    [gex_physical_library_metrics.valid_umis]
+    type = "Percent"
+    header = "Valid UMI Sequences"
+    json_key = "good_umi_frac"
+
+        [[gex_physical_library_metrics.valid_umis.alerts]]
+        # TODO: This seems way too low?
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid UMI Sequences"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [gex_physical_library_metrics.sequencing_saturation]
+    type = "Percent"
+    header = "Sequencing saturation"
+    json_key = "multi_cdna_pcr_dupe_reads_frac"
+
+    [gex_physical_library_metrics.reads_in_cell_associated_partitions]
+    type = "Percent"
+    header = "Confidently mapped reads in cells"
+    json_key = "multi_filtered_bcs_conf_mapped_barcoded_reads_cum_frac"
+
+        [[gex_physical_library_metrics.reads_in_cell_associated_partitions.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.7
+        warn_title = "Low Fraction Confidently Mapped Reads in Cells"
+        detail = "Ideal > 70%. Application performance may be affected. Many of the reads were not from cell-associated barcodes. This could be caused by high levels of ambient RNA or by a significant population of cells with a low RNA content, which the algorithm did not call as cells. The latter case can be addressed by inspecting the data to determine the appropriate cell count and using --force-cells."
+
+    [gex_physical_library_metrics.mean_reads_per_cell_associated_partition]
+    type = "FloatAsInt"
+    header = "Mean reads per cell"
+    json_key = "multi_transcriptome_total_raw_reads_per_filtered_bc"
+
+    # These metrics are specific to barnyard runs so they are set to optional for now
+    # Instead, they should be set to required and their extraction conditional.
+    # See Jira: CELLRANGER-9671
+    [gex_physical_library_metrics.filtered_bcs_observed_all]
+    type = "usize"    
+    header = "GEMs with >0 cells"
+    extract = "optional"
+
+    [gex_physical_library_metrics.filtered_bcs_inferred_multiplets]
+    type = "usize"    
+    header = "GEMs with >1 cells"
+    extract = "optional"
+
+    [gex_physical_library_metrics.filtered_bcs_inferred_multiplet_rate]
+    type = "Percent"    
+    header = "Fraction of GEMs with >1 cells"
+    extract = "optional"
+
+[rtl_physical_library_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [rtl_physical_library_metrics.conditions]
+    sections = ["Gene Expression"]
+    is_rtl = true
+    is_multiplexed = true
+
+    [rtl_physical_library_metrics.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [rtl_physical_library_metrics.valid_gem_barcodes]
+    type = "Percent"
+    header = "Valid GEM barcodes"
+    json_key = "good_bc_in_gel_bead_frac"
+
+        [[rtl_physical_library_metrics.valid_gem_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid GEM Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [rtl_physical_library_metrics.valid_probe_barcodes]
+    type = "Percent"
+    header = "Valid probe barcodes"
+    json_key = "good_bc_in_probe_frac"
+
+        [[rtl_physical_library_metrics.valid_probe_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Probe Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1 or R2. Application performance may be affected."
+
+# --------------------------------------------------------------------------------------------------
+#  Ab
+# --------------------------------------------------------------------------------------------------
+[antibody_library]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [antibody_library.conditions]
+    sections = ["Antibody Capture"]
+
+    [antibody_library.physical_library_id]
+    header = "Physical library ID"
+    type = "String"
+
+    [antibody_library.reads_in_library]
+    type = "usize"
+    json_key = "ANTIBODY_total_read_pairs"
+    header = "Number of reads in the library"
+
+    [antibody_library.fraction_antibody_reads]
+    type = "Percent"
+    json_key = "ANTIBODY_recognized_feature_bc_frac"
+    header = "Fraction antibody reads"
+
+    [antibody_library.fraction_antibody_reads_usable]
+    type = "Percent"
+    json_key = "ANTIBODY_frac_feature_reads_usable"
+    header = "Fraction antibody reads usable"
+
+        [[antibody_library.fraction_antibody_reads_usable.alerts]]
+        error_threshold = 0
+        warn_threshold = 0.20
+        error_title = "No Antibody Reads Usable Found"
+        warn_title = "Low Fraction Antibody Reads Usable"
+        detail = "Ideal > 20%. This may indicate poor library quality for the antibody library, poor sequencing quality, or mistakes while specifying antibody details in the Feature Reference CSV provided to Cell Ranger."
+
+    [antibody_library.fraction_reads_in_aggregate_barcodes]
+    type = "Percent"
+    json_key = "ANTIBODY_reads_lost_to_aggregate_GEMs"
+    extract = "optional"
+    header = "Fraction antibody reads in aggregate barcodes"
+
+        [[antibody_library.fraction_reads_in_aggregate_barcodes.alerts]]
+        conditions = { is_rtl = true }
+        error_threshold = 1.0
+        warn_threshold = 0.20
+        error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
+        warn_title = "High Fraction of Antibody Reads in Aggregate Barcodes"
+        detail = "Ideal < 20%. A high fraction of antibody reads were found to belong to barcodes identified as antibody aggregates and were removed from the final matrix."
+
+        [[antibody_library.fraction_reads_in_aggregate_barcodes.alerts]]
+        conditions = { is_rtl = false }
+        error_threshold = 1.0
+        warn_threshold = 0.05
+        error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
+        warn_title = "High Fraction of Antibody Reads in Aggregate Barcodes"
+        detail = "Ideal < 5%. A high fraction of antibody reads were found to belong to barcodes identified as antibody aggregates and were removed from the final matrix."
+
+    [antibody_library.number_of_reads]
+    type = "usize"
+    json_key = "ANTIBODY_total_read_pairs"
+    header = "Number of reads"
+
+    [antibody_library.valid_barcodes]
+    type = "Percent"
+    json_key = "ANTIBODY_good_bc_frac"
+    header = "Valid barcodes"
+
+        [[antibody_library.valid_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [antibody_library.valid_umis]
+    type = "Percent"
+    json_key = "ANTIBODY_good_umi_frac"
+    header = "Valid UMI Sequences"
+
+    [antibody_library.sequencing_saturation]
+    type = "Percent"
+    json_key = "ANTIBODY_multi_cdna_pcr_dupe_reads_frac"
+    header = "Sequencing saturation"
+
+    [antibody_library.reads_in_cell_associated_partitions]
+    type = "Percent"
+    json_key = "ANTIBODY_feature_reads_in_cells"
+    header = "Antibody reads in cells"
+
+    [antibody_library.mean_reads_per_cell_associated_partition]
+    type = "FloatAsInt"
+    json_key = "ANTIBODY_reads_per_cell"
+    header = "Mean reads per cell"
+
+[antibody_rtl_physical_library_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [antibody_rtl_physical_library_metrics.conditions]
+    sections = ["Antibody Capture"]
+    is_rtl = true
+    is_multiplexed = true
+
+    [antibody_rtl_physical_library_metrics.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [antibody_rtl_physical_library_metrics.valid_gem_barcodes]
+    type = "Percent"
+    json_key = "ANTIBODY_good_bc_in_gel_bead_frac"
+    header = "Valid GEM barcodes"
+
+        [[antibody_rtl_physical_library_metrics.valid_gem_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid GEM Barcodes"
+        detail = "Ideal > 75%. This may indicate a read quality issue. Application performance may be affected."
+
+    [antibody_rtl_physical_library_metrics.valid_probe_barcodes]
+    type = "Percent"
+    json_key = "ANTIBODY_good_bc_in_probe_frac"
+    header = "Valid probe barcodes"
+
+        [[antibody_rtl_physical_library_metrics.valid_probe_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Probe Barcodes"
+        detail = "Ideal > 75%. This may indicate a read quality issue. Application performance may be affected."
+
+# --------------------------------------------------------------------------------------------------
+# Ag -> Metrics Per Physical Library
+# --------------------------------------------------------------------------------------------------
+[antigen_physical_library_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [antigen_physical_library_metrics.conditions]
+    sections = ["Antigen Capture"]
+
+    [antigen_physical_library_metrics.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [antigen_physical_library_metrics.number_of_reads]
+    type = "usize"
+    json_key = "ANTIGEN_total_read_pairs"
+    header = "Number of reads"
+
+    [antigen_physical_library_metrics.valid_barcodes]
+    type = "Percent"
+    json_key = "ANTIGEN_good_bc_frac"
+    header = "Valid barcodes"
+
+        [[antigen_physical_library_metrics.valid_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [antigen_physical_library_metrics.valid_umis]
+    type = "Percent"
+    json_key = "ANTIGEN_good_umi_frac"
+    header = "Valid UMI Sequences"
+
+    [antigen_physical_library_metrics.sequencing_saturation]
+    type = "Percent"
+    json_key = "ANTIGEN_multi_cdna_pcr_dupe_reads_frac"
+    header = "Sequencing saturation"
+
+    [antigen_physical_library_metrics.reads_in_cell_associated_partitions]
+    type = "Percent"
+    json_key = "ANTIGEN_feature_reads_in_cells"
+    header = "Fraction reads in cells"
+
+    [antigen_physical_library_metrics.mean_reads_per_cell_associated_partition]
+    type = "FloatAsInt"
+    json_key = "ANTIGEN_reads_per_cell"
+    header = "Mean reads per cell"
+
+    [antigen_physical_library_metrics.fraction_antigen_reads]
+    type = "Percent"
+    json_key = "ANTIGEN_recognized_feature_bc_frac"
+    header = "Fraction antigen reads"
+
+    [antigen_physical_library_metrics.fraction_antigen_reads_usable]
+    type = "Percent"
+    json_key = "ANTIGEN_frac_feature_reads_usable"
+    header = "Fraction antigen reads usable"
+
+        [[antigen_physical_library_metrics.fraction_antigen_reads_usable.alerts]]
+        error_threshold = 0
+        warn_threshold = 0.20
+        error_title = "No Antigen Reads Usable Found"
+        warn_title = "Low Fraction Antigen Reads Usable"
+        detail = "Ideal > 20%. This may indicate poor library quality for the antigen library, poor sequencing quality, or mistakes while specifying antigen details in the Feature Reference CSV provided to Cell Ranger."
+
+
+    [antigen_physical_library_metrics.fraction_unknown_antigen]
+    type = "Percent"
+    json_key = "ANTIGEN_unrecognized_feature_bc_frac"
+    header = "Fraction unrecognized antigen"
+
+        [[antigen_physical_library_metrics.fraction_unknown_antigen.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.50
+        error_title = "No Recognized Antigens Found"
+        warn_title = "High Fraction Unrecognized Antigens"
+        detail = "Ideal < 50%. A high fraction of antigens do not match any provided in the Feature Reference CSV file. This may indicate poor library quality for the antigen library, poor sequencing quality, or mistakes while specifying antigen details in the Feature Reference CSV provided to Cell Ranger."
+
+    [antigen_physical_library_metrics.fraction_reads_in_aggregate_barcodes]
+    type = "Percent"
+    json_key = "ANTIGEN_reads_lost_to_aggregate_GEMs"
+    extract = "optional"
+    header = "Fraction antigen reads in aggregate barcodes"
+
+        [[antigen_physical_library_metrics.fraction_reads_in_aggregate_barcodes.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.05
+        error_title = "All Antigen Reads Belonged to Aggregate Barcodes"
+        warn_title = "High Fraction of Antigen Reads in Aggregate Barcodes"
+        detail = "Ideal < 5%. A high fraction of antigen reads were found to belong to barcodes identified as antigen aggregates, which were removed from the final matrix."
+
+# --------------------------------------------------------------------------------------------------
+# CRISPR
+# --------------------------------------------------------------------------------------------------
+[crispr_library]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [crispr_library.conditions]
+    sections = ["CRISPR Guide Capture"]
+
+    [crispr_library.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [crispr_library.number_of_reads]
+    type = "usize"
+    json_key = "CRISPR_total_read_pairs"
+    header = "Number of reads"
+
+    [crispr_library.fraction_reads_with_putative_protospacer]
+    type = "Percent"
+    json_key = "CRISPR_feature_bc_extracted_frac"
+    header = "Fraction reads with putative protospacer sequence"
+
+    [crispr_library.fraction_guide_reads]
+    type = "Percent"
+    json_key = "CRISPR_recognized_feature_bc_frac"
+    header = "Fraction guide reads"
+
+    [crispr_library.fraction_guide_reads_usable]
+    type = "Percent"
+    json_key = "CRISPR_frac_feature_reads_usable"
+    header = "Fraction guide reads usable"
+
+        [[crispr_library.fraction_guide_reads_usable.alerts]]
+        error_threshold = 0
+        warn_threshold = 0.20
+        error_title = "No Guide Reads Usable Found"
+        warn_title = "Low Fraction Guide Reads Usable"
+        detail = "Ideal > 20%. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
+
+    [crispr_library.fraction_protospacer_not_recognized]
+    type = "Percent"
+    json_key = "CRISPR_unrecognized_feature_bc_frac"
+    header = "Fraction protospacer not recognized"
+
+        [[crispr_library.fraction_protospacer_not_recognized.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.50
+        error_title = "No Recognized Protospacers Found"
+        warn_title = "High Fraction Unrecognized Protospacer"
+        detail = "Ideal < 50%. A high fraction of protospacer sequences in the CRISPR library do not match any provided in the Feature Reference CSV file. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
+
+    [crispr_library.valid_barcodes]
+    type = "Percent"
+    json_key = "CRISPR_good_bc_frac"
+    header = "Valid barcodes"
+
+        [[crispr_library.valid_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [crispr_library.valid_umis]
+    type = "Percent"
+    json_key = "CRISPR_good_umi_frac"
+    header = "Valid UMI Sequences"
+
+    [crispr_library.sequencing_saturation]
+    type = "Percent"
+    json_key = "CRISPR_multi_cdna_pcr_dupe_reads_frac"
+    header = "Sequencing saturation"
+
+    [crispr_library.reads_in_cell_associated_partitions]
+    type = "Percent"
+    json_key = "CRISPR_feature_reads_in_cells"
+    header = "Guide reads in cells"
+    extract = "placeholder" # absent if 0 cells
+
+    [crispr_library.mean_reads_per_cell_associated_partition]
+    type = "FloatAsInt"
+    json_key = "CRISPR_reads_per_cell"
+    header = "Mean reads per cell"
+
+[rtl_crispr_library]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [rtl_crispr_library.conditions]
+    sections = ["CRISPR Guide Capture"]
+    is_rtl = true
+    is_multiplexed = true
+
+    [rtl_crispr_library.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [rtl_crispr_library.valid_gem_barcodes]
+    type = "Percent"
+    json_key = "CRISPR_good_bc_in_gel_bead_frac"
+    header = "Valid GEM barcodes"
+
+        [[rtl_crispr_library.valid_gem_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid GEM Barcodes"
+        detail = "Ideal > 75%. This may indicate a read quality issue. Application performance may be affected."
+
+    [rtl_crispr_library.valid_probe_barcodes]
+    type = "Percent"
+    json_key = "CRISPR_good_bc_in_probe_frac"
+    header = "Valid probe barcodes"
+
+        [[rtl_crispr_library.valid_probe_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Probe Barcodes"
+        detail = "Ideal > 75%. This may indicate a read quality issue. Application performance may be affected."
+
+# --------------------------------------------------------------------------------------------------
+# Custom -> Metrics Per Physical Library
+# --------------------------------------------------------------------------------------------------
+[custom_feature_physical_library_metrics]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [custom_feature_physical_library_metrics.conditions]
+    sections = ["Custom Feature"]
+
+    [custom_feature_physical_library_metrics.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [custom_feature_physical_library_metrics.number_of_reads]
+    type = "usize"
+    header = "Number of reads"
+    json_key = "Custom_total_read_pairs"
+
+    [custom_feature_physical_library_metrics.valid_barcodes]
+    type = "Percent"
+    header = "Valid barcodes"
+    json_key = "Custom_good_bc_frac"
+
+        [[custom_feature_physical_library_metrics.valid_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [custom_feature_physical_library_metrics.valid_umis]
+    type = "Percent"
+    header = "Valid UMI Sequences"
+    json_key = "Custom_good_umi_frac"
+
+    [custom_feature_physical_library_metrics.sequencing_saturation]
+    type = "Percent"
+    header = "Sequencing saturation"
+    json_key = "Custom_multi_cdna_pcr_dupe_reads_frac"
+
+    [custom_feature_physical_library_metrics.reads_in_cell_associated_partitions]
+    type = "Percent"
+    header = "Fraction reads in cells"
+    json_key = "Custom_feature_reads_in_cells"
+
+    [custom_feature_physical_library_metrics.mean_reads_per_cell_associated_partition]
+    type = "FloatAsInt"
+    header = "Mean reads per cell"
+    json_key = "Custom_reads_per_cell"
+
+    [custom_feature_physical_library_metrics.fraction_feature_reads]
+    type = "Percent"
+    header = "Fraction feature reads"
+    json_key = "Custom_recognized_feature_bc_frac"
+
+    [custom_feature_physical_library_metrics.fraction_feature_reads_usable]
+    type = "Percent"
+    header = "Fraction feature reads usable"
+    json_key = "Custom_frac_feature_reads_usable"
+
+    [custom_feature_physical_library_metrics.fraction_unknown_feature]
+    type = "Percent"
+    header = "Fraction unrecognized feature"
+    json_key = "Custom_unrecognized_feature_bc_frac"
+
+# --------------------------------------------------------------------------------------------------
+# CMO/Hashtag Multiplexing
+# --------------------------------------------------------------------------------------------------
+[cmo_library]
+tier = "Library"
+group_by_key = "physical_library_id"
+
+    [cmo_library.conditions]
+    sections = ["Multiplexing Capture"]
+
+    [cmo_library.physical_library_id]
+    type = "String"
+    header = "Physical library ID"
+
+    [cmo_library.number_of_reads]
+    type = "usize"
+    header = "Number of reads"
+        json_key = "MULTIPLEXING_total_read_pairs"
+
+    [cmo_library.valid_barcodes]
+    type = "Percent"
+    header = "Valid barcodes"
+        json_key = "MULTIPLEXING_good_bc_frac"
+
+        [[cmo_library.valid_barcodes.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Low Fraction Valid Barcodes"
+        detail = "Ideal > 75%. This may indicate a quality issue with R1. Application performance may be affected."
+
+    [cmo_library.valid_umis]
+    type = "Percent"
+    header = "Valid UMI Sequences"
+    json_key = "MULTIPLEXING_good_umi_frac"
+
+    [cmo_library.sequencing_saturation]
+    type = "Percent"
+    header = "Sequencing saturation"
+        json_key = "MULTIPLEXING_multi_cdna_pcr_dupe_reads_frac"
+
+    [cmo_library.reads_in_cell_associated_partitions]
+    type = "Percent"
+    header = "Fraction reads in cell-associated barcodes"
+    json_key = "MULTIPLEXING_feature_reads_in_cells"
+
+        [[cmo_library.reads_in_cell_associated_partitions.alerts]]
+        error_threshold = 0.20
+        warn_threshold = 0.30
+        warn_title = "Low Fraction Reads in Cell-Associated Partitions"
+        detail = "Ideal > 30%. Usually indicates high background in the multiplexing library, which may result from experimental issues (e.g. cell-handling). Application performance may be affected."
+
+    [cmo_library.mean_reads_per_cell_associated_partition]
+    type = "FloatAsInt"
+    header = "Mean reads per cell-associated barcode"
+    json_key = "MULTIPLEXING_multi_total_raw_reads_per_filtered_bc"
+
+    [cmo_library.fraction_cmo_reads]
+    type = "Percent"
+    header = "Fraction CMO reads"
+    json_key = "MULTIPLEXING_recognized_feature_bc_frac"
+
+    [cmo_library.fraction_cmo_reads_usable]
+    type = "Percent"
+    header = "Fraction CMO reads usable"
+    json_key = "MULTIPLEXING_frac_feature_reads_usable"
+
+    [cmo_library.fraction_unknown_cmo]
+    type = "Percent"
+    header = "Fraction unrecognized CMO"
+        json_key = "MULTIPLEXING_unrecognized_feature_bc_frac"
+
+        [[cmo_library.fraction_unknown_cmo.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.50
+        error_title = "No Recognized CMO Sequences Found"
+        warn_title = "High Fraction Unrecognized CMO Sequences"
+        detail = "Ideal < 50%. A high fraction of CMOs do not match known CMO sequences. This may indicate poor library quality for the CMO library, poor sequencing quality, or an error in the CMO CSV provided to Cell Ranger (if a custom CMO CSV was specified)."
+
+    [cmo_library.fraction_reads_from_multiplets]
+    type = "Percent"
+    header = "Fraction reads from multiplets"
+    json_key = "MULTIPLEXING_frac_reads_from_multiplets"
+
+    [cmo_library.cell_associated_partitions]
+    header = "Estimated number of cell-associated barcodes"
+    type = "usize"
+    json_key = "multi_filtered_bcs"
+
+    [cmo_library.samples_assigned_at_least_one_singlet]
+    type = "usize"
+    header = "Number of samples assigned at least one cell"
+    json_key = "samples_with_any_singlets"
+
+        [[cmo_library.samples_assigned_at_least_one_singlet.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "No samples assigned a cell"
+        detail = "No samples have been assigned a cell. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in staining or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one CMO (or Hashtag) can be assigned to a sample."
+
+    [cmo_library.singlets_assigned_to_a_sample]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    transformer = "CellsFraction"
+    json_key = "total_singlets"
+    header = "Cells assigned to a sample"
+
+        [[cmo_library.singlets_assigned_to_a_sample.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "No cells have been assigned to a sample"
+        detail = "No cells have been assigned to a sample. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in staining or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one CMO (or Hashtag) can be assigned to a sample."
+
+    [cmo_library.singlet_capture_ratio]
+    type = "f64"
+    header = "Singlet capture ratio"
+    json_key = "MULTIPLEXING_sc_rec_efficiency_jibes"
+    extract = "placeholder" # absent if 0 cells
+
+        [[cmo_library.singlet_capture_ratio.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Fewer than expected number of singlets recovered"
+        detail = "Ideal >= 0.85. The ratio of observed and expected number of singlets (i.e. cell-associated barcodes assigned exactly one CMO) is less than ideal - fewer than expected number of singlets have been recovered. This may indicate experimental issues (CMO staining quality, cell-handling, etc.) or mistakes in CMO or sample definitions specified in the Config CSV."
+
+    [cmo_library.median_cmo_umis_per_singlet]
+    type = "FloatAsInt"
+    header = "Median CMO UMI Counts per cell assigned to a sample"
+    json_key = "MULTIPLEXING_median_cmo_umis_per_singlet"
+    extract = "placeholder" # absent if 0 cells
+
+    [cmo_library.cell_associated_partitions_identified_as_multiplets]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    transformer = "CellsFraction"
+    header = "Cell-associated barcodes identified as multiplets"
+
+    [cmo_library.cell_associated_partitions_not_assigned_any_tags]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    transformer = "CellsFraction"
+    json_key = "cell_associated_partitions_not_assigned_any_samples"
+    header = "Cell-associated barcodes not assigned any CMOs"
+
+# --------------------------------------------------------------------------------------------------
+# Hashtag -> Multiplexing Quality
+# --------------------------------------------------------------------------------------------------
+[hashtag_multiplexing_quality]
+tier = "Library"
+
+    [hashtag_multiplexing_quality.conditions]
+    sections = ["Hashtag"]
+
+    [hashtag_multiplexing_quality.cell_associated_partitions]
+    type = "usize"
+    header = "Cell-associated barcodes"
+    json_key = "multi_filtered_bcs"
+
+        [[hashtag_multiplexing_quality.cell_associated_partitions.alerts]]
+        error_threshold = 0
+        warn_threshold = 100
+        error_title = "No Cells Detected"
+        warn_title = "Low Number of Cells Detected"
+        detail = "Estimated number of cell-associated barcodes is expected to be > 100. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. Application performance is likely to be affected."
+
+    [hashtag_multiplexing_quality.samples_assigned_at_least_one_singlet]
+    type = "usize"
+    header = "Number of samples assigned at least one cell"
+    json_key = "samples_with_any_singlets"
+
+    [hashtag_multiplexing_quality.singlets_assigned_to_a_sample]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    transformer = "CellsFraction"
+    json_key = "total_singlets"
+    header = "Cell-associated barcodes assigned to a sample"
+
+        [[hashtag_multiplexing_quality.singlets_assigned_to_a_sample.alerts]]
+        if_metric_is = "less_than_or_equal"
+        error_threshold = 0
+        error_title = "No cells have been assigned to a sample"
+        detail = "No cells have been assigned to a sample. This may indicate experimental issues (Hashtag staining quality, cell-handling, etc.) or mistakes in staining or sample definitions specified in the Config CSV. Only cell-associated barcodes assigned exactly one Hashtag can be assigned to a sample."
+
+    [hashtag_multiplexing_quality.median_hashtag_umis_per_singlet]
+    type = "FloatAsInt"
+    header = "Median Hashtag UMI Counts per cell"
+    json_key = "ANTIBODY_median_cmo_umis_per_singlet"
+
+    [hashtag_multiplexing_quality.cell_associated_partitions_identified_as_multiplets]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    transformer = "CellsFraction"
+    header = "Cell-associated barcodes identified as multiplets"
+
+    [hashtag_multiplexing_quality.cell_associated_partitions_not_assigned_any_tags]
+    type = "CountAndPercent" # NOTE: Alerts for CountAndPercent are based on the count, not percent
+    transformer = "CellsFraction"
+    json_key = "cell_associated_partitions_not_assigned_any_samples"
+    header = "Cell-associated barcodes not assigned any Hashtags"
+
+    [hashtag_multiplexing_quality.hashtag_singlet_capture_ratio]
+    type = "f64"
+    header = "Singlet capture ratio"
+    json_key = "ANTIBODY_sc_rec_efficiency_jibes"
+    extract = "optional"
+
+        [[hashtag_multiplexing_quality.hashtag_singlet_capture_ratio.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.75
+        warn_title = "Fewer than expected number of singlets recovered"
+        detail = "Ideal >= 0.85. The ratio of observed and expected (according to Poisson statistics) number of singlets (i.e. cell-associated barcodes assigned exactly one Hashtag) is less than ideal - fewer than expected number of singlets have been recovered. This may indicate experimental issues (Hashtag staining quality, cell-handling, etc.) or mistakes in Hashtag or sample definitions specified in the Config CSV."
+
+####################################################################################################
+# Section 2: Tables that appear in the "Sample" Tab
+####################################################################################################
+
+[gdna_sample_metrics]
+tier = "Cells"
+
+    [gdna_sample_metrics.conditions]
+    sections = ["Gene Expression"]
+    has_gdna = true
+
+    [gdna_sample_metrics.estimated_gdna_content]
+    type = "Percent"
+    header = "Estimated UMIs from genomic DNA"
+
+    [gdna_sample_metrics.estimated_gdna_unspliced_threshold]
+    type = "FloatAsInt"
+    header = "Estimated UMIs from genomic DNA per unspliced probe"
+
+# --------------------------------------------------------------------------------------------------
+# GEX -> Mapping metrics
+# --------------------------------------------------------------------------------------------------
+[gex_sample_mapping_metrics]
+tier = "Cells"
+
+    [gex_sample_mapping_metrics.conditions]
+    sections = ["Gene Expression"]
+    is_rtl = false
+    is_multiplexed = true
+
+    [gex_sample_mapping_metrics.number_of_reads_in_cells]
+    type = "usize"
+    header = "Number of reads in cells"
+    json_key = "total_read_pairs_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [gex_sample_mapping_metrics.mapped_to_genome]
+    type = "Percent"
+    header = "Mapped to genome"
+    json_key = "multi_genome_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [gex_sample_mapping_metrics.confidently_mapped_to_genome]
+    type = "Percent"
+    header = "Confidently mapped to genome"
+    json_key = "multi_genome_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [gex_sample_mapping_metrics.confidently_mapped_to_transcriptome]
+    type = "Percent"
+    header = "Confidently mapped to transcriptome"
+    json_key = "multi_transcriptome_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+        [[gex_sample_mapping_metrics.confidently_mapped_to_transcriptome.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.3
+        warn_title = "Low Fraction Reads Confidently Mapped To Transcriptome"
+        detail = "Ideal > 30%. This can indicate use of the wrong reference transcriptome, a reference transcriptome with overlapping genes, poor library quality, poor sequencing quality, or reads shorter than the recommended minimum. Application performance may be affected."
+
+    [gex_sample_mapping_metrics.confidently_mapped_to_intronic_regions]
+    type = "Percent"
+    header = "Confidently mapped to intronic regions"
+    json_key = "multi_intronic_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [gex_sample_mapping_metrics.confidently_mapped_to_exonic_regions]
+    type = "Percent"
+    header = "Confidently mapped to exonic regions"
+    json_key = "multi_exonic_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [gex_sample_mapping_metrics.confidently_mapped_to_intergenic_regions]
+    type = "Percent"
+    header = "Confidently mapped to intergenic regions"
+    json_key = "multi_intergenic_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [gex_sample_mapping_metrics.confidently_mapped_antisense]
+    type = "Percent"
+    header = "Confidently mapped antisense"
+    json_key = "multi_antisense_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+        [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
+        conditions = { include_introns = false }
+        error_threshold = 0.3
+        warn_threshold = 0.1
+        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
+        detail = "Ideal < 10% for single cell samples. This metric will usually be higher if run with --include_introns. This can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
+
+        [[gex_sample_mapping_metrics.confidently_mapped_antisense.alerts]]
+        conditions = { include_introns = true }
+        error_threshold = 0.4
+        warn_threshold = 0.2
+        warn_title = "High Fraction of Reads Mapped Antisense to Genes"
+        detail = "Ideal < 10% for single cell samples, but rates of 20% to 40% are common for single nuclei samples. This metric will usually be higher if run with --include_introns. If this is a single cell sample, this can indicate use of an incorrect chemistry type, an issue with the reference transcriptome, or elevated levels of antisense reads. Application performance is likely to be affected."
+
+# --------------------------------------------------------------------------------------------------
+#  GEX (RTL) -> Mapping metrics
+# --------------------------------------------------------------------------------------------------
+[rtl_sample_mapping_metrics]
+tier = "Cells"
+
+    [rtl_sample_mapping_metrics.conditions]
+    sections = ["Gene Expression"]
+    is_rtl = true
+    is_multiplexed = true
+
+    [rtl_sample_mapping_metrics.number_of_reads_in_cells]
+    type = "usize"
+    header = "Number of reads in cells"
+    json_key = "total_read_pairs_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [rtl_sample_mapping_metrics.reads_half_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads half-mapped to probe set"
+    json_key = "multi_transcriptome_half_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+        [[rtl_sample_mapping_metrics.reads_half_mapped_to_probe_set.alerts]]
+        warn_threshold = 0.2
+        if_metric_is = "greater_than_or_equal"
+        warn_title = "High Fraction Reads Half-Mapped to Probe Set"
+        detail = "Ideal < 20%. This can indicate low RNA content in the sample, poor washing after probe hybridization, deviation from recommended protocol during probe hybridization, or suboptimal sample preparation."
+
+    [rtl_sample_mapping_metrics.reads_split_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads split-mapped to probe set"
+    json_key = "multi_transcriptome_split_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+        [[rtl_sample_mapping_metrics.reads_split_mapped_to_probe_set.alerts]]
+        warn_threshold = 0.2
+        if_metric_is = "greater_than_or_equal"
+        warn_title = "High Fraction Reads Split-Mapped to Probe Set"
+        detail = "Ideal < 20%. This can indicate low RNA content in the sample, poor washing after probe hybridization, deviation from recommended protocol during probe hybridization, or suboptimal sample preparation."
+
+    [rtl_sample_mapping_metrics.reads_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads mapped to probe set"
+    json_key = "multi_transcriptome_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+    [rtl_sample_mapping_metrics.reads_confidently_mapped_to_probe_set]
+    type = "Percent"
+    header = "Reads confidently mapped to probe set"
+    json_key = "multi_transcriptome_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+        [[rtl_sample_mapping_metrics.reads_confidently_mapped_to_probe_set.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.5
+        warn_title = "Low Fraction Reads Confidently Mapped to Probe Set"
+        detail = "Ideal > 50%. This can indicate low aggregate expression, use of the wrong probe set, or the use of input FASTQs from products other than Flex."
+
+    [rtl_sample_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set]
+    type = "Percent"
+    header = "Reads confidently mapped to filtered probe set"
+    json_key = "multi_transcriptome_targeted_conf_mapped_reads_frac_in_filtered_barcodes"
+    extract = "placeholder"
+
+        [[rtl_sample_mapping_metrics.reads_confidently_mapped_to_filtered_probe_set.alerts]]
+        error_threshold = 0.2
+        warn_threshold = 0.5
+        warn_title = "Low Fraction Reads Confidently Mapped to Filtered Probe Set"
+        detail = "Ideal > 50%. This can indicate low aggregate expression, use of the wrong probe set, high expression genes removed by filtering, or the use of input FASTQs from products other than Flex."
+
+# --------------------------------------------------------------------------------------------------
+# Antibody -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[antibody_sample]
+tier = "Cells"
+
+    [antibody_sample.conditions]
+    sections = ["Antibody Capture"]
+
+    [antibody_sample.total_singlets]
+    type = "usize"
+    json_key = "ANTIBODY_multi_filtered_bcs"
+    header = "Cells"
+
+        [[antibody_sample.total_singlets.alerts]]
+        error_threshold = 0
+        warn_threshold = 9
+        error_title = "No Cells Assigned to Sample"
+        warn_title = "Low Number of Cells Assigned to Sample"
+        detail = "A low number of cells were found in this sample. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. At least 10 cells need to be assigned to a sample in order to obtain secondary analysis and visualization, such as tSNE plots. Application performance is likely to be affected."
+
+    [antibody_sample.median_umis_per_singlet]
+    type = "FloatAsInt"
+    json_key = "ANTIBODY_multi_filtered_bcs_median_counts"
+    header = "Median UMI counts per cell"
+
+    [antibody_sample.antibody_reads_usable_per_cell]
+    type = "FloatAsInt"
+    json_key = "ANTIBODY_multi_usable_reads_per_filtered_bc"
+    header = "Mean antibody reads usable per cell"
+
+    [antibody_sample.number_of_reads_in_cells]
+    type = "usize"
+    json_key = "ANTIBODY_total_read_pairs_in_filtered_barcodes"
+    header = "Number of reads in cells"
+    extract = "placeholder"
+
+    [antibody_sample.fraction_antibody_reads]
+    type = "Percent"
+    json_key = "ANTIBODY_recognized_feature_bc_frac_in_filtered_barcodes"
+    header = "Fraction antibody reads"
+    extract = "placeholder"
+
+    [antibody_sample.fraction_reads_in_aggregate_barcodes]
+    type = "Percent"
+    json_key = "ANTIBODY_reads_lost_to_aggregate_GEMs"
+    extract = "optional"
+    header = "Fraction antibody reads in aggregate barcodes"
+
+        [[antibody_sample.fraction_reads_in_aggregate_barcodes.alerts]]
+        conditions = { is_rtl = true }
+        error_threshold = 1.0
+        warn_threshold = 0.20
+        error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
+        warn_title = "High Fraction of Antibody Reads in Aggregate Barcodes"
+        detail = "Ideal < 20%. A high fraction of antibody reads were found to belong to barcodes identified as antibody aggregates and were removed from the final matrix."
+
+        [[antibody_sample.fraction_reads_in_aggregate_barcodes.alerts]]
+        conditions = { is_rtl = false }
+        error_threshold = 1.0
+        warn_threshold = 0.05
+        error_title = "All Antibody Reads Belonged to Aggregate Barcodes"
+        warn_title = "High Fraction of Antibody Reads in Aggregate Barcodes"
+        detail = "Ideal < 5%. A high fraction of antibody reads were found to belong to barcodes identified as antibody aggregates and were removed from the final matrix."
+
+[antibody_sample_read]
+tier = "Cells"
+
+    [antibody_sample_read.conditions]
+    sections = ["Antibody Capture"]
+    is_read_multiplexed = true
+
+    [antibody_sample_read.reads_in_cells]
+    type = "Percent"
+    json_key = "ANTIBODY_feature_reads_in_cells"
+    header = "Antibody reads in cells"
+
+# --------------------------------------------------------------------------------------------------
+# CRISPR
+# --------------------------------------------------------------------------------------------------
+[crispr_sample]
+tier = "Cells"
+
+    [crispr_sample.conditions]
+    sections = ["CRISPR Guide Capture"]
+
+    [crispr_sample.total_singlets]
+    type = "usize"
+    json_key = "CRISPR_multi_filtered_bcs"
+    header = "Cells"
+    extract = "placeholder" # absent if 0 cells
+
+    [crispr_sample.median_umis_per_singlet]
+    type = "FloatAsInt"
+    json_key = "CRISPR_multi_filtered_bcs_median_counts"
+    header = "Median UMI counts per cell"
+    extract = "placeholder" # absent if 0 cells
+
+    [crispr_sample.guide_reads_usable_per_cell]
+    type = "FloatAsInt"
+    json_key = "CRISPR_multi_usable_reads_per_filtered_bc"
+    header = "Mean guide reads usable per cell"
+    extract = "placeholder" # absent if 0 cells
+
+    [crispr_sample.cells_with_one_or_more_protospacers_detected]
+    type = "Percent" # this was CountAndPercent in the mockup, if we want that need to tweak CRISPR metrics to keep the counts
+    json_key = "CRISPR_frac_cells_with_protospacer"
+    header = "Cells with one or more protospacers detected"
+    extract = "placeholder" # absent if 0 cells
+
+    [crispr_sample.cells_with_two_or_more_protospacers_detected]
+    type = "Percent" # this was CountAndPercent in the mockup, if we want that need to tweak CRISPR metrics to keep the counts
+    json_key = "CRISPR_frac_cells_with_multiple_protospacer"
+    header = "Cells with two or more protospacers detected"
+    extract = "placeholder" # absent if 0 cells
+
+    [crispr_sample.number_of_reads_in_cells]
+    type = "usize"
+    json_key = "CRISPR_total_read_pairs_in_filtered_barcodes"
+    header = "Number of reads in cells"
+    extract = "placeholder"
+
+    [crispr_sample.fraction_reads_with_putative_protospacer]
+    type = "Percent"
+    json_key = "CRISPR_feature_bc_extracted_frac_in_filtered_barcodes"
+    header = "Fraction reads with putative protospacer sequence"
+    extract = "placeholder"
+
+    [crispr_sample.fraction_guide_reads]
+    type = "Percent"
+    json_key = "CRISPR_recognized_feature_bc_frac_in_filtered_barcodes"
+    header = "Fraction guide reads"
+    extract = "placeholder"
+
+        [[crispr_sample.fraction_guide_reads.alerts]]
+        error_threshold = 0
+        warn_threshold = 0.20
+        error_title = "No Guide Reads Found"
+        warn_title = "Low Fraction Guide Reads"
+        detail = "Ideal > 20%. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
+
+    [crispr_sample.fraction_protospacer_not_recognized]
+    type = "Percent"
+    json_key = "CRISPR_unrecognized_feature_bc_frac_in_filtered_barcodes"
+    header = "Fraction protospacer not recognized"
+    extract = "placeholder"
+
+        [[crispr_sample.fraction_protospacer_not_recognized.alerts]]
+        error_threshold = 1.0
+        warn_threshold = 0.50
+        error_title = "No Recognized Protospacers Found"
+        warn_title = "High Fraction Unrecognized Protospacer"
+        detail = "Ideal < 50%. A high fraction of protospacer sequences in the CRISPR library do not match any provided in the Feature Reference CSV file. This may indicate poor library quality for the CRISPR library, poor sequencing quality, or mistakes while specifying guide RNA details in the Feature Reference CSV provided to Cell Ranger."
+
+[crispr_sample_read_hero_metrics]
+tier = "Cells"
+
+    [crispr_sample_read_hero_metrics.conditions]
+    sections = ["CRISPR Guide Capture"]
+    is_read_multiplexed = true
+
+    [crispr_sample_read_hero_metrics.reads_in_cells]
+    type = "Percent"
+    json_key = "CRISPR_feature_reads_in_cells"
+    header = "Guide reads in cells"
+    extract = "placeholder" # absent if 0 cells
+
+# --------------------------------------------------------------------------------------------------
+# Custom -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[custom_feature_sample_hero_metrics]
+tier = "Cells"
+
+    [custom_feature_sample_hero_metrics.conditions]
+    sections = ["Custom Feature"]
+
+    [custom_feature_sample_hero_metrics.total_singlets]
+    type = "usize"
+    header = "Cells"
+    json_key = "Custom_multi_filtered_bcs"
+
+    [custom_feature_sample_hero_metrics.median_umis_per_singlet]
+    type = "FloatAsInt"
+    header = "Median UMI counts per cell"
+    json_key = "Custom_multi_filtered_bcs_median_counts"
+
+    [custom_feature_sample_hero_metrics.feature_reads_usable_per_cell]
+    type = "FloatAsInt"
+    header = "Mean feature reads usable per cell"
+    json_key = "Custom_multi_usable_reads_per_filtered_bc"
+
+# --------------------------------------------------------------------------------------------------
+# Antigen -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[antigen_sample_hero_metrics]
+tier = "Cells"
+group_by_key = "feature_type"
+
+    [antigen_sample_hero_metrics.conditions]
+    sections = ["Antigen Capture"]
+
+    [antigen_sample_hero_metrics.feature_type]
+    type = "String"
+    header = "Feature Type"
+
+    [antigen_sample_hero_metrics.total_singlets]
+    type = "usize"
+    json_key = "ANTIGEN_multi_filtered_bcs"
+    header = "Cells"
+    extract = "placeholder" # absent if 0 cells
+
+        [[antigen_sample_hero_metrics.total_singlets.alerts]]
+        error_threshold = 0
+        warn_threshold = 9
+        error_title = "No Cells Assigned to Sample"
+        warn_title = "Low Number of Cells Assigned to Sample"
+        detail = "A low number of cells were found in this sample. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. At least 10 cells need to be assigned to a sample in order to obtain secondary analysis and visualization, such as tSNE plots. Application performance is likely to be affected."
+
+
+    [antigen_sample_hero_metrics.median_umis_per_singlet]
+    type = "FloatAsInt"
+    json_key = "ANTIGEN_multi_filtered_bcs_median_counts"
+    header = "Median antigen UMI counts per cell"
+    extract = "placeholder" # absent if 0 cells
+
+    [antigen_sample_hero_metrics.antigen_reads_usable_per_cell]
+    type = "FloatAsInt"
+    json_key = "ANTIGEN_multi_usable_reads_per_filtered_bc"
+    header = "Mean antigen reads usable per cell"
+    extract = "placeholder" # absent if 0 cells

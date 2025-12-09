@@ -1,0 +1,15 @@
+{
+  "presets": [
+    "@babel/preset-env",
+    "@babel/preset-react",
+    "@babel/preset-typescript"
+  ],
+  "plugins": [],
+  "targets": {
+    "chrome": "79",
+    "edge": "94",
+    "firefox": "78",
+    "opera": "80",
+    "safari": "13.1"
+  }
+}

@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use crate::reference::probe_set_reference::TargetSetFile;
 use crate::types::TargetingMethod;
 use martian_derive::martian_filetype;

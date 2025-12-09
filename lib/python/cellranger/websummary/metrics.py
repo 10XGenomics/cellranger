@@ -316,6 +316,13 @@ class SpatialMetricAnnotations(MetricAnnotations):
         super().__init__("spatial_metrics.csv", intron_mode_alerts=intron_mode_alerts)
 
 
+class SpatialHDMetricAnnotations(SpatialMetricAnnotations):
+    def __init__(self, intron_mode_alerts=False):
+        super().__init__(intron_mode_alerts=intron_mode_alerts)
+        file_path = os.path.join(os.path.dirname(__file__), "spatial_hd_metrics.csv")
+        self._override_metric_settings(file_path)
+
+
 class SpatialAggrMetricAnnotations(SpatialMetricAnnotations):
     def __init__(self):
         super().__init__()

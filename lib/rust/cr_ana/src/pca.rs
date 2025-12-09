@@ -1,18 +1,22 @@
 //! PCA analysis code
+#![deny(missing_docs)]
 
 use crate::types::PcaResult;
-use anyhow::Result;
-use cr_types::reference::feature_reference::FeatureType;
+use anyhow::{Error, Result};
 use cr_types::FeatureBarcodeType;
+use cr_types::reference::feature_reference::FeatureType;
 use log::warn;
 use ndarray::linalg::Dot;
-use ndarray::{s, Array, Array1, Array2, Axis};
-use ndarray_stats::interpolate::Linear;
+use ndarray::{Array, Array1, Array2, Axis, s};
 use ndarray_stats::Quantile1dExt;
-use noisy_float::types::{n64, N64};
-use scan_rs::dim_red::bk_svd::BkSvd;
+use ndarray_stats::interpolate::Linear;
+use noisy_float::types::{N64, n64};
 use scan_rs::dim_red::Pca;
-use scan_rs::normalization::{normalize_with_size_factor, Normalization};
+use scan_rs::dim_red::bk_svd::BkSvd;
+use scan_rs::normalization::{
+    FixedPointFormat, LogBase, Normalization, log1p_normalize_fixed_point,
+    normalize_with_size_factor,
+};
 use scan_rs::stats::median_mut;
 use sqz::{AdaptiveMat, AdaptiveVec, LowRankOffset, MatrixMap};
 use std::cmp::Ordering;
@@ -47,7 +51,7 @@ fn binned_median(
 }
 
 fn unselect(len: usize, vals: &Array1<f64>, idxs: &[usize]) -> Array1<f64> {
-    let mut ret = Array1::from_elem((len,), f64::NAN);
+    let mut ret = Array1::from_elem(len, f64::NAN);
     for (&idx, &val) in zip(idxs, vals) {
         ret[idx] = val;
     }
@@ -73,7 +77,11 @@ fn compute_normalized_dispersion(
     let mut quantiles = mean
         .mapv(n64)
         .quantiles_mut(&qs, &Linear)
-        .map(ndarray::ArrayBase::into_raw_vec)
+        .map(|xs| {
+            let (xs, offset) = xs.into_raw_vec_and_offset();
+            assert_eq!(offset, Some(0));
+            xs
+        })
         .unwrap_or_default();
     quantiles.dedup();
     if quantiles.len() <= 1 {
@@ -134,27 +142,52 @@ fn select_features(
     Ok((filtered_matrix, dispersion, features))
 }
 
-/// Gets the normalized matrix from the filtered feature barcode matrix
-/// If the feature type is not Antibody
-/// runs in spatial, use the standard cellranger normalization
-/// For feature type antibody in a spatial run, normalizes just taking logarithms
-fn get_normalized_matrix<D, M>(
-    feature_type: FeatureType,
-    is_spatial: &bool,
-    filtered_matrix: AdaptiveMat<u32, D, M>,
-) -> LowRankOffset<D, impl MatrixMap<u32, f64>>
+type BkSvdPcaResult = (Array2<f64>, Array1<f64>, Array2<f64>);
+
+fn run_pca_on_filtered_norm_matrix<D>(
+    matrix: LowRankOffset<D, impl MatrixMap<u32, f64>>,
+    num_pcs: usize,
+) -> Result<(BkSvdPcaResult, usize), Error>
 where
     D: Deref<Target = [AdaptiveVec]>,
-    M: MatrixMap<u32, u32>,
 {
-    match (feature_type, is_spatial) {
-        (FeatureType::Barcode(FeatureBarcodeType::Antibody), true) => {
-            normalize_with_size_factor(filtered_matrix, Normalization::LogTransform, None)
-        }
-        _ => normalize_with_size_factor(filtered_matrix, Normalization::CellRanger, None),
+    let [num_features, num_cells] = matrix.shape();
+    let min_dim = std::cmp::min(num_features, num_cells);
+    let num_pcs = if min_dim < num_pcs {
+        warn!(
+            "matrix shape {:?} < requested PCs {}, reducing to {}",
+            matrix.shape(),
+            num_pcs,
+            min_dim
+        );
+        min_dim
+    } else {
+        num_pcs
+    };
+    match BkSvd::new().run_pca(&matrix, num_pcs) {
+        Ok(outs) => Ok((outs, num_pcs)),
+        Err(e) => Err(e),
     }
 }
 
+fn get_components_and_transform_matrix<D>(
+    matrix: LowRankOffset<D, impl MatrixMap<u32, f64>>,
+    u: Array2<f64>,
+    num_pcs: usize,
+    selected_features: &[usize],
+) -> (Array2<f64>, Array2<f64>)
+where
+    D: Deref<Target = [AdaptiveVec]>,
+{
+    let mut components = Array2::from_elem((num_pcs, matrix.rows()), 0.0);
+    for (j, &i) in selected_features.iter().enumerate() {
+        components.slice_mut(s![.., i]).assign(&u.slice(s![j, ..]));
+    }
+    let transformed_pca_matrix = matrix.t().dot(&components.t()); // (bcs, feat) x (feat, pcs)
+    (components, transformed_pca_matrix)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_pca<'a>(
     matrix: &AdaptiveMat,
     feature_ids: &'a [String],
@@ -163,6 +196,7 @@ pub(crate) fn run_pca<'a>(
     num_pcs: usize,
     threshold: f64,
     is_spatial: bool,
+    fixed_point: Option<FixedPointFormat>,
 ) -> Result<PcaResult<'a>> {
     let (filtered_matrix, dispersion, selected_features) =
         select_features(matrix, max_features, threshold)?;
@@ -173,31 +207,59 @@ pub(crate) fn run_pca<'a>(
         .map(|&i| feature_ids[i].as_str())
         .collect::<Vec<_>>();
 
-    let norm_matrix = get_normalized_matrix(feature_type, &is_spatial, filtered_matrix);
-    let [num_features, num_cells] = norm_matrix.shape();
-    let min_dim = std::cmp::min(num_features, num_cells);
-    let num_pcs = if min_dim < num_pcs {
-        warn!(
-            "matrix shape {:?} < requested PCs {}, reducing to {}",
-            norm_matrix.shape(),
+    let ((u, sigma, _), adjusted_num_pcs) = match (feature_type, is_spatial) {
+        (FeatureType::Barcode(FeatureBarcodeType::Antibody), true) => {
+            run_pca_on_filtered_norm_matrix(
+                normalize_with_size_factor(filtered_matrix, Normalization::LogTransform, None),
+                num_pcs,
+            )?
+        }
+        (FeatureType::ProteinExpression, false) | (FeatureType::ProteinExpression, true) => {
+            match fixed_point {
+                Some(fp) => run_pca_on_filtered_norm_matrix(
+                    log1p_normalize_fixed_point(filtered_matrix, LogBase::Two, fp),
+                    num_pcs,
+                )?,
+                None => panic!("missing fixed point details for protein expression"),
+            }
+        }
+        _ => run_pca_on_filtered_norm_matrix(
+            normalize_with_size_factor(filtered_matrix, Normalization::CellRanger, None),
             num_pcs,
-            min_dim
-        );
-        min_dim
-    } else {
-        num_pcs
+        )?,
     };
-    let (u, s, _) = BkSvd::new().run_pca(&norm_matrix, num_pcs)?;
-    let full_norm_matrix = get_normalized_matrix(feature_type, &is_spatial, matrix.view());
-    let mut components = Array2::from_elem((num_pcs, matrix.rows()), 0.0);
-    for (j, &i) in selected_features.iter().enumerate() {
-        components.slice_mut(s![.., i]).assign(&u.slice(s![j, ..]));
-    }
-    let transformed_pca_matrix = full_norm_matrix.t().dot(&components.t()); // (bcs, feat) x (feat, pcs)
 
+    let (components, transformed_pca_matrix) = match (feature_type, is_spatial) {
+        (FeatureType::Barcode(FeatureBarcodeType::Antibody), true) => {
+            get_components_and_transform_matrix(
+                normalize_with_size_factor(matrix.view(), Normalization::LogTransform, None),
+                u,
+                adjusted_num_pcs,
+                &selected_features,
+            )
+        }
+        (FeatureType::ProteinExpression, false) | (FeatureType::ProteinExpression, true) => {
+            match fixed_point {
+                Some(fp) => get_components_and_transform_matrix(
+                    log1p_normalize_fixed_point(matrix.view(), LogBase::Two, fp),
+                    u,
+                    adjusted_num_pcs,
+                    &selected_features,
+                ),
+                None => panic!("missing fixed point details for protein expression"),
+            }
+        }
+        _ => get_components_and_transform_matrix(
+            normalize_with_size_factor(matrix.view(), Normalization::CellRanger, None),
+            u,
+            adjusted_num_pcs,
+            &selected_features,
+        ),
+    };
     let num_bcs = transformed_pca_matrix.shape()[0];
     let num_features = selected_features.len();
-    let variance_explained = s.mapv_into(|v| v * v / ((num_bcs - 1) as f64 * num_features as f64));
+    let variance_explained =
+        sigma.mapv_into(|v| v * v / ((num_bcs - 1) as f64 * num_features as f64));
 
     Ok(PcaResult::new(
         components,
@@ -252,11 +314,7 @@ mod tests {
             [0.92609909, 0.14507504, 0.25503138, 0.59722303, -1.92342854]
         ];
         let mtx = AdaptiveMatOwned::<u32>::from_dense(dense.view());
-        let norm_mat = get_normalized_matrix(
-            FeatureType::Barcode(FeatureBarcodeType::Antibody),
-            &true,
-            mtx,
-        );
+        let norm_mat = normalize_with_size_factor(mtx, Normalization::LogTransform, None);
 
         assert!(expected_out_dense.abs_diff_eq(&norm_mat.to_dense(), 1e-6));
     }
@@ -307,7 +365,7 @@ mod tests {
             ]
         ];
         let mtx = AdaptiveMatOwned::<u32>::from_dense(dense.view());
-        let norm_mat = get_normalized_matrix(FeatureType::Gene, &true, mtx);
+        let norm_mat = normalize_with_size_factor(mtx, Normalization::CellRanger, None);
 
         assert!(expected_out_dense.abs_diff_eq(&norm_mat.to_dense(), 1e-6));
     }

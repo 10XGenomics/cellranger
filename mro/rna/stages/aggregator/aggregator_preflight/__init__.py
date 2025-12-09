@@ -15,11 +15,7 @@ import cellranger.molecule_counter as cr_mol_counter
 from cellranger.chemistry import CHEMISTRY_SC3P_LT, SC3P_CHEMISTRIES, SC5P_CHEMISTRIES
 from cellranger.molecule_counter import TARGETING_METHOD_METRIC
 from cellranger.molecule_counter_converter import convert_v2_to_v4
-from cellranger.rna.library import (
-    ANTIBODY_LIBRARY_TYPE,
-    FEATURE_LIBRARY_TYPES,
-    GENE_EXPRESSION_LIBRARY_TYPE,
-)
+from cellranger.rna.library import FEATURE_LIBRARY_TYPES
 from cellranger.targeted.targeted_constants import TARGETING_METHOD_HC, TARGETING_METHOD_TL
 from cellranger.utils import string_is_ascii
 
@@ -44,7 +40,7 @@ class AggregatorPreflightStageInputs:
 
 def incompat_msg(reason) -> str:
     return (
-        f"The datasets you are trying to aggregate were created with different {reason}s, "
+        f"TXRNGR10019: The datasets you are trying to aggregate were created with different {reason}s, "
         f"but the 'aggr' command requires identical {reason}s in order to combine datasets. "
         f"Please re-run the original pipeline ('count' or 'multi', as the case may be) with "
         f"uniform {reason} in order to aggregate these data."
@@ -101,7 +97,6 @@ def convert_v2_to_v4_if_needed(filename: str, is_pd: bool) -> str:
 
 
 # pylint: disable=too-many-branches,too-many-statements
-# ruff: noqa: PLR0915, PLR0912
 def main(args: AggregatorPreflightStageInputs, _outs: None):
     if args.normalization_mode is not None and args.normalization_mode not in NORM_MODES:
         martian.exit("Normalization mode must be one of: {}".format(", ".join(NORM_MODES)))
@@ -257,12 +252,7 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 martian.exit(
                     "Molecule files provided were produced with different --filter-probes settings. All samples must be run with the same --filter-probes setting."
                 )
-            # Agg of Antibody Capture and Gene expression not allowed
-            if {ANTIBODY_LIBRARY_TYPE} in library_types:
-                if {ANTIBODY_LIBRARY_TYPE, GENE_EXPRESSION_LIBRARY_TYPE} in library_types:
-                    martian.exit(
-                        "Aggr with Antibody Capture and Gene Expression + Antibody Capture libraries is not supported."
-                    )
+
             mol_feature_ref = counter.feature_reference
             assert mol_feature_ref is not None
             if global_feature_ref is None:
@@ -383,7 +373,7 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
 
     if len(observed_ag_control_features) > 1:
         martian.exit(
-            "The datasets you are trying to aggregate have incompatible control "
+            "TXRNGR10020: The datasets you are trying to aggregate have incompatible control "
             "feature ids. Please re-run the original multi pipelines with uniform "
             "[antigen-specificity] sections."
         )

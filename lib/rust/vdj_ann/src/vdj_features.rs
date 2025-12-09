@@ -1,4 +1,5 @@
 // Copyright (c) 2021 10x Genomics, Inc. All rights reserved.
+#![expect(missing_docs)]
 
 // This file contains functions that take as input an amino acid reference sequence for a V
 // segment, along with its chain type (IGH, IGK, IGL, TRA or TRB), and attempt to find features in
@@ -72,11 +73,7 @@ impl Motif {
             .iter()
             .filter_map(|element| element.score(seq))
             .sum();
-        if score == 0 {
-            None
-        } else {
-            Some(score)
-        }
+        if score == 0 { None } else { Some(score) }
     }
 
     /// Search for the best match in a sliding window through a sequence.

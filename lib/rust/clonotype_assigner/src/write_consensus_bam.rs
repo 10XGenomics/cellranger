@@ -1,17 +1,18 @@
 //! WriteConsensusBam stage code
+#![expect(missing_docs)]
 
 use crate::assigner::{
-    bam_record_from_align, replace_sam_by_indexed_bam, BamBaiFile, BamFile, ProtoBinFile, SamFile,
-    QUALITY_OFFSET,
+    BamBaiFile, BamFile, ProtoBinFile, QUALITY_OFFSET, SamFile, bam_record_from_align,
+    replace_sam_by_indexed_bam,
 };
 use anyhow::Result;
 use bio::alignment::pairwise::Aligner;
 use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::LazyFileTypeIO;
+use martian_filetypes::json_file::JsonFile;
 use rayon::prelude::*;
 use rust_htslib::bam;
 use serde::{Deserialize, Serialize};

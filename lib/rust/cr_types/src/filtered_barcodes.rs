@@ -1,9 +1,10 @@
+#![expect(missing_docs)]
 use crate::types::GenomeName;
 use anyhow::Result;
-use barcode::{barcode_string, Barcode};
+use barcode::{Barcode, barcode_string};
 use itertools::Itertools;
-use martian_filetypes::tabular_file::CsvFileNoHeader;
 use martian_filetypes::LazyFileTypeIO;
+use martian_filetypes::tabular_file::CsvFileNoHeader;
 use metric::TxHashSet;
 use serde::{Deserialize, Serialize};
 

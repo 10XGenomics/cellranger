@@ -1,9 +1,10 @@
+#![expect(missing_docs)]
 use crate::utils::CliPath;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use clap::builder::NonEmptyStringValueParser;
 use clap::{self, Parser};
-use cr_types::sample_def::{FastqMode, SampleDef, COUNT_HELP};
 use cr_types::LibraryType;
+use cr_types::sample_def::{COUNT_HELP, FastqMode, SampleDef};
 use fastq_set::filenames::fastq_dir::FastqChecker;
 use itertools::Itertools;
 use metric::TxHashSet;

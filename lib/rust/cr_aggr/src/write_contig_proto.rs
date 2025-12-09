@@ -1,16 +1,17 @@
 //! WriteContigProto stage code
+#![expect(missing_docs)]
 
 use anyhow::Result;
 use cr_types::{BarcodeMultiplexingType, CellLevel, MetricsFile, ReadLevel};
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, LazyFileTypeIO};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_asm_asm::BarcodeDataBriefFile;
-use vdj_proto::io::{VdjProtoWriter, PROTOBUF_VERSION};
+use vdj_proto::io::{PROTOBUF_VERSION, VdjProtoWriter};
 use vdj_proto::types::{MetricsSummary, VdjMetadata, VdjReferenceRaw};
 use vdj_reference::VdjReceptor;
 

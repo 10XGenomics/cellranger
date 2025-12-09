@@ -14,18 +14,18 @@ workspace = true
 [dependencies.string_utils]
 path = '../string_utils'
 
-[dependencies.vdj_ann]
-path = '../vdj_ann'
-
 [dependencies.vector_utils]
 path = '../vector_utils'
 
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'vdj_ann_ref'
 publish = false
 version = '0.1.0'

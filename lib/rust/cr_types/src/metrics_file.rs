@@ -1,11 +1,12 @@
 //! Martian filetype for representing metrics JSON files.
 //! Use this type for any metrics JSON file whose contents is not represented
 //! by a static type.
+#![expect(missing_docs)]
 use anyhow::{Context, Result};
 use martian::MartianRover;
 use martian_derive::martian_filetype;
-use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::json_file::JsonFile;
 use metric::{JsonReport, JsonReporter, TxHashMap};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

@@ -15,9 +15,12 @@ workspace = true
 proc-macro = true
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 include = ['src/lib.rs']
 name = 'json_report_derive'
 publish = false

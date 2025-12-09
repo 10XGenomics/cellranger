@@ -1,4 +1,5 @@
 // Control over the algorithm.
+#![expect(missing_docs)]
 
 pub struct Heuristics {
     pub free: bool,      // do denovo assembly?

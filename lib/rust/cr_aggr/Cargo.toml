@@ -17,6 +17,9 @@ path = '../cr_h5'
 [dependencies.cr_types]
 path = '../cr_types'
 
+[dependencies.cr_vdj]
+path = '../cr_vdj'
+
 [dependencies.cr_websummary]
 path = '../cr_websummary'
 
@@ -25,6 +28,9 @@ workspace = true
 
 [dependencies.docopt]
 workspace = true
+
+[dependencies.enclone_process]
+path = '../enclone_process'
 
 [dependencies.enclone_proto]
 path = '../enclone_proto'
@@ -45,9 +51,6 @@ workspace = true
 path = '../metric'
 
 [dependencies.ndarray]
-workspace = true
-
-[dependencies.plotly]
 workspace = true
 
 [dependencies.serde]
@@ -72,6 +75,9 @@ path = '../vdj_asm_asm'
 [dependencies.vdj_asm_utils]
 path = '../vdj_asm_utils'
 
+[dependencies.vdj_filter_barcodes]
+path = '../vdj_filter_barcodes'
+
 [dependencies.vdj_proto]
 path = '../vdj_proto'
 
@@ -81,9 +87,12 @@ path = '../vdj_reference'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'cr_aggr'
 publish = false
 version = '0.1.0'

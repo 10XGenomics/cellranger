@@ -36,8 +36,8 @@ def main(args, outs):
     h5_version = cr_matrix.CountMatrix.get_format_version_from_h5(args.filtered_matrices_h5)
     if h5_version > cr_matrix.MATRIX_H5_VERSION:
         martian.exit(
-            "Filtered matrices file format version (%d) "
-            "is newer than this version of the software." % h5_version
+            f"Filtered matrices file format version ({h5_version}) "
+            "is newer than this version of the software."
         )
 
     if cr_matrix.get_gem_group_index(args.filtered_matrices_h5) is None:

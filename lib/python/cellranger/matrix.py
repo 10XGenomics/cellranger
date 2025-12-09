@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import copy
+import math
 import os.path
 import pathlib
 import shutil
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
-from io import BufferedIOBase
-from typing import Any, TypeVar, overload
+from io import IOBase
+from typing import Any, overload
 
 import h5py as h5
 import numpy as np
@@ -27,6 +28,7 @@ import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
 from cellranger.fast_utils import (  # pylint: disable=no-name-in-module, invalid-name
     MatrixBarcodeIndex,
+    load_matrix_by_filtered_feature_type,
 )
 from cellranger.feature_ref import GENOME_FEATURE_TAG, FeatureDef, FeatureReference
 from cellranger.wrapped_tables import tables
@@ -51,10 +53,7 @@ def sum_sparse_matrix(matrix, axis: int = 0) -> np.ndarray:
     return axis_sum.reshape((max_dim,))  # reshape accordingly
 
 
-_T = TypeVar("_T", bound=np.generic)
-
-
-def top_n(array: np.ndarray[Any, np.dtype[_T]], n: int) -> Iterable[tuple[int, _T]]:
+def top_n[T: np.generic](array: np.ndarray[Any, np.dtype[T]], n: int) -> Iterable[tuple[int, T]]:
     """Retrieve the N largest elements and their positions in a numpy ndarray.
 
     Args:
@@ -130,7 +129,7 @@ class CountMatrixView:
     ):
         self.feature_mask = np.ones(matrix.features_dim, dtype="bool")
         self.bc_mask = np.ones(matrix.bcs_dim, dtype="bool")
-        self.matrix = matrix
+        self.matrix: CountMatrix = matrix
 
         if feature_indices is not None:
             self.feature_mask.fill(False)
@@ -165,15 +164,25 @@ class CountMatrixView:
         """Sum across an axis."""
         return cr_sparse.sum_masked(self.matrix.m, self.feature_mask, self.bc_mask, axis=axis)
 
+    def max(self, axis: int | None = None) -> Any:
+        """Max across an axis."""
+        return (
+            self.matrix.m.asformat("csr", copy=False)[self.feature_mask, :][:, self.bc_mask]
+            .max(axis=axis)
+            .toarray()[0]
+        )
+
     @overload
     def count_ge(self, axis: None, threshold: int) -> np.uint64: ...
 
     @overload
-    def count_ge(self, axis: int, threshold: int) -> np.ndarray[int, np.dtype[np.uint64]]: ...
+    def count_ge(
+        self, axis: int, threshold: int
+    ) -> np.ndarray[tuple[int], np.dtype[np.uint64]]: ...
 
     def count_ge(
         self, axis: int | None, threshold: int
-    ) -> np.uint64 | np.ndarray[int, np.dtype[np.uint64]]:
+    ) -> np.uint64 | np.ndarray[tuple[int], np.dtype[np.uint64]]:
         """Count number of elements >= X over an axis."""
         return cr_sparse.count_ge_masked(
             self.matrix.m, self.feature_mask, self.bc_mask, threshold, axis
@@ -266,7 +275,7 @@ class CountMatrixView:
 
     def get_genomes(self) -> list[str]:
         """Get a list of the distinct genomes represented by gene expression features."""
-        return CountMatrix._get_genomes_from_feature_ref(self.feature_ref)
+        return self.feature_ref.get_genomes()
 
     def bcs_to_ints(self, bcs: list[bytes] | set[bytes]) -> list[int]:
         # Only works when we haven't masked barcodes.
@@ -315,13 +324,13 @@ class CountMatrix:
         if isinstance(bcs, np.ndarray) and bcs.dtype.type is np.bytes_:
             bc_array = bcs.copy()
         elif len(bcs) == 0:
-            bc_array = np.array([], dtype="S", copy=False)
+            bc_array = np.asarray([], dtype="S")
         else:
             max_len = max(len(bc) for bc in bcs)
             bc_array = np.fromiter(bcs, count=len(bcs), dtype=np.dtype((np.bytes_, max_len)))
         del bcs
         bc_array.flags.writeable = False
-        self.bcs: np.ndarray[int, np.dtype[np.bytes_]] = bc_array
+        self.bcs: np.ndarray[tuple[int], np.dtype[np.bytes_]] = bc_array
         (self.bcs_dim,) = self.bcs.shape
 
         self.bcs_idx = MatrixBarcodeIndex.from_raw_bytes(
@@ -331,15 +340,19 @@ class CountMatrix:
         self.m: sp_sparse.spmatrix = matrix
         assert self.m.shape[1] == len(self.bcs), "Barcodes must be equal to cols of matrix"
 
-    def get_shape(self):
+    def get_shape(self) -> tuple[int, int]:
         """Return the shape of the sliced matrix."""
         return self.m.shape
 
-    def get_num_nonzero(self):
+    def get_num_nonzero(self) -> int:
         """Return the number of nonzero entries in the sliced matrix."""
         return self.m.nnz
 
-    def view(self):
+    def is_empty(self) -> bool:
+        """Return true if the matrix contains no elements."""
+        return self.get_num_nonzero() == 0
+
+    def view(self) -> CountMatrixView:
         """Return a view on this matrix."""
         return CountMatrixView(self)
 
@@ -601,7 +614,7 @@ class CountMatrix:
         matrix_mem_gb = float(nonzero_entries) / h5_constants.NUM_MATRIX_ENTRIES_PER_MEM_GB
         # We store a list and a dict of the whitelist. Based on empirical obs.
         matrix_mem_gb += float(num_barcodes) / h5_constants.NUM_MATRIX_BARCODES_PER_MEM_GB
-        return scale * np.ceil(matrix_mem_gb) if ceil else scale * matrix_mem_gb
+        return scale * (math.ceil(matrix_mem_gb) if ceil else matrix_mem_gb)
 
     @staticmethod
     def get_mem_gb_from_group(
@@ -625,8 +638,19 @@ class CountMatrix:
         )
 
     @staticmethod
+    def get_mem_gb_bcs_only_from_matrix_h5(
+        filename: str | bytes,
+    ) -> float:
+        """Estimate memory usage of just the barcodes from an HDF5 file.
+
+        This method is not compatible with legacy versions of the count matrix.
+        """
+        with h5.File(filename, "r") as f:
+            return cr_h5.estimate_mem_gib_for_dataset(f[MATRIX][h5_constants.H5_BCS_ATTR])
+
+    @staticmethod
     def get_mem_gb_from_matrix_h5_file_handle(
-        file_handle: str | bytes | BufferedIOBase,
+        file_handle: str | bytes | IOBase,
         scale: float = h5_constants.MATRIX_MEM_GB_MULTIPLIER,
         ceil: bool = True,
     ) -> float:
@@ -636,7 +660,7 @@ class CountMatrix:
 
     @staticmethod
     def load_dims_from_h5_file_handle(
-        file_handle: str | bytes | BufferedIOBase,
+        file_handle: str | bytes | IOBase,
     ) -> tuple[int, int, int]:
         """Load the matrix shape from an HDF5 file."""
         with h5.File(file_handle, "r") as f:
@@ -657,7 +681,7 @@ class CountMatrix:
                 return CountMatrix.load_bcs_from_h5_group(f[MATRIX])
 
     @staticmethod
-    def _load_indptr_from_matrix_group(group: h5.Group):
+    def _load_indptr_from_matrix_group(group: h5.Group) -> h5.Series:
         return group[h5_constants.H5_MATRIX_INDPTR_ATTR][:]
 
     @staticmethod
@@ -665,8 +689,7 @@ class CountMatrix:
         fn, version = CountMatrix._validate_h5_file(filename)
         if version < MATRIX_H5_VERSION:
             raise ValueError(
-                "Matrix HDF5 file format version (%d) is an older version that is no longer supported."
-                % version
+                f"Matrix HDF5 file format version ({version}) is an older version that is no longer supported."
             )
         with h5.File(fn, "r") as f:
             mat_group = f[MATRIX]
@@ -773,13 +796,11 @@ class CountMatrix:
 
             if version > MATRIX_H5_VERSION:
                 raise ValueError(
-                    "Matrix HDF5 file format version (%d) is a newer version that is not supported by this version of the software."
-                    % version
+                    f"Matrix HDF5 file format version ({version}) is a newer version that is not supported by this version of the software."
                 )
             if version < MATRIX_H5_VERSION:
                 raise ValueError(
-                    "Matrix HDF5 file format version (%d) is an older version that is no longer supported."
-                    % version
+                    f"Matrix HDF5 file format version ({version}) is an older version that is no longer supported."
                 )
 
             if "matrix" not in f.keys():
@@ -1023,14 +1044,9 @@ class CountMatrix:
         """Get count of each feature by type."""
         return {ft: self.get_count_of_feature_type(ft) for ft in self.get_library_types()}
 
-    @staticmethod
-    def _get_genomes_from_feature_ref(feature_ref: FeatureReference) -> list[str]:
-        """Get a list of the distinct genomes represented by gene expression features."""
-        return feature_ref.get_genomes(feature_type=rna_library.DEFAULT_LIBRARY_TYPE)
-
     def get_genomes(self):
         """Get a list of the distinct genomes represented by gene expression features."""
-        return CountMatrix._get_genomes_from_feature_ref(self.feature_ref)
+        return self.feature_ref.get_genomes()
 
     @staticmethod
     def get_genomes_from_h5(filename: str | bytes) -> list[str]:
@@ -1041,8 +1057,7 @@ class CountMatrix:
             return CountMatrix._get_genomes_from_legacy_v1_h5(filename)
         else:
             with h5.File(filename, "r") as f:
-                feature_ref = CountMatrix.load_feature_ref_from_h5_group(f[MATRIX])
-                return CountMatrix._get_genomes_from_feature_ref(feature_ref)
+                return CountMatrix.load_feature_ref_from_h5_group(f[MATRIX]).get_genomes()
 
     @staticmethod
     def _get_genomes_from_legacy_v1_h5(filename):
@@ -1050,16 +1065,16 @@ class CountMatrix:
         with h5.File(ensure_binary(filename), "r") as f:
             return list(f.keys())
 
-    def get_numfeatures_per_bc(self) -> np.ndarray[int, np.dtype[np.int_]]:
+    def get_numfeatures_per_bc(self) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         self.m.eliminate_zeros()
         return self.m.getnnz(axis=0)
 
-    def get_counts_per_bc(self) -> np.ndarray[int, np.dtype[np.int_]]:
+    def get_counts_per_bc(self) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         return sum_sparse_matrix(self.m, axis=0)
 
     def get_counts_per_barcode_for_genome(
         self, genome: str, feature_type: str | None = None
-    ) -> np.ndarray[int, np.dtype[np.int_]]:
+    ) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         """Sum the count matrix across feature rows with a given genome tag.
 
         The feature reference
@@ -1083,16 +1098,18 @@ class CountMatrix:
             return view.sum(axis=0)
         return np.array([], dtype=self.m.dtype)
 
-    def get_counts_per_feature(self) -> np.ndarray[int, np.dtype[np.int_]]:
+    def get_counts_per_feature(self) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         return sum_sparse_matrix(self.m, axis=1)
 
-    def get_frac_counts_per_feature(self) -> np.ndarray[int, np.dtype[np.int_]]:
+    def get_frac_counts_per_feature(self) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         total_umi = sum(sum_sparse_matrix(self.m))
         return sum_sparse_matrix(self.m, axis=1) / total_umi
 
     def get_mean_and_var_per_feature(
         self,
-    ) -> tuple[np.ndarray[int, np.dtype[np.float64]], np.ndarray[int, np.dtype[np.float64]]]:
+    ) -> tuple[
+        np.ndarray[tuple[int], np.dtype[np.float64]], np.ndarray[tuple[int], np.dtype[np.float64]]
+    ]:
         """Calculate the mean and variance on the sparse matrix efficiently.
 
         :return: a tuple with numpy arrays for mean and var
@@ -1109,7 +1126,7 @@ class CountMatrix:
 
     def get_subselected_counts(
         self, list_feature_ids=None, list_barcodes=None, log_transform=False, library_type=None
-    ) -> np.ndarray[int, np.dtype[np.int_]]:
+    ) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         """Get counts per barcode, sliced various ways.
 
         - subset by list of feature IDs
@@ -1136,7 +1153,7 @@ class CountMatrix:
             return np.log10(1.0 + counts_feature)
         return counts_feature
 
-    def get_numbcs_per_feature(self) -> np.ndarray[int, np.dtype[np.int_]]:
+    def get_numbcs_per_feature(self) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
         return sum_sparse_matrix(self.m > 0, axis=1)
 
     def get_top_bcs(self, cutoff: int) -> np.ndarray:
@@ -1235,7 +1252,7 @@ class CountMatrix:
 
     @staticmethod
     def _validate_h5_file(filename):
-        if isinstance(filename, pathlib.PosixPath):
+        if isinstance(filename, IOBase | pathlib.PosixPath):
             fn = filename
         else:
             fn = ensure_binary(filename)
@@ -1248,8 +1265,7 @@ class CountMatrix:
             version = CountMatrix._get_format_version_from_handle(f)
             if version > MATRIX_H5_VERSION:
                 raise ValueError(
-                    "Matrix HDF5 file format version (%d) is a newer version that is not supported by this version of the software."
-                    % version
+                    f"Matrix HDF5 file format version ({version}) is a newer version that is not supported by this version of the software."
                 )
             if version >= MATRIX_H5_VERSION and MATRIX not in f.keys():
                 raise ValueError('Could not find the "matrix" group inside the matrix HDF5 file.')
@@ -1260,7 +1276,7 @@ class CountMatrix:
         """Load a matrix H5 file, optionally subsetting down to a particular range of columns if requests.
 
         Args:
-            filename: The name of the H5 file
+            filename: The name of the H5 file or a file handle to the file
             col_start: (Optional) The column to select
             col_end: (Optional) End of column select range
 
@@ -1284,6 +1300,23 @@ class CountMatrix:
                 return CountMatrix.load_columns_from_file(f[MATRIX], col_start, col_end)
             else:
                 return CountMatrix.load(f[MATRIX])
+
+    @classmethod
+    def load_data_for_library_type_from_h5(cls, filename: str, library_type: str):
+        """Load a matrix H5 file, subsetting to the features of the specified library type."""
+        indptr, indices, data = load_matrix_by_filtered_feature_type(filename, library_type)
+        feature_ref = cls.load_feature_ref_from_h5_file(filename).select_features_by_type(
+            library_type
+        )
+        # Check to make sure indptr increases monotonically (to catch overflow bugs)
+        assert np.all(np.diff(indptr) >= 0)
+        rows, cols, _ = cls.load_dims_from_h5(filename)
+        assert cols == len(indptr) - 1, "Error loading the filtered matrix, columns don't match"
+        assert rows >= feature_ref.get_num_features(), "Failed to subselect features"
+        shape = (feature_ref.get_num_features(), cols)
+        matrix = sp_sparse.csc_matrix((data, indices, indptr), shape=shape)
+        bcs = cls.load_bcs_from_h5(filename)
+        return cls(feature_ref=feature_ref, bcs=bcs, matrix=matrix)
 
     @staticmethod
     def count_cells_from_h5(filename):
@@ -1372,16 +1405,42 @@ class CountMatrix:
         # Rescale the rows corresponding to the  by a size factor and upscale by scale factor
         # enables a de facto fixed point representation. Account for the potential of overflow
         # by first computing the matrix in floats and then converting to int.
-        max_value = np.iinfo(self.view().matrix.m.dtype).max
-        tmp_normalised_matrix = self.m[indices_in_library, :].dot(
-            sp_sparse.diags(scale_factor / size_factor).astype(np.float64)
-        )
+        # Have to take a roundabout way to do this computation as assigning to a slice of a
+        # scipy sparse matrix breaks when the width x height of the matrix is more than
+        # the max value of indptr (2 billion for int32).
+        # report1: https://github.com/scverse/muon/issues/88
+        # report2: https://github.com/scipy/scipy/issues/20311
+        # report3: https://github.com/scverse/anndata/issues/339
+        matrix_dtype = self.view().matrix.m.dtype
+        max_value = np.iinfo(matrix_dtype).max
+
+        indicator_vector_library = np.zeros(self.features_dim).astype(matrix_dtype)
+        indicator_vector_library[indices_in_library] = 1
+
+        scale_factor_over_size_factor = scale_factor / size_factor
+        # Get a copy of the matrix where all entries not in the libraries we want to
+        # normalise are set to 0, and all entries in the libraries we are interested in
+        # are appropriately normalised. Have to do this as we need to deal with overflows.
+        matrix_restricted_to_library_of_interest = (
+            sp_sparse.diags(indicator_vector_library) @ self.m
+        ) @ sp_sparse.diags(scale_factor_over_size_factor).astype(np.float64)
+
         # Clip at max_value - 1 because we often do log1p where the 1 plus will lead to overflow
+        # Clip the final matrix at 0 because anything below that is numerical error.
+        # this implies a clip of negative of the corresponding entry in the matrix.
         number_of_overflow_entries = (
-            (tmp_normalised_matrix.data < 0) | (tmp_normalised_matrix.data > max_value - 1)
+            (matrix_restricted_to_library_of_interest.data < 0)
+            | (matrix_restricted_to_library_of_interest.data > max_value - 1)
         ).sum()
-        tmp_normalised_matrix.data = np.clip(tmp_normalised_matrix.data, 0, max_value - 1)
-        self.m[indices_in_library, :] = tmp_normalised_matrix.astype(self.view().matrix.m.dtype)
+        matrix_restricted_to_library_of_interest.data = np.clip(
+            matrix_restricted_to_library_of_interest.data, 0, max_value - 1
+        )
+
+        # Zeroing out entries corresponding to libraries of interest
+        self.m -= (sp_sparse.diags(indicator_vector_library) @ self.m).astype(matrix_dtype)
+        # Setting entries corresponding to libraries of interest to the normalised
+        # values.
+        self.m += matrix_restricted_to_library_of_interest.astype(matrix_dtype)
 
         # Update normalize tag in the feature ref of the matrix
         features_normalized_set = set(self.get_feature_ids_by_type(library_type))
@@ -1392,6 +1451,35 @@ class CountMatrix:
             self.feature_ref.update_tag(NORMALIZATION_TAG_IN_H5, features_label_dict)
 
         return number_of_overflow_entries
+
+    def get_non_zero_entries_by_library_type(self, library_type: str) -> int:
+        """Return the number of non-zero entries in the matrix for the specified library type."""
+        library_type_indicators = np.fromiter(
+            (ftr_def.feature_type == library_type for ftr_def in self.feature_ref.feature_defs),
+            dtype=bool,
+        )
+        return int(sum(library_type_indicators[x] for x in self.m.indices))
+
+    @staticmethod
+    def get_non_zero_entries_by_library_type_from_h5(filename: str, library_type: str) -> int:
+        """Get the number of non-zero entries in a matrix h5 file for given library type features without loading the matrix into memory.
+
+        Args:
+        filename: Path to the h5 file.
+        library_type: Library type for which to count non-zero entries. E.g. "Gene Expression".
+
+        Returns:
+        int: Number of non-zero entries for {library_type} features.
+        """
+        with h5.File(filename, "r") as h5_file:
+            feature_defs = CountMatrix.load_feature_ref_from_h5_group(h5_file[MATRIX]).feature_defs
+            library_type_indicators = np.fromiter(
+                (ftr_def.feature_type == library_type for ftr_def in feature_defs),
+                dtype=bool,
+            )
+            indices = h5_file[MATRIX][h5_constants.H5_MATRIX_INDICES_ATTR]
+            num_non_zero_indices = int(sum(library_type_indicators[x] for x in indices[::]))
+        return num_non_zero_indices
 
 
 def merge_matrices(h5_filenames: list[str]) -> CountMatrix | None:
@@ -1466,12 +1554,14 @@ def create_merged_matrix_from_col_concat(
             _save_sw_version(outfile, sw_version)
         if extra_attrs:
             _save_extra_attrs(outfile, extra_attrs)
-        matrix = outfile[MATRIX]
+        matrix: h5.Group = outfile[MATRIX]
+        # pylint: disable-next=no-member
         ind_ptr = CountMatrix._load_indptr_from_matrix_group(matrix).astype(np.uint64)
         end = len(matrix[to_append[0]])
         # Resize everything to expected total size
         for dset_name in to_append:
             dset = matrix[dset_name]
+            # pylint: disable-next=no-member
             dset.resize((total_nnz,))
         # Now append new data to this
         for small_file, s_start, s_end in fn_start_ends[1:]:

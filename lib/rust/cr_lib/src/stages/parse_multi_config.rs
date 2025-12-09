@@ -1,33 +1,41 @@
 //! Martian stage PARSE_MULTI_CONFIG
+#![deny(missing_docs)]
 
+use super::setup_reference_info::get_reference_info;
 use crate::preflight::hostname;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use cr_types::cell_annotation::CellAnnotationModel;
 use cr_types::chemistry::{
-    AutoChemistryName, AutoOrRefinedChemistry, ChemistryDef, ChemistrySpecs, IndexScheme,
+    AutoChemistryName, AutoOrRefinedChemistry, ChemistryDef, ChemistryDefs, ChemistrySpecs,
+    IndexScheme,
 };
-use cr_types::probe_set::{merge_probe_set_csvs, ProbeSetReferenceMetadata};
+use cr_types::probe_set::{ProbeSetReferenceMetadata, merge_probe_set_csvs};
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile};
 use cr_types::reference::probe_set_reference::TargetSetFile;
+use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::sample_def::SampleDef;
 use cr_types::types::FileOrBytes;
-use cr_types::{AlignerParam, LibraryType, TargetingMethod, VdjChainType};
+use cr_types::{
+    AlignerParam, GeneticDemuxParams, GenomeName, LibraryType, TargetingMethod, VdjChainType,
+};
+use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, MartianType, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use metric::TxHashMap;
-use multi::barcode_sample_assignment::SampleAssignmentCsv;
+use multi::SampleAssignmentCsv;
 use multi::config::preflight::build_feature_reference_with_cmos;
-use multi::config::{create_feature_config, MultiConfigCsvFile};
-use parameters_toml::max_multiplexing_tags;
+use multi::config::{MultiConfigCsvFile, create_feature_config};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JValue;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Default, Serialize, Deserialize, MartianType)]
 pub struct MultiParams {
@@ -38,13 +46,15 @@ pub struct MultiParams {
     #[serde(default)]
     primers: Vec<Primers>,
     #[serde(default)]
-    index_scheme: Option<IndexScheme>,
+    index_schemes: HashMap<LibraryType, IndexScheme>,
     #[serde(default)]
     barcode_whitelist: Option<String>,
     #[serde(default)]
     special_genomic_regions: Option<Vec<String>>,
     #[serde(default)]
     cell_calling_mode: Option<String>,
+    #[serde(default)]
+    genetic_demux_params: Option<GeneticDemuxParams>,
 }
 
 #[derive(Clone, Deserialize, MartianStruct)]
@@ -52,7 +62,6 @@ pub struct ParseMultiConfigStageInputs {
     pub sample_id: String,
     pub sample_desc: String,
     pub config: FileOrBytes,
-    pub config_hash: Option<String>,
     pub params: Option<MultiParams>,
     pub is_pd: bool,
 }
@@ -88,6 +97,7 @@ impl CellCallingParam {
 /// Carries options to customize the cell calling mode.
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 #[cfg_attr(test, derive(Debug))]
+#[expect(missing_docs)]
 pub struct CellCalling {
     pub recovered_cells: CellCallingParam,
     pub force_cells: CellCallingParam,
@@ -118,22 +128,21 @@ pub struct BarcodeAssignments {
 }
 
 pub type Primers = JValue;
-pub type GeneticDemuxParams = JValue;
 
 /// CountInputs struct
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 #[cfg_attr(test, derive(Debug))]
+#[expect(missing_docs)]
 pub struct CountInputs {
     pub sample_def: Vec<SampleDef>,
     pub target_set: Option<TargetSetFile>,
     pub target_set_name: Option<String>,
+    pub reference_info: Option<ReferenceInfo>,
     pub chemistry_specs: ChemistrySpecs,
-    pub custom_chemistry_def: Option<ChemistryDef>,
-    pub reference_path: Option<PathBuf>,
+    pub custom_chemistry_defs: ChemistryDefs,
     pub gene_index: Option<JsonFile<()>>,
     #[mro_type = "map[]"]
     pub primers: Vec<Primers>,
-    pub cell_calling_config: CellCalling,
     pub subsample_rate: Option<f64>,
     pub initial_reads: Option<usize>,
     pub primer_initial_reads: Option<usize>,
@@ -143,14 +152,12 @@ pub struct CountInputs {
     pub trim_polya_min_score: Option<i64>,
     pub trim_tso_min_score: Option<i64>,
     pub no_secondary_analysis: bool,
-    pub no_target_umi_filter: bool,
     pub filter_probes: Option<bool>,
     pub feature_reference: Option<FeatureReferenceFile>,
     pub include_exons: bool,
     pub include_introns: bool,
     pub targeting_method: Option<TargetingMethod>,
     pub aligner: Option<AlignerParam>,
-    #[mro_type = "map"]
     pub genetic_demux_params: Option<GeneticDemuxParams>,
     pub throughput: Option<String>,
     pub check_library_compatibility: bool,
@@ -164,6 +171,27 @@ pub struct CountInputs {
     pub skip_cell_annotation: bool,
     pub tenx_cloud_token_path: Option<String>,
     pub enable_tsne: bool,
+    pub no_minimap: bool,
+    pub star_parameters: Option<String>,
+    pub umi_min_read_length: Option<usize>,
+}
+
+impl CountInputs {
+    /// Return the list of genomes
+    pub fn get_genomes(&self) -> Option<&[GenomeName]> {
+        if let Some(reference_info) = self.reference_info.as_ref() {
+            Some(&reference_info.genomes)
+        } else {
+            None
+        }
+    }
+
+    /// Return transcriptome reference_path
+    pub fn get_reference_path(&self) -> Option<&Path> {
+        self.reference_info
+            .as_ref()
+            .and_then(|x| x.get_reference_path())
+    }
 }
 
 /// General VdjInputs which are not chain specific
@@ -175,6 +203,7 @@ pub struct VdjGenInputs {
     pub min_contig_length: Option<usize>,
     pub filter_flags: VdjFilterFlags,
     pub skip_clonotyping: bool,
+    pub umi_min_read_length: Option<usize>,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, MartianStruct)]
@@ -204,6 +233,7 @@ pub struct VdjInputs {
     pub inner_enrichment_primers: Option<PathBuf>,
     pub chain_type: Option<String>,
     pub physical_library_id: Option<String>,
+    pub max_reads_per_barcode: Option<usize>,
 }
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
@@ -227,6 +257,7 @@ pub struct BasicPipelineConfig {
 pub struct ParseMultiConfigStageOutputs {
     pub common_input: CommonInputs,
     pub count_input: Option<CountInputs>,
+    pub count_cell_calling_config: Option<CellCalling>,
     pub vdj_inputs: Vec<VdjInputs>, // or just JSON w/ outer array?
     pub vdj_gen_inputs: Option<VdjGenInputs>,
     pub basic_config: BasicPipelineConfig,
@@ -248,7 +279,7 @@ pub struct ParseMultiConfigStageOutputs {
     pub barcode_sample_assignments: Option<CsvFile<()>>,
 }
 
-// This is our stage struct
+/// Martian stage PARSE_MULTI_CONFIG
 pub struct ParseMultiConfig;
 
 #[make_mro(mem_gb = 6, volatile = strict)]
@@ -262,7 +293,7 @@ impl MartianMain for ParseMultiConfig {
             FileOrBytes {
                 file: None,
                 bytes: Some(ref bytes),
-            } => base64::decode(bytes)?,
+            } => BASE64_STANDARD.decode(bytes)?,
             FileOrBytes {
                 bytes: None,
                 file: Some(ref file),
@@ -292,14 +323,16 @@ impl MartianMain for ParseMultiConfig {
             initial_reads,
             subsample_rate,
             primers,
-            index_scheme,
+            index_schemes,
             barcode_whitelist,
             special_genomic_regions,
             cell_calling_mode,
+            genetic_demux_params,
         } = args.params.unwrap_or_default();
 
         let (
             count_input,
+            count_cell_calling_config,
             feature_ref,
             cell_barcodes,
             sample_barcodes,
@@ -323,7 +356,7 @@ impl MartianMain for ParseMultiConfig {
                         Ok(acc)
                     })?;
             if sample_def.is_empty() {
-                (None, None, None, None, None, None, None)
+                (None, None, None, None, None, None, None, None)
             } else {
                 let gex = cfg.gene_expression.as_ref().ok_or_else(
                     #[cold]
@@ -437,44 +470,46 @@ impl MartianMain for ParseMultiConfig {
                     disable_high_occupancy_gem_detection: !gex.filter_high_occupancy_gems,
                 };
 
-                let (feature_reference_file, tenx_cmos) = match build_feature_reference_with_cmos(
-                    &cfg,
-                    args.is_pd,
-                    &hostname(),
-                    *max_multiplexing_tags()?,
-                )? {
-                    (Some(_), None) => {
-                        // Not using CMO multiplexing; use the original feature reference file.
-                        let src = cfg
-                            .feature
-                            .as_ref()
-                            .unwrap()
-                            .reference_path
-                            .as_ref()
-                            .unwrap();
-                        let dst: FeatureReferenceFile = rover.make_path("feature_ref");
-                        if std::fs::hard_link(src, &dst).is_err() {
-                            std::fs::copy(src, &dst)?;
+                let (feature_reference_file, tenx_cmos) =
+                    match build_feature_reference_with_cmos(&cfg, args.is_pd, &hostname())? {
+                        (Some(_), None) => {
+                            // Not using CMO multiplexing; use the original feature reference file.
+                            let src = cfg
+                                .feature
+                                .as_ref()
+                                .unwrap()
+                                .reference_path
+                                .as_ref()
+                                .unwrap();
+                            let dst: FeatureReferenceFile = rover.make_path("feature_ref");
+                            if std::fs::hard_link(src, &dst).is_err() {
+                                std::fs::copy(src, &dst)?;
+                            }
+                            (Some(dst), None)
                         }
-                        (Some(dst), None)
-                    }
-                    (Some(feature_ref), Some(tenx_cmos)) => {
-                        // Using CMO, need to write out the constructed feature reference file.
-                        let dst: FeatureReferenceFile = rover.make_path("feature_ref");
-                        let mut w = BufWriter::new(File::create(&dst)?);
-                        feature_ref.to_csv(&mut w)?;
-                        (Some(dst), Some(tenx_cmos))
-                    }
-                    (None, _) => (None, None),
-                };
+                        (Some(feature_ref), Some(tenx_cmos)) => {
+                            // Using CMO, need to write out the constructed feature reference file.
+                            let dst: FeatureReferenceFile = rover.make_path("feature_ref");
+                            let mut w = BufWriter::new(File::create(&dst)?);
+                            feature_ref.to_csv(&mut w)?;
+                            (Some(dst), Some(tenx_cmos))
+                        }
+                        (None, _) => (None, None),
+                    };
 
-                let custom_chemistry_def = index_scheme.map(|is| {
-                    is.to_chemistry_def(
-                        barcode_whitelist
-                            .expect("Barcode set is required for custom chemistry")
-                            .as_ref(),
-                    )
-                });
+                let custom_chemistry_defs = index_schemes
+                    .into_iter()
+                    .map(|(lib_type, index_scheme)| {
+                        anyhow::Ok((
+                            lib_type,
+                            index_scheme.to_chemistry_def(
+                                barcode_whitelist
+                                    .as_ref()
+                                    .expect("Barcode Set is required for custom chemistry"),
+                            )?,
+                        ))
+                    })
+                    .try_collect()?;
 
                 let chemistry_specs = cfg.chemistry_specs()?;
                 let has_gex_library = chemistry_specs
@@ -496,15 +531,21 @@ impl MartianMain for ParseMultiConfig {
                             probe_sets => {
                                 let target_set: TargetSetFile =
                                     rover.make_path("combined_probe_set");
-                                let name =
-                                    merge_probe_set_csvs(probe_sets, target_set.buf_writer()?)?;
+                                let name = merge_probe_set_csvs(
+                                    probe_sets,
+                                    target_set.buf_writer()?,
+                                    gex_params.reference_path.as_deref(),
+                                )?;
                                 (Some(target_set), Some(name))
                             }
                         },
                         _ => (None, None),
                     };
+                let reference_info =
+                    get_reference_info(gex.reference_path.as_deref(), target_set.as_ref())?;
 
                 let count_input = Some(CountInputs {
+                    reference_info: Some(reference_info),
                     // Filter the VDJ libraries out of this collection since VDJ
                     // chemistry is handled separately.
                     chemistry_specs: chemistry_specs
@@ -514,11 +555,9 @@ impl MartianMain for ParseMultiConfig {
                     target_set,
                     target_set_name,
                     sample_def,
-                    custom_chemistry_def,
-                    reference_path: gex.reference_path.clone(),
+                    custom_chemistry_defs,
                     gene_index,
                     primers: primers.clone(),
-                    cell_calling_config,
                     subsample_rate,
                     initial_reads,
                     primer_initial_reads: Some(1000000),
@@ -528,14 +567,13 @@ impl MartianMain for ParseMultiConfig {
                     trim_polya_min_score: None,
                     trim_tso_min_score: None,
                     no_secondary_analysis: gex.no_secondary_analysis,
-                    no_target_umi_filter: false,
                     filter_probes: gex.filter_probes,
                     feature_reference: feature_reference_file.clone(),
                     include_exons: true,
                     include_introns: gex.include_introns,
                     targeting_method: gex.targeting_method(),
                     aligner: gex.aligner,
-                    genetic_demux_params: None,
+                    genetic_demux_params,
                     throughput: None,
                     check_library_compatibility: gex.check_library_compatibility,
                     no_bam: !gex.create_bam,
@@ -557,10 +595,14 @@ impl MartianMain for ParseMultiConfig {
                     // this will return a default token path if not supplied
                     tenx_cloud_token_path: gex.get_tenx_cloud_token_path(),
                     enable_tsne: true,
+                    no_minimap: gex.aligner.is_none_or(|a| a != AlignerParam::Minimap2),
+                    star_parameters: gex.star_parameters.clone(),
+                    umi_min_read_length: gex.umi_min_read_length,
                 });
 
                 (
                     count_input,
+                    Some(cell_calling_config),
                     feature_reference_file,
                     cell_barcodes,
                     sample_barcodes,
@@ -623,25 +665,26 @@ impl MartianMain for ParseMultiConfig {
                         chemistry_spec: AutoOrRefinedChemistry::Auto(AutoChemistryName::Vdj),
                         sample_def,
                         custom_chemistry_def: None,
-
                         primers: primers.clone(),
                         subsample_rate,
                         initial_reads,
                         primer_initial_reads: Some(1000000),
                         special_genomic_regions: special_genomic_regions.clone(),
-                        denovo: false,
+                        denovo: vdj.denovo.unwrap_or_default(),
                         r1_length: vdj.r1_length,
                         r2_length: vdj.r2_length,
                         inner_enrichment_primers: vdj.inner_enrichment_primers.clone(),
                         chain_type,
                         physical_library_id: Some(physical_library_id.to_string()),
+                        max_reads_per_barcode: vdj.max_reads_per_barcode,
                     });
                 }
                 let vdj_gen_inputs = VdjGenInputs {
                     reference_path: cfg
                         .gene_expression
+                        .as_ref()
                         .and_then(|gex| gex.reference_path.clone()),
-                    vdj_reference_path: Some(vdj.reference_path.clone()),
+                    vdj_reference_path: vdj.reference_path.clone(),
                     min_contig_length: vdj.min_contig_length,
                     filter_flags: VdjFilterFlags {
                         multiplet_filter: vdj.multiplet_filter,
@@ -649,6 +692,10 @@ impl MartianMain for ParseMultiConfig {
                         umi_baseline_filter: vdj.umi_baseline_filter,
                     },
                     skip_clonotyping: vdj.skip_clonotyping.unwrap_or_default(),
+                    umi_min_read_length: cfg
+                        .gene_expression
+                        .as_ref()
+                        .and_then(|gex| gex.umi_min_read_length),
                 };
                 (vdj_inputs, Some(vdj_gen_inputs))
             }
@@ -658,12 +705,8 @@ impl MartianMain for ParseMultiConfig {
             disable_vdj: vdj_inputs.is_empty(),
             disable_multi: false,
             disable_multi_count: count_input.is_none(),
-            disable_rtl: count_input
-                .as_ref()
-                .map_or(true, |c| c.target_set.is_none()),
-            disable_annotate: count_input
-                .as_ref()
-                .map_or(true, |c| c.skip_cell_annotation),
+            disable_rtl: count_input.as_ref().is_none_or(|c| c.target_set.is_none()),
+            disable_annotate: count_input.as_ref().is_none_or(|c| c.skip_cell_annotation),
         };
 
         let common_input = CommonInputs {
@@ -696,6 +739,7 @@ impl MartianMain for ParseMultiConfig {
             common_input,
             target_set: count_input.as_ref().and_then(|c| c.target_set.clone()),
             count_input,
+            count_cell_calling_config,
             vdj_inputs,
             vdj_gen_inputs,
             basic_config,
@@ -730,7 +774,6 @@ mod tests {
                 bytes: None,
                 file: Some(csv_file.as_ref().into()),
             },
-            config_hash: None,
             params: None,
             is_pd,
         })
@@ -790,11 +833,12 @@ mod tests {
         assert!(cmos.contains("CMO2"));
         assert!(cmos.contains("CMO3"));
 
-        assert!(cfg
-            .samples
-            .unwrap()
-            .get_translated_probe_barcodes()
-            .is_empty());
+        assert!(
+            cfg.samples
+                .unwrap()
+                .get_translated_probe_barcodes()
+                .is_empty()
+        );
     }
 
     #[test]

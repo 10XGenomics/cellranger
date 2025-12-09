@@ -1,9 +1,10 @@
+#![deny(missing_docs)]
 use num_traits::PrimInt;
 use std::fmt::Display;
 
-// Compute nx of a list of positive integers
-// Helper function to compute n50 and n90 scores.
-pub fn nx<'a, T, I>(items: I, fraction: f64) -> Option<T>
+/// Compute nx of a list of positive integers
+/// Helper function to compute n50 and n90 scores.
+pub fn compute_nx<'a, T, I>(items: I, fraction: f64) -> Option<T>
 where
     T: 'a + PrimInt + Display,
     I: IntoIterator<Item = &'a T>,
@@ -42,11 +43,11 @@ where
 ///
 /// # Inputs
 /// - `items`: Any type which can be converted to an iterator over a primary integer
-///            type T. E.g &Vec<_>
+///   type T. E.g &Vec<_>
 ///
 /// # Outputs
 /// - `Option<T>`: `None` variant is returned only when the input is an empty iterator.
-///                The caller should handle this case explicitly.
+///   The caller should handle this case explicitly.
 ///
 /// # Panics
 /// - If any of the numbers is <=0. This likely points to a bug in the caller code,
@@ -70,7 +71,7 @@ where
     T: 'a + PrimInt + Display,
     I: IntoIterator<Item = &'a T>,
 {
-    nx(items, 0.5f64)
+    compute_nx(items, 0.5f64)
 }
 
 /// Compute the N90 from a list of positive numbers. The numbers
@@ -78,11 +79,11 @@ where
 ///
 /// # Inputs
 /// - `items`: Any type which can be converted to an iterator over a primary integer
-///            type T. E.g &Vec<_>
+///   type T. E.g &Vec<_>
 ///
 /// # Outputs
 /// - `Option<T>`: `None` variant is returned only when the input is an empty iterator.
-///                The caller should handle this case explicitly.
+///   The caller should handle this case explicitly.
 ///
 /// # Panics
 /// - If any of the numbers is <=0. This likely points to a bug in the caller code,
@@ -106,7 +107,7 @@ where
     T: 'a + PrimInt + Display,
     I: IntoIterator<Item = &'a T>,
 {
-    nx(items, 0.9f64)
+    compute_nx(items, 0.9f64)
 }
 
 #[cfg(test)]

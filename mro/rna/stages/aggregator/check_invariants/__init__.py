@@ -36,11 +36,9 @@ def split(args):
     mol_info_mem_gb = (
         np.max(
             [
-                int(
-                    math.ceil(
-                        MoleculeCounter.estimate_mem_gb(
-                            MoleculeCounter.open(sample_def[cr_constants.AGG_H5_FIELD], "r").nrows()
-                        )
+                math.ceil(
+                    MoleculeCounter.estimate_mem_gb(
+                        MoleculeCounter.open(sample_def[cr_constants.AGG_H5_FIELD], "r").nrows()
                     )
                 )
                 for sample_def in args.input_sample_defs
@@ -121,6 +119,7 @@ def join(args, outs, chunk_defs, chunk_outs):
             (gene_id, GENE_EXPRESSION_LIBRARY_TYPE) for gene_id in target_gene_ids
         }
 
+    is_any_visium_hd = False
     for sample_def in args.input_sample_defs:
         library_id = ensure_binary(sample_def["library_id"])
         with MoleculeCounter.open(sample_def[cr_constants.AGG_H5_FIELD], "r") as mc:
@@ -129,6 +128,7 @@ def join(args, outs, chunk_defs, chunk_outs):
             input_num_gem_groups += _update_counts(
                 mc, library_id, input_bc_counts, input_feature_counts
             )
+            is_any_visium_hd |= mc.get_visium_hd_slide_name() is not None
 
     # compute invariants on output
     output_matrix = cr_matrix.CountMatrix.load_h5_file(args.merged_raw_gene_bc_matrices_h5)
@@ -172,14 +172,17 @@ def join(args, outs, chunk_defs, chunk_outs):
             "Number of GEM groups differs between input molecule files and aggregated matrix"
         )
         martian.exit(exit_message)
+
     for lib_gg, in_count in input_bc_counts.items():
-        if len(in_count) != len(output_bc_counts[lib_gg]):
+        # The input molecule info for HD is at full resolution, but we do aggr after binning. Hence
+        # the barcode invariant checks are not valid for HD.
+        if (not is_any_visium_hd) and (len(in_count) != len(output_bc_counts[lib_gg])):
             martian.log_info(
                 f"Barcode list for library {lib_gg[0]}, GEM group {lib_gg[1]} has different length "
                 "in aggregated output compared to input."
             )
             martian.exit(exit_message)
-        if np.any(in_count < output_bc_counts[lib_gg]):
+        if (not is_any_visium_hd) and (np.any(in_count < output_bc_counts[lib_gg])):
             martian.log_info(
                 f"Barcode(s) in library {lib_gg[0]}, GEM group {lib_gg[1]} have higher UMI counts "
                 "in aggregated output compared to inputs"

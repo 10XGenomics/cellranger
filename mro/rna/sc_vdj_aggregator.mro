@@ -129,12 +129,12 @@ pipeline SC_VDJ_AGGREGATOR(
     )
 
     call RUN_ENCLONE_AGGR(
+        origin_info           = SETUP_VDJ_AGGR.origin_info,
         mix_donors            = self.mix_donors,
         filter_switch         = self.filter_switch,
-        contig_ann_json_files = SETUP_VDJ_AGGR.contig_ann_json_files,
-        enclone_input_csv     = SETUP_VDJ_AGGR.enclone_input_csv,
         enclone_gem_well_meta = SETUP_VDJ_AGGR.enclone_gem_well_meta,
         vdj_reference_path    = SETUP_VDJ_AGGR.vdj_reference_path,
+        receptor              = PROCESS_VDJ_PROTO.receptor,
     )
 
     call WRITE_CONSENSUS_TXT(

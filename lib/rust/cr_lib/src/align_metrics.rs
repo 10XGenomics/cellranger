@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use crate::aligner::BarcodeSummary;
 use anyhow::Result;
 use barcode::Barcode;
@@ -6,11 +8,11 @@ use cr_types::probe_set::{
 };
 use cr_types::rna_read::RnaRead;
 use cr_types::{GenomeName, LibraryType};
-use fxhash::FxHashMap;
 use itertools::Itertools;
 use json_report_derive::JsonReport;
 use metric::{
     CountMetric, JsonReport, JsonReporter, MeanMetric, Metric, PercentMetric, ToMetricPrefix,
+    TxHashMap,
 };
 use metric_derive::Metric;
 use serde::{Deserialize, Serialize};
@@ -21,15 +23,14 @@ use std::convert::From;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use strum::IntoEnumIterator;
-use strum_macros::{Display, EnumIter};
+use strum::{Display, EnumIter, IntoEnumIterator};
 use transcriptome::Gene;
 use tx_annotation::mark_dups::DupInfo;
 use tx_annotation::read::{AnnotationInfo, ReadAnnotations};
 use tx_annotation::transcript::AnnotationRegion;
 use tx_annotation::visitor::AnnotatedReadVisitor;
-use MappingRegion::{Genome, Transcriptome};
 
+/// The genome name used for multi-genome metrics.
 pub const MULTI_GENOME: &str = "multi";
 
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Display, EnumIter, Hash)]
@@ -128,7 +129,6 @@ pub struct AlignAndCountVisitor {
     metrics: VisitorMetrics,
     /// The visitor is expected to process a single library type
     library_type: LibraryType,
-    #[allow(dead_code)]
     /// If targeted, the set of genes which are on target
     target_genes: Option<HashSet<Gene>>,
     pub barcode_summaries: Vec<BarcodeSummary>,
@@ -430,10 +430,6 @@ pub struct VisitorMetrics {
     corrected_umi_reads: CountMetric,
     /// Total number of reads with a valid barcode where the UMI was marked as low support
     low_support_umi_reads: CountMetric,
-    /// Total number of reads with a valid barcode, conf. mapped to an on-target gene,
-    /// but not counted because the UMI did not have high enough read support. Applies
-    /// only to Targeted Gene Expression data
-    filtered_target_umi_reads: CountMetric,
     candidate_dup_reads: CountMetric,
     /// Candidate dup reads which are not used for UMI counts
     dup_reads: CountMetric,
@@ -446,13 +442,13 @@ pub struct VisitorMetrics {
     insert_sizes: MeanMetric,
     /// Number of reads that match the template-switching oligo (TSO) sequence.
     tso_reads: CountMetric,
-    pub per_genome_name: FxHashMap<GenomeName, PerGenomeNameMetrics>,
+    pub per_genome_name: TxHashMap<GenomeName, PerGenomeNameMetrics>,
     // Additional metrics split by region needed for per barcode metrics
     per_genome_annotation_region:
-        FxHashMap<GenomeAnnotationRegion, PerGenomeAnnotationRegionMetrics>,
-    pub per_genome_mapping: FxHashMap<GenomeMapping, PerMappingStatusMetrics>,
+        TxHashMap<GenomeAnnotationRegion, PerGenomeAnnotationRegionMetrics>,
+    pub per_genome_mapping: TxHashMap<GenomeMapping, PerMappingStatusMetrics>,
     /// Additional metrics split by targeting status
-    per_targeted_mapping: FxHashMap<TargetedMapping, PerMappingStatusMetrics>,
+    per_targeted_mapping: TxHashMap<TargetedMapping, PerMappingStatusMetrics>,
     /// Fraction of reads with a valid UMI among the reads that have a valid barcode
     good_umi_with_good_bc: PercentMetric,
     /// Total UMI counts
@@ -539,11 +535,13 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
     fn visit_mapped_read_genomes(&mut self, ann: &ReadAnnotations, genomes: HashSet<&GenomeName>) {
         if !genomes.is_empty() {
             self.metrics
-                .increment_mapped(GenomeMapping::multi(Genome), ann.mapq());
+                .increment_mapped(GenomeMapping::multi(MappingRegion::Genome), ann.mapq());
         }
         for genome in genomes {
-            self.metrics
-                .increment_mapped(GenomeMapping::new(genome.clone(), Genome), ann.mapq());
+            self.metrics.increment_mapped(
+                GenomeMapping::new(genome.clone(), MappingRegion::Genome),
+                ann.mapq(),
+            );
         }
     }
 
@@ -554,12 +552,14 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
     ) {
         let genomes: HashSet<_> = genes.iter().copied().map(|(g, _)| g).collect();
         if !genomes.is_empty() {
-            self.metrics
-                .increment_mapped(GenomeMapping::multi(Transcriptome), ann.mapq());
+            self.metrics.increment_mapped(
+                GenomeMapping::multi(MappingRegion::Transcriptome),
+                ann.mapq(),
+            );
         }
         for &genome in &genomes {
             self.metrics.increment_mapped(
-                GenomeMapping::new(genome.clone(), Transcriptome),
+                GenomeMapping::new(genome.clone(), MappingRegion::Transcriptome),
                 ann.mapq(),
             );
         }
@@ -573,13 +573,13 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
             };
             if !genomes.is_empty() {
                 self.metrics.increment_mapped_targeting(
-                    TargetedMapping::multi(Transcriptome, targeting),
+                    TargetedMapping::multi(MappingRegion::Transcriptome, targeting),
                     ann.mapq(),
                 );
             };
             for genome in genomes {
                 self.metrics.increment_mapped_targeting(
-                    TargetedMapping::new(genome.clone(), Transcriptome, targeting),
+                    TargetedMapping::new(genome.clone(), MappingRegion::Transcriptome, targeting),
                     ann.mapq(),
                 );
             }
@@ -609,9 +609,11 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
         genome: &GenomeName,
     ) {
         self.metrics
-            .increment_conf_mapped(read.barcode(), GenomeMapping::multi(Genome));
-        self.metrics
-            .increment_conf_mapped(read.barcode(), GenomeMapping::new(genome.clone(), Genome));
+            .increment_conf_mapped(read.barcode(), GenomeMapping::multi(MappingRegion::Genome));
+        self.metrics.increment_conf_mapped(
+            read.barcode(),
+            GenomeMapping::new(genome.clone(), MappingRegion::Genome),
+        );
     }
 
     fn visit_conf_mapped_read_gene(
@@ -622,11 +624,11 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
     ) {
         self.metrics.increment_conf_mapped(
             annotation.read.barcode(),
-            GenomeMapping::multi(Transcriptome),
+            GenomeMapping::multi(MappingRegion::Transcriptome),
         );
         self.metrics.increment_conf_mapped(
             annotation.read.barcode(),
-            GenomeMapping::new(genome.clone(), Transcriptome),
+            GenomeMapping::new(genome.clone(), MappingRegion::Transcriptome),
         );
         if let Some(target_genes) = &self.target_genes {
             let targeting = if target_genes.contains(gene) {
@@ -636,11 +638,11 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
             };
             self.metrics.increment_conf_mapped_targeting(
                 annotation.read.barcode(),
-                TargetedMapping::multi(Transcriptome, targeting),
+                TargetedMapping::multi(MappingRegion::Transcriptome, targeting),
             );
             self.metrics.increment_conf_mapped_targeting(
                 annotation.read.barcode(),
-                TargetedMapping::new(genome.clone(), Transcriptome, targeting),
+                TargetedMapping::new(genome.clone(), MappingRegion::Transcriptome, targeting),
             );
         }
         if let Some((_, region)) = annotation.primary.conf_mapped_region() {
@@ -718,12 +720,32 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
 
     fn visit_read_annotation(&mut self, annotation: &ReadAnnotations) {
         let barcode = annotation.read.barcode();
+
+        match self.last_barcode {
+            // If the barcode has changed, send the metrics for the previous barcode
+            Some(last_barcode) if BarcodeKind::from(last_barcode) != BarcodeKind::from(barcode) => {
+                if !last_barcode.is_valid() {
+                    // This metric is only defined for valid barcodes
+                    assert_eq!(self.metrics.good_umi_with_good_bc.denominator.count(), 0);
+                }
+                self.metrics_sender
+                    .send(BarcodeMetrics {
+                        barcode: last_barcode.into(),
+                        library_type: self.library_type,
+                        metrics: self.metrics.clone(),
+                    })
+                    .expect("Error while sending metrics");
+                // Reset metrics for the new barcode
+                self.metrics = VisitorMetrics::default();
+            }
+            Some(_) | None => {}
+        };
+
         if barcode.is_valid() {
-            // last_barcode is initialized as None
-            if self.last_barcode.map_or(true, |bc| bc != barcode) {
-                // Add a BarcodeSummary element for the new barcode
+            if self.last_barcode.is_none_or(|x| x != barcode) {
+                // Add a BarcodeSummary element for the first barcode
                 self.barcode_summaries
-                    .push(BarcodeSummary::new(barcode, self.library_type));
+                    .push(BarcodeSummary::new(barcode.to_string(), self.library_type));
             }
             self.barcode_summaries
                 .last_mut()
@@ -734,19 +756,6 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
                 .increment(annotation.umi_info.is_valid);
         }
 
-        match self.last_barcode {
-            Some(bc) if BarcodeKind::from(bc) != BarcodeKind::from(barcode) => {
-                self.metrics_sender
-                    .send(BarcodeMetrics {
-                        barcode: bc.into(),
-                        library_type: self.library_type,
-                        metrics: self.metrics.clone(),
-                    })
-                    .expect("Error while sending metrics");
-                self.metrics = VisitorMetrics::default();
-            }
-            _ => {}
-        }
         self.last_barcode = Some(barcode);
 
         debug_assert!(annotation.read.library_type == self.library_type);
@@ -799,19 +808,6 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
                     ))
                     .or_default()
                     .low_support_umi_region
-                    .increment();
-            }
-        } else if dup_info.is_filtered_target_umi {
-            self.metrics.filtered_target_umi_reads.increment();
-            if is_mapped_to_region {
-                self.metrics
-                    .per_genome_annotation_region
-                    .entry(GenomeAnnotationRegion::new(
-                        genome.unwrap().clone(),
-                        region.unwrap().1,
-                    ))
-                    .or_default()
-                    .filtered_target_umi_region
                     .increment();
             }
         } else {
@@ -953,9 +949,9 @@ pub struct GexReport {
     #[json_report(inline)]
     targeted: Option<TargetedGexReport>,
     #[json_report(inline)]
-    antisense: FxHashMap<GenomeName, MappingMetrics>,
+    antisense: TxHashMap<GenomeName, MappingMetrics>,
     #[json_report(inline)]
-    mapping: FxHashMap<GenomeMapping, RegionMetrics>,
+    mapping: TxHashMap<GenomeMapping, RegionMetrics>,
     unmapped_reads: PercentMetric,
     /// - Numerator: Number of reads that match the template-switching oligo (TSO) sequence.
     /// - Denominator: Total number of reads in the gene expression library.
@@ -973,7 +969,7 @@ impl GexReport {
 
         let den = visitor.total_reads; // denominator
 
-        let mut antisense: FxHashMap<GenomeName, MappingMetrics> = visitor
+        let mut antisense: TxHashMap<GenomeName, MappingMetrics> = visitor
             .per_genome_name
             .into_iter()
             .map(|(k, PerGenomeNameMetrics { antisense, .. })| {
@@ -986,7 +982,7 @@ impl GexReport {
             })
             .collect();
 
-        let mut mapping: FxHashMap<_, _> = visitor
+        let mut mapping: TxHashMap<_, _> = visitor
             .per_genome_mapping
             .into_iter()
             .map(|(genome_mapping, per_mapping_status_metrics)| {
@@ -1009,7 +1005,7 @@ impl GexReport {
                     .entry(GenomeMapping::new(g.clone(), m))
                     .or_insert_with(|| RegionMetrics::with_total(den));
             }
-            antisense.entry(g).or_insert(MappingMetrics {
+            antisense.entry(g).or_insert_with(|| MappingMetrics {
                 antisense_reads: PercentMetric::from_parts(0, den.count()),
             });
         }
@@ -1029,12 +1025,7 @@ impl GexReport {
 #[derive(JsonReport)]
 pub struct TargetedGexReport {
     #[json_report(inline)]
-    mapping: FxHashMap<TargetedMapping, RegionMetrics>,
-    /// - Numerator: Total number of reads with a valid barcode, conf. mapped to an on-target gene,
-    ///              but not counted because the UMI did not have high enough read support. Applies
-    ///              only to Targeted Gene Expression data
-    /// - Denominator: total_reads
-    filtered_target_umi_reads: PercentMetric,
+    mapping: TxHashMap<TargetedMapping, RegionMetrics>,
 }
 
 impl TargetedGexReport {
@@ -1043,7 +1034,7 @@ impl TargetedGexReport {
     fn from_visitor(visitor: &mut VisitorMetrics, genomes: &[GenomeName]) -> Self {
         let den = visitor.total_reads; // denominator
 
-        let mut mapping: FxHashMap<_, _> = visitor
+        let mut mapping: TxHashMap<_, _> = visitor
             .per_targeted_mapping
             .drain()
             .map(|(genome_mapping, per_mapping_status_metrics)| {
@@ -1072,13 +1063,7 @@ impl TargetedGexReport {
             }
         }
 
-        TargetedGexReport {
-            mapping,
-            filtered_target_umi_reads: PercentMetric::from_parts(
-                visitor.filtered_target_umi_reads,
-                visitor.total_reads,
-            ),
-        }
+        TargetedGexReport { mapping }
     }
 }
 
@@ -1118,8 +1103,8 @@ enum AlignCountReport {
 impl JsonReport for AlignCountReport {
     fn to_json_reporter(&self) -> JsonReporter {
         match self {
-            AlignCountReport::Gex(ref gex_report) => gex_report.to_json_reporter(),
-            AlignCountReport::Feature(ref feature_report) => feature_report.to_json_reporter(),
+            AlignCountReport::Gex(gex_report) => gex_report.to_json_reporter(),
+            AlignCountReport::Feature(feature_report) => feature_report.to_json_reporter(),
         }
     }
 }
@@ -1146,7 +1131,6 @@ mod tests {
         let mut expected = JsonReporter::default();
         expected.insert("corrected_umi_frac", 0.0f64);
         expected.insert("low_support_umi_reads_frac", 0.0f64);
-        expected.insert("filtered_target_umi_reads_frac", 0.0f64);
         expected.insert("multi_cdna_pcr_dupe_reads_frac", 0.0f64);
         expected.insert("total_read_pairs", 100);
         expected.insert("tso_frac", 0.0f64);

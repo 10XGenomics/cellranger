@@ -1,7 +1,7 @@
-diff --git a/lib/python3.10/site-packages/ipytablewidgets/traitlets.py b/lib/python3.10/site-packages/ipytablewidgets/traitlets.py
+diff --git a/lib/python3.12/site-packages/ipytablewidgets/traitlets.py b/lib/python3.12/site-packages/ipytablewidgets/traitlets.py
 index 6651047..84508e9 100644
---- a/lib/python3.10/site-packages/ipytablewidgets/traitlets.py
-+++ b/lib/python3.10/site-packages/ipytablewidgets/traitlets.py
+--- a/lib/python3.12/site-packages/ipytablewidgets/traitlets.py
++++ b/lib/python3.12/site-packages/ipytablewidgets/traitlets.py
 @@ -1,9 +1,61 @@
  # Initial software, Jean-Daniel Fekete, Christian Poli, Copyright (c) Inria, BSD 3-Clause License, 2021
  

@@ -1,20 +1,17 @@
 //! Martian stage RUN_ENCLONE
-
-// // Note: this lint needs to be disabled until https://github.com/martian-lang/martian-rust/pull/497
-// is merged and cellranger is updated.
-#![allow(clippy::needless_update)]
+#![expect(missing_docs)]
 
 use anyhow::Result;
 use bio::alignment::{Alignment, AlignmentOperation};
+use enclone_process::{
+    ClonotypingConfig, Dataset, InputSpec, VdjReceptor as EncloneRangerVdjReceptor, run_enclone,
+};
 use enclone_proto::proto_io::read_proto;
 use enclone_proto::types::EncloneOutputs;
-use enclone_ranger::main_enclone::{
-    main_enclone_ranger, CellrangerOpt, InputSpec, VdjReceptor as EncloneRangerVdjReceptor,
-};
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::FileTypeWrite;
+use martian_filetypes::json_file::JsonFile;
 use rust_htslib::bam;
 use rust_htslib::bam::index;
 use rust_htslib::bam::record::CigarString;
@@ -30,7 +27,7 @@ use vdj_filter_barcodes::filter_log::FilterSwitch;
 use vdj_reference::VdjReceptor;
 use vector_utils::next_diff;
 
-pub(crate) const QUALITY_OFFSET: u8 = 33;
+pub(super) const QUALITY_OFFSET: u8 = 33;
 
 pub struct Assigner;
 
@@ -71,7 +68,7 @@ pub struct ClonotypeAssignerStageOutputs {
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
-pub(crate) fn bam_record_from_align(
+pub(super) fn bam_record_from_align(
     al: &Alignment,
     tigname: &str,
     refid: usize,
@@ -107,7 +104,7 @@ pub(crate) fn bam_record_from_align(
     rec
 }
 
-pub(crate) fn replace_sam_by_indexed_bam(sam_name: &Path) {
+pub(super) fn replace_sam_by_indexed_bam(sam_name: &Path) {
     // Sort the sam file.  At the time of this writing, there is no rust code to sort sam or
     // bam files, so we have to call out to the samtools executable.  This is horrible.
     // See https://github.com/rust-bio/rust-htslib/issues/57.
@@ -144,21 +141,23 @@ impl MartianMain for Assigner {
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let t0 = Instant::now();
 
-        let contig_annotations = args.contig_annotations.as_ref().to_str().unwrap();
-
         let enclone_output: ProtoBinFile = rover.make_path("enclone_output");
         let donor_ref_fa: FaFile = rover.make_path("donor_ref");
         let barcode_fate: JsonFile<()> = rover.make_path("barcode_fate");
 
-        let mut opt = CellrangerOpt {
-            input: Some(InputSpec::Explicit(
-                match args.receptor {
+        let opt = ClonotypingConfig {
+            input: InputSpec {
+                receptor: match args.receptor {
                     VdjReceptor::TR => EncloneRangerVdjReceptor::TR,
                     VdjReceptor::TRGD => EncloneRangerVdjReceptor::TRGD,
                     VdjReceptor::IG => EncloneRangerVdjReceptor::IG,
                 },
-                contig_annotations.rev_before("/").to_string(),
-            )),
+                origin_info: vec![Dataset {
+                    file: args.contig_annotations,
+                    donor_id: "d1".to_string(),
+                    origin_id: "s1".to_string(),
+                }],
+            },
             refname: args
                 .vdj_reference_path
                 .join("fasta/regions.fa")
@@ -172,13 +171,13 @@ impl MartianMain for Assigner {
             // Option to split clonotypes that have 4 chains or more.
             // These are most likely false joins due to a shared chain
             split_max_chains: 4,
-            ..Default::default()
+            filter: args.filter_switch.into(),
+            proto_metadata: String::new(),
+            mix_donors: false,
         };
 
-        args.filter_switch.update_enclone_args(&mut opt.filter);
-
         println!("Invoking enclone:\n{opt:?}");
-        main_enclone_ranger(opt).unwrap();
+        run_enclone(opt).unwrap();
         println!(
             "used {:.2} seconds up through enclone",
             t0.elapsed().as_secs_f64()
@@ -261,7 +260,7 @@ mod tests {
             contig_annotations: JsonFile::from(
                 "../dui_tests/test_resources/cellranger-vdj/vdj_tcell_tiny/contig_annotations.json",
             ),
-            receptor: vdj_reference::VdjReceptor::TR,
+            receptor: VdjReceptor::TR,
         };
         let out = Assigner.test_run(&dir, args).unwrap();
 

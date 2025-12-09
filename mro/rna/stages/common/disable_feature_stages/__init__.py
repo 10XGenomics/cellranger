@@ -11,8 +11,10 @@ stage DISABLE_FEATURE_STAGES(
     in  bool                disable_count,
     in  bool                is_pd,
     in  bool                in_disable_targeted,
+    in  bool                no_secondary_analysis,
     in  map<SampleSlfeOuts> sample_outs,
     in  json                multi_graph,
+    in  ReferenceInfo       reference_info,
     out bool                disable_crispr,
     out bool                disable_antibody,
     out bool                disable_antigen,
@@ -20,8 +22,12 @@ stage DISABLE_FEATURE_STAGES(
     out bool                disable_targeted,
     out bool                disable_legacy_stages,
     out bool                disable_library_cloupe,
+    out bool                disable_library_crispr,
+    out bool                disable_library_rna,
     out bool                disable_gex,
     src py                  "stages/common/disable_feature_stages",
+) using (
+    volatile = strict,
 )
 """
 
@@ -38,6 +44,8 @@ def main(args, outs):
         outs.disable_legacy_stages = True
         outs.disable_targeted = True
         outs.disable_library_cloupe = True
+        outs.disable_library_crispr = True
+        outs.disable_library_rna = True
         outs.disable_gex = True
         return
 
@@ -50,11 +58,11 @@ def main(args, outs):
     found_multiplexing = rna_library.MULTIPLEXING_LIBRARY_TYPE in library_types
     found_gex = rna_library.GENE_EXPRESSION_LIBRARY_TYPE in library_types
 
-    outs.disable_crispr = not (found_crispr)
-    outs.disable_antibody = not (found_antibody)
-    outs.disable_antigen = not (found_antigen)
-    outs.disable_multiplexing = not (found_multiplexing)
-    outs.disable_gex = not (found_gex)
+    outs.disable_crispr = not found_crispr or args.no_secondary_analysis
+    outs.disable_antibody = not found_antibody
+    outs.disable_antigen = not found_antigen
+    outs.disable_multiplexing = not found_multiplexing
+    outs.disable_gex = not found_gex
     outs.disable_targeted = args.in_disable_targeted
 
     outs.disable_legacy_stages = (not args.is_pd) and (
@@ -74,3 +82,12 @@ def main(args, outs):
         and (args.sample_outs is not None)
         and (len(args.sample_outs) == 1)  # is single sample
     ) or args.disable_count
+
+    # Disable library CRISPR analysis if it's being run per sample.
+    outs.disable_library_crispr = outs.disable_crispr or not args.disable_multi
+
+    # Disable library RNA analysis if its library cloupe is disabled but as long as it is not a
+    # barnyard run
+    outs.disable_library_rna = (
+        outs.disable_library_cloupe and len(args.reference_info["genomes"]) < 2
+    )

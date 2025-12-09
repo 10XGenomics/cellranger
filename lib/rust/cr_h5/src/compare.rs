@@ -1,3 +1,6 @@
+#![deny(missing_docs)]
+#![expect(dead_code)]
+
 use anyhow::{Context, Result};
 use hdf5::types::{FixedAscii, FloatSize, IntSize, TypeDescriptor, VarLenAscii, VarLenUnicode};
 use hdf5::{Attribute, Container, Dataset, File, Group, H5Type, Location};

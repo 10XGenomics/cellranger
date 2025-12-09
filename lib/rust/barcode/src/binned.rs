@@ -1,6 +1,5 @@
-//!
 //! Barcodes which are defined based on binning geometry
-//!
+#![expect(missing_docs)]
 
 use anyhow::ensure;
 use pyo3::{pyclass, pymethods};
@@ -16,13 +15,10 @@ pub struct SquareBinRowOrColumnIndex {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Debug)]
-#[pyclass]
+#[pyclass(str, get_all)]
 pub struct SquareBinIndex {
-    #[pyo3(get)]
     pub row: usize,
-    #[pyo3(get)]
     pub col: usize,
-    #[pyo3(get)]
     pub size_um: u32,
 }
 
@@ -35,11 +31,11 @@ impl SquareBinIndex {
     }
 
     /// Extracts binned barcode from unbinned HD barcode
-    pub fn extract_binned_barcode(self, bin_scale: i32) -> SquareBinIndex {
+    pub fn binned(self, bin_scale: u32) -> SquareBinIndex {
         SquareBinIndex {
             row: self.row / bin_scale as usize,
             col: self.col / bin_scale as usize,
-            size_um: self.size_um * bin_scale as u32,
+            size_um: self.size_um * bin_scale,
         }
     }
 }
@@ -47,6 +43,7 @@ impl SquareBinIndex {
 #[pymethods]
 impl SquareBinIndex {
     #[new]
+    #[pyo3(signature = (barcode=None, row=None, col=None, size_um=None))]
     pub fn new(
         barcode: Option<String>,
         row: Option<usize>,
@@ -56,11 +53,12 @@ impl SquareBinIndex {
         match (barcode, row, col, size_um) {
             (Some(barcode), None, None, None) => Ok(barcode.parse()?),
             (None, Some(row), Some(col), Some(size_um)) => Ok(SquareBinIndex { row, col, size_um }),
-            bad_args => Err(anyhow::anyhow!("Invalid arguments: {:?}", bad_args).into()),
+            bad_args => Err(anyhow::anyhow!("Invalid arguments: {bad_args:?}").into()),
         }
     }
-    fn __str__(&self) -> String {
-        self.to_string()
+
+    pub fn with_default_gem_group(&self) -> String {
+        format!("{self}-1")
     }
 }
 
@@ -91,9 +89,7 @@ impl FromStr for SquareBinIndex {
         let prefix = parts.next().ok_or_else(|| error(s))?;
         ensure!(
             prefix == SQUARE_BIN_PREFIX,
-            "Invalid prefix {} in {}",
-            prefix,
-            s
+            "Square-barcodes should have the prefix {SQUARE_BIN_PREFIX}. Found square-barcode {s} which has prefix {prefix}"
         );
 
         let size = parts
@@ -133,6 +129,7 @@ mod tests {
             size_um: 16,
         };
         assert_eq!(b.to_string(), "s_016um_00001_00002");
+        assert_eq!(b.with_default_gem_group(), "s_016um_00001_00002-1");
         assert_eq!(b, "s_016um_00001_00002".parse().unwrap());
         assert_eq!(b, "s_016um_00001_00002-1".parse().unwrap());
     }

@@ -528,14 +528,14 @@ class BarcodeAS:
     """Data structure representing antigen counts and specificity scores for a single barcode."""
 
     __slots__ = (
+        "_antigens",
+        "_assignments",
+        "_specificity_scores",
+        "allele",
         "barcode",
         "clonotype_id",
-        "exact_subclonotype_id",
         "controls",
-        "allele",
-        "_antigens",
-        "_specificity_scores",
-        "_assignments",
+        "exact_subclonotype_id",
         # "sample_id",
     )
 

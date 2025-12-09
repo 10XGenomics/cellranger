@@ -23,6 +23,12 @@ struct VdjAggrCsvLibrary(
     map<string> meta,
 )
 
+struct Dataset(
+    json   file      "Path to contig annotations for this dataset.",
+    string donor_id  "Short name for this donor.",
+    string origin_id "Sample short name.",
+)
+
 struct VdjAggrInput(
     VdjAggrCsvLibrary[] libraries,
 )
@@ -43,6 +49,14 @@ struct VdjAggrResults(
     vloupe vloupe,
     html   filter_summary,
     pb     enclone_output,
+)
+
+struct FilterSwitch(
+    bool asm_shared_contig     "Turn on/off filters in the assembler that makes use of shared contigs to detect potential artifacts",
+    bool enclone_shared_contig "Turn on/off enclone filters that makes use of shared contigs across clonotypes to detect",
+    bool enclone_multiplet     "Filters that remove putative doublets",
+    bool enclone_umi           "Turn on/off UMI thresholds in enclone",
+    bool enclone_cross         "Turn on/off enclone filters that detect fake clonotype expansions",
 )
 
 stage MERGE_MOLECULES(
@@ -70,16 +84,14 @@ stage SETUP_VDJ_AGGR(
     in  VdjAggrCsvLibrary[] libraries,
     in  map                 gem_well_map,
     in  string              receptor,
-    out json[]              contig_ann_json_files,
-    out csv                 enclone_input_csv,
+    out Dataset[]           origin_info,
     out em.json             enclone_gem_well_meta,
     out path                vdj_reference_path,
     out json                combined_ann_json,
     src comp                "cr_aggr martian setup_vdj_aggr",
 ) split (
     in  int                 chunk_id,
-    out json                chunk_ann_json,
-    out map                 enclone_meta_row,
+    out Dataset             dataset,
     out map                 enclone_gem_well_info,
 )
 
@@ -159,4 +171,20 @@ stage CREATE_CLONOTYPE_CLUSTERMAP(
     in  csv  antigen_specificity,
     out json antigen_clonotype_clustermap,
     src comp "cr_aggr martian create_clonotype_clustermap",
+)
+
+stage RUN_ENCLONE_AGGR(
+    in  Dataset[]    origin_info,
+    in  em.json      enclone_gem_well_meta,
+    in  path         vdj_reference_path,
+    in  string       receptor,
+    in  FilterSwitch filter_switch,
+    in  bool         mix_donors,
+    out pb           enclone_output,
+    out fa           donor_ref_fa,
+    out json         barcode_fate,
+    src comp         "cr_aggr martian run_enclone_aggr",
+) using (
+    mem_gb  = 16,
+    threads = 4,
 )

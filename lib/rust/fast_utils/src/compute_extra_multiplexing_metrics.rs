@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use barcode::BcSeq;
 use cr_h5::molecule_info::{
     BarcodeIdxType, FullUmiCount, GemGroupType, LibraryIdxType, MoleculeInfoIterator,
@@ -8,7 +9,6 @@ use cr_types::rna_read::LibraryInfo;
 use cr_types::types::FeatureBarcodeType;
 use cr_types::{BarcodeMultiplexingType, CellLevel, LibraryType};
 use itertools::Itertools;
-use itertools::__std_iter::Iterator;
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
@@ -110,20 +110,18 @@ fn load_tag_json(
     bc_gg
 }
 
-fn make_barcode_to_index_map(mol_h5_fname: &Path) -> HashMap<BcSeq, usize> {
+fn make_barcode_to_index_map(mol_h5_fname: &Path) -> anyhow::Result<HashMap<BcSeq, usize>> {
     // Gets a map translating a barcode sequence to a index value
-    MoleculeInfoReader::read_barcodes(mol_h5_fname)
-        .unwrap()
-        .into_iter()
+    MoleculeInfoReader::read_barcodes(mol_h5_fname)?
         .enumerate()
-        .map(|(index, barcode)| (*barcode.sequence(), index))
-        .collect()
+        .map(|(index, barcode)| Ok((*barcode?.sequence(), index)))
+        .try_collect()
 }
 
 // Method counts the total number of reads for each feature
 #[allow(clippy::type_complexity)]
 #[pyfunction]
-pub(crate) fn tag_read_counts(
+pub(super) fn tag_read_counts(
     _py: Python<'_>,
     mol_info_path: String,
     singlets_path: String,
@@ -140,7 +138,7 @@ pub(crate) fn tag_read_counts(
     let cur_path = Path::new(&mol_info_path);
 
     // Load up singlet and multiplet barcodes
-    let bc_to_ind = make_barcode_to_index_map(cur_path);
+    let bc_to_ind = make_barcode_to_index_map(cur_path).unwrap();
     let singlets = load_tag_json(singlets_path.as_ref(), &bc_to_ind, None);
     let multiplets = load_tag_json(
         non_singlets_path.as_ref(),
@@ -177,7 +175,7 @@ pub(crate) fn tag_read_counts(
         .for_each(|z| {
             lib_to_gg.insert(z.library_id, z.gem_group);
         });
-    let barcodes = MoleculeInfoReader::read_barcode_info(cur_path).unwrap().0;
+    let barcodes = MoleculeInfoReader::read_barcode_info_pass_filter(cur_path).unwrap();
     let mut cell_associated_bcs: HashSet<(BarcodeIdxType, GemGroupType)> =
         HashSet::with_capacity(barcodes.dim().0 / 2); // divide by 2 as we typically have GEX + CMO at a minimum, and we only add in CMO
     barcodes.outer_iter().for_each(|z| {

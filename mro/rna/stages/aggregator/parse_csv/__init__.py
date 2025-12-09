@@ -298,9 +298,9 @@ def parse_sample_sheet(
             # check required fields again (it could be missing for just this row)
             for field in required_fields:
                 if field not in row:
-                    martian.exit("Row %d is missing a required field: %s." % (i, field))
+                    martian.exit(f"Row {i} is missing a required field: {field}.")
                 if len(row[field]) == 0:
-                    martian.exit("Row %d has an empty value for field: %s." % (i, field))
+                    martian.exit(f"Row {i} has an empty value for field: {field}.")
 
                 if field_validation[field].type == "string":
                     row[field] = _text_cleanup(row[field])

@@ -98,6 +98,7 @@ pipeline COUNT_AGGR(
         tsne_mom_switch_iter     = null,
         product_type             = "sc",
         is_pd                    = self.is_pd,
+        spatial_high_barcodes    = false,
         enable_tsne              = self.enable_tsne,
     )
 
@@ -123,12 +124,16 @@ pipeline COUNT_AGGR(
         hd_slide_name                = null,
         loupe_map                    = null,
         product_type                 = "sc",
+        cells_per_batch              = null,
         cells_per_sample             = null,
         cells_per_tag                = null,
         cells_per_protospacer        = SC_RNA_AGGREGATOR.cells_per_protospacer,
         spatial_enrichment           = null,
         spatial_deconvolution_path   = null,
         disable_cloupe               = null,
+        matrix_type                  = null,
+        spatial_cell_segment_mask    = null,
+        spatial_cell_segment_geojson = null,
     )
 
     return (

@@ -1,9 +1,9 @@
 //! Wrapping the Rust handling of the multi config.
+#![deny(missing_docs)]
 use cr_types::{BarcodeMultiplexingType, CellLevel, CrMultiGraph, Fingerprint, ReadLevel};
-use itertools::Itertools;
 use martian::MartianFileType;
-use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::json_file::JsonFile;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -21,7 +21,7 @@ pub struct MultiGraph(CrMultiGraph);
 impl MultiGraph {
     /// Load the multi graph from the provided path.
     #[classmethod]
-    pub fn from_path(_cls: &PyType, path: &str) -> PyResult<Self> {
+    pub fn from_path(_cls: &Bound<'_, PyType>, path: &str) -> PyResult<Self> {
         Ok(Self(JsonFile::from_path(Path::new(path)).read().map_err(
             |err| PyErr::new::<PyException, _>(format!("{err:#}")),
         )?))
@@ -29,7 +29,7 @@ impl MultiGraph {
 
     /// Load the multi graph from the provided JSON-encoded string.
     #[classmethod]
-    pub fn from_str(_cls: &PyType, contents: &str) -> PyResult<Self> {
+    pub fn from_str(_cls: &Bound<'_, PyType>, contents: &str) -> PyResult<Self> {
         Ok(Self(serde_json::from_str(contents).map_err(|err| {
             PyErr::new::<PyException, _>(format!("{err:#}"))
         })?))
@@ -63,14 +63,12 @@ impl MultiGraph {
             .collect()
     }
 
-    /// Extract the names of all feature barcoding types present.
-    pub fn feature_types(&self) -> HashSet<String> {
+    /// Get the names of all library types.
+    pub fn library_types(&self) -> HashSet<&'static str> {
         self.0
             .libraries
             .iter()
-            .filter_map(|lib| lib.library_type.feature_barcode_type())
-            .unique()
-            .map(|fbt| fbt.to_string())
+            .map(|x| x.library_type.as_str())
             .collect()
     }
 
@@ -103,72 +101,11 @@ impl MultiGraph {
             == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::OH))
     }
 
-    /// Return tuples of sample ID and finerprints.
-    /// THIS IS ONLY USED FOR CREATION OF GRAPHVIZ.
-    pub fn sample_info_for_graphviz(&self) -> Vec<(String, Vec<PyFingerprint>)> {
-        self.0
-            .samples
-            .iter()
-            .map(|sample| {
-                (
-                    sample.sample_id.clone(),
-                    sample
-                        .fingerprints
-                        .iter()
-                        .map(PyFingerprint::from_fingerprint)
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect()
-    }
-
-    /// Return tuples of physical library ID, gem well, associated FASTQ IDs.
-    /// THIS IS ONLY USED FOR CREATION OF GRAPHVIZ.
-    pub fn library_info_for_graphviz(&self) -> Vec<(String, u16, Vec<String>)> {
-        self.0
-            .libraries
-            .iter()
-            .map(|lib| {
-                (
-                    lib.physical_library_id.clone(),
-                    lib.gem_well.0,
-                    lib.fastqs
-                        .iter()
-                        .map(|fastq| fastq.id().to_string())
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect()
-    }
-}
-
-#[pyclass]
-pub struct PyFingerprint {
-    #[pyo3(get)]
-    gem_well: u16,
-    #[pyo3(get)]
-    tag_names: Vec<String>,
-}
-
-impl PyFingerprint {
-    fn from_fingerprint(fingerprint: &Fingerprint) -> Self {
-        match fingerprint {
-            Fingerprint::Tagged {
-                gem_well,
-                tag_name,
-                translated_tag_names,
-                ..
-            } => Self {
-                gem_well: gem_well.0,
-                tag_names: std::iter::once(tag_name)
-                    .chain(translated_tag_names)
-                    .cloned()
-                    .collect(),
-            },
-            Fingerprint::Untagged { gem_well } => Self {
-                gem_well: gem_well.0,
-                tag_names: Default::default(),
-            },
-        }
+    /// Return the multiplexing type as String. Returns None if not multiplexed.
+    pub fn get_barcode_multiplexing_type(&self) -> PyResult<Option<String>> {
+        Ok(self
+            .0
+            .barcode_multiplexing_type()
+            .map(|x| x.as_str().to_string()))
     }
 }

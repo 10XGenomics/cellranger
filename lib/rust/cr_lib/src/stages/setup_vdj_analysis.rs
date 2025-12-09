@@ -1,4 +1,5 @@
-//! SetupVdjAnalysis stage code
+//! Martians stage SETUP_VDJ_ANALYSIS
+#![deny(missing_docs)]
 
 use super::setup_vdj_demux::VdjDemuxSampleInfo;
 use crate::GexMatrices;
@@ -8,9 +9,9 @@ use cr_types::reference::feature_reference::BeamMode;
 use cr_types::{BarcodeMultiplexingType, ReadLevel};
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::tabular_file::CsvFile;
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::tabular_file::CsvFile;
 use serde::{Deserialize, Serialize};
 use vdj_reference::VdjReceptor;
 
@@ -46,6 +47,7 @@ pub struct SetupVdjAnalysisStageOutputs {
     pub filtered_barcodes: Option<CsvFile<()>>,
 }
 
+/// Martians stage SETUP_VDJ_ANALYSIS
 pub struct SetupVdjAnalysis;
 
 #[derive(Eq, PartialEq)]

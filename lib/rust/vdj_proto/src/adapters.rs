@@ -1,6 +1,6 @@
-//!
 //! - Converting from crate::types to vdj_types
 //! - Additional functions to auto derived structs
+#![expect(missing_docs)]
 
 use crate::types::vdj_proto_message::MessageContent;
 use crate::types::{
@@ -9,7 +9,7 @@ use crate::types::{
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::convert::Into;
-use std::fs;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
@@ -220,11 +220,7 @@ fn option_usize_to_i32(src: Option<usize>) -> i32 {
 }
 
 fn i32_to_option_usize(src: i32) -> Option<usize> {
-    if src < 0 {
-        None
-    } else {
-        Some(src as usize)
-    }
+    if src < 0 { None } else { Some(src as usize) }
 }
 
 fn option_string_to_string(src: Option<String>) -> String {
@@ -232,11 +228,7 @@ fn option_string_to_string(src: Option<String>) -> String {
 }
 
 fn string_to_option_string(src: String) -> Option<String> {
-    if src.is_empty() {
-        None
-    } else {
-        Some(src)
-    }
+    if src.is_empty() { None } else { Some(src) }
 }
 
 impl From<vdj_ann::annotate::ContigAnnotation> for crate::types::ContigAnnotation {
@@ -308,9 +300,6 @@ impl From<crate::types::ContigAnnotation> for vdj_ann::annotate::ContigAnnotatio
                 exact_subclonotype_id: string_to_option_string(src.exact_subclonotype_id),
             },
             high_confidence: src.high_confidence,
-            validated_umis: /* src.validated_umis */ None, // ?????????????????????????????????????
-            non_validated_umis: /* src.validated_umis */ None, // ?????????????????????????????????
-            invalidated_umis: /* src.invalidated_umis */ None, // ?????????????????????????????????
             is_cell: src.is_cell,
             is_asm_cell: src.asm_data.map(|a| a.is_asm_cell),
             is_gex_cell: src.gex_data.map(|g| g.is_gex_cell),
@@ -381,15 +370,15 @@ impl VdjProtoMessage {
 impl VdjReferenceRaw {
     pub fn new(reference_folder: &Path) -> Result<Self> {
         Ok(VdjReferenceRaw {
-            regions: std::fs::read_to_string(reference_folder.join("fasta/regions.fa"))?,
-            ref_json: std::fs::read_to_string(reference_folder.join("reference.json"))?,
+            regions: fs::read_to_string(reference_folder.join("fasta/regions.fa"))?,
+            ref_json: fs::read_to_string(reference_folder.join("reference.json"))?,
         })
     }
 
     pub fn write_to_folder(&self, folder: &Path) -> Result<()> {
         fs::create_dir_all(folder.join("fasta"))?;
-        fs::File::create(folder.join("fasta/regions.fa"))?.write_all(self.regions.as_bytes())?;
-        fs::File::create(folder.join("reference.json"))?.write_all(self.ref_json.as_bytes())?;
+        File::create(folder.join("fasta/regions.fa"))?.write_all(self.regions.as_bytes())?;
+        File::create(folder.join("reference.json"))?.write_all(self.ref_json.as_bytes())?;
         Ok(())
     }
 
@@ -431,7 +420,7 @@ impl VdjMetadata {
 
 impl MetricsSummary {
     pub fn from_metrics_json(path: &Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)?;
+        let contents = fs::read_to_string(path)?;
         // Ensure that this is a valid metric json. Panic if not
         let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
         assert!(
@@ -445,7 +434,6 @@ impl MetricsSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
     use strum::IntoEnumIterator;
 
     #[test]

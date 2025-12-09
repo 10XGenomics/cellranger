@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 GEX_PREFIX = "gene_expression"
 AB_PREFIX = "antibody_capture"
+PROT_PREFIX = "protein_expression"
 ATAC_PREFIX = "peaks"
 CLUSTER_TYPE_KMEANS = "kmeans"
 CLUSTER_TYPE_ANTIBODY_KMEANS = AB_PREFIX + "_" + CLUSTER_TYPE_KMEANS
@@ -29,6 +30,7 @@ CLUSTER_TYPE_ATAC = ATAC_PREFIX + "_" + CLUSTER_TYPE_KMEANS
 CLUSTER_TYPE_GRAPHCLUST = GEX_PREFIX + "_" + "graphclust"
 CLUSTER_TYPE_ATAC_GRAPHCLUST = ATAC_PREFIX + "_" + "graphclust"
 CLUSTER_TYPE_ANTIBODY_GRAPHCLUST = f"{AB_PREFIX}_graphclust"
+CLUSTER_TYPE_PROTEIN_GRAPHCLUST = f"{PROT_PREFIX}_graphclust"
 CLUSTER_TYPE_KMEDOIDS = "kmedoids"
 CLUSTER_TYPE_CELLTYPES = "celltype"
 
@@ -44,7 +46,7 @@ class CLUSTERING(NamedTuple):
 
 def format_legacy_clustering_key(cluster_type: str, cluster_param: int):
     assert cluster_type == CLUSTER_TYPE_KMEANS
-    return "_%d" % cluster_param
+    return f"_{cluster_param}"
 
 
 def format_clustering_key(cluster_type: str, cluster_param: int):
@@ -52,11 +54,11 @@ def format_clustering_key(cluster_type: str, cluster_param: int):
     if cluster_type == CLUSTER_TYPE_KMEANS:
         return f"{GEX_PREFIX}_{CLUSTER_TYPE_KMEANS}_{cluster_param}_clusters"
     elif cluster_type == CLUSTER_TYPE_ANTIBODY_KMEANS:
-        return "%s_%s_%d_clusters" % (AB_PREFIX, CLUSTER_TYPE_KMEANS, cluster_param)
+        return f"{AB_PREFIX}_{CLUSTER_TYPE_KMEANS}_{cluster_param}_clusters"
     elif cluster_type == CLUSTER_TYPE_ATAC:
-        return "%s_%s_%d_clusters" % (ATAC_PREFIX, CLUSTER_TYPE_KMEANS, cluster_param)
+        return f"{ATAC_PREFIX}_{CLUSTER_TYPE_KMEANS}_{cluster_param}_clusters"
     elif cluster_type == CLUSTER_TYPE_KMEDOIDS:
-        return "%s_%d_clusters" % (CLUSTER_TYPE_KMEDOIDS, cluster_param)
+        return f"{CLUSTER_TYPE_KMEDOIDS}_{cluster_param}_clusters"
     elif cluster_type in (
         CLUSTER_TYPE_GRAPHCLUST,
         CLUSTER_TYPE_ATAC_GRAPHCLUST,
@@ -99,6 +101,9 @@ def parse_clustering_key(clustering_key: str):
     elif clustering_key.startswith(AB_PREFIX):
         n_clusters = _parse_number_of_clusters(clustering_key)
         return (CLUSTER_TYPE_ANTIBODY_KMEANS, n_clusters)
+    elif clustering_key.startswith(PROT_PREFIX):
+        n_clusters = _parse_number_of_clusters(clustering_key)
+        return (CLUSTER_TYPE_PROTEIN_GRAPHCLUST, n_clusters)
     elif clustering_key.startswith(ATAC_PREFIX):
         n_clusters = _parse_number_of_clusters(clustering_key)
         return (CLUSTER_TYPE_ATAC, n_clusters)
@@ -119,13 +124,13 @@ def humanify_clustering_key(clustering_key: str):
     elif cluster_type == CLUSTER_TYPE_ATAC_GRAPHCLUST:
         return "Peaks Graph-based"
     elif cluster_type == CLUSTER_TYPE_KMEANS:
-        return "Gene Expression K-means (K=%d)" % cluster_param
+        return f"Gene Expression K-means (K={cluster_param})"
     elif cluster_type == CLUSTER_TYPE_ANTIBODY_KMEANS:
-        return "Antibody Capture K-means (K=%d)" % cluster_param
+        return f"Antibody Capture K-means (K={cluster_param})"
     elif cluster_type == CLUSTER_TYPE_ATAC:
-        return "Peaks K-means (K=%d)" % cluster_param
+        return f"Peaks K-means (K={cluster_param})"
     elif cluster_type == CLUSTER_TYPE_KMEDOIDS:
-        return "K-medoids (K=%d)" % cluster_param
+        return f"K-medoids (K={cluster_param})"
     elif cluster_type == CLUSTER_TYPE_CELLTYPES:
         return "Celltypes"
     else:

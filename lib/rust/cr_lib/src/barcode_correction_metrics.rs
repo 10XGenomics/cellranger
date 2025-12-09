@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use crate::barcode_sort::ReadVisitor;
 use crate::per_type_metric;
 use anyhow::Result;
@@ -15,11 +16,20 @@ use serde::{Deserialize, Serialize};
 /// The metrics associated with BarcodeCorrection.
 #[derive(Default, Serialize, Deserialize, Metric, JsonReport)]
 pub struct InnerBarcodeCorrectionMetrics {
+    /// Fraction of corrected barcodes.
     corrected_bc: PercentMetric,
-    /// Fraction of corrected barcodes in each segment
+    /// Fraction of corrected barcodes in each segment.
     corrected_bc_in: BarcodeConstructMetric<PercentMetric>,
+    /// Fraction of good barcodes after correction.
     good_bc: PercentMetric,
+    /// Fraction of good barcodes after correction in each segment.
     good_bc_in: BarcodeConstructMetric<PercentMetric>,
+    /// Fraction of barcodes that could not be corrected, because the correction was ambiguous.
+    ambiguous_bc_in: BarcodeConstructMetric<PercentMetric>,
+    /// Fraction of barcodes that could not be corrected, because the correction was an indel.
+    indel_bc_in: BarcodeConstructMetric<PercentMetric>,
+    /// Fraction of barcodes that could not be corrected, because the molecule has unusual structure.
+    unusual_bc_in: BarcodeConstructMetric<PercentMetric>,
 }
 
 impl InnerBarcodeCorrectionMetrics {
@@ -33,6 +43,9 @@ impl InnerBarcodeCorrectionMetrics {
             corrected_bc_in: num_valid_segments.map(|x| PercentMetric::from_parts(0.into(), x)),
             good_bc: (num_valid_read_pairs, num_valid_read_pairs).into(),
             good_bc_in: num_valid_segments.map(|x| PercentMetric::from_parts(x, x)),
+            ambiguous_bc_in: num_valid_segments.map(|x| PercentMetric::from_parts(0.into(), x)),
+            indel_bc_in: num_valid_segments.map(|x| PercentMetric::from_parts(0.into(), x)),
+            unusual_bc_in: num_valid_segments.map(|x| PercentMetric::from_parts(0.into(), x)),
         }
     }
 }
@@ -81,6 +94,21 @@ impl ReadVisitor for BarcodeCorrectionVisitor {
                 .segments_valid()
                 .map(PercentMetric::from)
                 .into(),
+            ambiguous_bc_in: read
+                .segmented_barcode
+                .segments()
+                .map(|seg| PercentMetric::from(seg.state == BarcodeSegmentState::InvalidAmbiguous))
+                .into(),
+            indel_bc_in: read
+                .segmented_barcode
+                .segments()
+                .map(|seg| PercentMetric::from(seg.state == BarcodeSegmentState::InvalidIndel))
+                .into(),
+            unusual_bc_in: read
+                .segmented_barcode
+                .segments()
+                .map(|seg| PercentMetric::from(seg.state == BarcodeSegmentState::InvalidStructure))
+                .into(),
         };
 
         self.metrics
@@ -103,7 +131,7 @@ pub type BarcodeCorrectionMetricsFormat =
 
 /// Barcode diversity metrics
 #[derive(JsonReport)]
-pub(crate) struct BarcodeDiversityMetrics {
+pub(super) struct BarcodeDiversityMetrics {
     /// Number of barcodes detected
     pub barcodes_detected: usize,
 

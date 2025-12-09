@@ -1,0 +1,535 @@
+@import '../../shared/websummary/styles/styles.scss';
+
+.page-layout {
+  background-color: rgb(247, 249, 252);
+
+  .page-header {
+    background: linear-gradient(90deg, #0a2347 7.06%, #0b85c8 124.06%);
+    padding: 0.75rem 2rem 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    .branding {
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+
+      img {
+        height: 1.5rem;
+      }
+    }
+
+    h3 {
+      color: white;
+      margin: 0;
+      transform: translateY(0.25rem);
+    }
+
+    .support-button {
+      background: rgba(255, 255, 255, 0.25);
+      border: none;
+      border-radius: 6px;
+      color: white;
+      padding: 8px 8px 5px;
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      gap: 8px;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.5);
+        text-decoration: none;
+      }
+    }
+  }
+
+  .summary-navigation {
+    max-width: 1280px;
+    width: 100%;
+  }
+}
+
+.optional-multiplexed-summary {
+  align-items: center;
+  flex-direction: column;
+  box-sizing: border-box;
+  display: flex;
+  padding: 2rem 1rem 4rem;
+  width: 100%;
+  min-height: 100vh;
+
+  article {
+    max-width: 1280px;
+    width: 100%;
+  }
+
+  .callout {
+    background: #edfefb;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 20px 1fr;
+    margin-bottom: 2rem;
+    padding: 1rem;
+
+    h3 {
+      color: #0a2347;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    p {
+      color: #445979;
+      font-size: 16px;
+      font-weight: 400;
+      margin: 0;
+    }
+  }
+
+  .sample-header,
+  .tab-header {
+    margin-bottom: 32px;
+
+    p {
+      margin: 0;
+    }
+
+    ul {
+      display: flex;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      gap: 1rem 3rem;
+      flex-wrap: wrap;
+    }
+
+    .title {
+      font-weight: 700;
+      margin-bottom: 8px;
+      white-space: nowrap;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+  }
+
+  .sample-header {
+    color: #0a2347;
+
+    .sample-id {
+      .subtitle {
+        font-size: 24px;
+        font-weight: 700;
+      }
+    }
+  }
+
+  .per-sample-header {
+    display: grid;
+  }
+
+  .tab-header {
+    .parameters-table {
+      flex-flow: column nowrap;
+      margin: 32px 0;
+      color: #445979;
+      gap: 0;
+
+      li {
+        display: flex;
+      }
+
+      // The flex properties make the table's subtitles align with one another
+      // even if the title has variable width. Longer titles will line break,
+      // if we ever run into them.
+      .title {
+        flex: 1;
+        white-space: normal;
+      }
+
+      .subtitle {
+        flex: 5;
+      }
+    }
+  }
+
+  .plot-table {
+    display: flex;
+
+    .plot-table-wrapper {
+      width: 50%;
+    }
+
+    .table-wrapper {
+      max-height: 540px;
+      overflow-y: scroll;
+    }
+  }
+
+  .experimental-design {
+    min-width: 100%;
+
+    .summary_border {
+      padding-left: 24px;
+      padding-right: 24px;
+    }
+
+    .csv {
+      h2 {
+        font-size: 18px;
+        font-weight: 400;
+      }
+
+      h3 {
+        margin-top: 0.66rem;
+        text-align: left;
+      }
+
+      button,
+      button:focus {
+        border: none;
+        background: none;
+        display: flex;
+        outline: none;
+        align-items: baseline;
+        padding: 16px 0;
+        width: 100%;
+
+        *:first-child {
+          margin-right: 16px;
+        }
+      }
+    }
+
+    section:not(:first-child) {
+      margin-top: 40px;
+    }
+
+    figure {
+      display: flex;
+      justify-content: center;
+      padding: 18px;
+    }
+
+    .code-wrapper {
+      border-top: 1px solid #dce0e6;
+      padding: 16px 0;
+      width: 100%;
+    }
+
+    code {
+      white-space: pre;
+    }
+  }
+
+  .hero-metrics {
+    table {
+      tbody {
+        background-color: inherit;
+        color: #00b398;
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      tbody tr:hover {
+        color: #00b398;
+      }
+    }
+  }
+
+  .tab-warning {
+    display: flex;
+    align-items: baseline;
+
+    svg {
+      margin-left: 8px;
+    }
+  }
+
+  .nav-warning {
+    display: flex;
+    align-items: center;
+
+    svg {
+      margin-left: 8px;
+    }
+  }
+
+  // Some plot styles to place plots side by side (like scatter plots,
+  // knee plots, etc.)
+
+  .half-plot {
+    display: flex;
+    flex-flow: row wrap;
+    justify-content: space-between;
+
+    >* {
+      flex: 1;
+    }
+  }
+
+  .half-plot {
+    >* {
+      max-width: 49%;
+    }
+  }
+
+  @include media-breakpoint-down('lg') {
+    display: block;
+
+    // There just isn't enough space for the plot and table to show their
+    // contents comfortably side-by-side at even bootstrap's lg (992px)
+    // resolution.
+    .plot-table {
+      flex-flow: column;
+
+      .plot-table-wrapper {
+        width: 100%;
+      }
+
+      .table-wrapper {
+        max-height: initial;
+        overflow-y: initial;
+      }
+    }
+  }
+
+  @include media-breakpoint-down('md') {
+    .sample-header {
+      ul {
+        flex-direction: column;
+      }
+    }
+
+    .tab-header {
+      .parameters-table {
+        .subtitle {
+          flex: 3;
+          margin-left: 16px;
+        }
+      }
+    }
+
+    .half-plot {
+      flex-flow: column;
+
+      >* {
+        max-width: initial;
+        width: 100%;
+      }
+    }
+
+    .experimental-design {
+      figure {
+        overflow-x: scroll;
+        justify-content: initial;
+
+        svg {
+          min-width: 1024px;
+          width: 100%;
+          height: auto;
+        }
+      }
+    }
+  }
+
+  // Various styles to deal with mobile or override some built in
+  // styles that don't really work well with this layout/components.
+  .summary_border {
+    // Support scrolling the metrics tables (and other components) when
+    // the window size is small.
+    overflow-x: scroll;
+    // Not sure why we _wouldn't_ want this - ensures that everything
+    // up to the bounds of this container will have a white background.
+    background-color: white !important;
+    // Removes the default border and replaces it with a drop shadow.
+    border: none;
+    box-shadow:
+      0px 1px 1px rgba(0, 0, 0, 0.1),
+      0px 1px 1px rgba(0, 0, 0, 0.14),
+      0px 1px 3px rgba(0, 0, 0, 0.2);
+
+    h2 {
+      font-size: 1.25rem;
+    }
+  }
+
+  .plot-container {
+    // Overrides an inline left margin for the biplots with thresholding
+    // that should not be necessary for this layout.
+    margin-left: 0 !important;
+  }
+
+  .container.alert-container {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .clustering-selector {
+
+    // Overrides negative left and right margins on the row in the clustering selector
+    // for previous websummaries but not for this layout. It's not
+    // being done globally for backwards compatibility reasons.
+    .row {
+      margin: 0;
+    }
+  }
+
+  .targeted {
+
+    // Overrides certain defaults on the targeted plot that worked
+    // for previous websummaries but not for this layout. It's not
+    // being done globally for backwards compatibility reasons.
+    .row {
+      margin: 0;
+    }
+
+    .summary_column:first-child {
+      flex: 2;
+      max-width: none;
+    }
+
+    .summary_column {
+      flex: 1;
+      max-width: 480px;
+    }
+
+    @include media-breakpoint-down('md') {
+      .summary_column {
+        max-width: initial;
+      }
+    }
+  }
+
+  .table {
+    color: #0a2347;
+
+    td {
+      padding: 0.75rem 1rem;
+    }
+
+    // Inner border between the cells.
+    td:not(:last-child) {
+      border-right: 1px solid #dee2e6;
+    }
+  }
+
+  .disclaimer,
+  .title-help-text-container {
+    padding: 16px;
+    border-radius: 6px;
+    background-color: #ebf4fc;
+  }
+
+  .title-help-text-container {
+    margin-bottom: 16px;
+  }
+
+  .disclaimer {
+    margin-top: 10px;
+    padding-bottom: 2px !important;
+    border: 2px solid #0071d9;
+  }
+
+  .nav-tabs {
+    display: flex;
+    gap: 2.5rem;
+    border: none;
+
+    .nav-link {
+      // Needed to override 'a' styles.
+      border: none;
+      color: #8a97ab;
+      display: flex;
+      align-items: center;
+      padding: 0 0 0.5rem;
+    }
+
+    .nav-link.active {
+      background-color: transparent;
+      border: none;
+      color: #153057;
+      font-weight: 700;
+      border-bottom: 4px solid #0071d9;
+    }
+  }
+
+  .section-with-visualizations .nav-tabs,
+  .per-sample>.nav-tabs {
+    display: flex;
+    gap: 0.5rem;
+
+    .nav-link {
+      padding: 0.5rem 1.5rem 0.25rem;
+      border-radius: 32px;
+      border: 1px solid #dce0e6;
+      background: #fff;
+      color: #445979;
+    }
+
+    .nav-link.active {
+      background: #0071d9;
+      color: #fff;
+    }
+  }
+
+  .table-header-container {
+    display: flex;
+    cursor: help;
+  }
+
+  .table-header-content {
+    display: flex;
+    width: fit-content;
+    color: #445979;
+
+    &:hover {
+      color: #0a2347;
+    }
+  }
+
+  .table-right-aligned {
+    justify-content: flex-end;
+    text-align: right;
+  }
+
+  .tooltip {
+    background: #0a2347;
+    border-radius: 4px;
+    padding: 1rem;
+    text-align: left;
+    z-index: 999;
+  }
+
+  .tooltip-link {
+    color: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  .tooltip-link:hover {
+    color: #0071d9;
+  }
+
+  .table-tooltip {
+    max-width: 350px;
+  }
+
+  .plot-tooltip {
+    max-width: 350px;
+  }
+
+  // Tooltips are attached to various SVG elements.
+  // They should not be clickable, but the browser seems to
+  // still apply focus on click to those elements.
+  // This removes any kind of browser-specific focus styling.
+  svg *:focus {
+    outline: none;
+  }
+}

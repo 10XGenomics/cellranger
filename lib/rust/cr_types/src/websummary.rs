@@ -1,5 +1,6 @@
 //! Types shared between websummary derive macros and websummary construction.
-use anyhow::{bail, ensure, Result};
+#![expect(missing_docs)]
+use anyhow::{Result, bail, ensure};
 use proc_macro2::TokenStream;
 use quote::quote;
 use serde::{Deserialize, Serialize};
@@ -60,7 +61,7 @@ impl quote::ToTokens for AlertConditions {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct AlertConfig {
     pub error_threshold: Option<f64>,
     pub warn_threshold: Option<f64>,
@@ -162,21 +163,41 @@ impl AlertConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(deny_unknown_fields)]
-pub struct MetricConfig {
+pub struct MetricEtlConfig {
+    /// The human-readable name to give this metric.
     pub header: String,
+    /// If present, use this key to look up the metric.
     pub json_key: Option<String>,
+    /// The Rust type to unpack the metric as.
+    ///
+    /// NOTE: this is used in the typescript frontend to dispatch the
+    /// value to the appropriate formatter.
     #[serde(rename = "type")]
     pub ty: String,
-    #[serde(default)] // false
-    pub optional: bool,
-    pub help: Option<String>,
+    /// If provided, use the specified named transformer to transform the value.
+    /// The specified type should match the output of the transformer.
+    /// FIXME CELLRANGER-8444 this should replace the ty field entirely,
+    /// and the output type specification should move from the metric config
+    /// into the metric value struct instead. Consider also making formatted
+    /// output metric an enum and dispatching based on that key in the frontend
+    /// instead.
+    #[serde(default)]
+    #[serde(skip_serializing)]
+    pub transformer: Option<String>,
+    /// Control the extraction behavior of this metric.
+    ///
+    /// Defaults to making the metric required.
+    #[serde(default)]
+    #[serde(skip_serializing)]
+    pub extract: ExtractMode,
+    /// The alerts to potentially fire for this metric.
     #[serde(default)] // Empty vec
     pub alerts: Vec<AlertConfig>,
 }
 
-impl MetricConfig {
+impl MetricEtlConfig {
     pub fn validate(&self) -> Result<()> {
         // Ensure that expected transformed type is compatible with alerts.
         // FIXME extract transformer keys as constants.
@@ -197,31 +218,19 @@ impl MetricConfig {
     }
 }
 
-impl quote::ToTokens for MetricConfig {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Self {
-            header,
-            json_key,
-            ty,
-            optional,
-            help,
-            alerts,
-        } = self;
-        let json_key = quote_string_option(json_key);
-        let help = quote_string_option(help);
-        tokens.extend(quote![
-            ::cr_types::websummary::MetricConfig {
-                header: #header.to_string(),
-                json_key: #json_key,
-                ty: #ty.to_string(),
-                optional: #optional,
-                help: #help,
-                alerts: vec![
-                    #(#alerts),*
-                ]
-            }
-        ]);
-    }
+/// Control how we handle optionality when extracting a metric.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractMode {
+    /// This metric is required to be found. Fail with an error if the key is missing.
+    #[default]
+    Required,
+    /// If this metric is not found, compleley omit it from the output.
+    Optional,
+    /// If this metric is not found, populate a placeholder in the output.
+    /// This will include the full metric config, but with null for the value,
+    /// a placeholder for the stringified value, and no alerts.
+    Placeholder,
 }
 
 fn check_exclusive_conditions(conditions: &[&AlertConditions]) -> bool {
@@ -249,14 +258,14 @@ fn check_exclusive_conditions(conditions: &[&AlertConditions]) -> bool {
     true
 }
 
-fn quote_option<T: quote::ToTokens>(arg: &Option<T>) -> proc_macro2::TokenStream {
+fn quote_option<T: quote::ToTokens>(arg: &Option<T>) -> TokenStream {
     match arg {
         None => quote![None],
         Some(x) => quote![Some(#x)],
     }
 }
 
-fn quote_string_option(arg: &Option<String>) -> proc_macro2::TokenStream {
+fn quote_string_option(arg: &Option<String>) -> TokenStream {
     match arg {
         None => quote![None],
         Some(x) => quote![Some(#x.to_string())],

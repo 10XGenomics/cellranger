@@ -1,4 +1,7 @@
+//! slide_design::stubs
+#![expect(missing_docs)]
 #![allow(unused)]
+
 use anyhow::Result;
 use martian::AsMartianPrimaryType;
 use serde::{Deserialize, Serialize};

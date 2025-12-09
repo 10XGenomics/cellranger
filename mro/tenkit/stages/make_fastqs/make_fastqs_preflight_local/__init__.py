@@ -87,8 +87,7 @@ def check_read_params(args, runinfo):
             > read_info_by_read_type[args.bc_read_type]["read_length"]
         ):
             martian.exit(
-                "Barcode out of bounds (%s:%d-%d)"
-                % (args.bc_read_type, args.bc_start_index, args.bc_start_index + args.bc_length)
+                f"Barcode out of bounds ({args.bc_read_type}:{args.bc_start_index}-{args.bc_start_index + args.bc_length})"
             )
 
     # if sample index reads not generated, must specify lanes to demux
@@ -105,8 +104,7 @@ def check_read_params(args, runinfo):
             > read_info_by_read_type[args.umi_read_type]["read_length"]
         ):
             martian.exit(
-                "UMI out of bounds (%s:%d-%d)"
-                % (args.umi_read_type, args.umi_start_index, args.umi_start_index + args.umi_length)
+                f"UMI out of bounds ({args.umi_read_type}:{args.umi_start_index}-{args.umi_start_index + args.umi_length})"
             )
 
 

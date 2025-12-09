@@ -1,5 +1,6 @@
+#![expect(missing_docs)]
 use anyhow::Result;
-use enclone_ranger::main_enclone::CellrangerFilterOpt;
+use enclone_process::ClonotypingFilterConfig;
 use martian_derive::MartianStruct;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::lz4_file::Lz4;
@@ -34,27 +35,29 @@ impl Default for FilterSwitch {
     }
 }
 
-impl FilterSwitch {
-    pub fn update_enclone_args(self, opt: &mut CellrangerFilterOpt) {
-        if !self.enclone_shared_contig {
-            opt.graph = false;
+impl From<FilterSwitch> for ClonotypingFilterConfig {
+    fn from(sw: FilterSwitch) -> Self {
+        let mut cfg = Self::default();
+        if !sw.enclone_shared_contig {
+            cfg.graph = false;
         }
 
-        if !self.enclone_umi {
-            opt.umi_count = false;
-            opt.umi_ratio = false;
+        if !sw.enclone_umi {
+            cfg.umi_count = false;
+            cfg.umi_ratio = false;
         }
 
-        if !self.enclone_multiplet {
-            opt.weak_chains = false;
-            opt.weak_foursies = false;
-            opt.doublet = false;
-            opt.signature = false;
+        if !sw.enclone_multiplet {
+            cfg.weak_chains = false;
+            cfg.weak_foursies = false;
+            cfg.doublet = false;
+            cfg.signature = false;
         }
 
-        if !self.enclone_cross {
-            opt.cross_dataset = false;
+        if !sw.enclone_cross {
+            cfg.cross_dataset = false;
         }
+        cfg
     }
 }
 
@@ -73,6 +76,18 @@ impl FilterLogger {
     pub fn log(&mut self, entry: &FilterLogEntry) {
         self.writer.write_item(entry).unwrap();
     }
+}
+
+pub fn extend_filter_log(
+    in_fpath: VdjFilterLogFormat,
+    out_fpath: &VdjFilterLogFormat,
+) -> FilterLogger {
+    let in_filter_log: Vec<FilterLogEntry> = in_fpath.read_all().unwrap();
+    let mut filter_logger = FilterLogger::new(out_fpath).unwrap();
+    for entry in in_filter_log {
+        filter_logger.log(&entry);
+    }
+    filter_logger
 }
 
 #[derive(Serialize, Deserialize)]
@@ -194,8 +209,7 @@ pub enum AsmCellFilter {
 
     /// The maximum number of reads among the surviving UMIs needs to be at least
     /// 3% that of the n50_n50_rpu.
-    /// - `n50_n50_rpu`: For each barcode compute N50 reads per UMI. Compute the N50 of these
-    ///    values
+    /// - `n50_n50_rpu`: For each barcode compute N50 reads per UMI. Compute the N50 of these values
     NotEnoughReadsPerUmi {
         max_umi_reads: usize,
         n50_n50_rpu: usize,

@@ -7,7 +7,6 @@
 @include "_cell_annotation_common_stages.mro"
 @include "_common_stages.mro"
 @include "_cr_lib_stages.mro"
-@include "_sc_multi_defs.mro"
 @include "_sc_rna_counter_stages.mro"
 
 pipeline _STRUCTIFY(
@@ -43,7 +42,6 @@ pipeline SC_RNA_COUNTER_CS(
     in  bool      no_bam,
     in  bool      filter_probes,
     in  bool      no_secondary_analysis,
-    in  bool      no_target_umi_filter,
     in  int       force_cells,
     in  bool      include_introns,
     in  bool      check_library_compatibility,
@@ -143,13 +141,19 @@ pipeline SC_RNA_COUNTER_CS(
         preflight = true,
     )
 
+    call SETUP_REFERENCE_INFO(
+        reference_path = self.reference_path,
+        target_set     = self.target_set,
+    )
+
     call WRITE_GENE_INDEX(
         reference_path = self.reference_path,
     )
 
     call COPY_CHEMISTRY_SPEC(
-        sample_defs    = self.sample_def,
-        chemistry_spec = self.chemistry,
+        sample_defs          = self.sample_def,
+        chemistry_spec       = self.chemistry,
+        custom_chemistry_def = null,
     )
 
     call _STRUCTIFY(
@@ -161,33 +165,6 @@ pipeline SC_RNA_COUNTER_CS(
         count_input  = {
             aligner:                     self.aligner,
             cell_annotation_model:       self.cell_annotation_model,
-            cell_calling_config: {
-                cell_barcodes:                        null,
-                disable_ab_aggregate_detection:       self.disable_ab_aggregate_detection,
-                disable_high_occupancy_gem_detection: false,
-                emptydrops_minimum_umis: {
-                    per_gem_well: self.emptydrops_minimum_umis,
-                    per_sample:   null,
-                },
-                force_cells: {
-                    per_gem_well: self.force_cells,
-                    per_sample:   null,
-                },
-                global_minimum_umis: {
-                    per_gem_well: self.global_minimum_umis,
-                    per_sample:   null,
-                },
-                max_mito_percent: {
-                    per_gem_well: self.max_mito_percent,
-                    per_sample:   null,
-                },
-                override_library_types:               null,
-                override_mode:                        null,
-                recovered_cells: {
-                    per_gem_well: self.recovered_cells,
-                    per_sample:   null,
-                },
-            },
             check_library_compatibility: self.check_library_compatibility,
             chemistry_specs:             COPY_CHEMISTRY_SPEC.chemistry_specs,
             emptydrops_minimum_umis:     self.emptydrops_minimum_umis,
@@ -206,13 +183,14 @@ pipeline SC_RNA_COUNTER_CS(
             min_assignment_confidence:   null,
             min_crispr_umi_threshold:    self.min_crispr_umi_threshold,
             no_bam:                      self.no_bam,
+            no_minimap:                  true,
             no_secondary_analysis:       self.no_secondary_analysis,
-            no_target_umi_filter:        self.no_target_umi_filter,
             r1_length:                   self.r1_length,
             r2_length:                   self.r2_length,
-            reference_path:              self.reference_path,
+            reference_info:              SETUP_REFERENCE_INFO.reference_info,
             sample_def:                  self.sample_def,
             skip_cell_annotation:        self.skip_cell_annotation,
+            star_parameters:             null,
             target_set:                  self.target_set,
             target_set_name:             self.target_set_name,
             targeting_method:            self.targeting_method,
@@ -220,6 +198,7 @@ pipeline SC_RNA_COUNTER_CS(
             tenx_cmos:                   null,
             trim_polya_min_score:        self.trim_polya_min_score,
             trim_tso_min_score:          self.trim_tso_min_score,
+            umi_min_read_length:         null,
         },
     )
 
@@ -253,19 +232,46 @@ pipeline SC_RNA_COUNTER_CS(
     )
 
     call SC_MULTI_CORE(
-        common_input          = _STRUCTIFY.common_input,
-        count_input           = FULL_COUNT_INPUTS,
-        vdj_inputs            = [],
-        vdj_gen_inputs        = null,
-        basic_config          = _STRUCTIFY.config,
-        multi_config          = null,
-        is_pd                 = false,
-        count_allowed_chems   = FULL_COUNT_INPUTS.count_allowed_chems,
-        count_pipestance_type = "SC_RNA_COUNTER_CS",
-        vdj_allowed_chems     = null,
-        is_multi              = false,
-        feature_config        = null,
-        no_preflight          = false,
+        common_input              = _STRUCTIFY.common_input,
+        count_input               = FULL_COUNT_INPUTS,
+        count_cell_calling_config = {
+            cell_barcodes:                        null,
+            disable_ab_aggregate_detection:       self.disable_ab_aggregate_detection,
+            disable_high_occupancy_gem_detection: false,
+            emptydrops_minimum_umis: {
+                per_gem_well: self.emptydrops_minimum_umis,
+                per_sample:   null,
+            },
+            force_cells: {
+                per_gem_well: self.force_cells,
+                per_sample:   null,
+            },
+            global_minimum_umis: {
+                per_gem_well: self.global_minimum_umis,
+                per_sample:   null,
+            },
+            max_mito_percent: {
+                per_gem_well: self.max_mito_percent,
+                per_sample:   null,
+            },
+            override_library_types:               null,
+            override_mode:                        null,
+            recovered_cells: {
+                per_gem_well: self.recovered_cells,
+                per_sample:   null,
+            },
+        },
+        vdj_inputs                = [],
+        vdj_gen_inputs            = null,
+        basic_config              = _STRUCTIFY.config,
+        multi_config              = null,
+        is_pd                     = false,
+        count_allowed_chems       = FULL_COUNT_INPUTS.count_allowed_chems,
+        count_pipestance_type     = "SC_RNA_COUNTER_CS",
+        vdj_allowed_chems         = null,
+        is_multi                  = false,
+        feature_config            = null,
+        no_preflight              = false,
     )
 
     call GET_AGGREGATE_BARCODES_OUT(

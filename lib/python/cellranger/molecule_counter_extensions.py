@@ -1,10 +1,7 @@
 #
 # Copyright (c) 2020 10X Genomics, Inc. All rights reserved.
 #
-"""High performance compiled methods for the molecule counter.
-
-In a separate file to avoid loading dependencies during preflights.
-"""
+"""Extension methods for the molecule counter."""
 
 from __future__ import annotations
 
@@ -36,9 +33,7 @@ def get_indices_for_values(
     if isinstance(values, set):
         raise TypeError("Argument cannot be a set, must be list or numpy array")
 
-    # Special case filtering in one dimension, to use numba
-    # TODO: Can we use numba on structs? (ran into some compilation issues and had to move on
-    # but am not certain it isn't possible).
+    # Special case filtering in one dimension, originally to use numba
     if len(col_names) == 1:
 
         def _get_element_in_set(values):
@@ -64,9 +59,20 @@ def get_indices_for_values(
 
         def _mask(
             num: int, source_sel: slice, dest_sel: slice
-        ) -> np.ndarray[int, np.dtype[np.bool_]]:
+        ) -> np.ndarray[tuple[int], np.dtype[np.bool_]]:
             col.read_direct(chunk, source_sel, dest_sel)
-            return element_in_set[chunk[0:num]]
+            return np.fromiter(
+                (
+                    (
+                        False
+                        if idx == cr_mc.PROBE_IDX_AS_FEATURE_IDX_PLACEHOLDER
+                        else element_in_set[idx]
+                    )
+                    for idx in chunk[0:num]
+                ),
+                dtype=bool,
+                count=num,
+            )
 
     else:
         cols = [(name, mc.get_column_lazy(name)) for name in col_names]
@@ -79,7 +85,7 @@ def get_indices_for_values(
 
         def _mask(
             num: int, source_sel: slice, dest_sel: slice
-        ) -> np.ndarray[int, np.dtype[np.bool_]]:
+        ) -> np.ndarray[tuple[int], np.dtype[np.bool_]]:
             for name, col in cols:
                 # do not allocate, read directly into the chunk array
                 col.read_direct(store[name], source_sel, dest_sel)

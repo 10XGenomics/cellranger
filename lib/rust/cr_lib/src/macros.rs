@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 #[macro_export]
 macro_rules! per_type_metric {
     ($new_metric_name:ident, $new_visitor_name:ident, $key_type:ident, $inner_type:ident) => {

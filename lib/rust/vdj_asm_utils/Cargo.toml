@@ -11,9 +11,6 @@ path = '../barcode'
 [dependencies.bio]
 workspace = true
 
-[dependencies.bio_edit]
-path = '../bio_edit'
-
 [dependencies.debruijn]
 workspace = true
 
@@ -53,12 +50,6 @@ path = '../metric'
 [dependencies.ordered-float]
 workspace = true
 
-[dependencies.rand]
-workspace = true
-
-[dependencies.rayon]
-workspace = true
-
 [dependencies.rust-htslib]
 workspace = true
 
@@ -68,17 +59,11 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
-[dependencies.stats_utils]
-path = '../stats_utils'
-
 [dependencies.string_utils]
 path = '../string_utils'
 
-[dependencies.superslice]
-workspace = true
-
-[dependencies.tenkit2]
-path = '../tenkit2'
+[dependencies.umi]
+path = '../umi'
 
 [dependencies.vdj_ann]
 path = '../vdj_ann'
@@ -92,9 +77,12 @@ path = '../vector_utils'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'vdj_asm_utils'
 publish = false
 version = '0.1.0'

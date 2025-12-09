@@ -1,4 +1,5 @@
 //! Standard chemistry definitions imported from a json file
+#![deny(missing_docs)]
 
 use crate::chemistry::{ChemistryDef, ChemistryName};
 use anyhow::{Context, Result};

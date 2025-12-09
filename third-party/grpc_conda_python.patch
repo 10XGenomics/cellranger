@@ -1,4 +1,4 @@
-From 139f508c2398cf6e71ab4e85e7cb80db431c2986 Mon Sep 17 00:00:00 2001
+From 94d270a965586d57a19188f6df63b53f707f8229 Mon Sep 17 00:00:00 2001
 Date: Mon, 16 Aug 2021 15:08:20 -0700
 Subject: [PATCH] Use conda python binary and headers.
 
@@ -8,11 +8,11 @@ the problem that it has to use the version from conda_package_python
 rather than @anaconda//:python because it's a repository rule, but at
 least this should mostly work.
 ---
- third_party/py/python_configure.bzl | 40 ++++++-----------------------
- 1 file changed, 8 insertions(+), 32 deletions(-)
+ third_party/py/python_configure.bzl | 38 ++++++-----------------------
+ 1 file changed, 7 insertions(+), 31 deletions(-)
 
 diff --git a/third_party/py/python_configure.bzl b/third_party/py/python_configure.bzl
-index fa47d89ebc..364bffbb9a 100644
+index 6569d3e9c1..a5340ee27c 100644
 --- a/third_party/py/python_configure.bzl
 +++ b/third_party/py/python_configure.bzl
 @@ -119,36 +119,12 @@ def _symlink_genrule_for_dir(
@@ -62,7 +62,7 @@ index fa47d89ebc..364bffbb9a 100644
          repository_ctx,
          "_python3",
          _PYTHON3_BIN_PATH,
--        "python3",
+-        "python3" if not _is_windows(repository_ctx) else "python.exe",
 +        "../conda_package_python/bin/python3",
          _PYTHON3_LIB_PATH,
          False

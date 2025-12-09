@@ -19,11 +19,11 @@ import polars as pl
 import cellranger.analysis.graphclust as cr_graphclust
 import cellranger.analysis.io as analysis_io
 import tenkit.safe_json as tk_safe_json
-from cellranger.cell_typing.cas_postprocessing import COARSE_CELL_TYPES_KEY
+from cellranger.cell_typing.common_cell_typing import COARSE_CELL_TYPES_KEY
 
 
 def main(args, outs):
-    cell_types = pl.read_csv(args.cell_types)
+    cell_types = pl.read_csv(args.cell_types, null_values=["NA"])
     unique_values = cell_types[COARSE_CELL_TYPES_KEY].unique().sort()
     mapper = {v: i + 1 for i, v in enumerate(unique_values)}
     cell_types = cell_types.with_columns(

@@ -10,7 +10,7 @@ path = '../cr_types'
 
 [dependencies.fastq_set]
 optional = true
-workspace = true
+path = '../fastq_set'
 
 [dependencies.fst]
 optional = true
@@ -29,24 +29,20 @@ workspace = true
 [dependencies.serde]
 workspace = true
 
-[dependencies.slide_design]
-path = '../slide_design'
-
-[dependencies.triple_accel]
-optional = true
-workspace = true
-
 [features]
 default = ['tenx_source_available']
-tenx_internal = ['triple_accel', 'rayon', 'fst', 'fastq_set']
+tenx_internal = ['rayon', 'fst', 'fastq_set']
 tenx_source_available = []
 
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'barcode_extensions'
 publish = false
 version = '0.1.0'

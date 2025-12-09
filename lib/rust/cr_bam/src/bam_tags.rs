@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use bitflags::bitflags;
 
 pub const READ_GROUP_TAG: &[u8] = b"RG";
@@ -54,8 +55,8 @@ bitflags! {
         const UMI_COUNT = 8u32;
         /// Confidently assigned feature barcode
         const CONF_FEATURE = 16u32;
-        /// This read's (BC, UMI, feature) combination was not counted only because the read
-        /// count was too low. Implies not a LOW_SUPPORT_UMI
+        /// DEFUNCT. Previously indicated this read's (BC, UMI, feature) combination
+        /// was not counted only because the read count was too low. Implies not a LOW_SUPPORT_UMI
         const FILTERED_TARGET_UMI = 32u32;
     }
 }

@@ -1,6 +1,7 @@
 //! A stack-allocated immutable string.
+#![deny(missing_docs)]
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use metric::AsMetricPrefix;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -13,9 +14,11 @@ use std::ops::Deref;
 pub type ShortString7 = ShortString<7>;
 
 /// A stack-allocated string occupying the same space as two 64-bit machine words.
+#[cfg(test)]
 pub type ShortString15 = ShortString<15>;
 
 /// A stack-allocated string occupying the same space as String.
+#[cfg(test)]
 pub type ShortString23 = ShortString<23>;
 
 /// A stack-allocated immutable string.
@@ -162,7 +165,7 @@ impl<'de, const N: usize> Deserialize<'de> for ShortString<N> {
 
 struct ShortStringVisitor<const N: usize>;
 
-impl<'de, const N: usize> Visitor<'de> for ShortStringVisitor<N> {
+impl<const N: usize> Visitor<'_> for ShortStringVisitor<N> {
     type Value = ShortString<N>;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -188,7 +191,7 @@ mod test {
         type SS = ShortString<TEST_SIZE>;
 
         let too_long = "foobarba";
-        assert_eq!(TEST_SIZE + 1, too_long.as_bytes().len());
+        assert_eq!(TEST_SIZE + 1, too_long.len());
         assert!(SS::try_from(&too_long[..TEST_SIZE]).is_ok());
         assert!(SS::try_from(too_long).is_err());
 

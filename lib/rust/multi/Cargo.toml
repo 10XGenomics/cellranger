@@ -15,12 +15,15 @@ path = '../cr_types'
 workspace = true
 
 [dependencies.fastq_set]
-workspace = true
+path = '../fastq_set'
 
 [dependencies.itertools]
 workspace = true
 
 [dependencies.lazy_static]
+workspace = true
+
+[dependencies.libc]
 workspace = true
 
 [dependencies.martian]
@@ -41,16 +44,22 @@ workspace = true
 [dependencies.regex]
 workspace = true
 
+[dependencies.rustix]
+workspace = true
+
 [dependencies.serde]
 workspace = true
 
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.strsim]
+workspace = true
+
 [dependencies.strum]
 workspace = true
 
-[dependencies.strum_macros]
+[dependencies.thiserror]
 workspace = true
 
 [dependencies.transcriptome]
@@ -62,9 +71,12 @@ path = '../vdj_reference'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'multi'
 publish = false
 version = '0.1.0'

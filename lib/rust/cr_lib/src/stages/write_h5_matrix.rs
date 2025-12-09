@@ -1,16 +1,18 @@
 //! Martian stage WRITE_H5_MATRIX.
+#![deny(missing_docs)]
 
 use crate::types::FeatureReferenceFormat;
-use crate::utils::estimate_mem::{barcode_mem_gib, get_total_barcodes_detected};
+use crate::utils::estimate_mem::barcode_mem_gib;
 use anyhow::Result;
 use cr_h5::count_matrix::write_matrix_h5;
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
-use cr_types::{BarcodeIndexFormat, CountShardFile, GemWell, H5File, MetricsFile};
+use cr_types::{BarcodeIndexOutput, CountShardFile, GemWell, H5File};
 use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
 use serde::{Deserialize, Serialize};
 
+/// Martian stage WRITE_H5_MATRIX.
 /// Output the feature-barcode matrix HDF5 file `raw_feature_bc_matrix.h5`.
 pub struct WriteH5Matrix;
 
@@ -21,8 +23,7 @@ pub struct WriteH5MatrixStageInputs {
     pub feature_reference: FeatureReferenceFormat,
     pub chemistry_defs: ChemistryDefs,
     pub sample_id: String,
-    pub barcode_index: BarcodeIndexFormat,
-    pub barcode_correction_summary: MetricsFile,
+    pub barcode_index_output: BarcodeIndexOutput,
 }
 
 #[derive(Serialize, Deserialize, Clone, MartianStruct)]
@@ -42,7 +43,7 @@ impl MartianStage for WriteH5Matrix {
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
         // Multi uses more memory for sample_barcodes and other data.
-        let barcodes_count = get_total_barcodes_detected(&args.barcode_correction_summary.read()?);
+        let barcodes_count = args.barcode_index_output.num_barcodes;
         // bytes_per_barcode and offset_gib are empirically determined.
         let mem_gib = barcode_mem_gib(barcodes_count, 220, 2);
         println!("barcode_count={barcodes_count},mem_gib={mem_gib}");
@@ -73,7 +74,7 @@ impl MartianStage for WriteH5Matrix {
             &args.sample_id,
             &args.chemistry_defs.description(),
             args.gem_well,
-            &args.barcode_index.read()?,
+            &args.barcode_index_output.index.read()?,
             &rover.pipelines_version(),
         )?;
         Ok(Self::StageOutputs {

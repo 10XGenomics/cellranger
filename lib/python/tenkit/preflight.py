@@ -121,8 +121,18 @@ def check_kernel_version(release: str) -> None:
             f"""
 WARNING: The kernel used by this operating system version is unsupported:
     {release}
-This release requires kernel version 3.10.0 or higher.
+This release requires kernel version 3.10.0 or higher. Future releases of this 
+pipeline will require kernel version 4.15.0 or higher.
 For more information, see {OS_SUPPORT_URL}."""
+        )
+    elif version < (4, 15):
+        raise OsVersionError(
+            f"""
+WARNING: The kernel used by this operating system version will no longer be
+supported in a future release:
+    {release}
+Future releases of this pipeline will require kernel version 4.15.0 or
+higher. For more information, see {OS_SUPPORT_URL}."""
         )
 
 
@@ -150,7 +160,17 @@ def check_libc_version(libc_ver: str | None) -> None:
             f"""
     WARNING: The glibc version of this operating system version is unsupported:
         {libc_ver}
-    This release requires libc version 2.17 or higher.
+    This release requires libc version 2.17 or higher. Future releases of this
+    pipeline will require libc version 2.28 or higher.
+    For more information, see {OS_SUPPORT_URL}."""
+        )
+    elif libc_version < (2, 28):
+        raise OsVersionError(
+            f"""
+    WARNING: The glibc version of this operating system version will no longer
+    be supported in a future release:
+        {libc_ver}
+    Future releases of this pipeline will require libc version 2.28 or higher.
     For more information, see {OS_SUPPORT_URL}."""
         )
 
@@ -362,14 +382,13 @@ system administrator.""".format(
     if max_contigs is not None and num_contigs > max_contigs:
         return (
             False,
-            "Long Ranger supports a maximum of %d reference contigs. Your reference contains %d. Please combine small contigs into a larger contig separated by N's."
-            % (max_contigs, num_contigs),
+            f"Long Ranger supports a maximum of {max_contigs} reference contigs. Your reference contains {num_contigs}. Please combine small contigs into a larger contig separated by N's.",
         )
 
     max_len = max(len(v) for v in fasta.values())
 
     logging = f"reference path {reference_path} on {hostname} contains genome: {genome!s}."
-    logging += "reference contains %d contigs. max contig length: %d." % (num_contigs, max_len)
+    logging += f"reference contains {num_contigs} contigs. max contig length: {max_len}."
 
     if max_len >= (1 << 29):
         return (
@@ -393,8 +412,7 @@ def check_open_fh() -> tuple[bool, str | None]:
     if hard >= 0 and hard < MIN_PROCESS_NOFILE:
         return (
             False,
-            "On machine: %s, process open file handle hard limit (%d) is less than %d. Please run 'ulimit -n %d' before restarting the pipeline."
-            % (socket.gethostname(), hard, MIN_PROCESS_NOFILE, MIN_PROCESS_NOFILE),
+            f"On machine: {socket.gethostname()}, process open file handle hard limit ({hard}) is less than {MIN_PROCESS_NOFILE}. Please run 'ulimit -n {MIN_PROCESS_NOFILE}' before restarting the pipeline.",
         )
 
     if not os.path.exists(GLOBAL_NOFILE_PATH):
@@ -414,8 +432,7 @@ def check_open_fh() -> tuple[bool, str | None]:
     if glob < MIN_GLOBAL_NOFILE:
         return (
             False,
-            "On machine: %s, global open file handle limit (%d) is less than %d. Please set the global file handle limit to %d before restarting the pipeline."
-            % (socket.gethostname(), glob, MIN_GLOBAL_NOFILE, MIN_GLOBAL_NOFILE),
+            f"On machine: {socket.gethostname()}, global open file handle limit ({glob}) is less than {MIN_GLOBAL_NOFILE}. Please set the global file handle limit to {MIN_GLOBAL_NOFILE} before restarting the pipeline.",
         )
     return True, None
 

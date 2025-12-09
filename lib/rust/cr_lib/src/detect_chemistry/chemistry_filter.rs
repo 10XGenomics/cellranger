@@ -1,90 +1,135 @@
+#![deny(missing_docs)]
 use super::errors::DetectChemistryErrors;
 use super::identity_check::check_read_identity;
 use anyhow::Result;
-use cr_types::chemistry::ChemistryName;
-use cr_types::sample_def::SampleDef;
 use cr_types::LibraryType;
+use cr_types::chemistry::{ChemistryDef, ChemistryName};
+use cr_types::sample_def::SampleDef;
 use fastq_set::filenames::FindFastqs;
 use fastq_set::read_pair::ReadPair;
 use fastq_set::read_pair_iter::{InputFastqs, ReadPairIter};
 use itertools::Itertools;
-use metric::TxHashSet;
-use parameters_toml;
+use metric::{TxHashMap, TxHashSet};
 use stats::ReservoirSampler;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
 const RANDOM_SEED: u64 = 124;
 
-pub(crate) trait ChemistryFilter<'a> {
-    fn context() -> &'static str;
-    fn allowed_chemistries(&self) -> &'a TxHashSet<ChemistryName>;
-    fn input_chemistries(&self) -> TxHashSet<ChemistryName>;
+pub(crate) type DetectChemistryCandidates = TxHashMap<ChemistryName, ChemistryDef>;
+
+pub(crate) trait ChemistryFilter {
+    const CONTEXT: &'static str;
     fn process_unit(
         &mut self,
+        candidates: &DetectChemistryCandidates,
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors>;
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors>;
 
-    fn filter_chemistries(
+    /// Perform filtering on each individual input unit.
+    /// Return a collection of compatible chemistries per input unit.
+    ///
+    /// The elements in the output vec correspond to the input units.
+    fn filter_chemistries_per_unit(
         &mut self,
+        candidates: &DetectChemistryCandidates,
         units: &[(DetectChemistryUnit, Vec<ReadPair>)],
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
-        let per_unit_chems: Vec<_> = units
+    ) -> Result<Vec<DetectChemistryCandidates>, DetectChemistryErrors> {
+        units
             .iter()
-            .map(|(unit, read_pairs)| {
-                println!("\n{} for {unit}", Self::context());
-                let compatible_chems = self.process_unit(unit, read_pairs)?;
-                println!(
-                    "Compatible chemistries: {}",
-                    compatible_chems.iter().sorted().format(", ")
-                );
-                assert!(!compatible_chems.is_empty());
-                Ok(compatible_chems)
-            })
-            .try_collect()?;
+            .map(|unit| self.filter_chemistries_single_unit(candidates, unit))
+            .try_collect()
+    }
 
+    /// Perform filtering on an individual input unit using explicit chemistries.
+    fn filter_chemistries_single_unit(
+        &mut self,
+        candidates: &DetectChemistryCandidates,
+        (unit, read_pairs): &(DetectChemistryUnit, Vec<ReadPair>),
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
+        println!("\n{} for {unit}", Self::CONTEXT);
+        let compatible_chems = self.process_unit(candidates, unit, read_pairs)?;
+        println!(
+            "Compatible chemistries: {}",
+            compatible_chems.keys().sorted().format(", ")
+        );
+        assert!(!compatible_chems.is_empty());
+        Ok(compatible_chems)
+    }
+
+    /// Collapse a collection of per-unit chemistries into their intersection.
+    ///
+    /// Perform filter-specific post-processing.
+    fn reduce_per_unit_chems(
+        units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+        per_unit_chems: Vec<DetectChemistryCandidates>,
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
         // Chemistries that are compatible with all libraries.
-        let result = per_unit_chems
-            .iter()
-            .fold(self.input_chemistries(), |acc, x| {
-                acc.intersection(x).copied().collect()
-            });
+        let result = intersect_many(&per_unit_chems);
         if result.is_empty() {
             println!("Result: none");
         } else {
-            println!("Result: {}", result.iter().sorted().format(", "));
+            println!("Result: {}", result.keys().sorted().format(", "));
         }
 
         if result.is_empty() {
             return Err(DetectChemistryErrors::ConflictingChemistries {
                 units: units.iter().map(|(unit, _)| unit.clone()).collect(),
                 per_unit_chems,
-                context: Self::context(),
+                context: Self::CONTEXT,
             });
         }
 
-        let result = self.post_process(result)?;
-
-        // if we have more than 1 possible chemistry, remove the non-allowed ones
-        Ok(if result.len() > 1 {
-            result
-                .intersection(self.allowed_chemistries())
-                .copied()
-                .collect()
-        } else {
-            result
-        })
-    }
-
-    /// Perform post-filtering processing on the mixture of chemistries resulting
-    /// from this filter.
-    fn post_process(
-        &self,
-        result: TxHashSet<ChemistryName>,
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
         Ok(result)
     }
+
+    /// Filter a collection of explicit chemistry defs, indexed by their name.
+    fn filter_chemistries(
+        &mut self,
+        candidates: &DetectChemistryCandidates,
+        units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
+        let per_unit_chems = self.filter_chemistries_per_unit(candidates, units)?;
+
+        Self::reduce_per_unit_chems(units, per_unit_chems)
+    }
+
+    /// Filter a collection of named default chemistries.
+    fn filter_named_chemistries(
+        &mut self,
+        candidates: &TxHashSet<ChemistryName>,
+        units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
+        Ok(self
+            .filter_chemistries(&named_candidates(candidates), units)?
+            .into_keys()
+            .collect())
+    }
+}
+
+/// Map a set of named chemistries into a mapping to their defs.
+pub(crate) fn named_candidates(candidates: &TxHashSet<ChemistryName>) -> DetectChemistryCandidates {
+    candidates
+        .iter()
+        .map(|&name| (name, ChemistryDef::named(name)))
+        .collect()
+}
+
+/// Return a candidate collection which is the intersection of several.
+///
+/// Assumes the chemistry values associated with each key are identical.
+fn intersect_many<'a>(
+    items: impl IntoIterator<Item = &'a DetectChemistryCandidates>,
+) -> DetectChemistryCandidates {
+    let mut iter = items.into_iter();
+    let Some(mut first) = iter.next().cloned() else {
+        return Default::default();
+    };
+    for other in iter {
+        first.retain(|item, _def| other.contains_key(item));
+    }
+    first
 }
 
 #[derive(Debug, Clone)]
@@ -112,11 +157,12 @@ impl Display for DetectChemistryUnit {
 }
 
 impl DetectChemistryUnit {
-    pub fn sampled_read_pairs(&self) -> Result<Vec<ReadPair>> {
-        let detect_chemistry_sample_reads = *parameters_toml::detect_chemistry_sample_reads()?;
-        let detect_chemistry_total_reads = *parameters_toml::detect_chemistry_total_reads()?;
-
-        let mut read_sampler = ReservoirSampler::new(detect_chemistry_sample_reads, RANDOM_SEED);
+    pub fn sampled_read_pairs(
+        &self,
+        sample_reads: usize,
+        total_reads: usize,
+    ) -> Result<Vec<ReadPair>> {
+        let mut read_sampler = ReservoirSampler::new(sample_reads, RANDOM_SEED);
         for fastq in &self.fastqs {
             let read_pair_iter = ReadPairIter::from_fastq_files(fastq)?;
             if read_pair_iter.get_is_single_ended() {
@@ -126,7 +172,7 @@ impl DetectChemistryUnit {
             }
             for read_pair in read_pair_iter {
                 read_sampler.add(read_pair?);
-                if read_sampler.num_items_seen() >= detect_chemistry_total_reads {
+                if read_sampler.num_items_seen() >= total_reads {
                     return Ok(read_sampler.done());
                 }
             }

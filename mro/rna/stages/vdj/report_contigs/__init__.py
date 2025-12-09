@@ -52,7 +52,7 @@ def split(args):
     mem_gb = max(mem_gb_annot, mem_gb_umi)
     mem_gb = max(mem_gb, 6)
 
-    print("requested %d" % mem_gb)
+    print(f"requested {mem_gb}")
     return {
         "chunks": [
             {

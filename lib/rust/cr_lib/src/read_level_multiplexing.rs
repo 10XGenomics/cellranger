@@ -1,9 +1,10 @@
+#![deny(missing_docs)]
 use anyhow::Result;
-use barcode::whitelist::BarcodeId;
 use barcode::BcSegSeq;
-use cr_h5::count_matrix::{BarcodeWithGemGroup, CountMatrix};
+use barcode::whitelist::BarcodeId;
+use cr_h5::count_matrix::{BarcodeWithGemGroup, CountMatrix, CountMatrixStreaming};
 use cr_types::reference::feature_reference::FeatureType;
-use itertools::Itertools;
+use itertools::{Itertools, process_results};
 use metric::TxHashMap;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -15,16 +16,18 @@ pub fn map_multiplexing_seq_to_id(
     multiplexing_seq_range: &Range<usize>,
 ) -> BarcodeId {
     let seq = &BcSegSeq::from_bytes(&barcode.as_bytes()[multiplexing_seq_range.clone()]);
-    seq_to_id_map[seq]
+    *seq_to_id_map
+        .get(seq)
+        .unwrap_or_else(|| panic!("barcode not found: {seq}"))
 }
 
 /// Return the valid barcodes for each read-level multiplexing identifier
 pub fn get_barcodes_per_multiplexing_identifier(
-    matrix: &CountMatrix,
+    matrix: &CountMatrixStreaming,
     seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
-) -> Result<TxHashMap<BarcodeId, Vec<String>>> {
-    Ok(matrix
+) -> TxHashMap<BarcodeId, Vec<String>> {
+    matrix
         .barcodes()
         .iter()
         .fold(TxHashMap::default(), |mut acc, barcode| {
@@ -36,52 +39,57 @@ pub fn get_barcodes_per_multiplexing_identifier(
                 acc.insert(multiplexing_id, vec![barcode.to_string()]);
             }
             acc
-        }))
+        })
 }
 
 /// Return the number of UMIs for each read-level multiplexing identifier
 /// for all feature types.
 pub fn get_umi_per_multiplexing_identifier(
-    matrix: &CountMatrix,
+    matrix: &CountMatrixStreaming,
     seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
-) -> HashMap<FeatureType, TxHashMap<BarcodeId, i64>> {
-    matrix
-        .counts()
-        .group_by(|x| (x.barcode, x.feature.feature_type))
-        .into_iter()
-        .map(|((barcode, feature_type), counts)| {
-            (
+) -> Result<HashMap<FeatureType, TxHashMap<BarcodeId, i64>>> {
+    process_results(matrix.counts()?, |counts| {
+        counts
+            .chunk_by(|x| (x.barcode, x.feature.feature_type))
+            .into_iter()
+            .map(|((barcode, feature_type), counts)| {
                 (
-                    feature_type,
-                    map_multiplexing_seq_to_id(barcode, seq_to_id_map, multiplexing_seq_range),
-                ),
-                counts.map(|x| x.count as i64).sum(),
-            )
-        })
-        .into_grouping_map()
-        .sum()
-        .into_iter()
-        .map(|((feature_type, multiplexing_id), count)| (feature_type, (multiplexing_id, count)))
-        .into_grouping_map()
-        .collect()
+                    (
+                        feature_type,
+                        map_multiplexing_seq_to_id(barcode, seq_to_id_map, multiplexing_seq_range),
+                    ),
+                    counts.map(|x| x.count as i64).sum(),
+                )
+            })
+            .into_grouping_map()
+            .sum()
+            .into_iter()
+            .map(|((feature_type, multiplexing_id), count)| {
+                (feature_type, (multiplexing_id, count))
+            })
+            .into_grouping_map()
+            .collect()
+    })
 }
 
 /// Return the number of UMIs for each read-level multiplexing identifier
 /// for the specified feature type.
 pub fn get_umi_per_multiplexing_identifier_for_feature_type(
-    matrix: &CountMatrix,
+    matrix: &CountMatrixStreaming,
     seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
     feature_type: FeatureType,
-) -> TxHashMap<BarcodeId, i64> {
-    matrix.barcode_counts_for_feature_type(feature_type).fold(
-        TxHashMap::default(),
-        |mut acc, (barcode, count)| {
-            let multiplexing_id =
-                map_multiplexing_seq_to_id(barcode, seq_to_id_map, multiplexing_seq_range);
-            *acc.entry(multiplexing_id).or_default() += count;
-            acc
+) -> Result<TxHashMap<BarcodeId, i64>> {
+    process_results(
+        matrix.barcode_counts_for_feature_type(feature_type)?,
+        |bc_counts| {
+            bc_counts.fold(TxHashMap::default(), |mut acc, (barcode, count)| {
+                let multiplexing_id =
+                    map_multiplexing_seq_to_id(barcode, seq_to_id_map, multiplexing_seq_range);
+                *acc.entry(multiplexing_id).or_default() += count;
+                acc
+            })
         },
     )
 }

@@ -1,0 +1,314 @@
+# These metric groups are processed individually.
+
+
+# --------------------------------------------------------------------------------------------------
+# Sequencing Metrics per fastq id
+# --------------------------------------------------------------------------------------------------
+#
+# Shared by GEX, VDJ, AB etc.
+[sequencing_metrics]
+tier = "Library"
+group_by_key = "fastq_id"
+
+    [sequencing_metrics.fastq_id]
+    header = "Fastq ID"
+    type = "String"
+
+    [sequencing_metrics.number_of_reads]
+    type = "usize"
+    header = "Number of reads"
+
+    [sequencing_metrics.q30_barcode]
+    json_key = "q30_barcode_frac"
+    type = "Percent"
+    header = "Q30 barcodes"
+
+        [[sequencing_metrics.q30_barcode.alerts]]
+        error_threshold = 0.45
+        warn_threshold = 0.55
+        warn_title = "Fraction of cell barcode bases with Q-score >= 30 is low"
+        detail = "Ideal > 55%. Fraction of cell barcode bases (R1 for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Flex) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+
+    [sequencing_metrics.q30_gem_barcode]
+    json_key = "q30_gem_barcode_frac"
+    type = "Percent"
+    extract = "optional"
+    header = "Q30 GEM barcodes"
+
+        [[sequencing_metrics.q30_gem_barcode.alerts]]
+        error_threshold = 0.45
+        warn_threshold = 0.55
+        warn_title = "Fraction of GEM barcode bases with Q-score >= 30 is low"
+        detail = "Ideal > 55%. Fraction of GEM barcode bases (R1 for Flex) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+
+    [sequencing_metrics.q30_probe_barcode]
+    json_key = "q30_probe_barcode_frac"
+    type = "Percent"
+    extract = "optional"
+    header = "Q30 probe barcodes"
+
+        [[sequencing_metrics.q30_probe_barcode.alerts]]
+        error_threshold = 0.45
+        warn_threshold = 0.8
+        warn_title = "Fraction of probe barcode bases with Q-score >= 30 is low"
+        detail = "Ideal > 80%. Fraction of probe barcode bases in the R2 read for Flex with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality. This issue can be caused by a lack of sequence diversity in the flowcell, and it may be remedied by increasing diversity by adding PhiX or other library types during sequencing."
+
+    [sequencing_metrics.q30_umi]
+    json_key = "q30_umi_frac"
+    type = "Percent"
+    header = "Q30 UMI"
+
+        [[sequencing_metrics.q30_umi.alerts]]
+        error_threshold = 0.65
+        warn_threshold = 0.75
+        warn_title = "Fraction of UMI bases with Q-score >= 30 is low"
+        detail = "Ideal > 75%. Fraction of UMI bases in the R1 read with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+
+    [sequencing_metrics.q30_read1]
+    json_key = "q30_read1_frac"
+    type = "Percent"
+    header = "Q30 RNA read" # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
+
+        [[sequencing_metrics.q30_read1.alerts]]
+        error_threshold = 0.55
+        warn_threshold = 0.65
+        warn_title = "Fraction of RNA Read bases with Q-score >= 30 is low"
+        detail = "Ideal > 65%. Fraction of RNA Read bases with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+
+    [sequencing_metrics.q30_read2]
+    json_key = "q30_read2_frac"
+    type = "Percent"
+    extract = "optional"
+    header = "Q30 RNA read 2" # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
+
+        [[sequencing_metrics.q30_read2.alerts]]
+        error_threshold = 0.55
+        warn_threshold = 0.65
+        warn_title = "Fraction of RNA Read 2 bases with Q-score >= 30 is low"
+        detail = "Ideal > 65%. Fraction of RNA Read 2 bases with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
+
+
+
+# --------------------------------------------------------------------------------------------------
+# V(D)J Cell Statistics
+# --------------------------------------------------------------------------------------------------
+[vdj_library_metrics_per_ocm_barcode]
+tier = "Library"
+group_by_key = "ocm_barcode_id"
+
+    [vdj_library_metrics_per_ocm_barcode.ocm_barcode_id]
+    json_key = "tag_id"
+    header = "OCM Barcode ID"
+    type = "String"
+
+    [vdj_library_metrics_per_ocm_barcode.sample_id]
+    header = "Sample ID"
+    type = "String"
+
+    [vdj_library_metrics_per_ocm_barcode.vdj_cells_per_tag]
+    header = "VDJ cells"
+    type = "CountAndPercent"
+    transformer = "CellsFraction"
+
+[vdj_library_metrics_per_hashtag_id]
+tier = "Library"
+group_by_key = "hashtag_id"
+
+    [vdj_library_metrics_per_hashtag_id.hashtag_id]
+    json_key = "tag_id"
+    header = "Hashtag ID"
+    type = "String"
+
+    [vdj_library_metrics_per_hashtag_id.sample_id]
+    header = "Sample ID"
+    type = "String"
+
+    [vdj_library_metrics_per_hashtag_id.vdj_cells_per_tag]
+    header = "VDJ cells"
+    type = "CountAndPercent"
+    transformer = "CellsFraction"
+
+# --------------------------------------------------------------------------------------------------
+# GEX (RTL) -> Metrics per probe barcode
+# --------------------------------------------------------------------------------------------------
+[rtl_probe_barcode_metrics]
+tier = "Library"
+group_by_key = "probe_barcode_id"
+
+    [rtl_probe_barcode_metrics.probe_barcode_id]
+    type = "String"
+    header = "Probe barcode ID"
+
+    [rtl_probe_barcode_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+    extract = "placeholder"
+
+    [rtl_probe_barcode_metrics.umi_per_probe_barcode]
+    type = "CountAndPercent"
+    transformer = "UmiFraction"
+    header = "UMIs per probe barcode"
+
+    [rtl_probe_barcode_metrics.cells_per_probe_barcode]
+    type = "CountAndPercent"
+    transformer = "CellsFraction"
+    header = "Cells per probe barcode"
+    extract = "placeholder"
+
+# --------------------------------------------------------------------------------------------------
+# Multiplexing -> Metrics per CMO
+# --------------------------------------------------------------------------------------------------
+[cmo_per_tag_metrics]
+tier = "Library"
+group_by_key = "gem_well_cmo"
+
+    [cmo_per_tag_metrics.conditions]
+    sections = ["Multiplexing Capture"]
+
+    [cmo_per_tag_metrics.gem_well_cmo]
+    type = "String"
+    header = "CMO Name"
+    json_key = "tag_id"
+
+    [cmo_per_tag_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+
+    [cmo_per_tag_metrics.cmo_reads_in_cell_associated_partitions]
+    type = "Percent"
+    header = "Fraction reads in cell-associated barcodes"
+    json_key = "tag_reads_in_cell_associated_partitions"
+    extract = "placeholder" # absent if 0 cells for tag
+
+    [cmo_per_tag_metrics.singlets_assigned_to_cmo]
+    type = "CountAndPercent"
+    transformer = "CellsFraction"
+    header = "Cells per CMO"
+    json_key = "singlets_assigned_to_tag"
+
+    [cmo_per_tag_metrics.cmo_signal_to_background_ratio]
+    type = "f64"
+    header = "CMO signal-to-noise ratio"
+    json_key = "tag_signal_to_background_ratio"
+    extract = "placeholder" # absent if 0 cells for tag
+
+# --------------------------------------------------------------------------------------------------
+# Hashtag -> Metrics per Hashtag
+# --------------------------------------------------------------------------------------------------
+[hashtag_per_tag_metrics]
+tier = "Library"
+group_by_key = "gem_well_hashtag"
+
+    [hashtag_per_tag_metrics.conditions]
+    sections = ["Hashtag"]
+
+    [hashtag_per_tag_metrics.gem_well_hashtag]
+    type = "String"
+    header = "Hashtag Name"
+    json_key = "tag_id"
+
+    [hashtag_per_tag_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+
+    [hashtag_per_tag_metrics.hashtag_reads_in_cell_associated_partitions]
+    type = "Percent"
+    header = "Fraction reads in cell-associated barcodes"
+    json_key = "tag_reads_in_cell_associated_partitions"
+    extract = "placeholder" # absent if 0 cells for tag
+
+    [hashtag_per_tag_metrics.singlets_assigned_to_hashtag]
+    type = "CountAndPercent"
+    transformer = "CellsFraction"
+    header = "Cells per Hashtag"
+    json_key = "singlets_assigned_to_tag"
+
+    [hashtag_per_tag_metrics.hashtag_signal_to_background_ratio]
+    type = "f64"
+    header = "Hashtag signal-to-noise ratio"
+    json_key = "tag_signal_to_background_ratio"
+    extract = "placeholder" # absent if 0 cells for tag
+
+# --------------------------------------------------------------------------------------------------
+# GEX (OCM) -> Metrics per overhang
+# --------------------------------------------------------------------------------------------------
+[ocm_per_overhang_metrics]
+tier = "Library"
+group_by_key = "ocm_barcode_id"
+
+    [ocm_per_overhang_metrics.conditions]
+    sections = ["Gene Expression"]
+    is_oh_multiplexed = true
+
+    [ocm_per_overhang_metrics.ocm_barcode_id]
+    type = "String"
+    header = "OCM Barcode ID"
+
+    [ocm_per_overhang_metrics.sample_id]
+    type = "String"
+    header = "Sample ID"
+    extract = "placeholder" # absent if an unexpected overhang had enough reads
+
+    [ocm_per_overhang_metrics.umi_per_ocm_barcode]
+    type = "CountAndPercent"
+    transformer = "UmiFraction"
+    header = "UMIs per OCM barcode"
+
+    [ocm_per_overhang_metrics.cells_per_ocm_barcode]
+    type = "CountAndPercent"
+    transformer = "CellsFraction"
+    header = "Cells per OCM barcode"
+    extract = "placeholder" # absent if 0 cells for overhang
+
+# --------------------------------------------------------------------------------------------------
+# GEX -> Hero metrics
+# --------------------------------------------------------------------------------------------------
+[gex_sample_hero_metrics]
+tier = "Cells"
+group_by_key = "genome"
+
+    [gex_sample_hero_metrics.conditions]
+    sections = ["Gene Expression"]
+
+    [gex_sample_hero_metrics.genome]
+    type = "String"
+    extract = "optional" # only included for barnyard
+    header = "Genome"
+
+    [gex_sample_hero_metrics.total_singlets]
+    type = "usize"
+    header = "Cells"
+    extract = "placeholder"
+
+        [[gex_sample_hero_metrics.total_singlets.alerts]]
+        error_threshold = 0
+        warn_threshold = 9
+        error_title = "No Cells Assigned to Sample"
+        warn_title = "Low Number of Cells Assigned to Sample"
+        detail = "A low number of cells were found in this sample. This usually indicates poor cell handling, poor library quality, or poor sequencing quality. At least 10 cells need to be assigned to a sample in order to obtain secondary analysis and visualization, such as tSNE plots. Application performance is likely to be affected."
+
+    [gex_sample_hero_metrics.median_genes_per_singlet]
+    type = "FloatAsInt"
+    header = "Median genes per cell"
+    extract = "placeholder"
+
+    [gex_sample_hero_metrics.total_genes_detected]
+    type = "usize"
+    header = "Total genes detected"
+    extract = "placeholder"
+
+    [gex_sample_hero_metrics.median_umi_per_singlet]
+    type = "FloatAsInt"
+    header = "Median UMI counts per cell"
+    extract = "placeholder"
+
+    [gex_sample_hero_metrics.confidently_mapped_reads_in_cells]
+    type = "Percent"
+    extract = "optional" # completely absent for hashtag
+    header = "Confidently mapped reads in cells"
+
+        [[gex_sample_hero_metrics.confidently_mapped_reads_in_cells.alerts]]
+        error_threshold = 0.5
+        warn_threshold = 0.7
+        warn_title = "Low Fraction Confidently Mapped Reads in Cells"
+        detail = "Ideal > 70%. Application performance may be affected. Many of the reads were not from cell-associated barcodes. This could be caused by high levels of ambient RNA or by a significant population of cells with a low RNA content, which the algorithm did not call as cells. The latter case can be addressed by inspecting the data to determine the appropriate cell count and using --force-cells."

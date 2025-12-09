@@ -1,10 +1,11 @@
+#![expect(missing_docs)]
 use crate::env::PkgEnv;
 use crate::mrp_args::MrpArgs;
 use crate::telemetry::TelemetryCollector;
-use crate::utils::{validate_ascii_identifier, CliPath};
-use crate::{execute_to_status, make_mro, IntoExitCode};
-use anyhow::{bail, ensure, Result};
-use clap::{self, value_parser, Parser};
+use crate::utils::{CliPath, validate_ascii_identifier};
+use crate::{IntoExitCode, execute_to_status, make_mro};
+use anyhow::{Context, Result, bail, ensure};
+use clap::{self, Parser, value_parser};
 use cr_types::reference::reference_info::MULTI_GENOME_SEPARATOR;
 use serde::Serialize;
 use std::fs;
@@ -241,7 +242,7 @@ fn move_outputs(pipestance_name: &str, args: &MrpArgs, output_ref_dir_name: &str
     let outs_path = pipestance_path.join("outs");
     let output_reference_path = outs_path.join("reference");
 
-    if args.output_dir.is_some() {
+    if let Some(output_dir) = &args.output_dir {
         // If the user specified an output directory, the pipestance will have
         // run in it. Delete everything except the output reference, then move
         // it into the specified directory.
@@ -252,23 +253,26 @@ fn move_outputs(pipestance_name: &str, args: &MrpArgs, output_ref_dir_name: &str
                 continue;
             }
             if item.file_type()?.is_dir() {
-                fs::remove_dir_all(item.path())?;
+                fs::remove_dir_all(item.path())
+                    .with_context(|| format!("Unable to remove directory {item:#?}, after running in user specified output directory {output_dir}."))?;
             } else {
-                fs::remove_file(item.path())?;
+                fs::remove_file(item.path()).with_context(|| format!("Unable to remove file {item:#?}, after running in user-specified output directory {output_dir}."))?;
             }
         }
         // Now lift the contents of the reference folder up into the user-
         // specified one, and delete the outs folder.
         for item in fs::read_dir(output_reference_path)? {
             let item = item?;
-            fs::rename(item.path(), pipestance_path.join(item.file_name()))?;
+            fs::rename(item.path(), pipestance_path.join(item.file_name())).with_context(|| format!("Unable to rename file {item:#?} to {:#?} after running in user-specified output directory {output_dir}.", pipestance_path.join(item.file_name())))?;
         }
         // Don't fail if we didn't successfully delete.
         let _ = fs::remove_dir_all(outs_path.clone());
     } else {
         // We ran in the current working dir, so move the outputs into it
         // and delete the pipestance directory.
-        fs::rename(output_reference_path, output_ref_dir_name)?;
+        fs::rename(output_reference_path.clone(), output_ref_dir_name).with_context(|| format!(
+            "Unable to rename file {output_reference_path:#?} to {output_ref_dir_name} after running in current working directory."
+        ))?;
         // Don't fail if we didn't successfully delete.
         let _ = fs::remove_dir_all(pipestance_path);
     }

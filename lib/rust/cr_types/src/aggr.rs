@@ -1,4 +1,5 @@
 //! Types used in aggr pipelines
+#![expect(missing_docs)]
 
 use martian_derive::MartianType;
 use serde::{Deserialize, Serialize};

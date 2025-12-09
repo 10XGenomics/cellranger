@@ -1,7 +1,10 @@
+#![expect(missing_docs)]
 use crate::filter_log::{AsmCellFilter, FilterLogEntry, FilterLogger, LowConfidenceReason};
+use crate::pack_dna::pack_bases_80;
 use anyhow::Result;
-use barcode::whitelist::BarcodeId;
+use arrayref::array_ref;
 use barcode::BcSegSeq;
+use barcode::whitelist::BarcodeId;
 use bio::alignment::distance::simd::hamming;
 use cr_types::chemistry::BarcodeReadComponent;
 use debruijn::dna_string::DnaString;
@@ -10,7 +13,6 @@ use serde::Serialize;
 use std::cmp::{max, min};
 use std::collections::HashSet;
 use std::ops::Range;
-use tenkit2::pack_dna::pack_bases_80;
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_asm_utils::barcode_data::{BarcodeDataBrief, ContigChimeraData, ContigJunctionData};
 use vdj_types::{VdjChain, VdjRegion};
@@ -206,32 +208,28 @@ pub fn cell_filter(
 
     if is_tcr || denovo {
         is_cell = bc.xucounts.len() >= MIN_XUCOUNTS;
-        if !is_cell {
-            if let Some(ref mut logger) = filter_logger {
-                logger.log(&FilterLogEntry::cell_calling(
-                    bc.barcode.clone(),
-                    AsmCellFilter::NotEnoughUmisTcrOrDenovo {
-                        num_surviving_umis: bc.xucounts.len(),
-                        param_min_num_surviving_umis: MIN_XUCOUNTS,
-                    },
-                ));
-            }
+        if !is_cell && let Some(ref mut logger) = filter_logger {
+            logger.log(&FilterLogEntry::cell_calling(
+                bc.barcode.clone(),
+                AsmCellFilter::NotEnoughUmisTcrOrDenovo {
+                    num_surviving_umis: bc.xucounts.len(),
+                    param_min_num_surviving_umis: MIN_XUCOUNTS,
+                },
+            ));
         }
     }
     if is_bcr && !denovo {
         is_cell = bc.xucounts.len() >= MIN_XUCOUNTS && bc.total_ucounts >= MIN_TOTAL_UCOUNTS;
-        if !is_cell {
-            if let Some(ref mut logger) = filter_logger {
-                logger.log(&FilterLogEntry::cell_calling(
-                    bc.barcode.clone(),
-                    AsmCellFilter::NotEnoughUmisBcr {
-                        num_surviving_umis: bc.xucounts.len(),
-                        param_min_num_surviving_umis: MIN_XUCOUNTS,
-                        total_umis: bc.total_ucounts,
-                        param_min_total_umis: MIN_TOTAL_UCOUNTS,
-                    },
-                ));
-            }
+        if !is_cell && let Some(ref mut logger) = filter_logger {
+            logger.log(&FilterLogEntry::cell_calling(
+                bc.barcode.clone(),
+                AsmCellFilter::NotEnoughUmisBcr {
+                    num_surviving_umis: bc.xucounts.len(),
+                    param_min_num_surviving_umis: MIN_XUCOUNTS,
+                    total_umis: bc.total_ucounts,
+                    param_min_total_umis: MIN_TOTAL_UCOUNTS,
+                },
+            ));
         }
     }
 
@@ -302,28 +300,30 @@ pub fn map_multiplexing_seq_to_id(
 pub fn overhang_demux_filter(
     overhang_read_component: &BarcodeReadComponent,
     valid_overhang_ids: HashSet<BarcodeId>,
-    barcode_cell_info: &mut Vec<BarcodeCellInfo>,
+    barcodes: Vec<String>,
     mut filter_logger: Option<&mut FilterLogger>,
-) {
+) -> HashSet<String> {
     let overhang_range = overhang_read_component.offset()
         ..overhang_read_component.offset() + overhang_read_component.length();
     let overhang_seq_to_id = overhang_read_component.build_seq_to_id_map().unwrap();
+    let mut valid_bcs = HashSet::default();
 
-    for bc in barcode_cell_info {
-        let multiplexing_id =
-            map_multiplexing_seq_to_id(&bc.barcode, &overhang_seq_to_id, &overhang_range);
+    for bc in barcodes {
+        let multiplexing_id = map_multiplexing_seq_to_id(&bc, &overhang_seq_to_id, &overhang_range);
         if !valid_overhang_ids.contains(&multiplexing_id) {
-            bc.now_a_cell = false;
             if let Some(ref mut logger) = filter_logger {
                 logger.log(&FilterLogEntry::cell_calling(
-                    bc.barcode.clone(),
+                    bc.clone(),
                     AsmCellFilter::DifferentOverhang {
                         overhang_id: multiplexing_id.as_str().to_owned(),
                     },
                 ));
             }
+        } else {
+            valid_bcs.insert(bc);
         }
     }
+    valid_bcs
 }
 #[derive(Default, Clone)]
 pub struct Contigs {
@@ -579,9 +579,9 @@ impl BarcodeFilteringParams {
 mod tests {
     use super::*;
     use itertools::Itertools;
-    use martian_filetypes::json_file::JsonFile;
-    use martian_filetypes::FileTypeRead; //, LazyFileTypeIO};
-                                         //use std::collections::HashMap;
+    use martian_filetypes::FileTypeRead;
+    use martian_filetypes::json_file::JsonFile; //, LazyFileTypeIO};
+    //use std::collections::HashMap;
     #[test]
     fn test_barcode_has_chimeric_contig() {
         // contig_annotations_test defines 6 barcodes.

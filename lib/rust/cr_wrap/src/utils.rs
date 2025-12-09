@@ -1,5 +1,6 @@
+#![expect(missing_docs)]
 use crate::IntoExitCode;
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use clap::{self, Parser};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};

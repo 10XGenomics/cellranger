@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use itertools::Itertools;
 use metric::TxHashMap;
 use pyanyhow::Result;
@@ -41,14 +43,14 @@ impl MatrixBarcodeIndex {
         )
     }
 
-    fn __deepcopy__(&self, _memo: &PyDict) -> Self {
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyDict>) -> Self {
         self.clone()
     }
-    fn __setstate__(&mut self, state: &PyBytes) -> Result<()> {
+    fn __setstate__(&mut self, state: &Bound<'_, PyBytes>) -> Result<()> {
         *self = bincode::deserialize(state.as_bytes())?;
         Ok(())
     }
-    fn __getstate__<'py>(&self, py: Python<'py>) -> Result<&'py PyBytes> {
+    fn __getstate__<'py>(&self, py: Python<'py>) -> Result<Bound<'py, PyBytes>> {
         Ok(PyBytes::new(py, &bincode::serialize(&self)?))
     }
     fn __getnewargs__(&self) -> (TxHashMap<String, usize>,) {
@@ -58,7 +60,7 @@ impl MatrixBarcodeIndex {
         self.0 == other.0
     }
 
-    fn bc_to_int(&self, _py: Python<'_>, barcode: &PyAny) -> PyResult<usize> {
+    fn bc_to_int(&self, _py: Python<'_>, barcode: &Bound<'_, PyAny>) -> PyResult<usize> {
         let barcode = if let Ok(bytes) = barcode.extract::<&[u8]>() {
             std::str::from_utf8(strip_null_suffix(bytes)).unwrap()
         } else if let Ok(string) = barcode.extract::<&str>() {
@@ -76,12 +78,12 @@ impl MatrixBarcodeIndex {
     fn bcs_to_ints(
         &self,
         py: Python<'_>,
-        barcodes: Vec<&PyAny>,
+        barcodes: Vec<Bound<'_, PyAny>>,
         sort: bool,
     ) -> PyResult<Vec<usize>> {
         let mut indices: Vec<_> = barcodes
             .into_iter()
-            .map(|barcode| self.bc_to_int(py, barcode))
+            .map(|barcode| self.bc_to_int(py, &barcode))
             .try_collect()?;
         if sort {
             indices.sort_unstable();

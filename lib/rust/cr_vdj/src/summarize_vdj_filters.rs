@@ -1,12 +1,13 @@
 //! Martian stage SUMMARIZE_VDJ_FILTERS
+#![expect(missing_docs)]
 
-use crate::matrix::{gex_umi_counts_per_barcode, H5File};
+use crate::matrix::{H5File, gex_umi_counts_per_barcode};
 use anyhow::Result;
 use cr_lib::parquet_file::{ParquetFile, ParquetWriter, PerBarcodeFilter};
-use enclone_core::barcode_fate::BarcodeFate;
+use enclone_process::BarcodeFate;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO};
@@ -15,14 +16,15 @@ use plotly::color::Rgba;
 use plotly::common::{Marker, TextPosition};
 use plotly::layout::{Axis, AxisType, BarMode, HoverMode};
 use plotly::{Bar, Layout, Scatter};
-use rand::rngs::StdRng;
-use rand_distr::Distribution;
+use rand::SeedableRng;
+use rand::distr::{Distribution, Uniform};
+use rand::rngs::SmallRng;
 use serde::{Deserialize, Serialize};
 use statrs::statistics::OrderStatistics;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use strum_macros::IntoStaticStr;
+use strum::IntoStaticStr;
 use tenx_websummary::components::{HeroMetric, PlotlyChart, TitleWithHelp, WithTitle, WsNavBar};
 use tenx_websummary::{HtmlTemplate, SinglePageHtml};
 use vdj_ann::annotate::ContigAnnotation;
@@ -369,10 +371,10 @@ pub fn generate_filter_summary(
         filters
             .iter()
             .filter_map(|(bc, f)| {
-                if let Some(info) = barcode_info.get(bc) {
-                    if info.is_gex_cell.unwrap_or(true) {
-                        return Some(f);
-                    }
+                if let Some(info) = barcode_info.get(bc)
+                    && info.is_gex_cell.unwrap_or(true)
+                {
+                    return Some(f);
                 }
                 None
             })
@@ -696,7 +698,7 @@ fn barcode_rank_plot(umi_counts: impl Iterator<Item = u32>) -> PlotlyChart {
         .rev()
         .enumerate()
         .map(|(r, u)| (r + 1, u))
-        .group_by(|(_, umis)| *umis)
+        .chunk_by(|&(_, umis)| umis)
         .into_iter()
         .flat_map(|(_, rank_umis)| {
             let rank_umis: Vec<_> = rank_umis.collect();
@@ -893,8 +895,8 @@ fn make_cdr3_plots(
         .map(|(i, cdr3)| (cdr3, i))
         .collect();
 
-    let mut rng: StdRng = rand::SeedableRng::seed_from_u64(0);
-    let jitter = rand_distr::Uniform::new(-0.2f32, 0.2f32);
+    let mut rng = SmallRng::seed_from_u64(0);
+    let jitter = Uniform::new(-0.2f32, 0.2f32).unwrap();
 
     let umi_scatters = categorized_barcodes
         .iter()

@@ -6,6 +6,7 @@
 
 import json
 
+import cellranger.fast_utils as fast_utils
 import cellranger.matrix as cr_matrix
 import cellranger.websummary.violin_plots as cr_vp
 
@@ -24,10 +25,19 @@ COARSE_CELL_TYPE_LOWER_BOUND = 10
 
 
 def split(args):
-    mem_gib = 2 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.filtered_matrix, scale=1.1)
+    _num_features, num_bcs, _nonzero_entries = cr_matrix.CountMatrix.load_dims_from_h5(
+        args.filtered_matrix
+    )
+
+    # Estimate is we take kiB per barcode
+    mem_gib = (
+        num_bcs / 1024 / 1024
+        + fast_utils.get_streaming_fbc_mem_gb_estimate(args.filtered_matrix)
+        + 1
+    )
     return {
         "chunks": [],
-        "join": {"__mem_gb": mem_gib},
+        "join": {"__mem_gb": mem_gib, "__vmem_gb": max(mem_gib * 2, 8)},
     }
 
 

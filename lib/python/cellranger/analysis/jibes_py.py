@@ -64,7 +64,7 @@ class JibesModelPy:
                  simulated latent states
         """
         # TODO: Blank state not yet implemented
-        cnts = [int(x) for x in cr_fa.get_multiplet_counts(N, self.n_gems)][: self.num_tags]
+        cnts = [int(x) for x in cr_fa.get_multiplet_counts(N, n_gems=self.n_gems)][: self.num_tags]
         total = np.sum(cnts)
         x = np.zeros((total, self.num_tags + 1))
         x[:, 0] = np.ones(total)

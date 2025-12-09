@@ -99,14 +99,13 @@ def build_reference_fasta_from_ensembl(
 
             # Warn and skip if transcript_id missing
             if transcript_id is None:
-                print("Warning: Entry on row %d has no transcript_id" % line_no)
+                print(f"Warning: Entry on row {line_no} has no transcript_id")
                 continue
 
             # Warn and skip if gene_name missing
             if gene_name is None:
                 print(
-                    "Warning: Transcript %s on row %d has biotype %s but no gene_name. Skipping."
-                    % (transcript_id, line_no, transcript_biotype)
+                    f"Warning: Transcript {transcript_id} on row {line_no} has biotype {transcript_biotype} but no gene_name. Skipping."
                 )
                 continue
 
@@ -329,8 +328,7 @@ def get_gtf_iter(gtf_filename):
         row = line.split("\t")
         if len(row) != 9:
             raise VDJReferenceConstructionError(
-                "Encountered malformed GTF at line %d. Expected 9 columns but found %d: %s"
-                % (1 + line_num, len(row), line)
+                f"Encountered malformed GTF at line {1 + line_num}. Expected 9 columns but found {len(row)}: {line}"
             )
         properties = cr_reference.NewGtfParser().get_properties_dict(
             row[8], line_num + 1, gtf_filename, uniquify_keys=True

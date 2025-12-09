@@ -76,7 +76,7 @@ def main():
     else:
         genomes = gbm.get_genomes()
         if genome not in genomes:
-            sys.exit(f"Genome '{genome}' not found (genomes available: {genomes})")
+            sys.exit(f"Genome '{genome}' not found (genomes available: {list(map(str, genomes))})")
         matrix = gbm.select_features_by_genome(genome)
 
     num_features, num_barcodes, num_entries = (
@@ -87,15 +87,14 @@ def main():
     dense_size = num_features * num_barcodes
     zero_frac = float(dense_size - num_entries) * 100.0 / float(dense_size)
     print(
-        """
-    WARNING: this matrix has %d x %d (%d total) elements, %f%% of which are zero.
+        f"""
+    WARNING: this matrix has {num_features} x {num_barcodes} ({dense_size} total) elements, {zero_frac}% of which are zero.
     Converting it to dense CSV format may be very slow and memory intensive.
     Moreover, other programs (e.g. Excel) may be unable to load it due to its size.
     To cancel this command, press <control key> + C.
 
     If you need to inspect the data, we recommend using Loupe Browser.
     """
-        % (num_features, num_barcodes, dense_size, zero_frac)
     )
     sys.stdout.flush()
 

@@ -15,7 +15,7 @@ from PIL import Image, ImageOps
 
 
 def _base64_encode_image(filename, fmt="jpeg"):
-    """Opens a file using PIL and returns it encoded as a base64 string.
+    """Opens a file and returns it encoded as a base64 string.
 
     :param filename:
     :return:

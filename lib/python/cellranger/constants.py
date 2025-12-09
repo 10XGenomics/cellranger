@@ -26,26 +26,6 @@ BARCODE_WHITELIST_TRANSLATE_PATH = os.path.join(BARCODE_WHITELIST_PATH, "transla
 SPATIAL_PRODUCT_TYPE = "sp"
 SINGLE_CELL_PRODUCT_TYPE = "sc"
 
-# Bam tags
-# NUM_HITS_TAG = "NH"
-MULTIMAPPER_TAG = "mm"
-ANTISENSE_TAG = "AN"
-RAW_BARCODE_TAG = "CR"
-PROCESSED_BARCODE_TAG = "CB"
-RAW_BARCODE_QUAL_TAG = "CY"
-RAW_UMI_TAG = "UR"
-PROCESSED_UMI_TAG = "UB"
-UMI_QUAL_TAG = "UY"
-TRANSCRIPTS_TAG = "TX"
-GENE_IDS_TAG = "GX"
-# GENE_NAMES_TAG = "GN"
-MAPPING_REGION_TAG = "RE"
-RAW_FEATURE_BARCODE_TAG = "fr"
-FEATURE_IDS_TAG = "fx"
-EXTRA_FLAGS_TAG = "xf"
-# MATE_RESCUE_TAG = "MR"
-
-
 # Cell Ranger read types:
 #     all: all reads
 #     mapped: defined per region
@@ -114,7 +94,7 @@ STRANDS = [FORWARD_STRAND, REVERSE_STRAND]
 THREE_PRIME = "three_prime"
 FIVE_PRIME = "five_prime"
 
-INSERT_SIZE_CUTOFFS = list(range(0, 1550, 50))
+INSERT_SIZE_CUTOFFS = tuple(range(0, 1550, 50))
 MIN_COUNTS_PER_GENE = 1
 DEFAULT_RECOVERED_CELLS_PER_GEM_GROUP = 3000
 
@@ -144,14 +124,8 @@ REFERENCE_TYPE_KEY = "type"
 REFERENCE_TYPE = "Transcriptome"
 REFERENCE_METRIC_PREFIX = "reference_"
 
-BAM_CHUNK_SIZE_GB = 0.5
-MAX_BAM_CHUNKS = 256
-
 COUNT_GENES_MAX_MEM_GB = 64
-NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK = 40000000
-
-# Ensure this value matches cr_types::rna_read::HIGH_CONF_MAPQ.
-STAR_DEFAULT_HIGH_CONF_MAPQ = 255
+NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK = 40_000_000
 
 NORM_MODE_NONE = "none"
 
@@ -201,8 +175,8 @@ TISSUE_BBOX_COLOR = (29, 67, 122)
 
 # the color for the ring traced around fiducial spots on the QC image
 FIDUCIAL_SPOT_COLOR = "#1D437A"
-FILTER_LIST = [
+FILTER_LIST = (
     "None",
     "Non-Targeting",
     "Ignore",
-]  # List of targets that are considered filter-able ie
+)  # Tuple of targets that are considered filter-able ie

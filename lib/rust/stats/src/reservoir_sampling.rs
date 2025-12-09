@@ -1,5 +1,6 @@
+#![deny(missing_docs)]
+use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
-use rand_xoshiro::Xoshiro256StarStar;
 use std::iter::IntoIterator;
 
 /// Randomly choose a sample of k items from a list containing n items,
@@ -13,7 +14,7 @@ pub struct ReservoirSampler<T> {
     // Sampled items
     items: Vec<T>,
     // Fast and high quality psuedo random number generator
-    rng: Xoshiro256StarStar,
+    rng: SmallRng,
 }
 
 impl<T> ReservoirSampler<T> {
@@ -23,7 +24,7 @@ impl<T> ReservoirSampler<T> {
             capacity,
             items_seen: 0,
             items: Vec::with_capacity(capacity),
-            rng: Xoshiro256StarStar::seed_from_u64(seed),
+            rng: SmallRng::seed_from_u64(seed),
         }
     }
 
@@ -35,7 +36,7 @@ impl<T> ReservoirSampler<T> {
             self.items.push(item);
         } else {
             // Swap out an existing item according
-            let idx = self.rng.gen_range(0..self.items_seen);
+            let idx = self.rng.random_range(0..self.items_seen);
             if idx < self.items.len() {
                 self.items[idx] = item;
             }

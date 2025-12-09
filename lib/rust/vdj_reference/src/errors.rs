@@ -1,4 +1,5 @@
-#![allow(clippy::enum_glob_use)]
+#![deny(missing_docs)]
+
 use anyhow::Result;
 use bio::io::fasta::Record;
 use itertools::Itertools;
@@ -8,6 +9,7 @@ use std::io::{BufRead, BufReader, Lines};
 use std::iter::Enumerate;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+
 pub struct ErrorContext {
     reader: Enumerate<Lines<BufReader<File>>>,
     pub state: FastaState,
@@ -75,19 +77,6 @@ impl fmt::Display for FastaState {
     }
 }
 
-fn _last_record_print(last: Option<&(usize, String)>) -> String {
-    match last.as_ref() {
-        Some((n, line)) => {
-            format!(
-                "The last successfully processed record was:\nLine {:5}:{}",
-                n + 1,
-                line
-            )
-        }
-        None => "No fasta records were processed successfully!".into(),
-    }
-}
-
 #[derive(Debug)]
 pub enum VdjReferenceErrors {
     CannotReadFastaRecord {
@@ -109,6 +98,7 @@ pub enum VdjReferenceErrors {
 
 impl fmt::Display for VdjReferenceErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[allow(clippy::enum_glob_use)]
         use VdjReferenceErrors::*;
 
         fn _common_error(fa_file: &Path) -> String {
@@ -245,7 +235,9 @@ impl HeaderErrors {
     }
 
     fn highlight_range(&self, header: &str) -> Range<usize> {
+        #[allow(clippy::enum_glob_use)]
         use HeaderErrors::*;
+
         let n = header.len();
         match self {
             NoDescription => 0..n,
@@ -265,7 +257,9 @@ impl std::error::Error for HeaderErrors {}
 
 impl fmt::Display for HeaderErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[allow(clippy::enum_glob_use)]
         use HeaderErrors::*;
+
         let msg = match self {
             NoDescription => {
                 "Expected two strings (id & description) separated by a space in the FASTA header. Found no description".to_string()

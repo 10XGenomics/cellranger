@@ -69,6 +69,7 @@ def join(args, outs, _chunk_defs, _chunk_outs):
     if args.crispr_analysis_metrics:
         with open(args.crispr_analysis_metrics) as reader:
             summary.update(json.load(reader))
+    summary["samples_count"] = len(args.sample_defs)
     with open(outs.summary, "w") as f:
         json.dump(summary, f, indent=4, sort_keys=True)
 

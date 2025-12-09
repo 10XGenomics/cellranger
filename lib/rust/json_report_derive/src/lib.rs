@@ -1,17 +1,3 @@
-#![deny(
-    missing_copy_implementations,
-    non_upper_case_globals,
-    trivial_casts,
-    trivial_numeric_casts,
-    unsafe_code,
-    unstable_features,
-    unused_import_braces,
-    unused_qualifications
-)]
-
-//!
-//! This is documentation for the `json-metric_derive` crate.
-//!
 //! This crate defines a procedural macro for deriving the
 //! `JsonReport` trait. `JsonReport` trait can be auto derived for a
 //! struct if all the fields of the structs implement
@@ -24,9 +10,6 @@
 //! # What you write
 //!
 //! ``` ignore
-//! #[macro_use]
-//! extern crate json_report_derive;
-//!
 //! #[derive(JsonReport)]
 //! struct Foo {
 //!     bar1: CountMetric,
@@ -37,9 +20,6 @@
 //! # What you get (just for illustration)
 //!
 //! ``` ignore
-//! #[macro_use]
-//! extern crate json_report_derive;
-//!
 //! struct Foo {
 //!     bar1: CountMetric,
 //!     bar2: PercentMetric,
@@ -55,6 +35,7 @@
 //!     }
 //! }
 //! ```
+#![deny(missing_docs)]
 
 use itertools::multizip;
 use proc_macro::TokenStream;
@@ -112,7 +93,6 @@ pub fn derive_json_report_trait(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         // The generated impl
         #[automatically_derived]
-        #[allow(unused_attributes)]
         impl #impl_generics ::metric::JsonReport for #name #ty_generics #where_clause {
             fn to_json_reporter(&self) -> ::metric::JsonReporter {
                 let mut full_reporter = ::metric::JsonReporter::default();

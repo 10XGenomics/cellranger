@@ -369,30 +369,30 @@ class AnnotatedContig:
 
     # Note: 'frame' is unused
     __slots__ = [
-        "contig_name",
-        "sequence",
-        "quals",
+        "aa_sequence",
         "annotations",
-        "primer_annotations",
         "barcode",
-        "clonotype",
-        "read_count",
-        "umi_count",
-        "unannotated_intervals",
-        "filtered",
-        "cdr3_start",
-        "cdr3_stop",
-        "cdr3_seq",
         "cdr3",
         "cdr3_flag",
-        "start_codon_pos",
-        "stop_codon_pos",
+        "cdr3_seq",
+        "cdr3_start",
+        "cdr3_stop",
+        "clonotype",
+        "contig_name",
+        "filtered",
         "frame",
-        "aa_sequence",
-        "productive",
+        "high_confidence",
         "info_dict",
         "is_cell",
-        "high_confidence",
+        "primer_annotations",
+        "productive",
+        "quals",
+        "read_count",
+        "sequence",
+        "start_codon_pos",
+        "stop_codon_pos",
+        "umi_count",
+        "unannotated_intervals",
     ]
 
     def __init__(
@@ -979,7 +979,7 @@ class AnnotatedContig:
             elif cdr_pos is None:
                 flags.append("NO_CDR3")
             else:
-                flags.append("CDR3_TOO_LONG:%d" % (cdr_pos[1] - cdr_pos[0]))
+                flags.append(f"CDR3_TOO_LONG:{cdr_pos[1] - cdr_pos[0]}")
 
         if not self.cdr3:
             # Either this didn't have both a V and a J, or the annotation-guided search failed to give a valid CDR3.
@@ -1138,15 +1138,15 @@ class Annotation:
     """Annotation of a sequence against a reference of segment sequences."""
 
     __slots__ = [
-        "feature",
-        "cigar",
-        "score",
         "annotation_length",
-        "annotation_match_start",
         "annotation_match_end",
-        "contig_match_start",
+        "annotation_match_start",
+        "cigar",
         "contig_match_end",
+        "contig_match_start",
+        "feature",
         "mismatches",
+        "score",
         "sequence",
     ]
 

@@ -1,41 +1,43 @@
-// This file contains code to process a barcode.
+//! This file contains code to process a barcode.
+#![expect(missing_docs)]
+#![expect(clippy::many_single_char_names)]
 
-#![allow(clippy::many_single_char_names)]
-
-use crate::barcode_data::{BarcodeData, BarcodeDataBrief};
-use crate::constants::{CHAIN_TYPES, PRIMER_EXT_LEN};
-use crate::contigs::make_contigs;
+use crate::barcode_data::BarcodeData;
+use crate::constants::{CHAIN_NONE_POS, CHAIN_TYPES, CHAIN_TYPESX, PRIMER_EXT_LEN};
+use crate::contigs::{MakeContigsResult, make_contigs};
 use crate::heuristics::Heuristics;
-use crate::hops::FlowcellContam;
 use crate::log_opts::LogOpts;
 use crate::ref_free::{simplify_without_ref, uber_strong_paths, umis2};
+use crate::reverse_complement;
+use crate::umi_data::{ContigID, UmiInfo};
 use amino::{have_start, have_stop};
-use bio_edit::alignment::Alignment;
-use bio_edit::alignment::AlignmentOperation::{Del, Ins, Subst};
+use anyhow::Result;
+use bio::alignment::Alignment;
+use bio::alignment::AlignmentOperation::{Del, Ins, Subst};
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::{Kmer12, Kmer20};
 use debruijn::{Kmer, Mer, Vmer};
 use graph_simple::GraphSimple;
 use hyperbase::Hyper;
-use itertools::{izip, Itertools};
+use io_utils::{fwrite, fwriteln};
+use itertools::Itertools;
 use kmer_lookup::{make_kmer_lookup_20_single, match_12};
-use stats_utils::percent_ratio;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::iter::zip;
 use std::mem::swap;
-use string_utils::{abbrev_list, stringme, TextUtils};
-use superslice::Ext;
-use tenkit2::pack_dna::{pack_bases_16x, reverse_complement, unpack_bases_10};
+use std::str::FromStr;
+use string_utils::TextUtils;
 use vdj_ann::align::affine_align;
 use vdj_ann::annotate::{
-    annotate_seq, annotate_seq_core, chain_type, get_cdr3, get_cdr3_using_ann, print_annotations,
-    print_cdr3, print_cdr3_using_ann, print_some_annotations, print_start_codon_positions,
-    Annotation, ContigAnnotation, JunctionSupport,
+    Annotation, ContigAnnotation, JunctionSupport, annotate_seq, annotate_seq_core, chain_type,
+    get_cdr3, get_cdr3_using_ann, print_annotations, print_cdr3, print_cdr3_using_ann,
+    print_some_annotations, print_start_codon_positions,
 };
 use vdj_ann::refx::RefData;
-use vdj_ann::transcript::ContigStatus;
+use vdj_ann::transcript::{ContigStatus, JunctionSupportCore};
+use vdj_types::VdjChain;
 use vector_utils::{
     bin_member, intersection, lower_bound1_3, meet_size, next_diff, position, unique_sort,
     upper_bound1_3,
@@ -200,7 +202,7 @@ fn analyze_vscore(
                     matches += 1;
                 }
             }
-            let score = percent_ratio(matches, refs[t].len());
+            let score = 100.0 * matches as f64 / refs[t].len() as f64;
             if score > best {
                 let mut stop = false;
                 for j in 0..(refs[t].len() - 3) / 3 {
@@ -274,18 +276,14 @@ fn analyze_vscore(
                     mat += 1;
                 }
             }
-            let alt = percent_ratio(mat, total);
-            if alt > 85_f64 {
+            if mat as f64 / total as f64 > 0.85 {
                 better = true;
             }
         }
         if !better {
-            // comments = ", INTERESTING".to_string();
             interesting = true;
         }
     }
-    // fwriteln!( log, "\nVSCORE = {:2.1}%, max perf match = {}{}",
-    //     best, mpm, comments );
     if interesting {
         fwriteln!(log, ">vscore_{}_{:2.1}%\n{}", label, best, b.to_string());
     }
@@ -304,10 +302,7 @@ fn print_contig_info(
     id: usize,
     tig: &DnaString,
     ann: &[Annotation],
-    jsupp: &(i32, i32),
-    validated_umis: &[String],
-    non_validated_umis: &[String],
-    invalidated_umis: &[String],
+    jsupp: &JunctionSupportCore,
     tigq: &[u8],
     cumi: &[i32],
     cids: &[i32],
@@ -333,8 +328,8 @@ fn print_contig_info(
     }
     let junction_support = match !free && good {
         true => Some(JunctionSupport {
-            reads: jsupp.1,
-            umis: jsupp.0,
+            reads: jsupp.reads,
+            umis: jsupp.umis,
         }),
         false => None,
     };
@@ -551,9 +546,6 @@ fn print_contig_info(
             cids.len(),
             cumi.len(),
             high_confidence,
-            Some(validated_umis.to_vec()),
-            Some(non_validated_umis.to_vec()),
-            Some(invalidated_umis.to_vec()),
             is_cell,
             good,
             ContigStatus::default(),
@@ -567,6 +559,20 @@ fn print_contig_info(
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // PROCESS A BARCODE
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+
+pub struct ProcessBarcodeResult {
+    pub conx: Vec<DnaString>,
+    /// qual score for all contigs
+    pub conxq: Vec<Vec<u8>>,
+    /// reads assigned to each contig
+    pub cids: Vec<Vec<i32>>,
+    /// umis assigned to each contig
+    pub cumi: Vec<Vec<i32>>,
+    pub junction_support: Vec<Option<JunctionSupport>>,
+    pub productive: Vec<bool>,
+    pub nedges: usize,
+    pub umi_info: Vec<UmiInfo>,
+}
 
 // Note that this trims the reads.
 
@@ -591,80 +597,19 @@ pub fn process_barcode(
     refdata_full: &RefData,
     rkmers_plus_full_20: &[(Kmer20, i32, i32)],
     refdatax: &RefData,
-    lena: usize,
-    contam: &FlowcellContam,
     min_contig_length: Option<usize>,
     // OUTPUTS:
     barcode_data: &mut BarcodeData,
-    barcode_data_brief: &mut BarcodeDataBrief,
-    conx: &mut Vec<DnaString>,
-    conxq: &mut Vec<Vec<u8>>,
-    productive: &mut Vec<bool>,
-    validated_umis: &mut Vec<Vec<String>>,
-    non_validated_umis: &mut Vec<Vec<String>>,
-    invalidated_umis: &mut Vec<Vec<String>>,
-    cids: &mut Vec<Vec<i32>>,
-    cumi: &mut Vec<Vec<i32>>,
-    nedges: &mut usize,
-    junction_support: &mut Vec<Option<JunctionSupport>>,
     log: &mut Vec<u8>,
     // INPUTS:
     log_opts: &LogOpts,
     heur: &Heuristics,
-) {
+) -> Result<ProcessBarcodeResult> {
     let gd_mode = is_gd.unwrap_or(false);
     // Unpack refdata.
 
     let rheaders = &refdata.rheaders;
     let rheaders_full = &refdata_full.rheaders;
-
-    // Get cross-flowcell contamination.
-
-    let mut bad_umis = Vec::<String>::new();
-    if !contam.entry.is_empty() {
-        const MIN_RATIO_CONTAM: u32 = 10;
-        let mut lid = 60000_u16;
-        for i in 0..contam.lena_index.len() {
-            if bin_member(&contam.lena_index[i], &lena) {
-                lid = i as u16;
-                break;
-            }
-        }
-        assert!(
-            lid != 60000_u16,
-            "Failed to find lena id in contam.lena_index."
-        );
-        let bc = barcode_data_brief.barcode.before("-").as_bytes();
-        let mut bc_packed = [0_u8; 4];
-        pack_bases_16x(bc, &mut bc_packed);
-        let low = contam.entry.lower_bound_by_key(&bc_packed, |a| a.bc);
-        let high = contam.entry.upper_bound_by_key(&bc_packed, |a| a.bc);
-        let mut i = low;
-        while i < high {
-            let mut j = i + 1;
-            while j < high {
-                if contam.entry[j].umi != contam.entry[i].umi {
-                    break;
-                }
-                j += 1;
-            }
-            let mut max_mult = 0;
-            for k in i..j {
-                max_mult = max(max_mult, contam.entry[k].mult);
-            }
-            for k in i..j {
-                if MIN_RATIO_CONTAM * contam.entry[k].mult <= max_mult && contam.entry[k].lid == lid
-                {
-                    let umi_packed = &contam.entry[k].umi;
-                    let mut umi = [0_u8; 10];
-                    unpack_bases_10(umi_packed, &mut umi);
-                    bad_umis.push(stringme(&umi));
-                }
-            }
-            i = j;
-        }
-        bad_umis.sort();
-    }
 
     // Start log.
 
@@ -680,15 +625,15 @@ pub fn process_barcode(
     // ◼ Or the wrong and the right orientation?
 
     let mut rc_inner_primers = Vec::<String>::with_capacity(inner_primers.len());
-    let rc_inner_primers_bytes = inner_primers
+    let rc_inner_primers_bytes: Vec<Vec<u8>> = inner_primers
         .iter()
         .map(|p| {
             let mut p = p.clone();
             reverse_complement(&mut p);
-            rc_inner_primers.push(stringme(&p));
+            rc_inner_primers.push(String::from_utf8(p.clone()).unwrap());
             p
         })
-        .collect::<Vec<_>>();
+        .collect();
     let k = 20;
     if heur.prim_trim {
         for i in 0..reads.len() {
@@ -799,11 +744,7 @@ pub fn process_barcode(
                                         .zip(c_region_ext.iter())
                                         .map(
                                             |(nt_read, nt_ext)| {
-                                                if nt_read != nt_ext {
-                                                    1
-                                                } else {
-                                                    0
-                                                }
+                                                if nt_read != nt_ext { 1 } else { 0 }
                                             },
                                         )
                                         .sum::<usize>()
@@ -820,20 +761,9 @@ pub fn process_barcode(
         }
     }
 
-    // Kill contamination.
-
-    if !bad_umis.is_empty() {
-        for (read, qual, &umi) in izip!(reads.iter_mut(), quals.iter_mut(), umi_id) {
-            if bin_member(&bad_umis, &uu[umi as usize]) {
-                read.clear();
-                qual.clear();
-            }
-        }
-    }
-
     // Build the graph.
 
-    let mut x: Hyper = Hyper::new();
+    let mut x: Hyper = Hyper::default();
     x.build_from_reads(20, reads);
     let edges_initial = x.h.g.edge_count();
 
@@ -1118,42 +1048,62 @@ pub fn process_barcode(
     }
 
     // Compute ucounts, and umi_info.
+    fn _compute_umi_stats(
+        umi_seq: &[String],
+        umi_id: &[i32],
+        reads: &[DnaString],
+        single_end: bool,
+        n50_n50_rpu: i32,
+        barcode_data: &mut BarcodeData,
+    ) -> HashMap<String, UmiInfo> {
+        let mut total_ucounts = 0;
+        let mut ucounts = Vec::new();
+        let mut umi_map = HashMap::<String, UmiInfo>::new();
 
-    let mut ucounts = Vec::<i32>::new();
-    let mut total_ucounts = 0;
-    let mut id = 0;
-    let none_pos = CHAIN_TYPES
-        .into_iter()
-        .enumerate()
-        .find(|v| v.1 == "None")
-        .map_or(-1_i32, |v| v.0 as i32);
-    while id < reads.len() {
-        let id2 = next_diff(umi_id, id);
-        let null = reads[id..id2].iter().all(DnaString::is_empty);
-        let mut n = (id2 - id) as i32;
-        if !single_end {
-            n /= 2;
+        assert_eq!(umi_id.len(), reads.len());
+        for (umi_id, grouped_reads) in &umi_id
+            .iter()
+            .zip(reads.iter())
+            .chunk_by(|&(umi_id, _)| umi_id)
+        {
+            let reads: Vec<&DnaString> = grouped_reads.into_iter().map(|(_, read)| read).collect();
+            let umi = umi_seq[*umi_id as usize].clone();
+            let mut info = UmiInfo::new(&umi, *umi_id, &barcode_data.barcode, reads, single_end);
+
+            // barcode.umi_info counts _all_ read_pairs, irrespective of whether the read is empty or not
+
+            barcode_data
+                .umi_info
+                .push((info.read_pairs as i32, CHAIN_NONE_POS, umi.clone()));
+
+            // while ucounts only includes umis when there is at least one nonempty read_pair
+            // so a umi with >1 read_pair counted is not guaranteed to be categorized as nonsolo!
+            if info.nonempty_reads > 0 {
+                total_ucounts += 1;
+            }
+
+            if (info.read_pairs > 1 || n50_n50_rpu == 2) && (info.nonempty_reads > 0) {
+                ucounts.push(info.read_pairs.try_into().unwrap());
+                info.nonsolo = true;
+            }
+
+            umi_map.insert(umi.clone(), info);
         }
-        if !null {
-            total_ucounts += 1;
-        }
-        if (n > 1 || n50_n50_rpu == 2) && !null {
-            ucounts.push(n);
-        }
-        barcode_data
-            .umi_info
-            .push((n, none_pos as i8, uu[umi_id[id] as usize].clone()));
-        id = id2;
+        ucounts.sort_unstable();
+        barcode_data.ucounts = ucounts;
+        barcode_data.total_ucounts = total_ucounts as usize;
+        umi_map
     }
-    barcode_data.total_ucounts = total_ucounts;
-    ucounts.sort_unstable();
+
+    let mut umi_map = _compute_umi_stats(uu, umi_id, reads, single_end, n50_n50_rpu, barcode_data);
+
     if !log_opts.nucounts {
-        fwriteln!(log, "\ntotal ucounts = {}", total_ucounts);
+        fwriteln!(log, "\ntotal ucounts = {}", barcode_data.total_ucounts);
         fwriteln!(
             log,
             "nonsolo ucounts = {}[{}]",
-            ucounts.len(),
-            abbrev_list(&ucounts)
+            barcode_data.ucounts.len(),
+            abbrev_list(&barcode_data.ucounts)
         );
     }
     if log_opts.print_umi {
@@ -1181,7 +1131,6 @@ pub fn process_barcode(
         }
         fwriteln!(log, "");
     }
-    barcode_data.ucounts = ucounts;
 
     // Find surviving umis.
     //
@@ -1210,8 +1159,7 @@ pub fn process_barcode(
     // only high quality scores.
 
     let mut strong = Vec::<(i32, Vec<i32>)>::new();
-    // ◼ Below, needed x to be mutable, why?
-    uber_strong_paths(&mut x, umi_id, &mut strong);
+    uber_strong_paths(&x, umi_id, &mut strong);
     let mut es = Vec::<i32>::new();
     let mut have_v = false;
     let mut strongx = strong.iter().map(|i| &i.1).collect::<Vec<_>>();
@@ -1252,8 +1200,8 @@ pub fn process_barcode(
         } else {
             let s = c.to_string();
             for (inner_primer, rprim) in zip(inner_primers, &rc_inner_primers) {
-                let prim = stringme(inner_primer);
-                if s.contains(&prim) || s.contains(rprim) {
+                let prim = std::str::from_utf8(inner_primer).unwrap();
+                if s.contains(prim) || s.contains(rprim) {
                     anns += 1;
                 }
             }
@@ -1336,6 +1284,10 @@ pub fn process_barcode(
     for i in &xucounts2 {
         barcode_data.xucounts.push(i.0);
         barcode_data.xuids.push(i.1);
+
+        if let Some(info) = umi_map.get_mut(&uu[i.1 as usize]) {
+            info.surviving = true;
+        }
     }
     if !log_opts.nucounts {
         fwriteln!(
@@ -1373,40 +1325,43 @@ pub fn process_barcode(
             };
             for i in &ann_memory[p] {
                 let h = &rheaders_full[i.ref_id as usize];
-                let mut chain_types = Vec::<i8>::with_capacity(7);
+                let mut chain_types = Vec::<&str>::with_capacity(7);
                 if h.contains("TRAV") || h.contains("TRAJ") {
-                    chain_types.push(position(&chain_types_list, &"TRA") as i8);
+                    chain_types.push("TRA");
                 }
                 if h.contains("TRBV") || h.contains("TRBJ") {
-                    chain_types.push(position(&chain_types_list, &"TRB") as i8);
+                    chain_types.push("TRB");
                 }
                 if h.contains("TRDV") || h.contains("TRDJ") {
-                    chain_types.push(position(&chain_types_list, &"TRD") as i8);
+                    chain_types.push("TRD");
                 }
                 if h.contains("TRGV") || h.contains("TRGJ") {
-                    chain_types.push(position(&chain_types_list, &"TRG") as i8);
+                    chain_types.push("TRG");
                 }
                 if h.contains("IGHV") || h.contains("IGHJ") {
-                    chain_types.push(position(&chain_types_list, &"IGH") as i8);
+                    chain_types.push("IGH");
                 }
                 if h.contains("IGKV") || h.contains("IGKJ") {
-                    chain_types.push(position(&chain_types_list, &"IGK") as i8);
+                    chain_types.push("IGK");
                 }
                 if h.contains("IGLV") || h.contains("IGLJ") {
-                    chain_types.push(position(&chain_types_list, &"IGL") as i8);
+                    chain_types.push("IGL");
                 }
                 unique_sort(&mut chain_types);
                 if chain_types.len() == 1 {
-                    barcode_data.umi_info[j.0 as usize].1 = chain_types[0];
+                    barcode_data.umi_info[j.0 as usize].1 =
+                        position(&chain_types_list, &chain_types[0]) as i8;
+                    if let Some(info) = umi_map.get_mut(&barcode_data.umi_info[j.0 as usize].2) {
+                        info.chain_type = Some(VdjChain::from_str(chain_types[0]).unwrap());
+                    }
                 }
             }
         }
         let mut id = 0;
         let mut ucount = 0;
-        let types = ["IGH", "IGK", "IGL", "TRA", "TRB", "TRD", "TRG"];
         while id < reads.len() {
             let id2 = next_diff(umi_id, id);
-            if barcode_data.umi_info[ucount].1 == none_pos as i8 {
+            if barcode_data.umi_info[ucount].1 == CHAIN_NONE_POS {
                 let mut cts = Vec::<u8>::new();
                 for b in &reads[id..id2] {
                     let ct = chain_type(b, rkmers_plus_full_20, &refdata_full.rtype);
@@ -1417,7 +1372,11 @@ pub fn process_barcode(
                 unique_sort(&mut cts);
                 if cts.len() == 1 {
                     barcode_data.umi_info[ucount].1 =
-                        position(&chain_types_list, &types[cts[0] as usize]) as i8;
+                        position(&chain_types_list, &CHAIN_TYPESX[cts[0] as usize]) as i8;
+                    if let Some(info) = umi_map.get_mut(&barcode_data.umi_info[ucount].2) {
+                        info.chain_type =
+                            Some(VdjChain::from_str(CHAIN_TYPESX[cts[0] as usize]).unwrap());
+                    }
                 }
             }
             ucount += 1;
@@ -1440,22 +1399,22 @@ pub fn process_barcode(
         "\n==========================================================\
          =========================="
     );
-    *nedges = x.h.g.edge_count();
+    let nedges = x.h.g.edge_count();
 
-    // Make contigs.
-
-    let mut con = Vec::<DnaString>::new(); // good contigs
-    let mut con2 = Vec::<DnaString>::new(); // reject contigs
-
-    let mut jsupp = Vec::<(i32, i32)>::new(); // (umis, reads) supporting junction seqs of good contigs
-
-    make_contigs(
+    let MakeContigsResult {
+        conxq,
+        cids,
+        con,
+        con2,
+        jsupp,
+        cumi,
+    } = make_contigs(
         single_end,
         is_gd,
         inner_primers,
         reads,
         quals,
-        &mut x,
+        &x,
         umi_id,
         uu,
         refdata,
@@ -1463,36 +1422,34 @@ pub fn process_barcode(
         rkmers_plus_full_20,
         heur,
         min_contig_length,
-        &mut con,
-        &mut jsupp,
-        &mut con2,
-        conxq,
-        cumi,
-        cids,
         barcode_data,
-        validated_umis,
-        non_validated_umis,
-        invalidated_umis,
         log,
         log_opts,
     );
 
-    conx.extend(con.iter().cloned());
-    conx.extend(con2.iter().cloned());
-    productive.extend(vec![true; con.len()]); // good contigs == productive contigs (non-denovo mode)
-    productive.extend(vec![false; con2.len()]); // reject contigs == unproductive contigs (non-denovo mode)
-    junction_support.extend(jsupp.iter().map(|(umis, reads)| {
-        Some(JunctionSupport {
-            reads: *reads,
-            umis: *umis,
+    let conx: Vec<_> = con.iter().cloned().chain(con2.iter().cloned()).collect();
+    let mut productive = vec![true; con.len()]; // good contigs == productive contigs (non-denovo mode)
+    productive.extend(std::iter::repeat_n(false, con2.len())); // reject contigs == unproductive contigs (non-denovo mode)
+    let mut junction_support: Vec<_> = jsupp
+        .iter()
+        .map(|core| {
+            Some(JunctionSupport {
+                reads: core.reads,
+                umis: core.umis,
+            })
         })
-    }));
+        .collect();
     junction_support.extend(vec![None; con2.len()]);
-    barcode_data_brief.ncontigs = conx.len();
-    barcode_data_brief
-        .xucounts
-        .clone_from(&barcode_data.xucounts);
-    barcode_data_brief.total_ucounts = barcode_data.total_ucounts;
+
+    // Update junction_support status in umi_map
+    for umi in jsupp
+        .iter()
+        .flat_map(|j| j.umi_ids.iter().map(|&idx| uu[idx as usize].clone()))
+    {
+        if let Some(info) = umi_map.get_mut(&umi) {
+            info.junction_support = true;
+        }
+    }
 
     // Compute primer hits to good contigs.
 
@@ -1551,9 +1508,6 @@ pub fn process_barcode(
                 &con[j],
                 &ann_all[j],
                 &jsupp[j],
-                &validated_umis[j],
-                &non_validated_umis[j],
-                &invalidated_umis[j],
                 &conxq[j],
                 &cumi[j],
                 &cids[j],
@@ -1587,7 +1541,7 @@ pub fn process_barcode(
         fwriteln!(log, "\nREJECT CONTIGS");
         for j in 0..con2.len() {
             let tigname = format!("{}_{}", barcode_data.barcode, con.len() + j + 1);
-            let js = (0, 0);
+            let js = JunctionSupportCore::default();
             let ann = annotate_seq_core(&con2[j], refdata, true, false, true, log, false);
             print_contig_info(
                 &tigname,
@@ -1598,9 +1552,6 @@ pub fn process_barcode(
                 &con2[j],
                 &ann,
                 &js,
-                &validated_umis[con.len() + j],
-                &non_validated_umis[con.len() + j],
-                &invalidated_umis[con.len() + j],
                 &conxq[con.len() + j],
                 &cumi[con.len() + j],
                 &cids[con.len() + j],
@@ -1636,14 +1587,36 @@ pub fn process_barcode(
         }
     }
 
-    // Finish up logging.
+    // Update contig_id status in umi_map
+    for (i, cumi_ids) in cumi.iter().enumerate() {
+        for umi in cumi_ids.iter().map(|&idx| uu[idx as usize].clone()) {
+            if let Some(info) = umi_map.get_mut(&umi) {
+                info.contig = Some(ContigID(i + 1));
+            }
+        }
+    }
+
+    // Generate a sorted umi_info into a vector
+    let mut umi_info: Vec<UmiInfo> = umi_map.into_values().collect();
+    umi_info.sort_by(|a, b| a.umi_id.cmp(&b.umi_id));
+
+    Ok(ProcessBarcodeResult {
+        conx,
+        conxq,
+        cids,
+        cumi,
+        junction_support,
+        productive,
+        nedges,
+        umi_info,
+    })
 }
 
 // Define the complexity of an alignment to be its number of mismatches plus
 // its number of indel operations, where an indel is a deletion or insertion of
 // an arbitrary number of bases.  Ignores clips.
 
-pub fn complexity(a: &Alignment) -> usize {
+fn complexity(a: &Alignment) -> usize {
     let ops = &a.operations;
     let (mut comp, mut i) = (0, 0);
     while i < ops.len() {
@@ -1660,4 +1633,24 @@ pub fn complexity(a: &Alignment) -> usize {
         i += 1;
     }
     comp
+}
+
+/// Convert a sorted list into a an abbreviated string.
+fn abbrev_list<T: Eq + std::fmt::Display>(x: &[T]) -> String {
+    use std::fmt::Write;
+    let mut s = String::new();
+    let mut i = 0;
+    while i < x.len() {
+        if i > 0 {
+            s.push_str(", ");
+        }
+        let j = next_diff(x, i);
+        if j - i == 1 {
+            write!(s, "{}", x[i]).unwrap();
+        } else {
+            write!(s, "{}^{}", x[i], j - i).unwrap();
+        }
+        i = j;
+    }
+    s
 }

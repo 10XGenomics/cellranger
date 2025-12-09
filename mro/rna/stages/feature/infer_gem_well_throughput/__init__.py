@@ -26,16 +26,15 @@ from cellranger.feature.throughputs import (
 )
 from cellranger.feature_ref import HASHTAG_TAG
 from cellranger.matrix import CountMatrix
-from cellranger.reference_paths import get_reference_genomes
 
 __MRO__ = """
 stage INFER_GEM_WELL_THROUGHPUT(
     in  map<ChemistryDef> chemistry_defs,
     in  string            throughput,
     in  h5                filtered_feature_counts_matrix,
-    in  path              reference_path,
+    in  ReferenceInfo     reference_info,
     in  h5                barcode_summary_h5,
-    out string            throughput,
+    out string            inferred_throughput,
     out json              inferred_throughputs,
     src py                "stages/feature/infer_gem_well_throughput",
 ) using (
@@ -52,12 +51,12 @@ def main(args, outs):
         and HASHTAG_TAG not in feature_ref.all_tag_keys
     )
     if no_cmos or not feature_utils.all_files_present([args.barcode_summary_h5]):
-        outs.throughput = None
+        outs.inferred_throughput = None
         outs.inferred_throughputs = None
         return
 
     # get barcode counts from barcode summary
-    genomes = get_reference_genomes(args.reference_path)
+    genomes: list[str] = args.reference_info["genomes"]
     barcode_summary = h5py.File(args.barcode_summary_h5, "r")
     genome = genomes[0] if len(genomes) == 1 else rna_library.MULTI_REFS_PREFIX
     lib_prefix = rna_library.get_library_type_metric_prefix(
@@ -70,7 +69,7 @@ def main(args, outs):
         cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE,
     )
     if key not in barcode_summary:
-        outs.throughput = None
+        outs.inferred_throughput = None
         return
     counts_per_bc = barcode_summary[key][:]
     counts_per_bc[::-1].sort()  # pylint: disable=no-member
@@ -94,7 +93,7 @@ def main(args, outs):
         # Downstream code uses "throughput" to estimate droplet counts, so GEM-X
         # data needs an annotated "throughput" to handle this, even though
         # it no longer supports actual throughput differences.
-        outs.throughput = GEMX_THROUGHPUT
+        outs.inferred_throughput = GEMX_THROUGHPUT
         return
 
     inferred_throughputs = {
@@ -108,11 +107,11 @@ def main(args, outs):
 
     # We now take throughput directly from --chemistry input
     if gex_chemistry_def == CHEMISTRY_SC3P_LT:
-        outs.throughput = LT_THROUGHPUT
+        outs.inferred_throughput = LT_THROUGHPUT
     elif gex_chemistry_description.endswith("HT"):
-        outs.throughput = HT_THROUGHPUT
+        outs.inferred_throughput = HT_THROUGHPUT
     else:
-        outs.throughput = throughput_final
+        outs.inferred_throughput = throughput_final
 
-    inferred_throughputs["throughput_final_output"] = outs.throughput
+    inferred_throughputs["throughput_final_output"] = outs.inferred_throughput
     feature_utils.write_json_from_dict(inferred_throughputs, outs.inferred_throughputs)

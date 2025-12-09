@@ -12,7 +12,7 @@ import os
 import shutil
 import sys
 from collections.abc import Iterable, Sequence
-from typing import IO, TYPE_CHECKING, Any, AnyStr, Literal, TextIO, overload
+from typing import IO, TYPE_CHECKING, Any, Literal, TextIO, overload
 
 import lz4.frame as lz4
 import martian
@@ -23,11 +23,11 @@ if TYPE_CHECKING:
     import subprocess
 
 
-def fixpath(path: AnyStr) -> AnyStr:
+def fixpath[AnyStr: bytes | str](path: AnyStr) -> AnyStr:
     return os.path.abspath(os.path.expandvars(os.path.expanduser(path)))
 
 
-def get_input_path(oldpath: AnyStr, is_dir: bool = False) -> AnyStr:
+def get_input_path[AnyStr: bytes | str](oldpath: AnyStr, is_dir: bool = False) -> AnyStr:
     if not isinstance(oldpath, str | bytes):
         sys.exit(f"'{oldpath}' is not a valid string type and is an invalid path")
     path = fixpath(oldpath)
@@ -43,11 +43,11 @@ def get_input_path(oldpath: AnyStr, is_dir: bool = False) -> AnyStr:
     return path
 
 
-def get_input_paths(paths: list[AnyStr]) -> list[AnyStr]:
+def get_input_paths[AnyStr: bytes | str](paths: list[AnyStr]) -> list[AnyStr]:
     return [get_input_path(path) for path in paths]
 
 
-def get_output_path(oldpath: AnyStr) -> AnyStr:
+def get_output_path[AnyStr: bytes | str](oldpath: AnyStr) -> AnyStr:
     path = fixpath(oldpath)
     dirname = os.path.dirname(path)
     if not os.path.isdir(dirname):
@@ -122,7 +122,7 @@ def check_completed_process(p: subprocess.CompletedProcess, cmd: str) -> None:
     if p.returncode is None:
         raise CRCalledProcessError(f"Process did not finish: {cmd} .")
     elif p.returncode != 0:
-        raise CRCalledProcessError("Process returned error code %d: %s ." % (p.returncode, cmd))
+        raise CRCalledProcessError(f"Process returned error code {p.returncode}: {cmd} .")
 
 
 def mkdir(path: str | bytes, exist_ok: bool = True):
@@ -155,13 +155,13 @@ def remove(f: str | bytes, nonexistent_ok: bool = True):
         os.remove(f)
 
 
-def hardlink_with_fallback(src: AnyStr, dst: AnyStr):
+def hardlink_with_fallback[AnyStr: bytes | str](src: AnyStr, dst: AnyStr):
     """Hard-links src to dst, falling back to copy if it fails.
 
     If `src` is a directory, it will attempt to recursively hardlink.
     """
 
-    def _safe_copy(src: AnyStr, dst: AnyStr):
+    def _safe_copy(src: str | bytes, dst: str | bytes):
         """Copy a file, like shutil.copy2, but catch errors from copystat."""
         try:
             shutil.copyfile(src, dst, follow_symlinks=False)
@@ -176,7 +176,7 @@ def hardlink_with_fallback(src: AnyStr, dst: AnyStr):
             else:
                 raise
 
-    def _hardlink_file_with_fallback(src: AnyStr, dst: AnyStr):
+    def _hardlink_file_with_fallback(src: str | bytes, dst: str | bytes):
         """Hardlink a file, fallback to copy if fail."""
         try:
             os.link(src, dst)
@@ -195,7 +195,9 @@ def hardlink_with_fallback(src: AnyStr, dst: AnyStr):
         _hardlink_file_with_fallback(src, dst)
 
 
-def hard_link(f: AnyStr, relative_path: str | bytes | None = None) -> AnyStr | None:
+def hard_link[
+    AnyStr: bytes | str
+](f: AnyStr, relative_path: str | bytes | None = None) -> AnyStr | None:
     """Make a new hard link in a stage directory to the file f, defaulting to the basename of f."""
     if not f:
         return None
@@ -303,7 +305,7 @@ def recursive_hard_link_dict(in_files, prefixes=None):
         if path_or_dict is None:
             out_files[k] = None
         elif isinstance(path_or_dict, dict):
-            out_files[k] = recursive_hard_link_dict(in_files[k], prefixes + [k])
+            out_files[k] = recursive_hard_link_dict(path_or_dict, prefixes + [k])
         elif isinstance(path_or_dict, (str)):
             final_prefixes = prefixes + [k]
             old_path = path_or_dict

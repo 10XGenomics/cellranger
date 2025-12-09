@@ -1,4 +1,6 @@
 [dependencies]
+serde_ignored = '*'
+
 [dependencies.anyhow]
 workspace = true
 
@@ -15,6 +17,12 @@ path = '../cr_h5'
 path = '../cr_types'
 
 [dependencies.diff-exp]
+workspace = true
+
+[dependencies.geo]
+workspace = true
+
+[dependencies.geojson]
 workspace = true
 
 [dependencies.itertools]
@@ -41,6 +49,9 @@ path = '../pyanyhow'
 [dependencies.pyo3]
 workspace = true
 
+[dependencies.rayon]
+workspace = true
+
 [dependencies.serde]
 workspace = true
 
@@ -58,9 +69,12 @@ crate-type = ['staticlib']
 name = 'fast_utils'
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'fast_utils'
 publish = false
 version = '0.1.0'

@@ -77,19 +77,10 @@ pipeline _TARGETED_ANALYZER(
         disabled = DISABLE_TARGETED_STAGES.disable_sampling_stages,
     )
 
-    call SUBSAMPLE_READS as SUBSAMPLE_OFF_TARGET_READS(
-        molecule_info     = self.molecule_info,
-        filtered_barcodes = self.filtered_barcodes,
-        target_mode       = "offtarget",
-    ) using (
-        disabled = DISABLE_TARGETED_STAGES.disable_sampling_stages,
-    )
-
     call MERGE_METRICS(
         summaries = [
             CALCULATE_TARGETED_METRICS.summary,
             SUBSAMPLE_ON_TARGET_READS.summary,
-            SUBSAMPLE_OFF_TARGET_READS.summary,
             _RUN_GDNA_ANALYSIS.gdna_summary,
         ],
     )

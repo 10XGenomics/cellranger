@@ -1,10 +1,12 @@
+#![expect(missing_docs)]
 use crate::mark_dups::DupInfo;
 use crate::transcript::{
     AnnotationData, AnnotationParams, AnnotationRegion, PairAnnotationData, TranscriptAnnotator,
 };
 use anyhow::Result;
+use barcode::whitelist::ReqStrand;
 use cr_bam::bam_tags::{
-    ExtraFlags, ANTISENSE_TAG, EXTRA_FLAGS_TAG, FEATURE_IDS_TAG, FEATURE_QUAL_TAG, FEATURE_RAW_TAG,
+    ANTISENSE_TAG, EXTRA_FLAGS_TAG, ExtraFlags, FEATURE_IDS_TAG, FEATURE_QUAL_TAG, FEATURE_RAW_TAG,
     FEATURE_SEQ_TAG, GAP_COORDINATES_TAG, GENE_ID_TAG, GENE_NAME_TAG, MULTIMAPPER_TAG, PROBE_TAG,
     PROC_BC_SEQ_TAG, PROC_UMI_SEQ_TAG, RAW_BARCODE_QUAL_TAG, RAW_BARCODE_SEQ_TAG,
     RAW_GEL_BEAD_BARCODE_QUAL_TAG, RAW_GEL_BEAD_BARCODE_SEQ_TAG, RAW_UMI_QUAL_TAG, RAW_UMI_SEQ_TAG,
@@ -15,12 +17,12 @@ use cr_types::chemistry::ChemistryDef;
 use cr_types::probe_set::{GapInfo, MappedProbe};
 use cr_types::reference::feature_extraction::FeatureData;
 use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::rna_read::{RnaChunk, RnaRead, UmiPart, HIGH_CONF_MAPQ};
+use cr_types::rna_read::{RnaChunk, RnaRead, UmiPart};
 use cr_types::utils::calculate_median_of_sorted;
-use cr_types::{GenomeName, ReqStrand, UmiCount};
+use cr_types::{AlignerParam, GenomeName, UmiCount};
 use fastq_set::WhichEnd;
 use itertools::Itertools;
-use martian_derive::{martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, martian_filetype};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::lz4_file::Lz4;
 use rust_htslib::bam::record::{Aux, AuxArray, Record};
@@ -56,6 +58,7 @@ impl ReadAnnotator {
         chemistry_def: &ChemistryDef,
         include_exons: bool,
         include_introns: bool,
+        aligner: AlignerParam,
     ) -> Result<ReadAnnotator> {
         let params = AnnotationParams {
             chemistry_strandedness: chemistry_def.strandedness,
@@ -66,6 +69,7 @@ impl ReadAnnotator {
             region_min_overlap: 0.5,
             include_exons,
             include_introns,
+            aligner,
         };
         let annotator = TranscriptAnnotator::new(reference_path, params)?;
         Ok(ReadAnnotator { annotator })
@@ -79,9 +83,14 @@ impl ReadAnnotator {
     ) -> ReadAnnotations {
         let mut data = alignments
             .into_iter()
-            .map(|aln| RecordAnnotation::new_se(&self.annotator, aln))
+            .map(|aln| {
+                RecordAnnotation::new_se(&self.annotator, aln, self.annotator.params.aligner)
+            })
             .collect::<Vec<_>>();
-        rescue_alignments_se(&mut data);
+        // Minimap2 does not include query sequence and quals for secondary alignments
+        if self.annotator.params.aligner != AlignerParam::Minimap2 {
+            rescue_alignments_se(&mut data);
+        }
         ReadAnnotations::from_records(read, data, umi_info, false)
     }
 
@@ -97,7 +106,9 @@ impl ReadAnnotator {
         let pair_improper = r1_data.len() != r2_data.len();
         // Annotate pairs
         let mut data: Vec<_> = zip(r1_data, r2_data)
-            .map(|(r1, r2)| RecordAnnotation::new_pe(&self.annotator, r1, r2))
+            .map(|(r1, r2)| {
+                RecordAnnotation::new_pe(&self.annotator, r1, r2, self.annotator.params.aligner)
+            })
             .collect();
         rescue_alignments_pe(data.as_mut_slice());
         ReadAnnotations::from_records(read, data, umi_info, pair_improper)
@@ -107,14 +118,14 @@ impl ReadAnnotator {
 /// Use transcriptome alignments to promote a single genome alignment
 /// when none are confidently mapped to the genome.
 /// Returns true if rescue took place.
-fn rescue_alignments_se(recs: &mut [RecordAnnotation]) -> bool {
+pub fn rescue_alignments_se(recs: &mut [RecordAnnotation]) -> bool {
     // Check if rescue is appropriate and determine which record to promote
     let mut seen_genes = HashSet::new();
     let mut promote_index: Option<usize> = None;
 
     for (i, r1) in recs.iter().enumerate() {
         // Abort if any of the records mapped uniquely to the genome
-        if is_conf_mapped(r1.rec().0) {
+        if is_conf_mapped(r1.rec().0, r1.aligner().unwrap()) {
             return false;
         }
 
@@ -145,8 +156,9 @@ fn rescue_alignments_se(recs: &mut [RecordAnnotation]) -> bool {
         if promote_index.unwrap() == i {
             // Promote one alignment
             r1.set_rescued();
+            let aligner = *r1.aligner().unwrap();
             let (rec, _) = r1.mut_rec();
-            rec.set_mapq(HIGH_CONF_MAPQ);
+            rec.set_mapq(aligner.high_conf_mapq());
             cr_bam::bam::set_primary(rec);
         } else {
             let (rec, _) = r1.mut_rec();
@@ -161,8 +173,8 @@ fn rescue_alignments_se(recs: &mut [RecordAnnotation]) -> bool {
 
 /// in PeMapped, either read could be mapped, the other unmapped, so
 /// is_conf_mapped must test !is_unmapped
-fn is_conf_mapped(rec: &Record) -> bool {
-    !rec.is_unmapped() && rec.mapq() == HIGH_CONF_MAPQ
+fn is_conf_mapped(rec: &Record, aligner: &AlignerParam) -> bool {
+    !rec.is_unmapped() && rec.mapq() == aligner.high_conf_mapq()
 }
 
 /// Use transcriptome alignments to promote a single genome alignment
@@ -175,9 +187,9 @@ fn rescue_alignments_pe(pairs: &mut [RecordAnnotation]) -> bool {
 
     for (i, pair) in pairs.iter().enumerate() {
         match pair {
-            RecordAnnotation::PeMapped(rec1, _, rec2, _, anno) => {
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, anno, aligner) => {
                 // Abort if any of the records mapped uniquely to the genome
-                if is_conf_mapped(rec1) || is_conf_mapped(rec2) {
+                if is_conf_mapped(rec1, aligner) || is_conf_mapped(rec2, aligner) {
                     return false;
                 }
 
@@ -192,7 +204,7 @@ fn rescue_alignments_pe(pairs: &mut [RecordAnnotation]) -> bool {
                 // Track number of distinct genes we're aligned to
                 seen_genes.extend(genes);
             }
-            RecordAnnotation::Unmapped(_, _) => {}
+            RecordAnnotation::Unmapped(_, _, _) => {}
             _ => unimplemented!(),
         }
     }
@@ -205,19 +217,13 @@ fn rescue_alignments_pe(pairs: &mut [RecordAnnotation]) -> bool {
     // Promote a single alignment
     for (i, pair) in pairs.iter_mut().enumerate() {
         match pair {
-            RecordAnnotation::PeMapped(
-                ref mut rec1,
-                ref mut anno1,
-                ref mut rec2,
-                ref mut anno2,
-                _,
-            ) => {
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _, aligner) => {
                 if promote_index.unwrap() == i {
                     anno1.rescued = true;
-                    rec1.set_mapq(HIGH_CONF_MAPQ);
+                    rec1.set_mapq(aligner.high_conf_mapq());
                     cr_bam::bam::set_primary(rec1);
                     anno2.rescued = true;
-                    rec2.set_mapq(HIGH_CONF_MAPQ);
+                    rec2.set_mapq(aligner.high_conf_mapq());
                     cr_bam::bam::set_primary(rec2);
                 } else {
                     rec1.set_mapq(0);
@@ -324,7 +330,7 @@ pub struct AnnotationFiles {
 
 impl AnnotationFiles {
     pub fn make_chunks(&self, max_chunks: usize) -> Chunks<'_, ReadAnnotationsFormat> {
-        let files_per_chunk = ((self.files.len() + max_chunks - 1) / max_chunks).max(1);
+        let files_per_chunk = self.files.len().div_ceil(max_chunks).max(1);
         self.files.chunks(files_per_chunk)
     }
 }
@@ -387,7 +393,8 @@ impl ReadAnnotations {
     ) -> ReadAnnotations {
         // There ought to be precisely one primary (non-secondary) alignment record.
         let mut rec = recs.into_iter().find(|x| !x.is_secondary()).unwrap();
-        let star_multimapped = !rec.is_unmapped() && rec.mapq() < HIGH_CONF_MAPQ;
+        let star_multimapped =
+            !rec.is_unmapped() && rec.mapq() < AlignerParam::Hurtle.high_conf_mapq();
 
         // Clear the UNMAPPED flag if the read maps to a probe.
         if mapped_probe.is_mapped() {
@@ -560,33 +567,22 @@ impl ReadAnnotations {
     pub fn attach_tags(&mut self, read_chunks: &[RnaChunk]) {
         if let Some(dup_info) = self.dup_info.as_ref() {
             // Set dup
-            if !dup_info.is_umi_count()
-                && !dup_info.is_low_support_umi
-                && !dup_info.is_filtered_target_umi
-            {
-                self.primary
-                    .for_each_rec(rust_htslib::bam::Record::set_duplicate);
+            if !dup_info.is_umi_count() && !dup_info.is_low_support_umi {
+                self.primary.for_each_rec(Record::set_duplicate);
             }
         }
 
-        let (is_low_support_umi, is_filtered_target_umi) =
-            if let Some(dup_info) = self.dup_info.as_ref() {
-                (dup_info.is_low_support_umi, dup_info.is_filtered_target_umi)
-            } else {
-                (false, false)
-            };
+        let is_low_support_umi = if let Some(dup_info) = self.dup_info.as_ref() {
+            dup_info.is_low_support_umi
+        } else {
+            false
+        };
 
         let is_valid_umi = self.umi_info.is_valid;
         let is_valid_bc = self.read.barcode_is_valid();
         let read_group = &self.read.read_chunk(read_chunks).read_group;
         self.for_each_rec(|ann| {
-            ann.attach_tags(
-                is_valid_umi,
-                is_low_support_umi,
-                is_filtered_target_umi,
-                is_valid_bc,
-                read_group,
-            );
+            ann.attach_tags(is_valid_umi, is_low_support_umi, is_valid_bc, read_group);
         });
         self.attach_barcode_tags();
         self.attach_umi_tags();
@@ -594,7 +590,7 @@ impl ReadAnnotations {
 
     pub fn insert_size(&self) -> Option<i64> {
         match &self.primary {
-            RecordAnnotation::SeMapped(_, ref anno) => calculate_median_of_sorted(
+            RecordAnnotation::SeMapped(_, anno, _) => calculate_median_of_sorted(
                 &anno
                     .transcripts
                     .iter()
@@ -611,43 +607,40 @@ impl ReadAnnotations {
                     .sorted()
                     .collect_vec(),
             ),
-            RecordAnnotation::PeMapped(_, ref anno1, _, ref anno2, annop) => {
-                calculate_median_of_sorted(
-                    &annop
-                        .genes
-                        .iter()
-                        .filter_map(|gene| {
-                            let tx1 = anno1.transcripts.iter().find(|x| &x.gene == gene);
-                            let tx2 = anno2.transcripts.iter().find(|x| &x.gene == gene);
-                            match (tx1, tx2) {
-                                (Some(tx1), Some(tx2)) => {
-                                    if let Some(aln1) = tx1.tx_align.as_ref() {
-                                        if let Some(aln2) = tx2.tx_align.as_ref() {
-                                            let start = aln1.pos.min(aln2.pos);
-                                            let end =
-                                                (aln1.pos + aln1.alen).max(aln2.pos + aln2.alen);
-                                            let insert_size = end - start;
-                                            if insert_size <= MAX_INSERT_SIZE {
-                                                return Some(insert_size);
-                                            }
-                                        }
+            RecordAnnotation::PeMapped(_, anno1, _, anno2, annop, _) => calculate_median_of_sorted(
+                &annop
+                    .genes
+                    .iter()
+                    .filter_map(|gene| {
+                        let tx1 = anno1.transcripts.iter().find(|x| &x.gene == gene);
+                        let tx2 = anno2.transcripts.iter().find(|x| &x.gene == gene);
+                        match (tx1, tx2) {
+                            (Some(tx1), Some(tx2)) => {
+                                if let Some(aln1) = tx1.tx_align.as_ref()
+                                    && let Some(aln2) = tx2.tx_align.as_ref()
+                                {
+                                    let start = aln1.pos.min(aln2.pos);
+                                    let end = (aln1.pos + aln1.alen).max(aln2.pos + aln2.alen);
+                                    let insert_size = end - start;
+                                    if insert_size <= MAX_INSERT_SIZE {
+                                        return Some(insert_size);
                                     }
-                                    None
                                 }
-                                _ => None,
+                                None
                             }
-                        })
-                        .sorted()
-                        .collect_vec(),
-                )
-            }
+                            _ => None,
+                        }
+                    })
+                    .sorted()
+                    .collect_vec(),
+            ),
             _ => None,
         }
     }
 }
 
 impl ReadAnnotations {
-    pub fn iter_ann_info(&self) -> impl Iterator<Item = &RecordAnnotation> {
+    fn iter_ann_info(&self) -> impl Iterator<Item = &RecordAnnotation> {
         std::iter::once(&self.primary)
     }
     pub fn umi_count(&self) -> Option<UmiCount> {
@@ -720,6 +713,10 @@ impl AnnotationInfo for ReadAnnotations {
         self.primary.records()
     }
 
+    /// Returns a set of genomes that the read's primary mapping maps to.
+    /// This can return more than one genome if the read is a probe where each half maps to a different genome.
+    /// Note: For paired-end reads, this will always be a set of size 0 or 1 because of explicit filtering in
+    /// `PairAnnotationData::from_pair`.
     fn mapped_genomes(&self) -> HashSet<&GenomeName> {
         self.primary.mapped_genomes()
     }
@@ -754,14 +751,15 @@ impl AnnotationInfo for ReadAnnotations {
 /// All data associated with a single BAM record
 #[derive(Serialize, Deserialize)]
 pub enum RecordAnnotation {
-    Unmapped(Record, Option<Record>),
-    SeMapped(Record, AnnotationData),
+    Unmapped(Record, Option<Record>, AlignerParam),
+    SeMapped(Record, AnnotationData, AlignerParam),
     PeMapped(
         Record,
         AnnotationData,
         Record,
         AnnotationData,
         PairAnnotationData,
+        AlignerParam,
     ),
     Probe(Record, MappedProbe),
     FeatureExtracted(Record, FeatureData, Option<Record>),
@@ -770,23 +768,23 @@ pub enum RecordAnnotation {
 impl AnnotationInfo for RecordAnnotation {
     fn is_mapped(&self) -> bool {
         match self {
-            RecordAnnotation::SeMapped(_, _) => true,
-            RecordAnnotation::PeMapped(_, _, _, _, _) => true,
+            RecordAnnotation::SeMapped(_, _, _) => true,
+            RecordAnnotation::PeMapped(_, _, _, _, _, _) => true,
             RecordAnnotation::Probe(_, data) => data.is_mapped(),
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
         }
     }
 
     fn is_conf_mapped(&self) -> bool {
         match self {
-            RecordAnnotation::SeMapped(ref rec, _) => is_conf_mapped(rec),
-            RecordAnnotation::PeMapped(ref rec1, _, ref rec2, _, _) => {
-                is_conf_mapped(rec1) || is_conf_mapped(rec2)
+            RecordAnnotation::SeMapped(rec, _, aligner) => is_conf_mapped(rec, aligner),
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, _, aligner) => {
+                is_conf_mapped(rec1, aligner) || is_conf_mapped(rec2, aligner)
             }
             RecordAnnotation::Probe(_, data) => data.is_conf_mapped(),
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
         }
     }
 
@@ -796,32 +794,34 @@ impl AnnotationInfo for RecordAnnotation {
     /// Return 0 for unmapped reads.
     fn mapq(&self) -> u8 {
         match self {
-            RecordAnnotation::SeMapped(rec, _) => rec.mapq(),
-            RecordAnnotation::PeMapped(rec1, _, rec2, _, _) => min(rec1.mapq(), rec2.mapq()),
+            RecordAnnotation::SeMapped(rec, _, _) => rec.mapq(),
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, _, _) => min(rec1.mapq(), rec2.mapq()),
             RecordAnnotation::Probe(_rec, data) => data.mapq(),
             RecordAnnotation::FeatureExtracted(_, _, _) => 0,
-            RecordAnnotation::Unmapped(_, _) => 0,
+            RecordAnnotation::Unmapped(_, _, _) => 0,
         }
     }
 
     fn is_mapped_antisense(&self) -> bool {
         match self {
-            RecordAnnotation::SeMapped(_, anno) => anno.is_antisense(),
-            RecordAnnotation::PeMapped(_, anno1, _, anno2, _) => {
+            RecordAnnotation::SeMapped(_, anno, _) => anno.is_antisense(),
+            RecordAnnotation::PeMapped(_, anno1, _, anno2, _, _) => {
                 anno1.is_antisense() && anno2.is_antisense()
             }
             RecordAnnotation::Probe(_, _) => false,
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
         }
     }
 
     fn is_conf_mapped_antisense(&self) -> bool {
         match self {
-            RecordAnnotation::SeMapped(rec, anno) => is_conf_mapped(rec) && anno.is_antisense(),
-            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _) => {
-                let rec1_is_conf_mapped = is_conf_mapped(rec1);
-                let rec2_is_conf_mapped = is_conf_mapped(rec2);
+            RecordAnnotation::SeMapped(rec, anno, aligner) => {
+                is_conf_mapped(rec, aligner) && anno.is_antisense()
+            }
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _, aligner) => {
+                let rec1_is_conf_mapped = is_conf_mapped(rec1, aligner);
+                let rec2_is_conf_mapped = is_conf_mapped(rec2, aligner);
                 if rec1_is_conf_mapped && rec2_is_conf_mapped {
                     return anno1.is_antisense() && anno2.is_antisense();
                 } else if rec1_is_conf_mapped {
@@ -833,19 +833,21 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::Probe(_, _) => false,
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
         }
     }
 
     fn is_gene_discordant(&self) -> bool {
         match self {
-            RecordAnnotation::SeMapped(_, _) => false,
-            RecordAnnotation::PeMapped(rec1, _, rec2, _, annop) => {
-                is_conf_mapped(rec1) && is_conf_mapped(rec2) && annop.genes.is_empty()
+            RecordAnnotation::SeMapped(_, _, _) => false,
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, annop, aligner) => {
+                is_conf_mapped(rec1, aligner)
+                    && is_conf_mapped(rec2, aligner)
+                    && annop.genes.is_empty()
             }
             RecordAnnotation::Probe(_, _) => false,
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
         }
     }
 
@@ -872,8 +874,8 @@ impl AnnotationInfo for RecordAnnotation {
     // TX:i:<transcipt id>,<strand><pos>,<cigar>
     fn is_conf_mapped_unique_txomic(&self) -> bool {
         match self {
-            RecordAnnotation::SeMapped(rec, anno) => {
-                if is_conf_mapped(rec) && anno.genes.len() == 1 {
+            RecordAnnotation::SeMapped(rec, anno, aligner) => {
+                if is_conf_mapped(rec, aligner) && anno.genes.len() == 1 {
                     return anno
                         .transcripts
                         .iter()
@@ -881,9 +883,9 @@ impl AnnotationInfo for RecordAnnotation {
                 }
                 false
             }
-            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _) => {
-                let rec1_is_conf_mapped = is_conf_mapped(rec1);
-                let rec2_is_conf_mapped = is_conf_mapped(rec2);
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _, aligner) => {
+                let rec1_is_conf_mapped = is_conf_mapped(rec1, aligner);
+                let rec2_is_conf_mapped = is_conf_mapped(rec2, aligner);
                 if rec1_is_conf_mapped && rec2_is_conf_mapped {
                     return anno1
                         .transcripts
@@ -908,22 +910,22 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::Probe(_, data) => data.is_conf_mapped(),
             RecordAnnotation::FeatureExtracted(_, _, _) => false,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
         }
     }
 
     fn conf_mapped_genome(&self) -> Option<&GenomeName> {
         match self {
-            RecordAnnotation::SeMapped(rec, anno) => {
-                if is_conf_mapped(rec) {
+            RecordAnnotation::SeMapped(rec, anno, aligner) => {
+                if is_conf_mapped(rec, aligner) {
                     Some(&anno.genome)
                 } else {
                     None
                 }
             }
-            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _) => {
-                let rec1_is_conf_mapped = is_conf_mapped(rec1);
-                let rec2_is_conf_mapped = is_conf_mapped(rec2);
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _, aligner) => {
+                let rec1_is_conf_mapped = is_conf_mapped(rec1, aligner);
+                let rec2_is_conf_mapped = is_conf_mapped(rec2, aligner);
                 if rec1_is_conf_mapped && rec2_is_conf_mapped {
                     if anno1.genome == anno2.genome {
                         return Some(&anno1.genome);
@@ -937,28 +939,32 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::Probe(_, data) => {
                 if data.is_conf_mapped() {
-                    data.genome()
+                    Some(data.genomes().exactly_one().unwrap_or_else(|it| {
+                        panic!(
+                            "A confidently mapped probe must have exactly one genome; found: {it}"
+                        );
+                    }))
                 } else {
                     None
                 }
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => None,
-            RecordAnnotation::Unmapped(_, _) => None,
+            RecordAnnotation::Unmapped(_, _, _) => None,
         }
     }
 
     fn conf_mapped_gene(&self) -> Option<(&GenomeName, &Gene)> {
         match self {
-            RecordAnnotation::SeMapped(rec, anno) => {
-                if is_conf_mapped(rec) && anno.genes.len() == 1 {
+            RecordAnnotation::SeMapped(rec, anno, aligner) => {
+                if is_conf_mapped(rec, aligner) && anno.genes.len() == 1 {
                     Some((&anno.genome, &anno.genes[0]))
                 } else {
                     None
                 }
             }
-            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, annop) => {
-                let rec1_is_conf_mapped = is_conf_mapped(rec1);
-                let rec2_is_conf_mapped = is_conf_mapped(rec2);
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, annop, aligner) => {
+                let rec1_is_conf_mapped = is_conf_mapped(rec1, aligner);
+                let rec2_is_conf_mapped = is_conf_mapped(rec2, aligner);
                 if rec1_is_conf_mapped && rec2_is_conf_mapped {
                     if annop.genes.len() == 1 {
                         return Some((&anno1.genome, &annop.genes[0]));
@@ -973,10 +979,19 @@ impl AnnotationInfo for RecordAnnotation {
                 None
             }
             RecordAnnotation::Probe(_, data) => {
-                data.conf_gene().map(|x| (data.genome().unwrap(), x))
+                if let Some(gene) = data.conf_gene() {
+                    let genome = data.genomes().exactly_one().unwrap_or_else(|it| {
+                        panic!(
+                            "A probe with confidently mapped gene must have exactly one genome; found: {it}"
+                        );
+                    });
+                    Some((genome, gene))
+                } else {
+                    None
+                }
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => None,
-            RecordAnnotation::Unmapped(_, _) => None,
+            RecordAnnotation::Unmapped(_, _, _) => None,
         }
     }
 
@@ -997,16 +1012,16 @@ impl AnnotationInfo for RecordAnnotation {
 
     fn conf_mapped_region(&self) -> Option<(&GenomeName, AnnotationRegion)> {
         match self {
-            RecordAnnotation::SeMapped(rec, anno) => {
-                if is_conf_mapped(rec) {
+            RecordAnnotation::SeMapped(rec, anno, aligner) => {
+                if is_conf_mapped(rec, aligner) {
                     Some((&anno.genome, anno.region))
                 } else {
                     None
                 }
             }
-            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _) => {
-                let rec1_is_conf_mapped = is_conf_mapped(rec1);
-                let rec2_is_conf_mapped = is_conf_mapped(rec2);
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, _, aligner) => {
+                let rec1_is_conf_mapped = is_conf_mapped(rec1, aligner);
+                let rec2_is_conf_mapped = is_conf_mapped(rec2, aligner);
                 if rec1_is_conf_mapped && rec2_is_conf_mapped {
                     if anno1.genome == anno2.genome {
                         // doing this to ensure paired-end reads spanning intron-exon get counted
@@ -1031,19 +1046,26 @@ impl AnnotationInfo for RecordAnnotation {
             }
             RecordAnnotation::Probe(_, data) => {
                 if data.is_conf_mapped() {
-                    Some((data.genome().unwrap(), AnnotationRegion::Exonic))
+                    Some((
+                        data.genomes().exactly_one().unwrap_or_else(|it| {
+                            panic!(
+                                "A confidently mapped probe must have exactly one genome; found: {it}"
+                            );
+                        }),
+                        AnnotationRegion::Exonic,
+                    ))
                 } else {
                     None
                 }
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => None,
-            RecordAnnotation::Unmapped(_, _) => None,
+            RecordAnnotation::Unmapped(_, _, _) => None,
         }
     }
 
     fn records(self) -> Vec<Record> {
         match self {
-            RecordAnnotation::Unmapped(rec1, rec2)
+            RecordAnnotation::Unmapped(rec1, rec2, _)
             | RecordAnnotation::FeatureExtracted(rec1, _, rec2) => {
                 if let Some(rec2) = rec2 {
                     vec![rec1, rec2]
@@ -1051,15 +1073,15 @@ impl AnnotationInfo for RecordAnnotation {
                     vec![rec1]
                 }
             }
-            RecordAnnotation::SeMapped(rec, _) => vec![rec],
-            RecordAnnotation::PeMapped(rec1, _, rec2, _, _) => vec![rec1, rec2],
+            RecordAnnotation::SeMapped(rec, _, _) => vec![rec],
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, _, _) => vec![rec1, rec2],
             RecordAnnotation::Probe(rec, _) => vec![rec],
         }
     }
 
     fn mapped_genomes(&self) -> HashSet<&GenomeName> {
         if let RecordAnnotation::Probe(_, data) = self {
-            return data.genome().into_iter().collect();
+            return data.genomes().collect();
         }
 
         let (ann1, ann2) = self.annotation();
@@ -1072,7 +1094,7 @@ impl AnnotationInfo for RecordAnnotation {
 
     fn mapped_genes(&self) -> HashSet<(&GenomeName, &Gene)> {
         if let RecordAnnotation::Probe(_, data) = self {
-            return data.genes().map(|x| (data.genome().unwrap(), x)).collect();
+            return data.mapped_genes().collect();
         }
 
         let (ann1, ann2) = self.annotation();
@@ -1085,10 +1107,10 @@ impl AnnotationInfo for RecordAnnotation {
 
     fn mapped_regions(&self) -> HashSet<(&GenomeName, AnnotationRegion)> {
         if let RecordAnnotation::Probe(_, data) = self {
-            return HashSet::from_iter(
-                data.is_mapped()
-                    .then(|| (data.genome().unwrap(), AnnotationRegion::Exonic)),
-            );
+            return data
+                .genomes()
+                .map(|x| (x, AnnotationRegion::Exonic))
+                .collect();
         }
 
         let (ann1, ann2) = self.annotation();
@@ -1106,15 +1128,15 @@ impl AnnotationInfo for RecordAnnotation {
     fn is_feature_extracted(&self) -> bool {
         match self {
             RecordAnnotation::FeatureExtracted(_, _, _) => true,
-            RecordAnnotation::Unmapped(_, _) => false,
+            RecordAnnotation::Unmapped(_, _, _) => false,
             _ => unreachable!(),
         }
     }
 
     fn is_feature_corrected(&self) -> bool {
         match self {
-            RecordAnnotation::FeatureExtracted(_, ref data, _) => {
-                if let Some(ref corrected) = data.corrected_barcode {
+            RecordAnnotation::FeatureExtracted(_, data, _) => {
+                if let Some(corrected) = &data.corrected_barcode {
                     corrected != &data.barcode
                 } else {
                     false
@@ -1126,41 +1148,46 @@ impl AnnotationInfo for RecordAnnotation {
 
     fn is_feature_invalid(&self) -> bool {
         match self {
-            RecordAnnotation::FeatureExtracted(_, ref data, _) => data.corrected_barcode.is_none(),
+            RecordAnnotation::FeatureExtracted(_, data, _) => data.corrected_barcode.is_none(),
             _ => unreachable!(),
         }
     }
 }
 
 impl RecordAnnotation {
-    pub fn new_se(annotator: &TranscriptAnnotator, rec: Record) -> Self {
+    pub fn new_se(annotator: &TranscriptAnnotator, rec: Record, aligner: AlignerParam) -> Self {
         if rec.is_unmapped() {
-            RecordAnnotation::Unmapped(rec, None)
+            RecordAnnotation::Unmapped(rec, None, aligner)
         } else {
             let anno = annotator.annotate_alignment(&rec);
-            RecordAnnotation::SeMapped(rec, anno)
+            RecordAnnotation::SeMapped(rec, anno, aligner)
         }
     }
 
-    pub fn new_pe(annotator: &TranscriptAnnotator, rec1: Record, rec2: Record) -> Self {
+    fn new_pe(
+        annotator: &TranscriptAnnotator,
+        rec1: Record,
+        rec2: Record,
+        aligner: AlignerParam,
+    ) -> Self {
         // STAR _shouldn't_ return pairs where only a single end is mapped,
         //   but if it does, consider the pair unmapped
         if rec1.is_unmapped() || rec2.is_unmapped() {
-            RecordAnnotation::Unmapped(rec1, Some(rec2))
+            RecordAnnotation::Unmapped(rec1, Some(rec2), aligner)
         } else {
             let anno1 = annotator.annotate_alignment(&rec1);
             let anno2 = annotator.annotate_alignment(&rec2);
             let annop = PairAnnotationData::from_pair(&anno1, &anno2);
-            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, annop)
+            RecordAnnotation::PeMapped(rec1, anno1, rec2, anno2, annop, aligner)
         }
     }
 
     /// Construct a new RecordAnnotation from a SAM Record and MappedProbe.
     /// Return a new Probe if either Record or MappedProbe is mapped.
     /// Return an new Unmapped if both Record and MappedProbe are unmapped.
-    pub fn new_probe(rec: Record, mapped_probe: MappedProbe) -> Self {
+    fn new_probe(rec: Record, mapped_probe: MappedProbe) -> Self {
         if rec.is_unmapped() && !mapped_probe.is_mapped() {
-            RecordAnnotation::Unmapped(rec, None)
+            RecordAnnotation::Unmapped(rec, None, AlignerParam::Hurtle)
         } else {
             RecordAnnotation::Probe(rec, mapped_probe)
         }
@@ -1168,78 +1195,95 @@ impl RecordAnnotation {
 
     pub fn rec(&self) -> (&Record, Option<&Record>) {
         match self {
-            RecordAnnotation::Unmapped(ref rec, ref rec2) => (rec, rec2.as_ref()),
-            RecordAnnotation::SeMapped(ref rec, _) => (rec, None),
-            RecordAnnotation::PeMapped(ref rec1, _, ref rec2, _, _) => (rec1, Some(rec2)),
-            RecordAnnotation::FeatureExtracted(ref rec1, _, ref rec2) => (rec1, rec2.as_ref()),
-            RecordAnnotation::Probe(ref rec, _) => (rec, None),
+            RecordAnnotation::Unmapped(rec, rec2, _) => (rec, rec2.as_ref()),
+            RecordAnnotation::SeMapped(rec, _, _) => (rec, None),
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, _, _) => (rec1, Some(rec2)),
+            RecordAnnotation::FeatureExtracted(rec1, _, rec2) => (rec1, rec2.as_ref()),
+            RecordAnnotation::Probe(rec, _) => (rec, None),
         }
     }
 
-    pub fn for_each_rec<F: Fn(&mut Record)>(&mut self, f: F) {
+    fn for_each_rec<F: Fn(&mut Record)>(&mut self, f: F) {
         let (rec1, rec2) = self.mut_rec();
         f(rec1);
         rec2.map(f);
     }
 
-    pub fn mut_rec(&mut self) -> (&mut Record, Option<&mut Record>) {
+    fn mut_rec(&mut self) -> (&mut Record, Option<&mut Record>) {
         match self {
-            RecordAnnotation::Unmapped(ref mut rec1, ref mut rec2) => (rec1, rec2.as_mut()),
-            RecordAnnotation::SeMapped(ref mut rec, _) => (rec, None),
-            RecordAnnotation::PeMapped(ref mut rec1, _, ref mut rec2, _, _) => (rec1, Some(rec2)),
-            RecordAnnotation::FeatureExtracted(ref mut rec1, _, ref mut rec2) => {
-                (rec1, rec2.as_mut())
-            }
-            RecordAnnotation::Probe(ref mut rec, _) => (rec, None),
+            RecordAnnotation::Unmapped(rec1, rec2, _) => (rec1, rec2.as_mut()),
+            RecordAnnotation::SeMapped(rec, _, _) => (rec, None),
+            RecordAnnotation::PeMapped(rec1, _, rec2, _, _, _) => (rec1, Some(rec2)),
+            RecordAnnotation::FeatureExtracted(rec1, _, rec2) => (rec1, rec2.as_mut()),
+            RecordAnnotation::Probe(rec, _) => (rec, None),
         }
     }
 
-    pub fn annotation(&self) -> (Option<&AnnotationData>, Option<&AnnotationData>) {
+    fn annotation(&self) -> (Option<&AnnotationData>, Option<&AnnotationData>) {
         match self {
-            RecordAnnotation::SeMapped(_, ref anno) => (Some(anno), None),
-            RecordAnnotation::PeMapped(_, ref anno1, _, ref anno2, _) => (Some(anno1), Some(anno2)),
+            RecordAnnotation::SeMapped(_, anno, _) => (Some(anno), None),
+            RecordAnnotation::PeMapped(_, anno1, _, anno2, _, _) => (Some(anno1), Some(anno2)),
             RecordAnnotation::Probe(_, _) => unreachable!(),
             RecordAnnotation::FeatureExtracted(_, _, _) => (None, None),
-            RecordAnnotation::Unmapped(_, _) => (None, None),
+            RecordAnnotation::Unmapped(_, _, _) => (None, None),
         }
     }
 
-    pub fn set_rescued(&mut self) {
+    fn aligner(&self) -> Option<&AlignerParam> {
         match self {
-            RecordAnnotation::SeMapped(_, ref mut anno) => anno.rescued = true,
-            RecordAnnotation::PeMapped(_, ref mut anno1, _, ref mut anno2, _) => {
+            RecordAnnotation::SeMapped(_, _, aligner) => Some(aligner),
+            RecordAnnotation::PeMapped(_, _, _, _, _, aligner) => Some(aligner),
+            RecordAnnotation::Probe(_, _) => unreachable!(),
+            RecordAnnotation::FeatureExtracted(_, _, _) => unreachable!(),
+            RecordAnnotation::Unmapped(_, _, aligner) => Some(aligner),
+        }
+    }
+
+    fn set_rescued(&mut self) {
+        match self {
+            RecordAnnotation::SeMapped(_, anno, _) => anno.rescued = true,
+            RecordAnnotation::PeMapped(_, anno1, _, anno2, _, _) => {
                 anno1.rescued = true;
                 anno2.rescued = true;
             }
             RecordAnnotation::Probe(_, _) => unreachable!(),
             RecordAnnotation::FeatureExtracted(_, _, _) => unreachable!(),
-            RecordAnnotation::Unmapped(_, _) => panic!("Unmapped annotations cannot be rescued"),
+            RecordAnnotation::Unmapped(_, _, _) => panic!("Unmapped annotations cannot be rescued"),
         }
     }
 
     /// Add transcript TX tag to a BAM record.
-    pub fn attach_transcript_tag(&mut self) {
+    fn attach_transcript_tag(&mut self) {
         let attach_transcript_tag = |rec: &mut Record, anno: &AnnotationData| {
             if let Some(tag) = anno.make_tx_tag() {
                 rec.push_aux(TRANSCRIPT_TAG, Aux::String(&tag)).unwrap();
             }
         };
         match self {
-            RecordAnnotation::SeMapped(ref mut rec, ref anno) => attach_transcript_tag(rec, anno),
-            RecordAnnotation::PeMapped(ref mut rec1, ref anno1, ref mut rec2, ref anno2, _) => {
+            &mut RecordAnnotation::SeMapped(ref mut rec, ref anno, _) => {
+                attach_transcript_tag(rec, anno);
+            }
+            &mut RecordAnnotation::PeMapped(
+                ref mut rec1,
+                ref anno1,
+                ref mut rec2,
+                ref anno2,
+                _,
+                _,
+            ) => {
                 attach_transcript_tag(rec1, anno1);
                 attach_transcript_tag(rec2, anno2);
             }
             RecordAnnotation::Probe(_, _) => {} // TODO
             RecordAnnotation::FeatureExtracted(_, _, _) => {}
-            RecordAnnotation::Unmapped(_, _) => {}
+            RecordAnnotation::Unmapped(_, _, _) => {}
         }
     }
 
     /// Add tags to a BAM record.
     /// Set is_conf_mapped to true if the qname is confidently mapped to
     /// the transcriptome.
-    pub fn attach_basic_tags(&mut self) {
+    fn attach_basic_tags(&mut self) {
         let attach_basic_tags = |record: &mut Record, anno: &AnnotationData| {
             if let Some(tag) = anno.make_re_tag() {
                 record
@@ -1256,12 +1300,21 @@ impl RecordAnnotation {
             }
         };
         match self {
-            RecordAnnotation::SeMapped(ref mut rec, ref anno) => attach_basic_tags(rec, anno),
-            RecordAnnotation::PeMapped(ref mut rec1, ref anno1, ref mut rec2, ref anno2, _) => {
+            &mut RecordAnnotation::SeMapped(ref mut rec, ref anno, _) => {
+                attach_basic_tags(rec, anno);
+            }
+            &mut RecordAnnotation::PeMapped(
+                ref mut rec1,
+                ref anno1,
+                ref mut rec2,
+                ref anno2,
+                _,
+                _,
+            ) => {
                 attach_basic_tags(rec1, anno1);
                 attach_basic_tags(rec2, anno2);
             }
-            RecordAnnotation::Probe(ref mut rec, ref data) => {
+            &mut RecordAnnotation::Probe(ref mut rec, ref data) => {
                 if data.is_mapped() {
                     rec.push_aux(REGION_TAG, Aux::Char(b'E')).unwrap();
                 }
@@ -1270,18 +1323,17 @@ impl RecordAnnotation {
                 }
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => {}
-            RecordAnnotation::Unmapped(_, _) => {}
+            RecordAnnotation::Unmapped(_, _, _) => {}
         }
     }
 
     /// Add tags to a BAM record.
     /// Set is_conf_mapped to true if the qname is confidently mapped to
     /// the transcriptome.
-    pub fn attach_tags(
+    fn attach_tags(
         &mut self,
         is_valid_umi: bool,
         is_low_support_umi: bool,
-        is_filtered_target_umi: bool,
         is_valid_bc: bool,
         read_group: &str,
     ) {
@@ -1292,37 +1344,38 @@ impl RecordAnnotation {
         self.attach_transcript_tag();
 
         match self {
-            RecordAnnotation::SeMapped(ref mut rec, ref anno) => {
+            &mut RecordAnnotation::SeMapped(ref mut rec, ref anno, _) => {
                 if let Some((tag_gx, tag_gn)) = anno.make_gx_gn_tags() {
                     rec.push_aux(GENE_ID_TAG, Aux::String(&tag_gx)).unwrap();
                     rec.push_aux(GENE_NAME_TAG, Aux::String(&tag_gn)).unwrap();
                     rec.push_aux(FEATURE_IDS_TAG, Aux::String(&tag_gx)).unwrap();
                 }
             }
-            RecordAnnotation::PeMapped(
+            &mut RecordAnnotation::PeMapped(
                 ref mut rec1,
                 ref anno1,
                 ref mut rec2,
                 ref anno2,
                 ref annop,
+                _,
             ) => {
                 if let Some((tag_gx, tag_gn)) = annop.make_gx_gn_tags() {
                     for (rec, anno) in &mut [(rec1, anno1), (rec2, anno2)] {
                         rec.push_aux(GENE_ID_TAG, Aux::String(&tag_gx)).unwrap();
                         rec.push_aux(GENE_NAME_TAG, Aux::String(&tag_gn)).unwrap();
                         rec.push_aux(FEATURE_IDS_TAG, Aux::String(&tag_gx)).unwrap();
-                        if anno.genes != annop.genes {
-                            if let Some((tag_gx, tag_gn)) = anno.make_gx_gn_tags() {
-                                rec.push_aux(UNPAIRED_GENE_ID_TAG, Aux::String(&tag_gx))
-                                    .unwrap();
-                                rec.push_aux(UNPAIRED_GENE_NAME_TAG, Aux::String(&tag_gn))
-                                    .unwrap();
-                            }
+                        if anno.genes != annop.genes
+                            && let Some((tag_gx, tag_gn)) = anno.make_gx_gn_tags()
+                        {
+                            rec.push_aux(UNPAIRED_GENE_ID_TAG, Aux::String(&tag_gx))
+                                .unwrap();
+                            rec.push_aux(UNPAIRED_GENE_NAME_TAG, Aux::String(&tag_gn))
+                                .unwrap();
                         }
                     }
                 }
             }
-            RecordAnnotation::Probe(ref mut rec, data) => {
+            RecordAnnotation::Probe(rec, data) => {
                 if data.is_mapped() {
                     let ids = data.genes().map(|x| &x.id).join(";");
                     let names = data.genes().map(|x| &x.name).join(";");
@@ -1345,7 +1398,7 @@ impl RecordAnnotation {
                     }
                 }
             }
-            RecordAnnotation::FeatureExtracted(ref mut rec1, ref data, ref mut rec2) => {
+            &mut RecordAnnotation::FeatureExtracted(ref mut rec1, ref data, ref mut rec2) => {
                 for rec in std::iter::once(rec1).chain(rec2.iter_mut()) {
                     rec.push_aux(
                         FEATURE_RAW_TAG,
@@ -1376,16 +1429,11 @@ impl RecordAnnotation {
                     }
                 }
             }
-            RecordAnnotation::Unmapped(_, _) => {}
+            RecordAnnotation::Unmapped(_, _, _) => {}
         }
 
         self.attach_basic_tags();
-        self.attach_primary_tags(
-            is_valid_umi,
-            is_low_support_umi,
-            is_filtered_target_umi,
-            is_valid_bc,
-        );
+        self.attach_primary_tags(is_valid_umi, is_low_support_umi, is_valid_bc);
     }
 
     /// Add SAM tags to the primary alignment.
@@ -1393,7 +1441,6 @@ impl RecordAnnotation {
         &mut self,
         is_valid_umi: bool,
         is_low_support_umi: bool,
-        is_filtered_target_umi: bool,
         is_valid_bc: bool,
     ) {
         let is_conf_tx = self.is_conf_mapped_to_transcriptome();
@@ -1407,7 +1454,6 @@ impl RecordAnnotation {
                 is_discordant,
                 is_valid_umi,
                 is_low_support_umi,
-                is_filtered_target_umi,
                 is_valid_bc,
             );
         });
@@ -1422,7 +1468,6 @@ fn attach_primary_tags(
     is_gene_discordant: bool,
     is_valid_umi: bool,
     is_low_support_umi: bool,
-    is_filtered_target_umi: bool,
     is_valid_bc: bool,
 ) {
     // Note: only attach these flags to primary alignment
@@ -1445,21 +1490,102 @@ fn attach_primary_tags(
             flags |= ExtraFlags::GENE_DISCORDANT;
         }
 
-        if is_filtered_target_umi {
-            flags |= ExtraFlags::FILTERED_TARGET_UMI;
-        }
-
         if is_conf_mapped_to_feature
             && is_valid_bc
             && is_valid_umi
             && !rec.is_duplicate()
             && !is_low_support_umi
-            && !is_filtered_target_umi
         {
             flags |= ExtraFlags::UMI_COUNT;
         }
 
         rec.push_aux(EXTRA_FLAGS_TAG, Aux::I32(flags.bits() as i32))
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecordAnnotation;
+    use crate::read::rescue_alignments_se;
+    use crate::transcript::{
+        AnnotationData, AnnotationRegion, TranscriptAlignment, TxAlignProperties,
+    };
+    use barcode::whitelist::ReqStrand;
+    use cr_types::{AlignerParam, GenomeName};
+    use rust_htslib::bam::Record;
+    use transcriptome::Gene;
+
+    fn make_intergenic_ann() -> AnnotationData {
+        AnnotationData {
+            transcripts: vec![],
+            antisense: vec![],
+            genes: vec![],
+            region: AnnotationRegion::Intergenic,
+            rescued: false,
+            genome: GenomeName::from("genome"),
+        }
+    }
+
+    fn make_exonic_ann() -> AnnotationData {
+        AnnotationData {
+            transcripts: vec![TranscriptAlignment {
+                gene: Gene {
+                    id: "gx0".into(),
+                    name: "gene0".into(),
+                },
+                strand: ReqStrand::Forward,
+                tx_align: Some(TxAlignProperties {
+                    id: "tx0".into(),
+                    pos: 0,
+                    cigar: "23S118M1D166M3S".to_string(),
+                    alen: 10,
+                    se_insert_size: 100,
+                }),
+            }],
+            antisense: vec![],
+            genes: vec![Gene {
+                id: "gx0".into(),
+                name: "gene0".into(),
+            }],
+            region: AnnotationRegion::Exonic,
+            rescued: false,
+            genome: GenomeName::from("genome"),
+        }
+    }
+
+    fn make_record(name: &[u8], flags: u16) -> Record {
+        let mut record = Record::new();
+        record.set_qname(name);
+        record.set_flags(flags);
+        record
+    }
+
+    #[test]
+    fn test_rescue_alignments_se_primary_exonic() {
+        let primary = make_record("rec0".as_bytes(), 0);
+        let secondary = make_record("rec1".as_bytes(), 256);
+
+        // primary record with tx alignment
+        let mut rec_data = vec![
+            RecordAnnotation::SeMapped(primary, make_exonic_ann(), AlignerParam::Star),
+            RecordAnnotation::SeMapped(secondary, make_intergenic_ann(), AlignerParam::Star),
+        ];
+
+        assert!(rescue_alignments_se(&mut rec_data));
+    }
+
+    #[test]
+    fn test_rescue_alignments_se_secondary_exonic() {
+        let primary = make_record("rec0".as_bytes(), 0);
+        let secondary = make_record("rec1".as_bytes(), 256);
+
+        // primary record with tx alignment
+        let mut rec_data = vec![
+            RecordAnnotation::SeMapped(primary, make_intergenic_ann(), AlignerParam::Star),
+            RecordAnnotation::SeMapped(secondary, make_exonic_ann(), AlignerParam::Star),
+        ];
+
+        assert!(rescue_alignments_se(&mut rec_data));
     }
 }

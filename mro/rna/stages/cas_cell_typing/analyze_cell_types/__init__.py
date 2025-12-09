@@ -9,7 +9,7 @@ import json
 
 import martian
 
-import cellranger.cell_typing.cas_metrics as cas_metrics
+import cellranger.cell_typing.broad_tenx.cas_metrics as cas_metrics
 import cellranger.feature.utils as feature_utils
 import tenkit.safe_json as tk_safe_json
 
@@ -46,10 +46,10 @@ def main(args, outs):
         if args.metadata:
             with open(args.metadata) as f:
                 metadata_dict = json.load(f)
-
         cas_mets = cas_metrics.get_cas_cluster_purity(
             cell_types=args.cell_types, analysis=args.analysis
         )
+        cas_coarse_fine_mets = cas_metrics.get_cell_type_summary_mets(cell_types=args.cell_types)
         if args.cas_frac_returned_bcs:
             cas_mets["cas_frac_returned_bcs"] = args.cas_frac_returned_bcs
         cas_mets["cell_annotation_model"] = args.cas_model_used
@@ -58,6 +58,10 @@ def main(args, outs):
         cas_mets["tree_version_used"] = metadata_dict.get("tree_version_used")
         cas_mets["cas_frac_returned_bcs"] = args.cas_frac_returned_bcs
         cas_mets["display_map_version_used"] = metadata_dict.get("display_map_version_used")
+        cas_mets["num_coarse_cell_categories"] = cas_coarse_fine_mets.get(
+            "num_coarse_cell_categories"
+        )
+        cas_mets["num_fine_cell_categories"] = cas_coarse_fine_mets.get("num_fine_cell_categories")
         with open(martian.make_path(outs.cas_metrics), "w") as f:
             tk_safe_json.dump_numpy(
                 cas_mets,

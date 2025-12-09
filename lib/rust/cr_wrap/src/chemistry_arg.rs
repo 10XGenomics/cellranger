@@ -1,7 +1,4 @@
-use anyhow::{bail, Result};
-use cr_types::chemistry::{AutoChemistryName, AutoOrRefinedChemistry, ChemistryName};
-use itertools::Itertools;
-use multi::config::{ChemistryParam, ChemistrySet};
+#![expect(missing_docs)]
 #[allow(clippy::enum_glob_use)]
 use AutoChemistryName::*;
 #[allow(clippy::enum_glob_use)]
@@ -12,10 +9,14 @@ use ChemistryName::*;
 use ChemistryParam::*;
 #[allow(clippy::enum_glob_use)]
 use ChemistrySet::*;
+use anyhow::{Result, bail};
+use cr_types::chemistry::{AutoChemistryName, AutoOrRefinedChemistry, ChemistryName};
+use itertools::Itertools;
+use multi::config::{ChemistryParam, ChemistrySet};
 
 // NOTE: if you add or modify options here, you must update the
 // equivalent matcher in the telemetry configuration.
-const ALLOWED_COUNT_CHEM_INPUTS: [(ChemistryParam, Option<&str>); 17] = [
+const ALLOWED_COUNT_CHEM_INPUTS: [(ChemistryParam, Option<&str>); 16] = [
     (AutoOrRefined(Auto(Count)), Some("auto detection (default)")),
     (AutoOrRefined(Auto(ThreePrime)), Some("Single Cell 3'")),
     (AutoOrRefined(Auto(FivePrime)), Some("Single Cell 5'")),
@@ -52,7 +53,6 @@ const ALLOWED_COUNT_CHEM_INPUTS: [(ChemistryParam, Option<&str>); 17] = [
         AutoOrRefined(Refined(FeatureBarcodingOnly)),
         Some("Single Cell Antibody-only 3' v2 or 5'"),
     ),
-    (AutoOrRefined(Refined(SFRP)), None),
     (
         AutoOrRefined(Refined(ArcV1)),
         Some("GEX portion only of multiome"),
@@ -81,7 +81,9 @@ pub fn validate_chemistry(s: &str) -> Result<ChemistryParam> {
         return Ok(chem);
     }
     if matches!(chem, AutoOrRefined(Refined(ThreePrimeV3LT))) {
-        bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
+        bail!(
+            "The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier."
+        );
     }
     bail!(parse_err());
 }

@@ -4,6 +4,7 @@
 #
 
 filetype bincode.lz4;
+filetype csv;
 filetype h5;
 filetype npy;
 
@@ -12,7 +13,7 @@ struct PcaOutputs(
     path pca_csv,
 )
 
-stage RUN_DIFFERENTIAL_EXPRESSION_NG(
+stage RUN_DIFFERENTIAL_EXPRESSION(
     in  h5          matrix_h5,
     in  h5          clustering_h5,
     in  bool        is_antibody_only,
@@ -30,6 +31,7 @@ stage RUN_DIFFERENTIAL_EXPRESSION_NG(
 stage RUN_GRAPH_CLUSTERING(
     in  h5     matrix_h5,
     in  h5     pca_h5,
+    in  csv    graphclust_init,
     in  int    num_neighbors,
     in  float  neighbor_a,
     in  float  neighbor_b,
@@ -38,6 +40,7 @@ stage RUN_GRAPH_CLUSTERING(
     in  int    random_seed,
     in  int    threads,
     in  bool   parallel_clustering,
+    in  bool   sketch,
     out h5     clusters_h5,
     out path   clusters_csv,
     src comp   "cr_ana martian graph_clustering_stage",
@@ -66,6 +69,8 @@ stage RUN_PCA_NG(
     in  int             num_principal_comps,
     in  bool            is_spatial,
     in  map<PcaOutputs> pca_map,
+    in  int             fixed_point_base,
+    in  int             fixed_point_exponent,
     out h5              pca_h5,
     out path            pca_csv,
     src comp            "cr_ana martian pca_stage",
@@ -79,7 +84,7 @@ stage RUN_PCA2(
     in  h5  matrix_h5,
     in  int num_pcs,
     out npy dimred_matrix,
-    src comp "cr_ana martian pca2_stage",
+    src comp "cr_ana martian run_pca2",
 ) split (
 ) using (
     volatile = strict,
@@ -87,15 +92,16 @@ stage RUN_PCA2(
 
 stage RUN_TSNE(
     in  h5     matrix_h5,
-    in  h5     pca_h5,
+    in  h5     reduction_h5,
     in  int    random_seed,
     in  float  perplexity,
-    in  int    input_pcs,
+    in  int    input_dims,
     in  int    max_dims,
     in  int    max_iter,
     in  int    stop_lying_iter,
     in  int    mom_switch_iter,
     in  float  theta,
+    in  string reduction_type,
     out h5     tsne_h5,
     out path   tsne_csv,
     src comp   "cr_ana martian run_tsne",
@@ -108,14 +114,15 @@ stage RUN_TSNE(
 
 stage RUN_UMAP(
     in  h5     matrix_h5,
-    in  h5     pca_h5,
+    in  h5     reduction_h5,
     in  int    random_seed,
     in  int    n_neighbors,
-    in  int    input_pcs,
+    in  int    input_dims,
     in  int    max_dims,
     in  float  min_dist,
     in  string metric,
-    in  string implementation,
+    in  bool   parallel,
+    in  string reduction_type,
     out h5     umap_h5,
     out path   umap_csv,
     src comp   "cr_ana martian umap_stage",

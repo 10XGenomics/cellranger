@@ -1,13 +1,17 @@
-// There are a **lot** of metrics which need to be imported here.
-#![allow(clippy::wildcard_imports)]
-use cr_websummary::*;
+//! cr_aggr::websummary
+#![deny(missing_docs)]
+
+use cr_vdj::clonotype_table::VdjAggrClonotypeTable;
+use cr_websummary::{
+    CardWithTable, GenericTable, HeroMetric, NamedTable, PrettyMetric, TableRow, TermDesc,
+    Threshold, TitleWithHelp, TitleWithTermDesc, WsSample,
+};
 use serde::Serialize;
-pub mod annotation_card;
-pub mod cdr3_table;
-pub mod cells_card;
-pub mod clonotype_hist;
-pub mod clonotype_table;
-pub mod hero_metrics;
+
+pub(crate) mod annotation_card;
+pub(crate) mod cdr3_table;
+pub(crate) mod cells_card;
+pub(crate) mod hero_metrics;
 
 #[derive(Debug, Serialize, PartialEq, Eq, Clone)]
 #[serde(into = "GenericTable")]
@@ -49,32 +53,17 @@ pub struct VdjAggrWsContent {
 pub struct VdjAggrWsSummaryTab {
     pub hero_metrics: hero_metrics::VdjAggrHeroMetrics,
     pub pipeline_info_table: VdjAggrPipelineInfo,
-    pub vdj_clonotype: clonotype_table::VdjAggrClonotypeTable,
+    pub vdj_clonotype: VdjAggrClonotypeTable,
     pub vdj_annotation: annotation_card::VdjAggrAnnotationTable,
     pub vdj_aggr_cells: cells_card::VdjAggrCellsTable,
     pub vdj_shared_cdr3: cdr3_table::VdjAggrSharedCdr3,
-    pub vdj_clonotype_hist: clonotype_hist::ClonotypeHist,
-}
-
-#[cfg(test)]
-pub fn check_eq_json(j1: &str, j2: &str) {
-    pretty_assertions::assert_eq!(
-        serde_json::from_str::<serde_json::value::Value>(j1).unwrap(),
-        serde_json::from_str::<serde_json::value::Value>(j2).unwrap()
-    );
-}
-
-#[cfg(test)]
-fn test_json_roundtrip<T: Serialize + serde::de::DeserializeOwned>(json: &str) -> T {
-    let parsed: T = serde_json::from_str(json).unwrap();
-    let parsed_str = serde_json::to_string(&parsed).unwrap();
-    check_eq_json(&parsed_str, json);
-    parsed
+    pub vdj_clonotype_hist: cr_vdj::clonotype_hist::ClonotypeHist,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cr_vdj::{check_eq_json, test_json_roundtrip};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -266,6 +255,6 @@ mod tests {
 
     #[test]
     fn test_config_valid_json() {
-        let _ = default_plotly_config();
+        let _ = cr_websummary::default_plotly_config();
     }
 }

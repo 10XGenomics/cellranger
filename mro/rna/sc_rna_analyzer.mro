@@ -73,11 +73,13 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call RUN_PCA_NG as RUN_PCA(
-        matrix_h5           = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        num_pca_genes       = self.analyzer_inputs.num_pca_genes,
-        num_principal_comps = self.analyzer_inputs.num_principal_comps,
-        is_spatial          = self.analyzer_inputs.is_spatial,
-        pca_map             = CORRECT_CHEMISTRY_BATCH.aligned_pca_map,
+        matrix_h5            = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        num_pca_genes        = self.analyzer_inputs.num_pca_genes,
+        num_principal_comps  = self.analyzer_inputs.num_principal_comps,
+        is_spatial           = self.analyzer_inputs.is_spatial,
+        pca_map              = CORRECT_CHEMISTRY_BATCH.aligned_pca_map,
+        fixed_point_base     = null,
+        fixed_point_exponent = null,
     ) using (
         disabled = PREPROCESS_MATRIX.disable_run_pca,
         volatile = true,
@@ -98,6 +100,7 @@ pipeline SC_RNA_ANALYZER(
     call RUN_GRAPH_CLUSTERING(
         matrix_h5           = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         pca_h5              = RUN_PCA.pca_h5,
+        graphclust_init     = null,
         num_neighbors       = self.analyzer_inputs.graphclust_neighbors,
         neighbor_a          = self.analyzer_inputs.neighbor_a,
         neighbor_b          = self.analyzer_inputs.neighbor_b,
@@ -105,7 +108,8 @@ pipeline SC_RNA_ANALYZER(
         resolution          = self.analyzer_inputs.graphclust_resolution,
         random_seed         = self.analyzer_inputs.random_seed,
         threads             = 4,
-        parallel_clustering = false,
+        parallel_clustering = self.analyzer_inputs.parallel_graphclust,
+        sketch              = self.analyzer_inputs.sketch_graphclust,
     ) using (
         disabled = PREPROCESS_MATRIX.skip,
         volatile = true,
@@ -131,7 +135,7 @@ pipeline SC_RNA_ANALYZER(
         volatile = true,
     )
 
-    call RUN_DIFFERENTIAL_EXPRESSION_NG as RUN_DIFFERENTIAL_EXPRESSION(
+    call RUN_DIFFERENTIAL_EXPRESSION(
         matrix_h5        = PREPROCESS_MATRIX.preprocessed_matrix_h5,
         clustering_h5    = COMBINE_CLUSTERING.clustering_h5,
         is_antibody_only = PREPROCESS_MATRIX.is_antibody_only,
@@ -142,15 +146,16 @@ pipeline SC_RNA_ANALYZER(
 
     call RUN_TSNE(
         matrix_h5       = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5          = RUN_PCA.pca_h5,
+        reduction_h5    = RUN_PCA.pca_h5,
         random_seed     = self.analyzer_inputs.random_seed,
         perplexity      = self.analyzer_inputs.tsne_perplexity,
-        input_pcs       = self.analyzer_inputs.tsne_input_pcs,
+        input_dims      = self.analyzer_inputs.tsne_input_pcs,
         max_dims        = self.analyzer_inputs.tsne_max_dims,
         max_iter        = self.analyzer_inputs.tsne_max_iter,
         stop_lying_iter = self.analyzer_inputs.tsne_stop_lying_iter,
         mom_switch_iter = self.analyzer_inputs.tsne_mom_switch_iter,
         theta           = self.analyzer_inputs.tsne_theta,
+        reduction_type  = "pca",
     ) using (
         disabled = PREPROCESS_MATRIX.skip_tsne,
         volatile = true,
@@ -158,14 +163,15 @@ pipeline SC_RNA_ANALYZER(
 
     call RUN_UMAP(
         matrix_h5      = PREPROCESS_MATRIX.preprocessed_matrix_h5,
-        pca_h5         = RUN_PCA.pca_h5,
-        implementation = self.analyzer_inputs.umap_implementation,
+        reduction_h5   = RUN_PCA.pca_h5,
+        parallel       = self.analyzer_inputs.parallel_umap,
         random_seed    = self.analyzer_inputs.random_seed,
         n_neighbors    = self.analyzer_inputs.umap_n_neighbors,
-        input_pcs      = self.analyzer_inputs.umap_input_pcs,
+        input_dims     = self.analyzer_inputs.umap_input_pcs,
         max_dims       = self.analyzer_inputs.umap_max_dims,
         min_dist       = self.analyzer_inputs.umap_min_dist,
         metric         = self.analyzer_inputs.umap_metric,
+        reduction_type = "pca",
     ) using (
         disabled = PREPROCESS_MATRIX.skip,
         volatile = true,

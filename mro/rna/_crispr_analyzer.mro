@@ -26,17 +26,13 @@ pipeline _CRISPR_ANALYZER(
     call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_FEATURE(
         protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        feature_reference          = self.feature_reference,
         by_feature                 = true,
-        ignore_multiples           = false,
     )
 
     call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_TARGET(
         protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        feature_reference          = self.feature_reference,
         by_feature                 = false,
-        ignore_multiples           = false,
     )
 
     call SUMMARIZE_CRISPR_ANALYSIS(

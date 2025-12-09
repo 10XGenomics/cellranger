@@ -25,14 +25,7 @@ ILLUMINA_QUAL_OFFSET: int = ord(b"!")
 DEFAULT_HIGH_MAPQ: int = ord(b"<")
 
 # Demultiplex settings
-DEMULTIPLEX_ACCEPTED_SAMPLE_INDEX_LENGTH: list[int] = [8, 10]
-"""New defaults for dual-index."""
-DEMULTIPLEX_BARCODE_LENGTH: int = 14
 DEMULTIPLEX_INVALID_SAMPLE_INDEX: str = "X"
-MAX_INDICES_TO_DEMUX: int = 1500
-"""Maximum number of sample indices allowed."""
-SAMPLE_INDEX_MAX_HAMMING_DISTANCE: int = 1
-"""Maximum separation in HD between SIs of the same kind i7/i5."""
 
 # TAG names
 PROCESSED_BARCODE_TAG: str = "BX"

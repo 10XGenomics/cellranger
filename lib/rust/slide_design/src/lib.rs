@@ -1,3 +1,5 @@
+//! slide_design
+#![deny(missing_docs)]
 #[cfg(feature = "tenx_source_available")]
 mod stubs;
 #[cfg(feature = "tenx_source_available")]

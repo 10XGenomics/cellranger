@@ -32,7 +32,7 @@ def main(args, outs):
 
     # Plotting code is from
     # lib/python/cellranger/analysis/segment_model_fitter.py
-    alpha = 0.02
+    alpha = 0.02 if len(data_in["spliced_counts"]) > 200 else 1.0
     x_crit = data_in["model_crit_point"]
     a_1 = float(data_in["model_constant"])
     cis = data_in["spliced_counts"] < x_crit

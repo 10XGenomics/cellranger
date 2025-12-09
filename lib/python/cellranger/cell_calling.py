@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import numpy.ma as ma
@@ -18,12 +18,22 @@ from cellranger.analysis.diffexp import adjust_pvalue_bh
 from cellranger.chemistry import (
     CHEMISTRY_DESCRIPTION_FIELD,
     CHEMISTRY_SC3P_LT,
+    FLEX_V2_CHEMISTRIES,
     HT_CHEMISTRIES,
     SC3P_V3_CHEMISTRIES,
     SC3P_V4_CHEMISTRIES,
     SC5P_CHEMISTRIES,
     SC5P_V3_CHEMISTRIES,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from typing import Literal
+
+    from scipy.sparse import csc_matrix
+
+    from cellranger.feature_ref import FeatureReference
+    from cellranger.matrix import CountMatrix
 
 # Minimum number of UMIs for a barcode to be called as a cell
 MIN_GLOBAL_UMIS = 0
@@ -44,13 +54,17 @@ TARGETED_CC_MIN_UMIS_ADDITIONAL_CELLS = 10
 TARGETED_CC_MIN_UMIS_FROM_TARGET_GENES = 1
 
 
-def estimate_profile_sgt(matrix, barcode_indices, nz_feat):
+def estimate_profile_sgt(
+    matrix: csc_matrix,
+    barcode_indices: np.ndarray[tuple[int], np.dtype[np.intp]],
+    nz_feat: np.ndarray[tuple[int], np.dtype[np.intp]],
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Estimate a gene expression profile by Simple Good Turing.
 
     Args:
-      raw_mat (sparse matrix): Sparse matrix of all counts
-      barcode_indices (np.array(int)): Barcode indices to use
-      nz_feat (np.array(int)): Indices of features that are non-zero at least once
+      matrix: Sparse matrix of all counts
+      barcode_indices: Barcode indices to use
+      nz_feat: Indices of features that are non-zero at least once
 
     Returns:
       profile (np.array(float)): Estimated probabilities of length len(nz_feat).
@@ -78,28 +92,6 @@ def estimate_profile_sgt(matrix, barcode_indices, nz_feat):
 
     assert np.isclose(profile_p.sum(), 1.0)
     return profile_p
-
-
-# Construct a background expression profile from barcodes with <= T UMIs
-def est_background_profile_sgt(matrix, use_bcs):
-    """Estimate a gene expression profile on a given subset of barcodes.
-
-    Use Good-Turing to smooth the estimated profile.
-
-    Args:
-      matrix (scipy.sparse.csc_matrix): Sparse matrix of all counts
-      use_bcs (np.array(int)): Indices of barcodes to use (col indices into matrix)
-
-    Returns:
-      profile (use_features, np.array(float)): Estimated probabilities of length use_features.
-    """
-    # Use features that are nonzero anywhere in the data
-    use_feats = np.flatnonzero(np.asarray(matrix.sum(1)))
-
-    # Estimate background profile
-    bg_profile_p = estimate_profile_sgt(matrix, use_bcs, use_feats)
-
-    return (use_feats, bg_profile_p)
 
 
 class NonAmbientBarcodeResult(NamedTuple):
@@ -131,15 +123,19 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
     """
     if chemistry_description == CHEMISTRY_SC3P_LT[CHEMISTRY_DESCRIPTION_FIELD]:
         n_partitions = 9000
-    elif chemistry_description in [
-        chem[CHEMISTRY_DESCRIPTION_FIELD]
+    elif any(
+        chemistry_description == chem[CHEMISTRY_DESCRIPTION_FIELD]
         for chem in HT_CHEMISTRIES + SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
-    ]:
+    ):
         if num_probe_bcs is None:
             n_partitions = 160000
         else:
             # OCM
             n_partitions = 40000 * num_probe_bcs
+    elif any(
+        chemistry_description == chem[CHEMISTRY_DESCRIPTION_FIELD] for chem in FLEX_V2_CHEMISTRIES
+    ):
+        n_partitions = 160000 * (num_probe_bcs or 1)
     elif num_probe_bcs is not None:
         # Flex
         n_partitions = 90000 * num_probe_bcs
@@ -148,15 +144,32 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
     return (n_partitions // 2, n_partitions)
 
 
+def _sort_by_feat_id(
+    eval_features: np.ndarray[tuple[int], np.dtype[np.intp]],
+    feature_ref: FeatureReference,
+):
+    """Sort eval_features by feature ID."""
+    assert max(eval_features) < len(feature_ref.feature_defs)
+    eval_features_set = set(eval_features)
+    feat_id_order = np.argsort(
+        [
+            feat_id
+            for idx, feat_id in enumerate(feature_ref.get_feature_ids())
+            if idx in eval_features_set
+        ]
+    )
+    eval_features[:] = eval_features[feat_id_order]
+
+
 def find_nonambient_barcodes(
-    matrix,
-    orig_cell_bcs,
+    matrix: CountMatrix,
+    orig_cell_bcs: Iterable[str],
     chemistry_description,
-    num_probe_bcs,
+    num_probe_bcs: int | None,
     *,
-    emptydrops_minimum_umis=MIN_UMIS,
-    num_sims=NUM_SIMS,
-    method="multinomial",
+    emptydrops_minimum_umis: int = MIN_UMIS,
+    num_sims: int = NUM_SIMS,
+    method: Literal["dirichlet", "multinomial"] = "multinomial",
 ) -> NonAmbientBarcodeResult | None:
     """Call barcodes as being sufficiently distinct from the ambient profile.
 
@@ -167,6 +180,7 @@ def find_nonambient_barcodes(
       num_probe_bcs: The number of probe or OCM multiplexing barcodes
       emptydrops_minimum_umis: Minimum UMI threshold
       num_sims: Number of simulations
+      method: Either "dirichlet" or "multinomial"
 
     Returns:
       NonAmbientBarcodeResult
@@ -175,30 +189,28 @@ def find_nonambient_barcodes(
 
     # Estimate an ambient RNA profile
     umis_per_bc = matrix.get_counts_per_bc()
-    bc_order = np.argsort(umis_per_bc)
-
-    low, high = get_empty_drops_range(chemistry_description, num_probe_bcs)
-    max_adj_pvalue = get_empty_drops_fdr(chemistry_description)
-
-    # Take what we expect to be the barcodes associated w/ empty partitions.
-    print(f"Range empty barcodes: {low} - {high}")
-    empty_bcs = bc_order[::-1][low:high]
-    empty_bcs.sort()
-
-    # Require non-zero barcodes
-    nz_bcs = np.flatnonzero(umis_per_bc)
-    nz_bcs.sort()
-
-    ambient_bcs = np.intersect1d(empty_bcs, nz_bcs, assume_unique=True)
+    empty_bcs, ambient_bcs = _compute_ambient_and_empty_bcs(
+        chemistry_description, num_probe_bcs, umis_per_bc
+    )
 
     if len(ambient_bcs) > 0:
         try:
-            eval_features, ambient_profile_p = est_background_profile_sgt(matrix.m, ambient_bcs)
-            if method == "dirichlet":
-                alpha = cr_stats.estimate_dirichlet_overdispersion(
-                    matrix.m, ambient_bcs, ambient_profile_p
-                )
-
+            eval_features: np.ndarray[tuple[int], np.dtype[np.intp]] = np.flatnonzero(
+                np.asarray(matrix.m.sum(1))
+            )
+            # Sort features by their ID to ensure consistent ordering between runs with and without
+            # the reference genome. A better fix would be to sort the features by their ID when the
+            # feature ref data structure is built at the start of the pipeline making the matrix
+            # feature dimension itself consistent. However, this would break aggr-ing outputs of
+            # current CR version with older versions. When aggr supports out of order features, the
+            # better fix can be implemented.
+            # Jira: CELLRANGER-9524
+            _sort_by_feat_id(eval_features, matrix.feature_ref)
+            ambient_profile_p = estimate_profile_sgt(
+                matrix.m,
+                ambient_bcs,
+                eval_features,
+            )
         except cr_sgt.SimpleGoodTuringError as e:
             print(str(e))
             return None
@@ -207,10 +219,12 @@ def find_nonambient_barcodes(
         ambient_profile_p = np.zeros(0)
 
     # Choose candidate cell barcodes
-    orig_cell_bc_set = set(orig_cell_bcs)
-    orig_cells = np.flatnonzero(
+    orig_cell_bcs_set = set(orig_cell_bcs)
+    orig_cells: np.ndarray[tuple[int], np.dtype[np.intp]] = np.flatnonzero(
         np.fromiter(
-            (bc in orig_cell_bc_set for bc in matrix.bcs), count=len(matrix.bcs), dtype=bool
+            (bc in orig_cell_bcs_set for bc in matrix.bcs),
+            count=len(matrix.bcs),
+            dtype=bool,
         )
     )
 
@@ -218,25 +232,13 @@ def find_nonambient_barcodes(
     if orig_cells.sum() == 0:
         return None
 
-    # Look at non-cell barcodes above a minimum UMI count
-    eval_bcs = np.ma.array(np.arange(matrix.bcs_dim))
-    eval_bcs[orig_cells] = ma.masked
-
-    max_background_umis = np.max(umis_per_bc[empty_bcs], initial=0)
-    emptydrops_minimum_umis = max(emptydrops_minimum_umis, 1 + max_background_umis)
-    print(f"Max background UMIs: {max_background_umis}")
-
-    eval_bcs[umis_per_bc < emptydrops_minimum_umis] = ma.masked
-    n_unmasked_bcs = len(eval_bcs) - eval_bcs.mask.sum()
-
-    eval_bcs = np.argsort(ma.masked_array(umis_per_bc, mask=eval_bcs.mask))[0:n_unmasked_bcs]
-    # SORT the barcodes. This is a critical step; eval_bcs is a list of integers, and these indices are used
-    # to get the counts via matrix.select_features_by_genome(genome).select_barcodes(eval_bcs).get_counts_per_bc(),
-    # which sorts the input, and also to get the string barcode sequences via np.array(matrix.bcs)[eval_bcs],
-    # which doesn't. Without sorting here, the matching between the sequences and their counts from both
-    # genomes is essentially random, thus the species assignments will be wrong.
-    eval_bcs.sort()
-
+    eval_bcs = _compute_eval_bcs(
+        matrix,
+        orig_cells,
+        empty_bcs,
+        umis_per_bc,
+        emptydrops_minimum_umis,
+    )
     if len(eval_bcs) == 0:
         return None
 
@@ -247,38 +249,20 @@ def find_nonambient_barcodes(
     print(f"Number of empty bcs: {len(empty_bcs)}")
     print(f"Number of original cell calls: {len(orig_cells)}")
 
-    eval_mat = matrix.m[eval_features, :][:, eval_bcs]
-
     if len(ambient_profile_p) == 0:
-        obs_loglk = np.repeat(np.nan, len(eval_bcs))
-        pvalues = np.repeat(1, len(eval_bcs))
-        sim_loglk = np.repeat(np.nan, len(eval_bcs))
         return None
 
-    # Compute observed log-likelihood of barcodes being generated from ambient RNA and
-    # simulate log-likelihoods
-    if method == "dirichlet":
-        obs_loglk = cr_stats.eval_dirichlet_multinomial_loglikelihoods(
-            eval_mat, alpha * ambient_profile_p
-        )
-        distinct_ns, sim_loglk = cr_stats.simulate_dirichlet_multinomial_loglikelihoods(
-            alpha * ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
-        )
-    else:
-        obs_loglk = cr_stats.eval_multinomial_loglikelihoods(eval_mat, np.log(ambient_profile_p))
-        distinct_ns, sim_loglk = cr_stats.simulate_multinomial_loglikelihoods(
-            ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
-        )
-
-    # Compute p-values
-    pvalues = cr_stats.compute_ambient_pvalues(
-        umis_per_bc[eval_bcs], obs_loglk, distinct_ns, sim_loglk
+    obs_loglk, pvalues, pvalues_adj, max_adj_pvalue = _compute_pvalues(
+        matrix=matrix,
+        eval_features=eval_features,
+        eval_bcs=eval_bcs,
+        ambient_bcs=ambient_bcs,
+        ambient_profile_p=ambient_profile_p,
+        umis_per_bc=umis_per_bc,
+        chemistry_description=chemistry_description,
+        method=method,
+        num_sims=num_sims,
     )
-
-    pvalues_adj = adjust_pvalue_bh(pvalues)
-
-    print(f"Max adjusted P-value: {max_adj_pvalue}")
-    print(f"Min observed P-value: {min(pvalues_adj)}")
     is_nonambient = pvalues_adj <= max_adj_pvalue
 
     print(f"Non-ambient bcs identified by empty drops: {sum(is_nonambient)}")
@@ -291,3 +275,129 @@ def find_nonambient_barcodes(
         is_nonambient=is_nonambient,
         emptydrops_minimum_umis=emptydrops_minimum_umis,
     )
+
+
+def _compute_eval_bcs(
+    matrix: CountMatrix,
+    orig_cells: np.ndarray[tuple[int], np.dtype[np.intp]],
+    empty_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
+    umis_per_bc: np.ndarray[tuple[int], np.dtype[np.intp]],
+    emptydrops_minimum_umis: int,
+) -> np.ndarray[tuple[int], np.dtype[np.intp]]:
+    """Identify potential cell barcodes for further evaluation.
+
+    Returns:
+        A sorted numpy array of integer indices representing the barcodes to be
+        evaluated.
+    """
+    # Look at non-cell barcodes above a minimum UMI count
+    eval_bcs = np.ma.array(np.arange(matrix.bcs_dim))
+    eval_bcs[orig_cells] = ma.masked
+
+    max_background_umis = np.max(umis_per_bc[empty_bcs], initial=0)
+    emptydrops_minimum_umis = max(emptydrops_minimum_umis, 1 + max_background_umis)
+    print(f"Max background UMIs: {max_background_umis}")
+
+    eval_bcs[umis_per_bc < emptydrops_minimum_umis] = ma.masked
+    n_unmasked_bcs = len(eval_bcs) - eval_bcs.mask.sum()
+
+    eval_bcs: np.ndarray[tuple[int], np.dtype[np.intp]] = np.argsort(
+        ma.masked_array(
+            umis_per_bc,
+            mask=eval_bcs.mask,
+        )
+    )[0:n_unmasked_bcs]
+    # SORT the barcodes. This is a critical step; eval_bcs is a list of integers, and these indices are used
+    # to get the counts via matrix.select_features_by_genome(genome).select_barcodes(eval_bcs).get_counts_per_bc(),
+    # which sorts the input, and also to get the string barcode sequences via np.array(matrix.bcs)[eval_bcs],
+    # which doesn't. Without sorting here, the matching between the sequences and their counts from both
+    # genomes is essentially random, thus the species assignments will be wrong.
+    eval_bcs.sort()
+
+    return eval_bcs
+
+
+def _compute_pvalues(
+    matrix: CountMatrix,
+    eval_features: np.ndarray[tuple[int], np.dtype[np.intp]],
+    eval_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
+    ambient_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
+    ambient_profile_p: np.ndarray[tuple[int], np.dtype[np.float64]],
+    umis_per_bc: np.ndarray[tuple[int], np.dtype[np.int64]],
+    chemistry_description: str,
+    method: Literal["dirichlet", "multinomial"],
+    num_sims: int,
+):
+    """Compute p-values for the evaluation of barcodes.
+
+    Returns:
+        obs_loglk: Observed log-likelihoods of barcodes being generated from ambient RNA
+        pvalues: P-values of barcodes being generated from ambient RNA
+        pvalues_adj: B-H adjusted p-values
+        max_adj_pvalue: Maximum adjusted p-value to call a barcode as non-ambient
+    """
+    # Compute observed log-likelihood of barcodes being generated from ambient RNA and
+    # simulate log-likelihoods
+    eval_mat = matrix.m[eval_features, :][:, eval_bcs]
+    if method == "dirichlet":
+        alpha = cr_stats.estimate_dirichlet_overdispersion(matrix.m, ambient_bcs, ambient_profile_p)
+        obs_loglk = cr_stats.eval_dirichlet_multinomial_loglikelihoods(
+            eval_mat, alpha * ambient_profile_p
+        )
+        distinct_ns, sim_loglk = cr_stats.simulate_dirichlet_multinomial_loglikelihoods(
+            alpha * ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
+        )
+    else:
+        obs_loglk = cr_stats.eval_multinomial_loglikelihoods(
+            eval_mat,
+            np.log(ambient_profile_p),
+        )
+        (
+            distinct_ns,
+            sim_loglk,
+        ) = cr_stats.simulate_multinomial_loglikelihoods(
+            ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
+        )
+
+    # Compute p-values
+    pvalues = cr_stats.compute_ambient_pvalues(
+        umis_per_bc[eval_bcs], obs_loglk, distinct_ns, sim_loglk
+    )
+
+    pvalues_adj = adjust_pvalue_bh(pvalues)
+
+    max_adj_pvalue = get_empty_drops_fdr(chemistry_description)
+    print(f"Max adjusted P-value: {max_adj_pvalue}")
+    print(f"Min observed P-value: {min(pvalues_adj)}")
+
+    return obs_loglk, pvalues, pvalues_adj, max_adj_pvalue
+
+
+def _compute_ambient_and_empty_bcs(
+    chemistry_description: str,
+    num_probe_bcs: int | None,
+    umis_per_bc: np.ndarray[tuple[int], np.dtype[np.int64]],
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.intp]],
+    np.ndarray[tuple[int], np.dtype[np.intp]],
+]:
+    """Get ambient and empty barcodes.
+
+    Returns:
+        empty_bcs: Indices of barcodes associated with empty partitions
+        ambient_bcs: Indices of barcodes associated with empty partitions that have non-zero UMIs
+    """
+    bc_order = np.argsort(umis_per_bc)
+    low, high = get_empty_drops_range(chemistry_description, num_probe_bcs)
+
+    # Take what we expect to be the barcodes associated w/ empty partitions.
+    print(f"Range empty barcodes: {low} - {high}")
+    empty_bcs = bc_order[::-1][low:high]
+    empty_bcs.sort()
+
+    # Require non-zero barcodes
+    nz_bcs = np.flatnonzero(umis_per_bc)
+    nz_bcs.sort()
+
+    ambient_bcs = np.intersect1d(empty_bcs, nz_bcs, assume_unique=True)
+    return empty_bcs, ambient_bcs

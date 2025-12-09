@@ -1,8 +1,8 @@
-// This file contains code to make contigs.
-
-#![allow(clippy::many_single_char_names)]
+//! This file contains code to make contigs.
+#![deny(missing_docs)]
+#![expect(clippy::many_single_char_names)]
 // TODO: fix these.
-#![allow(clippy::needless_range_loop)]
+#![expect(clippy::needless_range_loop)]
 
 use self::equiv::EquivRel;
 use self::graph_simple::GraphSimple;
@@ -15,60 +15,51 @@ use crate::log_opts::LogOpts;
 use crate::ref_free::{alt_strong_paths, uber_strong_paths};
 use crate::sw::pos_base_quals_helper;
 use crate::utils;
-use debruijn::dna_string::{ndiffs, DnaString};
+use debruijn::dna_string::{DnaString, ndiffs};
 use debruijn::kmer::Kmer20;
 use debruijn::{Mer, Vmer};
+use io_utils::{fwrite, fwriteln};
 use itertools::Itertools;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use string_utils::stringme;
-use vdj_ann::annotate::{annotate_seq, get_cdr3, Annotation};
+use vdj_ann::annotate::{Annotation, annotate_seq, get_cdr3};
 use vdj_ann::refx::RefData;
-use vdj_ann::transcript::{is_productive_contig, junction_seq, junction_supp, junction_supp_core};
+use vdj_ann::transcript::{
+    JunctionSupportCore, is_productive_contig, junction_seq, junction_supp_core,
+};
 use vector_utils::{
     bin_member, bin_position, contains, erase_if, lower_bound1_3, next_diff, next_diff1_2,
-    next_diff1_3, next_diff1_6, reverse_sort, sort_sync2, unique_sort, upper_bound1_3, VecUtils,
+    next_diff1_3, next_diff1_6, reverse_sort, sort_sync2, unique_sort, upper_bound1_3,
 };
 use {equiv, graph_simple, hyperbase, kmer_lookup};
 
-// Given a vector x of length N > n, return n randomly selected elements, and sort the resulting
-// vector.  This is deterministic and will not change when crates are updated.
-
-pub fn random_subvec(x: &[String], n: usize) -> Vec<String> {
-    assert!(x.len() > n);
-    let mut s = HashSet::<usize>::new();
-    let mut y = Vec::<String>::new();
-    let mut r = 0_i64;
-    for _ in 0..n {
-        loop {
-            r = 6_364_136_223_846_793_005i64
-                .wrapping_mul(r)
-                .wrapping_add(1_442_695_040_888_963_407);
-            let p = (r as usize) % x.len();
-            if !s.contains(&p) {
-                s.insert(p);
-                y.push(x[p].clone());
-                break;
-            }
-        }
-    }
-    y.sort();
-    y
-}
-
 // Make contigs and clean them up using the reference, then determine if there
 // is a pairing.
+pub struct MakeContigsResult {
+    /// qual score for all contigs
+    pub conxq: Vec<Vec<u8>>,
+    /// reads assigned to each contig
+    pub cids: Vec<Vec<i32>>,
+    /// good contigs (or all?)
+    pub con: Vec<DnaString>,
+    /// reject contigs
+    pub con2: Vec<DnaString>,
+    /// (umis, reads, Vec<umi_ids>) supporting junction seqs of good contigs
+    pub jsupp: Vec<JunctionSupportCore>,
+    /// umis assigned to each contig
+    pub cumi: Vec<Vec<i32>>,
+}
 
 #[allow(clippy::too_many_arguments)]
-pub fn make_contigs(
+pub(super) fn make_contigs(
     // INPUTS:
     single_end: bool,
     is_gd: Option<bool>,
     primers: &[Vec<u8>],
     reads: &[DnaString],
     quals: &[Vec<u8>],
-    x: &mut Hyper,
+    x: &Hyper,
     umi_id: &[i32],
     uu: &[String],
     refdata: &RefData,
@@ -78,21 +69,12 @@ pub fn make_contigs(
     min_contig_length: Option<usize>,
 
     // OUTPUTS:
-    con: &mut Vec<DnaString>,                  // good contigs (or all?)
-    jsupp: &mut Vec<(i32, i32)>,               // junction support for good contigs
-    con2: &mut Vec<DnaString>,                 // reject contigs
-    conxq: &mut Vec<Vec<u8>>,                  // qual score for all contigs
-    cumi: &mut Vec<Vec<i32>>,                  // umis assigned to each contig
-    cids: &mut Vec<Vec<i32>>,                  // reads assigned to each contig
-    barcode_data: &mut BarcodeData,            // data on barcode including pairing
-    validated_umis: &mut Vec<Vec<String>>,     // validated UMIs
-    non_validated_umis: &mut Vec<Vec<String>>, // non-validated UMIs
-    invalidated_umis: &mut Vec<Vec<String>>,   // invalidated UMIs
+    barcode_data: &mut BarcodeData, // data on barcode including pairing
 
     // LOGGING:
     log: &mut Vec<u8>,
     log_opts: &LogOpts,
-) {
+) -> MakeContigsResult {
     let gd_mode = is_gd.unwrap_or(false);
     // Unpack refdata.
 
@@ -388,8 +370,8 @@ pub fn make_contigs(
         }
     }
 
-    con.clear();
-    con2.clear();
+    let mut con = vec![];
+    let mut con2 = vec![];
     let mut conp = Vec::<Vec<i32>>::new();
     for j in 0..all.len() {
         let c = x.cat(&all[j]);
@@ -448,10 +430,10 @@ pub fn make_contigs(
                 let (mut start, mut stop) = (0, con[j].len());
                 let l = ann.len() - 1;
                 let (t1, t2) = (ann[0].ref_id as usize, ann[l].ref_id as usize);
-                if refdata.segtype[t1] == "U" {
+                if refdata.segtype[t1] == b'U' {
                     start = ann[0].tig_start as usize;
                 }
-                if refdata.segtype[t2] == "C" {
+                if refdata.segtype[t2] == b'C' {
                     stop = ann[l].tig_start as usize + ann[l].match_len as usize;
                 }
                 if start > 0 || stop < con[j].len() {
@@ -480,7 +462,7 @@ pub fn make_contigs(
                     p[j] = b'A';
                 }
             }
-            rc_primers.push(stringme(&p));
+            rc_primers.push(String::from_utf8(p).unwrap());
         }
         for j in 0..con.len() {
             let s: String = con[j].to_string();
@@ -514,7 +496,7 @@ pub fn make_contigs(
                 to_delete[i] = true;
             }
         }
-        erase_if(con, &to_delete);
+        erase_if(&mut con, &to_delete);
         erase_if(&mut conp, &to_delete);
     }
 
@@ -557,7 +539,7 @@ pub fn make_contigs(
                     }
                 }
                 unique_sort(&mut nexts);
-                if nexts.solo() {
+                if nexts.len() == 1 {
                     next = nexts[0];
                     last_match = true;
                 } else if !last_match {
@@ -645,7 +627,7 @@ pub fn make_contigs(
                     if ucount.len() > 2 {
                         continue;
                     }
-                    if ucount.duo() && ucount[0] > 1 && ucount[1] > 1 {
+                    if ucount.len() == 2 && ucount[0] > 1 && ucount[1] > 1 {
                         continue;
                     }
 
@@ -670,7 +652,7 @@ pub fn make_contigs(
             to_delete[i] = true;
         }
     }
-    erase_if(con, &to_delete);
+    erase_if(&mut con, &to_delete);
     erase_if(&mut conp, &to_delete);
 
     // Move invalid contigs to the reject pile.
@@ -696,9 +678,11 @@ pub fn make_contigs(
             con2.push(con[i].clone());
         }
     }
-    erase_if(con, &to_delete);
+    erase_if(&mut con, &to_delete);
     erase_if(&mut conp, &to_delete);
-    erase_if(&mut ann_all, &to_delete);
+    if !heur.free {
+        erase_if(&mut ann_all, &to_delete);
+    }
 
     /*
     // Print:
@@ -796,7 +780,7 @@ pub fn make_contigs(
             junction_seq(&con[j], refdata, &ann_all[j], &mut jseq);
         } else {
             let cdr3 = get_cdr3(&con[j].slice(0, con[j].len()));
-            if cdr3.solo() {
+            if cdr3.len() == 1 {
                 jseq = con[j]
                     .slice(
                         cdr3[0].start_position_on_contig,
@@ -881,7 +865,7 @@ pub fn make_contigs(
         }
         i = j;
     }
-    *con = conx;
+    con = conx;
     conp = conpx;
     ann_all = ann_allx;
 
@@ -890,13 +874,14 @@ pub fn make_contigs(
 
     let mut tra = Vec::<ContigJunction>::new();
     let mut trb = Vec::<ContigJunction>::new();
+    let mut jsupp = vec![];
     let mut to_delete: Vec<bool> = vec![false; con.len()];
     if heur.free {
         let mut all = Vec::<(i32, i32, usize)>::new();
         for j in 0..con.len() {
             let mut jseq_long = DnaString::new();
             let cdr3 = get_cdr3(&con[j].slice(0, con[j].len()));
-            if cdr3.solo() {
+            if cdr3.len() == 1 {
                 let jseq = con[j]
                     .slice(
                         cdr3[0].start_position_on_contig,
@@ -907,11 +892,7 @@ pub fn make_contigs(
                     jseq_long = jseq.clone();
                 } else {
                     let ext = 100 - jseq.len();
-                    let start = if ext <= cdr3[0].start_position_on_contig {
-                        cdr3[0].start_position_on_contig - ext
-                    } else {
-                        0
-                    };
+                    let start = cdr3[0].start_position_on_contig.saturating_sub(ext);
                     jseq_long = con[j]
                         .slice(
                             start,
@@ -920,12 +901,12 @@ pub fn make_contigs(
                         .to_owned();
                 }
             }
-            let mut jsupp_this: (i32, i32) = (0, 0);
-            if !jseq_long.is_empty() {
-                junction_supp_core(reads, x, umi_id, &jseq_long, &mut jsupp_this);
-            }
+            let jsupp_this = match !jseq_long.is_empty() {
+                true => junction_supp_core(reads, x, umi_id, &jseq_long),
+                false => JunctionSupportCore::default(),
+            };
+            all.push((jsupp_this.umis, jsupp_this.reads, j));
             jsupp.push(jsupp_this);
-            all.push((jsupp_this.0, jsupp_this.1, j));
         }
         reverse_sort(&mut all);
         for j1 in 0..all.len() {
@@ -954,19 +935,10 @@ pub fn make_contigs(
         }
     } else {
         for j in 0..con.len() {
-            let mut jsupp_this: (i32, i32) = (0, 0);
-            junction_supp(
-                &con[j],
-                reads,
-                x,
-                umi_id,
-                refdata,
-                &ann_all[j],
-                &mut jsupp_this,
-            );
-            jsupp.push(jsupp_this);
             let mut jseq = DnaString::new();
             junction_seq(&con[j], refdata, &ann_all[j], &mut jseq);
+            jsupp.push(junction_supp_core(reads, x, umi_id, &jseq));
+
             let ann = annotate_seq(&con[j], refdata, true, false, false);
             let mut this_is_tra = false;
             for a in ann {
@@ -982,16 +954,16 @@ pub fn make_contigs(
             }
             if this_is_tra {
                 tra.push(ContigJunction {
-                    jsupp_umi: jsupp[j].0,
-                    jsupp_reads: jsupp[j].1,
+                    jsupp_umi: jsupp[j].umis,
+                    jsupp_reads: jsupp[j].reads,
                     con_idx: j,
                     junction_seq: jseq,
                     contig_seq: con[j].clone(),
                 });
             } else {
                 trb.push(ContigJunction {
-                    jsupp_umi: jsupp[j].0,
-                    jsupp_reads: jsupp[j].1,
+                    jsupp_umi: jsupp[j].umis,
+                    jsupp_reads: jsupp[j].reads,
                     con_idx: j,
                     junction_seq: jseq,
                     contig_seq: con[j].clone(),
@@ -1040,10 +1012,10 @@ pub fn make_contigs(
         tocon[i] = pos;
         pos += 1;
     }
-    erase_if(con, &to_delete);
+    erase_if(&mut con, &to_delete);
     erase_if(&mut conp, &to_delete);
-    erase_if(jsupp, &to_delete);
-    erase_if(&mut ann_all, &to_delete);
+    erase_if(&mut jsupp, &to_delete);
+    drop(ann_all);
 
     // Print paths.
 
@@ -1058,7 +1030,7 @@ pub fn make_contigs(
     // reject contig, delete the shorter one.
 
     let mut zkmers_plus = Vec::<(Kmer20, i32, i32)>::new();
-    make_kmer_lookup_20_single(con2, &mut zkmers_plus);
+    make_kmer_lookup_20_single(&con2, &mut zkmers_plus);
     let mut to_delete2 = vec![false; con2.len()];
     let mut share = Vec::<Vec<i32>>::new();
     for _i in 0..con2.len() {
@@ -1091,7 +1063,7 @@ pub fn make_contigs(
             }
         }
     }
-    erase_if(con2, &to_delete2);
+    erase_if(&mut con2, &to_delete2);
 
     // If nearly all the annotated kmers in one reject contig are contained in a
     // good contig, delete the reject contig.
@@ -1152,7 +1124,7 @@ pub fn make_contigs(
                 }
             }
         }
-        erase_if(con2, &to_delete12);
+        erase_if(&mut con2, &to_delete12);
     }
 
     // Move contigs.  Report total number.
@@ -1162,7 +1134,7 @@ pub fn make_contigs(
 
     for x in con2.as_slice() {
         con.push(x.clone());
-        jsupp.push((0, 0));
+        jsupp.push(JunctionSupportCore::default());
     }
     barcode_data.ncontigs = con.len() as i32;
 
@@ -1222,10 +1194,7 @@ pub fn make_contigs(
     // Assign UMIs to contigs.  We assign each UMI to at most one contig.
     // We let cumi[t] be the list of UMIs assigned to contig t.
 
-    cumi.clear();
-    for _i in 0..conx.len() {
-        cumi.push(Vec::<i32>::new());
-    }
+    let mut cumi = vec![Vec::new(); conx.len()];
     let mut numi = 0;
     for u in umi_id {
         numi = max(numi, u + 1);
@@ -1251,12 +1220,6 @@ pub fn make_contigs(
         unique_sort(&mut cumi[t]);
     }
 
-    // Set up to track validated and non-validated and invalidated UMIs.
-
-    *validated_umis = vec![Vec::<String>::new(); conx.len()];
-    *non_validated_umis = vec![Vec::<String>::new(); conx.len()];
-    *invalidated_umis = vec![Vec::<String>::new(); conx.len()];
-
     // Form pileup and then compute quality scores.  Also compute cids.  Note that the pileup
     // uses only bases that agree with the contig, which does not necessarily make sense.  It also
     // does not respect the assignment of reads to contigs, which does not necessarily make sense.
@@ -1266,10 +1229,8 @@ pub fn make_contigs(
     // - The offset of a read is determined by its longest match to the contig.
     // - Every base on the read (that is not off the end) is assigned to the contig.
 
-    cids.clear();
-    for _i in 0..conx.len() {
-        cids.push(Vec::<i32>::new());
-    }
+    let mut cids = vec![Vec::<i32>::new(); conx.len()];
+    let mut conxq = vec![];
     let mut perfp = 0;
     let mut contig_count = 0;
     for t in 0..conx.len() {
@@ -1381,93 +1342,67 @@ pub fn make_contigs(
                 let p = bin_position(&umis, &u) as usize;
                 count[p] += 1;
             }
-            if let Some(vstart) = vstart {
-                if let Some(jstop) = jstop {
-                    if vstart < jstop {
-                        for i in 0..umis.len() {
-                            fwrite!(log, "umi {} = {} reads:", uu[umis[i] as usize], count[i]);
-                            let vstart = vstart as usize;
-                            let vj = &conx[t].slice(vstart, jstop as usize);
-                            let mut good = vec![false; vj.len()];
-                            let mut bad = vec![false; vj.len()];
-                            let mut verybad = vec![false; vj.len()];
-                            let mut val = true;
-                            let mut inval = false;
-                            for p in 0..vj.len() {
-                                let mut qsums = vec![0_usize; 4];
-                                for j in 0..pilex[vstart + p].len() {
-                                    if pilex[vstart + p][j].0 == umis[i] {
-                                        qsums[pilex[vstart + p][j].1 as usize] +=
-                                            pilex[vstart + p][j].2 as usize;
-                                    }
-                                }
-                                let mut ids = vec![0, 1, 2, 3];
-                                sort_sync2(&mut qsums, &mut ids);
-                                qsums.reverse();
-                                ids.reverse();
-                                let q = qsums[0] - qsums[1];
-                                let b = ids[0];
-                                if b == conx[t].get(vstart + p) && q >= 20 {
-                                    good[p] = true;
-                                } else {
-                                    val = false;
-                                }
-                                if b != conx[t].get(vstart + p) && qsums[0] > 0 {
-                                    bad[p] = true;
-                                    inval = true;
-                                }
-                                if b != conx[t].get(vstart + p) && q >= 40 {
-                                    verybad[p] = true;
-                                }
+            if let Some(vstart) = vstart
+                && let Some(jstop) = jstop
+                && vstart < jstop
+            {
+                for i in 0..umis.len() {
+                    fwrite!(log, "umi {} = {} reads:", uu[umis[i] as usize], count[i]);
+                    let vstart = vstart as usize;
+                    let vj = &conx[t].slice(vstart, jstop as usize);
+                    let mut good = vec![false; vj.len()];
+                    let mut bad = vec![false; vj.len()];
+                    let mut verybad = vec![false; vj.len()];
+                    for p in 0..vj.len() {
+                        let mut qsums = vec![0_usize; 4];
+                        for j in 0..pilex[vstart + p].len() {
+                            if pilex[vstart + p][j].0 == umis[i] {
+                                qsums[pilex[vstart + p][j].1 as usize] +=
+                                    pilex[vstart + p][j].2 as usize;
                             }
-                            let mut j = 0;
-                            while j < good.len() {
-                                let k = next_diff(&good, j);
-                                if good[j] {
-                                    fwrite!(log, " +");
-                                } else {
-                                    fwrite!(log, " -");
-                                }
-                                fwrite!(log, "{}", k - j);
-                                if verybad[j] {
-                                    fwrite!(log, "XX");
-                                } else {
-                                    let mut b = false;
-                                    for m in j..k {
-                                        if bad[m] {
-                                            b = true;
-                                        }
-                                    }
-                                    if b {
-                                        fwrite!(log, "X");
-                                    }
-                                }
-                                j = k;
-                            }
-                            if val {
-                                validated_umis[t].push(uu[umis[i] as usize].clone());
-                                fwrite!(log, " validated");
-                            } else if !inval {
-                                non_validated_umis[t].push(uu[umis[i] as usize].clone());
-                                fwrite!(log, " non-validated");
-                            } else {
-                                invalidated_umis[t].push(uu[umis[i] as usize].clone());
-                                fwrite!(log, " invalidated");
-                            }
-                            fwriteln!(log, "");
+                        }
+                        let mut ids = vec![0, 1, 2, 3];
+                        sort_sync2(&mut qsums, &mut ids);
+                        qsums.reverse();
+                        ids.reverse();
+                        let q = qsums[0] - qsums[1];
+                        let b = ids[0];
+                        if b == conx[t].get(vstart + p) && q >= 20 {
+                            good[p] = true;
+                        }
+                        if b != conx[t].get(vstart + p) && qsums[0] > 0 {
+                            bad[p] = true;
+                        }
+                        if b != conx[t].get(vstart + p) && q >= 40 {
+                            verybad[p] = true;
                         }
                     }
+                    let mut j = 0;
+                    while j < good.len() {
+                        let k = next_diff(&good, j);
+                        if good[j] {
+                            fwrite!(log, " +");
+                        } else {
+                            fwrite!(log, " -");
+                        }
+                        fwrite!(log, "{}", k - j);
+                        if verybad[j] {
+                            fwrite!(log, "XX");
+                        } else {
+                            let mut b = false;
+                            for m in j..k {
+                                if bad[m] {
+                                    b = true;
+                                }
+                            }
+                            if b {
+                                fwrite!(log, "X");
+                            }
+                        }
+                        j = k;
+                    }
+                    fwriteln!(log, "");
                 }
-            }
-            const UMI_CAP: usize = 20;
-            if validated_umis[t].len() > UMI_CAP {
-                validated_umis[t] = random_subvec(&validated_umis[t], UMI_CAP);
-            }
-            if non_validated_umis[t].len() > UMI_CAP {
-                non_validated_umis[t] = random_subvec(&non_validated_umis[t], UMI_CAP);
-            }
-            if invalidated_umis[t].len() > UMI_CAP {
-                invalidated_umis[t] = random_subvec(&invalidated_umis[t], UMI_CAP);
             }
         }
 
@@ -1604,15 +1539,21 @@ pub fn make_contigs(
         }
     }
     erase_if(&mut trb, &trb_del);
-    erase_if(con, &noreads1);
-    erase_if(jsupp, &noreads1);
-    erase_if(con2, &noreads2);
-    erase_if(conxq, &noreads);
-    erase_if(cumi, &noreads);
-    erase_if(cids, &noreads);
-    erase_if(validated_umis, &noreads);
-    erase_if(non_validated_umis, &noreads);
-    erase_if(invalidated_umis, &noreads);
+    erase_if(&mut con, &noreads1);
+    erase_if(&mut jsupp, &noreads1);
+    erase_if(&mut con2, &noreads2);
+    erase_if(&mut conxq, &noreads);
+    erase_if(&mut cumi, &noreads);
+    erase_if(&mut cids, &noreads);
+
+    MakeContigsResult {
+        conxq,
+        cids,
+        con,
+        con2,
+        jsupp,
+        cumi,
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]

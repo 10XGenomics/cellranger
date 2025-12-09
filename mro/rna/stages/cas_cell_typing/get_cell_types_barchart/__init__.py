@@ -12,7 +12,8 @@ import martian
 import polars as pl
 
 from cellranger.altair_utils import chart_to_json
-from cellranger.cell_typing.cas_postprocessing import (
+from cellranger.cell_typing.broad_tenx.cas_postprocessing import LOW_UMI_BARCODE_KEY
+from cellranger.cell_typing.common_cell_typing import (
     BARCODE_KEY,
     COARSE_CELL_TYPES_KEY,
     FINE_CELL_TYPES_KEY,
@@ -68,7 +69,10 @@ def main(args, outs):  # pylint: disable=too-many-locals
         martian.clear(outs)
         return
 
-    lazy_df = pl.scan_csv(args.cell_types, schema=CELL_TYPING_CSV_SCHEMA)
+    pl.set_random_seed(seed=7)
+    lazy_df = pl.scan_csv(args.cell_types, schema_overrides=CELL_TYPING_CSV_SCHEMA).select(
+        [BARCODE_KEY, COARSE_CELL_TYPES_KEY, FINE_CELL_TYPES_KEY]
+    )
 
     df = (
         lazy_df.group_by(FINE_CELL_TYPES_KEY)
@@ -153,8 +157,26 @@ def main(args, outs):  # pylint: disable=too-many-locals
         groupby=[COARSE_CELL_TYPES_KEY], num_barcodes=f"sum({NUM_BARCODES_KEY})"
     )
 
+    num_cell_types = (
+        df.group_by("coarse_cell_type")
+        .agg(pl.col("num_barcodes").sum())
+        .filter(pl.col("num_barcodes") > COARSE_CELL_TYPE_LOWER_BOUND)
+        .height
+    )
+
+    chart_height = max(15 * num_cell_types, 250)
     left_chart = (
         base_left_chart.transform_filter(f"datum.num_barcodes > {COARSE_CELL_TYPE_LOWER_BOUND}")
+        .transform_calculate(
+            sort_priority=f"datum.{COARSE_CELL_TYPES_KEY} === '{LOW_UMI_BARCODE_KEY}' ? 1 : 0"
+        )
+        .transform_window(
+            sort_index="rank()",
+            sort=[
+                alt.SortField("sort_priority", order="ascending"),
+                alt.SortField("num_barcodes", order="descending"),
+            ],
+        )
         .mark_bar(
             stroke="black",
             color="#0071D9",
@@ -162,7 +184,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
         )
         .encode(
             y=alt.Y(f"{COARSE_CELL_TYPES_KEY}:N")
-            .sort("-x")
+            .sort(alt.EncodingSortField(field="sort_index", order="ascending"))
             .axis(title=CELL_TYPES_LABEL, labelFontSize=12, titleFontSize=14),
             x=alt.X("num_barcodes:Q").axis(
                 title=NUMBER_OF_BARCODES_LABEL, labelFontSize=12, titleFontSize=14
@@ -175,7 +197,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
             strokeWidth=alt.condition(hover_brush, alt.value(2), alt.value(0)),
         )
         .add_params(brush, hover_brush)
-    ).properties(height=250)
+    ).properties(height=chart_height)
 
     transformed_chart = base_chart.transform_filter(brush)
 
@@ -242,7 +264,13 @@ def main(args, outs):  # pylint: disable=too-many-locals
             groupby=[FINE_CELL_TYPES_KEY],
             frac_barcodes_in_subtype=f"sum({FRACTION_OF_COARSE_CELL_TYPE_KEY})",
         )
-        .transform_window(row_number="row_number()")
+        .transform_window(
+            row_number="row_number()",
+            sort=[
+                alt.SortField("frac_barcodes_in_subtype", order="descending"),  # Primary sort
+                alt.SortField(FINE_CELL_TYPES_KEY, order="ascending"),  # Secondary sort
+            ],
+        )
         .transform_filter(f"datum.row_number < {MAX_SUBTYPES_TO_SHOW}")
         .transform_filter(f"datum.frac_barcodes_in_subtype >= {MIN_FRACTION_TO_LIST}")
         .encode(y=alt.Y("row_number:O", axis=None))

@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 use itertools::Itertools;
 use ndarray::{Array2, ShapeBuilder};
 use num_traits::Num;
@@ -16,7 +17,7 @@ pub fn get_cluster_representatives<N, I>(
 ) -> Array2<f64>
 where
     N: Num + Clone,
-    f64: std::convert::From<N>,
+    f64: From<N>,
     I: SpIndex,
 {
     let size_factors = index_to_cluster_map.iter().counts();

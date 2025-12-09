@@ -1,4 +1,7 @@
-use anyhow::{bail, ensure, Context, Result};
+//! cellranger
+#![deny(missing_docs)]
+
+use anyhow::{Context, Result, bail, ensure};
 use clap::{self, Parser};
 use cr_types::cell_annotation::CellAnnotationModel;
 use cr_types::sample_def::SampleDef;
@@ -6,18 +9,18 @@ use cr_types::types::FileOrBytes;
 use cr_types::{LibraryType, TargetingMethod};
 use cr_wrap::chemistry_arg::validate_chemistry;
 use cr_wrap::create_bam_arg::CreateBam;
-use cr_wrap::env::Initialize;
+use cr_wrap::env::{Initialize, get_version};
 use cr_wrap::fastqs::{FastqArgs, FastqArgsNoLibraries};
 use cr_wrap::mkref::Mkvdjref;
 use cr_wrap::mrp_args::MrpArgs;
 use cr_wrap::shared_cmd::{self, HiddenCmd, RnaSharedCmd, SharedCmd};
 use cr_wrap::telemetry::CollectTelemetry;
-use cr_wrap::utils::{validate_id, AllArgs, CliPath};
+use cr_wrap::utils::{AllArgs, CliPath, validate_id};
 use cr_wrap::{cloud, env, execute, make_mro, make_mro_with_comment, mkfastq};
-use multi::config::{ChemistryParam, ChemistrySet};
+use multi::config::{ChemistryParam, ChemistrySet, MultiConfigCsv};
 use serde::{self, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{read_to_string, File};
+use std::fs::{File, read_to_string};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -48,17 +51,9 @@ impl FromStr for ForceCells {
     }
 }
 
-// TODO: make this a const fn
-fn cr_version() -> &'static str {
-    match option_env!("CELLRANGER_VERSION") {
-        Some(s) => s,
-        _ => "redacted",
-    }
-}
-
 /// Process 10x Genomics Gene Expression, Feature Barcode, and Immune Profiling data
 #[derive(Parser, Debug)]
-#[clap(name = CMD, version = cr_version(), before_help = format!("{CMD} {}", cr_version()))]
+#[clap(name = CMD, version = get_version(), before_help = format!("{CMD} {}", get_version()))]
 struct CellRanger {
     #[clap(subcommand)]
     subcmd: SubCommand,
@@ -116,13 +111,13 @@ enum SubCommand {
     /// Prepare a reference for use with CellRanger VDJ.
     ///
     /// Build a Cell Ranger V(D)J-compatible reference folder from:
-    /// 1) A user-supplied genome FASTA and gene GTF files.
-    ///     For example, using files from ENSEMBL.
+    /// 1. A user-supplied genome FASTA and gene GTF files.
+    ///    For example, using files from ENSEMBL.
     ///
     /// OR
     ///
-    /// 2) A FASTA file containing V(D)J segments as per the mkvdjref spec.
-    ///     For example, using files from IMGT.
+    /// 2. A FASTA file containing V(D)J segments as per the mkvdjref spec.
+    ///    For example, using files from IMGT.
     ///
     /// Creates a new folder named after the genome.
     #[clap(name = "mkvdjref")]
@@ -310,7 +305,7 @@ impl Count {
         // if the token path is not supplied, default to the value expected by
         // cellranger cloud auth setup, which is $HOME/.config/txg/credential
         // cellranger cloud [args], which is $HOME/.config/txg/credentials
-        if tenx_cloud_token_path.is_none() {
+        if tenx_cloud_token_path.is_none() && c.cell_annotation_model.is_some() {
             if let Ok(default_token_path) = cloud_utils::default_token_path() {
                 tenx_cloud_token_path = Some(default_token_path);
             } else {
@@ -328,7 +323,6 @@ impl Count {
             recovered_cells: c.expect_cells,
             no_bam: !c.create_bam.validated()?,
             no_secondary_analysis: c.no_secondary_analysis,
-            no_target_umi_filter: false,
             force_cells: c.force_cells.map(|fc| fc.0),
             chemistry: c.chemistry,
             r1_length: c.r1_length,
@@ -362,7 +356,6 @@ struct CountCsMro {
     recovered_cells: Option<usize>,
     no_bam: bool,
     no_secondary_analysis: bool,
-    no_target_umi_filter: bool,
     force_cells: Option<usize>,
     chemistry: ChemistryParam,
     r1_length: Option<usize>,
@@ -431,6 +424,11 @@ impl Multi {
             config_hash,
             no_preflight: self.mrp.nopreflight,
         })
+    }
+
+    fn validate_config(&self) -> Result<()> {
+        let _config = MultiConfigCsv::from_csv(self.csv.clone())?;
+        Ok(())
     }
 }
 
@@ -802,7 +800,6 @@ impl Testrun {
             recovered_cells: None,
             no_bam: false,
             no_secondary_analysis: false,
-            no_target_umi_filter: false,
             force_cells: None,
             chemistry: ChemistryParam::Set(ChemistrySet::ThreePrimeV3),
             r1_length: None,
@@ -881,6 +878,7 @@ If you want to proceed with a feature barcode reference, but no feature barcode 
         }
 
         SubCommand::Multi(m) => {
+            m.validate_config()?;
             let mro = make_mro_with_comment(
                 "SC_MULTI_CS",
                 &m.to_mro_args()?,

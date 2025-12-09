@@ -114,7 +114,7 @@ func uploadEvent(ctx context.Context, event eventPayload,
 	if err != nil {
 		select {
 		case errc <- fmt.Errorf(
-			"creating request telementry upload request: %w", err):
+			"creating request telemetry upload request: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -132,7 +132,7 @@ func uploadEvent(ctx context.Context, event eventPayload,
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		select {
-		case errc <- fmt.Errorf("sending telementry: %w", err):
+		case errc <- fmt.Errorf("sending telemetry: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -143,10 +143,10 @@ func uploadEvent(ctx context.Context, event eventPayload,
 	b = bytes.TrimSpace(b)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		if len(b) > 0 {
-			errc <- fmt.Errorf("sending telementry: http %d: %s\n%s",
+			errc <- fmt.Errorf("sending telemetry: http %d: %s\n%s",
 				resp.StatusCode, resp.Status, string(b))
 		} else {
-			errc <- fmt.Errorf("sending telementry: http %d: %s",
+			errc <- fmt.Errorf("sending telemetry: http %d: %s",
 				resp.StatusCode, resp.Status)
 		}
 	}
@@ -199,7 +199,7 @@ func saveEventCache(cache string, event eventPayload, errc chan<- error) string 
 	dir := path.Join(cache, event.product, event.version)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		select {
-		case errc <- fmt.Errorf("creating telementry directory: %w", err):
+		case errc <- fmt.Errorf("creating telemetry directory: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -215,7 +215,7 @@ func saveEventCache(cache string, event eventPayload, errc chan<- error) string 
 			"*.json")
 	if err != nil {
 		select {
-		case errc <- fmt.Errorf("creating telementry file: %w", err):
+		case errc <- fmt.Errorf("creating telemetry file: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -224,14 +224,14 @@ func saveEventCache(cache string, event eventPayload, errc chan<- error) string 
 	defer f.Close()
 	if _, err := f.Write(event.content); err != nil {
 		select {
-		case errc <- fmt.Errorf("writing telementry file: %w", err):
+		case errc <- fmt.Errorf("writing telemetry file: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
 	}
 	if err := f.Close(); err != nil {
 		select {
-		case errc <- fmt.Errorf("closing telementry file: %w", err):
+		case errc <- fmt.Errorf("closing telemetry file: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -261,7 +261,7 @@ func cleanOldEvents(dir string, errc chan<- error) {
 	if err != nil {
 		select {
 		case errc <- fmt.Errorf(
-			"checking telementry output directory: %w", err):
+			"checking telemetry output directory: %w", err):
 		default:
 		}
 		return
@@ -275,7 +275,7 @@ func cleanOldEvents(dir string, errc chan<- error) {
 			if err := os.Remove(path.Join(dir, entry.Name())); err != nil {
 				select {
 				case errc <- fmt.Errorf(
-					"removing old telementry event: %w", err):
+					"removing old telemetry event: %w", err):
 				default:
 				}
 			}
@@ -286,7 +286,7 @@ func cleanOldEvents(dir string, errc chan<- error) {
 func saveEventInPipestance(dir, fn string, event eventPayload, errc chan<- error) string {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		select {
-		case errc <- fmt.Errorf("creating telementry directory: %w", err):
+		case errc <- fmt.Errorf("creating telemetry directory: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -312,7 +312,7 @@ func saveEventInPipestance(dir, fn string, event eventPayload, errc chan<- error
 	}
 	if err != nil {
 		select {
-		case errc <- fmt.Errorf("creating telementry file: %w", err):
+		case errc <- fmt.Errorf("creating telemetry file: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
@@ -321,14 +321,14 @@ func saveEventInPipestance(dir, fn string, event eventPayload, errc chan<- error
 	defer f.Close()
 	if _, err := f.Write(event.content); err != nil {
 		select {
-		case errc <- fmt.Errorf("writing telementry file: %w", err):
+		case errc <- fmt.Errorf("writing telemetry file: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}
 	}
 	if err := f.Close(); err != nil {
 		select {
-		case errc <- fmt.Errorf("closing telementry file: %w", err):
+		case errc <- fmt.Errorf("closing telemetry file: %w", err):
 		default:
 			// Enough errors to overwhelm reporting anyway.
 		}

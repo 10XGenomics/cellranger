@@ -34,10 +34,26 @@ const (
 	configUpdateInterval = time.Hour
 	DisableEnvVar        = "TENX_DISABLE_TELEMETRY"
 
-	configDownloadUrlBase = "https://config.telemetry.10xgenomics.com/"
-	telemetryUploadUrl    = "https://upload.telemetry.10xgenomics.com/api/v1/event"
-	PrivacyStatementUrl   = "https://10xgen.com/pipeline-telemetry"
+	configDownloadUrlBase   = "https://config.telemetry.10xgenomics.com/"
+	telemetryUploadUrl      = "https://upload.telemetry.10xgenomics.com/api/v1/event"
+	cellrangerPrivacyUrl    = "https://10xgen.com/pipeline-telemetry"
+	spacerangerPrivacyUrl   = "https://10xgen.com/sr-pipeline-telemetry"
+	cellrangerArcPrivacyUrl = "https://www.10xgenomics.com/support/software/" +
+		"cell-ranger-arc/latest/tutorials/cr-arc-pipeline-telemetry"
 )
+
+// PrivacyStatementUrl returns the appropriate privacy statement URL based on the product.
+func PrivacyStatementUrl() string {
+	product, _ := getProduct()
+	switch product {
+	case "spaceranger":
+		return spacerangerPrivacyUrl
+	case "cellranger-arc":
+		return cellrangerArcPrivacyUrl
+	default:
+		return cellrangerPrivacyUrl
+	}
+}
 
 // Attempts to find the directory containing the root of the pipeline
 // deployment.
@@ -253,8 +269,13 @@ func printWarningMessage() {
 	if err != nil {
 		dir = `~/.cache/tenx/telemetry/`
 	}
+	product, err := getProduct()
+	if err != nil {
+		product = "cellranger"
+	}
+	PrivacyStatementUrl := PrivacyStatementUrl()
 	fmt.Fprintf(os.Stderr,
-		`Thank you for using cellranger. To help us improve our product,
+		`Thank you for using %s. To help us improve our product,
 anonymized telemetry data has been collected and sent to 10X Genomics.
 This data helps us understand usage patterns, diagnose issues,
 and prioritize improvements.
@@ -263,11 +284,11 @@ You can inspect the telemetry metrics sent by looking in
 %s
 
 For more details on what data is collected and how it's used, please visit
-`+PrivacyStatementUrl+`
+%s
 
 You can disable telemetry at any time by running the following command:
-	cellranger telemetry disable
-`, dir)
+	%s telemetry disable
+`, product, dir, PrivacyStatementUrl, product)
 }
 
 func (status *TelemetryStatus) maybeWarn() {

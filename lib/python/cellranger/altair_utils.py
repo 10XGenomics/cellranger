@@ -98,3 +98,22 @@ def chart_to_json(
     chart_dict = chart.to_dict()
     sanitise_chart_dict(chart_dict)
     return chart_dict
+
+
+def convert_to_dict_list(data, key_str, value_str):
+    """Convert a list into a list of dictionaries with specified key and value strings for use with altair plots as input data.
+
+    Args:
+        data (list): The input data where each tuple contains two elements.
+        key_str (str): The string to be used as the key in the resulting dictionaries.
+        value_str (str): The string to be used as the value in the resulting dictionaries.
+
+    Returns:
+        list of dict: A list of dictionaries where each dictionary has the specified key and value strings.
+                      Both the key and value are converted to integers.
+    """
+    dict_list = [{key_str: key, value_str: value} for key, value in data]
+    for entry in dict_list:
+        entry[key_str] = int(entry[key_str])
+        entry[value_str] = int(entry[value_str])
+    return dict_list

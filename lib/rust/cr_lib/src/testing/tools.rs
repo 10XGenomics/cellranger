@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;

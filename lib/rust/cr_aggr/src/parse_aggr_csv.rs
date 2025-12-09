@@ -1,11 +1,12 @@
 //! Martian stage PARSE_AGGR_CSV
+#![expect(missing_docs)]
 
 use crate::errors::{FieldResolutionErrors, ParseAggrCsvErrors};
-use anyhow::{bail, Result};
+use anyhow::{Context, Result, bail};
 use cr_types::csv_parser::CsvParser;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, MartianType, make_mro};
 use martian_filetypes::tabular_file::CsvFile;
 use path_clean::PathClean;
 use serde::{Deserialize, Serialize};
@@ -43,47 +44,48 @@ impl CsvField {
 }
 
 struct MultiFilePaths {
-    count_v5: PathBuf,
-    count_v6: PathBuf,
+    molinfo: Option<PathBuf>,
     vdjt: PathBuf,
     vdjtgd: PathBuf,
     vdjb: PathBuf,
 }
 
 impl MultiFilePaths {
-    fn new(multi_path: &Path) -> Self {
-        MultiFilePaths {
-            count_v5: multi_path.join("count/molecule_info.h5"),
-            count_v6: multi_path.join("count/sample_molecule_info.h5"),
+    fn new(multi_path: &Path) -> Result<Self> {
+        let multi_pathbuf = multi_path.to_path_buf();
+        let molinfo = [
+            "sample_molecule_info.h5",
+            "count/sample_molecule_info.h5",
+            "count/molecule_info.h5",
+        ]
+        .into_iter()
+        .map(move |x| multi_pathbuf.join(x))
+        .filter(|x| x.exists())
+        .at_most_one()
+        .with_context(|| format!("Expected at most one molecule_info.h5 in {multi_path:?}"))?;
+
+        Ok(MultiFilePaths {
+            molinfo,
             vdjt: multi_path.join("vdj_t/vdj_contig_info.pb"),
             vdjtgd: multi_path.join("vdj_t_gd/vdj_contig_info.pb"),
             vdjb: multi_path.join("vdj_b/vdj_contig_info.pb"),
-        }
+        })
     }
+
     fn sub_libraries(&self) -> Vec<MultiSubLibraries> {
-        let mut ret_vec: Vec<MultiSubLibraries> = vec![];
-        if self.count_v5.exists() || self.count_v6.exists() {
-            ret_vec.push(MultiSubLibraries::Count);
-        }
-        if self.vdjt.exists() {
-            ret_vec.push(MultiSubLibraries::VdjT);
-        }
-        if self.vdjtgd.exists() {
-            ret_vec.push(MultiSubLibraries::VdjTGD);
-        }
-        if self.vdjb.exists() {
-            ret_vec.push(MultiSubLibraries::VdjB);
-        }
-        ret_vec
+        [
+            self.molinfo.is_some().then_some(MultiSubLibraries::Count),
+            self.vdjt.exists().then_some(MultiSubLibraries::VdjT),
+            self.vdjtgd.exists().then_some(MultiSubLibraries::VdjTGD),
+            self.vdjb.exists().then_some(MultiSubLibraries::VdjB),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
+
     fn mol_info(&self) -> Option<&Path> {
-        if self.count_v5.exists() {
-            Some(self.count_v5.as_ref())
-        } else if self.count_v6.exists() {
-            Some(self.count_v6.as_ref())
-        } else {
-            None
-        }
+        self.molinfo.as_deref()
     }
 }
 
@@ -128,16 +130,14 @@ fn process_multi_libraries(
             .join("\n");
         bail!(
             "The multi outs folders supplied as inputs to aggr contain an inconsistent set of \
-            libraries:\n{}\n\nIn order to aggr multi outs, we require that all the individual \
+            libraries:\n{desc}\n\nIn order to aggr multi outs, we require that all the individual \
             inputs contains the same set of library types. If you would like to aggr just one \
             library type, you can supply the `molecule_info` (for count) or the `vdj_contig_info` \
-            (for vdj)",
-            desc
+            (for vdj)"
         );
     }
 
     // Gather TCR libraries.
-
     let mut vdj_libs: Vec<VdjAggrCsvLibrary> = vec![];
     for mlib in &multi_libs {
         // For each library:
@@ -158,7 +158,7 @@ fn process_multi_libraries(
             if sublibs.contains(&MultiSubLibraries::VdjT) {
                 vdj_libs.push(VdjAggrCsvLibrary {
                     library_id: mlib.sample_id.clone(),
-                    vdj_contig_info: MultiFilePaths::new(&mlib.multi_outs).vdjt,
+                    vdj_contig_info: MultiFilePaths::new(&mlib.multi_outs)?.vdjt,
                     donor: donor.clone().unwrap(),
                     origin: origin.clone().unwrap(),
                     meta: vdj_meta.clone(),
@@ -173,7 +173,6 @@ fn process_multi_libraries(
     }
 
     // Gather BCR libraries.
-
     let mut vdj_libs: Vec<VdjAggrCsvLibrary> = vec![];
     for mlib in &multi_libs {
         // For each library:
@@ -194,7 +193,7 @@ fn process_multi_libraries(
             if sublibs.contains(&MultiSubLibraries::VdjB) {
                 vdj_libs.push(VdjAggrCsvLibrary {
                     library_id: mlib.sample_id.clone(),
-                    vdj_contig_info: MultiFilePaths::new(&mlib.multi_outs).vdjb,
+                    vdj_contig_info: MultiFilePaths::new(&mlib.multi_outs)?.vdjb,
                     donor: donor.clone().unwrap(),
                     origin: origin.clone().unwrap(),
                     meta: vdj_meta.clone(),
@@ -209,7 +208,6 @@ fn process_multi_libraries(
     }
 
     // Gather count libraries.
-
     for mut mlib in multi_libs {
         // For each library:
         // Detect what MultiSubLibraries are present (count)
@@ -218,7 +216,7 @@ fn process_multi_libraries(
             disable_count_aggr = false;
             count_libraries.push(CountLibrary {
                 library_id: mlib.sample_id.clone(),
-                molecule_h5: MultiFilePaths::new(&mlib.multi_outs)
+                molecule_h5: MultiFilePaths::new(&mlib.multi_outs)?
                     .mol_info()
                     .unwrap()
                     .to_owned(),
@@ -227,8 +225,6 @@ fn process_multi_libraries(
             });
         }
     }
-
-    // Return.
 
     Ok(ParseAggrCsvStageOutputs {
         aggregation_csv: Some(out_csv),
@@ -307,11 +303,10 @@ impl FieldKind {
             FieldKind::MultiFolderPath => {
                 let to_be_resolved = Path::new(to_be_resolved);
                 let resolved = resolve_path(to_be_resolved, pipestance_root, agg_csv_path)?;
-                let multi_paths = MultiFilePaths::new(&resolved);
+                let multi_paths = MultiFilePaths::new(&resolved)?;
 
                 if resolved.is_dir() {
-                    if multi_paths.count_v5.is_file()
-                        || multi_paths.count_v6.is_file()
+                    if multi_paths.molinfo.is_some()
                         || multi_paths.vdjt.is_file()
                         || multi_paths.vdjtgd.is_file()
                         || multi_paths.vdjb.is_file()
@@ -330,7 +325,7 @@ impl FieldKind {
     }
 }
 
-const ALLOWED_SPECIAL_CHARS: &str = r#"@%^&* ()-_+=[]|:;'."#;
+const ALLOWED_SPECIAL_CHARS: &str = r"@%^&* ()-_+=[]|:;'.";
 fn validate_text_value(value: &str) -> Result<String> {
     let result = value.to_string();
     for (i, c) in result.chars().enumerate() {
@@ -350,11 +345,10 @@ fn validate_text_value(value: &str) -> Result<String> {
 
 trait AggrCsvParser {
     type SampleDef;
+
     fn known_csv_fields() -> Vec<CsvField>;
-    fn build_sample_def(
-        &self,
-        valid_row: HashMap<String, String>,
-    ) -> Result<Self::SampleDef, ParseAggrCsvErrors>;
+
+    fn build_sample_def(&self, valid_row: HashMap<String, String>) -> Result<Self::SampleDef>;
 
     fn check<T: AsRef<str>>(headers: impl IntoIterator<Item = T>) -> bool {
         let headers: Vec<_> = headers.into_iter().map(|x| x.as_ref().into()).collect();
@@ -362,12 +356,14 @@ trait AggrCsvParser {
             .iter()
             .all(|f| headers.contains(&f.name))
     }
+
     fn known_csv_field_names() -> Vec<String> {
         Self::known_csv_fields()
             .into_iter()
             .map(|f| f.name)
             .collect()
     }
+
     fn parse_csv(&self, pipestance_root: &Path, csv_file: &Path) -> Result<Vec<Self::SampleDef>> {
         // Open the CSV
         // Read the headers and check them
@@ -462,6 +458,7 @@ pub const MULTI_OUTS: &str = "sample_outs";
 struct CountParser;
 impl AggrCsvParser for CountParser {
     type SampleDef = CountLibrary;
+
     fn known_csv_fields() -> Vec<CsvField> {
         use FieldConstraint::RequiredUnique;
         use FieldKind::{FilePath, Text};
@@ -470,10 +467,8 @@ impl AggrCsvParser for CountParser {
             CsvField::new(MOLECULE_H5_HEADER, FilePath, RequiredUnique),
         ]
     }
-    fn build_sample_def(
-        &self,
-        mut valid_row: HashMap<String, String>,
-    ) -> Result<Self::SampleDef, ParseAggrCsvErrors> {
+
+    fn build_sample_def(&self, mut valid_row: HashMap<String, String>) -> Result<Self::SampleDef> {
         Ok(CountLibrary {
             library_id: valid_row.remove(SAMPLE_ID_HEADER).unwrap(),
             molecule_h5: PathBuf::from(valid_row.remove(MOLECULE_H5_HEADER).unwrap()),
@@ -486,6 +481,7 @@ impl AggrCsvParser for CountParser {
 struct VdjParser;
 impl AggrCsvParser for VdjParser {
     type SampleDef = VdjAggrCsvLibrary;
+
     fn known_csv_fields() -> Vec<CsvField> {
         use FieldConstraint::{Required, RequiredUnique};
         use FieldKind::{FilePath, Text};
@@ -496,10 +492,8 @@ impl AggrCsvParser for VdjParser {
             CsvField::new(ORIGIN_HEADER, Text, Required),
         ]
     }
-    fn build_sample_def(
-        &self,
-        mut valid_row: HashMap<String, String>,
-    ) -> Result<Self::SampleDef, ParseAggrCsvErrors> {
+
+    fn build_sample_def(&self, mut valid_row: HashMap<String, String>) -> Result<Self::SampleDef> {
         Ok(VdjAggrCsvLibrary {
             library_id: valid_row.remove(SAMPLE_ID_HEADER).unwrap(),
             vdj_contig_info: PathBuf::from(valid_row.remove(VDJ_CONTIG_INFO_HEADER).unwrap()),
@@ -511,8 +505,10 @@ impl AggrCsvParser for VdjParser {
 }
 
 struct MultiParser;
+
 impl AggrCsvParser for MultiParser {
     type SampleDef = MultiAggrLibrary;
+
     fn known_csv_fields() -> Vec<CsvField> {
         use FieldConstraint::RequiredUnique;
         use FieldKind::{MultiFolderPath, Text};
@@ -521,12 +517,10 @@ impl AggrCsvParser for MultiParser {
             CsvField::new(MULTI_OUTS, MultiFolderPath, RequiredUnique),
         ]
     }
-    fn build_sample_def(
-        &self,
-        mut valid_row: HashMap<String, String>,
-    ) -> Result<Self::SampleDef, ParseAggrCsvErrors> {
+
+    fn build_sample_def(&self, mut valid_row: HashMap<String, String>) -> Result<Self::SampleDef> {
         let multi_outs = PathBuf::from(valid_row.remove(MULTI_OUTS).unwrap());
-        let libraries = MultiFilePaths::new(&multi_outs).sub_libraries();
+        let libraries = MultiFilePaths::new(&multi_outs)?.sub_libraries();
         Ok(MultiAggrLibrary {
             sample_id: valid_row.remove(SAMPLE_ID_HEADER).unwrap(),
             multi_outs,
@@ -650,6 +644,7 @@ fn check_outputs(outs: ParseAggrCsvStageOutputs) -> Result<ParseAggrCsvStageOutp
     }
     Ok(outs)
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct ParseAggrCsvStageOutputs {
     /// Input file copied, because it is a pipeline output as well
@@ -689,6 +684,7 @@ fn handle_deprecated_headers(csv: &Path) -> Result<()> {
 impl MartianMain for ParseAggrCsv {
     type StageInputs = ParseAggrCsvStageInputs;
     type StageOutputs = ParseAggrCsvStageOutputs;
+
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         // Need to handle parsing in three cases:
         // - Count only aggr
@@ -759,9 +755,9 @@ impl MartianMain for ParseAggrCsv {
 mod tests {
     use super::*;
     use insta::{assert_debug_snapshot, assert_json_snapshot, assert_snapshot};
+    use martian_filetypes::FileTypeRead;
     use martian_filetypes::json_file::JsonFile;
     use martian_filetypes::tabular_file::CsvFile;
-    use martian_filetypes::FileTypeRead;
     use pretty_assertions::assert_eq;
 
     impl ParseAggrCsvStageInputs {
@@ -791,7 +787,7 @@ mod tests {
         format!("{:#}", output.unwrap_err())
     }
 
-    fn error_to_string(err: anyhow::Error) -> String {
+    fn error_to_string(err: Error) -> String {
         format!("{err:#}")
     }
 
@@ -996,11 +992,11 @@ mod tests {
         let csv = "test_resources/parse_aggr_csv/pipes/csvs/missing_h5_file.csv";
         assert_eq!(
             err_string(csv),
-            error_to_string(anyhow::Error::from(ParseAggrCsvErrors::ErrorParsingField {
+            error_to_string(Error::from(ParseAggrCsvErrors::ErrorParsingField {
                 col: MOLECULE_H5_HEADER.to_string(),
                 line: 2,
                 path: PathBuf::from(csv),
-                source: anyhow::Error::from(FieldResolutionErrors::AbsPathDoesntExist {
+                source: Error::from(FieldResolutionErrors::AbsPathDoesntExist {
                     path: PathBuf::from("/no/such/file/molecule_info.h5"),
                 })
             }))
@@ -1012,11 +1008,11 @@ mod tests {
         let csv = "test_resources/parse_aggr_csv/pipes/csvs/vdj_invalid_proto.csv";
         assert_eq!(
             err_string(csv),
-            error_to_string(anyhow::Error::from(ParseAggrCsvErrors::ErrorParsingField {
+            error_to_string(Error::from(ParseAggrCsvErrors::ErrorParsingField {
                 col: VDJ_CONTIG_INFO_HEADER.to_string(),
                 line: 2,
                 path: PathBuf::from(csv),
-                source: anyhow::Error::from(FieldResolutionErrors::RelPathDoesntExist {
+                source: Error::from(FieldResolutionErrors::RelPathDoesntExist {
                     path: PathBuf::from("../invalid/dir/vdj_contig_info.pb"),
                     agg_csv_path: PathBuf::from(csv),
                     pipestance_root: PathBuf::new()
@@ -1371,7 +1367,7 @@ mod tests {
 
     #[test]
     fn test_check_headers_count() -> Result<()> {
-        assert!(CountParser::check([SAMPLE_ID_HEADER, MOLECULE_H5_HEADER]),);
+        assert!(CountParser::check([SAMPLE_ID_HEADER, MOLECULE_H5_HEADER]));
         assert!(CountParser::check([
             SAMPLE_ID_HEADER,
             MOLECULE_H5_HEADER,
@@ -1451,9 +1447,11 @@ mod tests {
         );
 
         // File instead of folder
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(abs_path.to_str().unwrap(), &pipestance_root, &agg_csv_path,)
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(abs_path.to_str().unwrap(), &pipestance_root, &agg_csv_path)
+                .is_err()
+        );
 
         assert_eq!(
             abs_path.to_str().unwrap(),
@@ -1467,7 +1465,7 @@ mod tests {
         assert_eq!(
             abs_path,
             // relative to pipestance root
-            resolve_path(Path::new("molecule.h5"), &pipestance_root, &agg_csv_path,)?
+            resolve_path(Path::new("molecule.h5"), &pipestance_root, &agg_csv_path)?
         );
 
         assert_eq!(
@@ -1521,23 +1519,29 @@ mod tests {
 
         let wrong_abs_path =
             cargo_dir.join("test_resources/parse_aggr_csv/path_resolution/pipe_root/WRONG.h5");
-        assert!(FieldKind::FilePath
-            .validate_and_resolve(
-                wrong_abs_path.to_str().unwrap(),
-                &pipestance_root,
-                &agg_csv_path,
-            )
-            .is_err());
+        assert!(
+            FieldKind::FilePath
+                .validate_and_resolve(
+                    wrong_abs_path.to_str().unwrap(),
+                    &pipestance_root,
+                    &agg_csv_path,
+                )
+                .is_err()
+        );
 
         // relative path
         assert!(resolve_path(Path::new("WRONG.h5"), &pipestance_root, &agg_csv_path).is_err());
-        assert!(FieldKind::FilePath
-            .validate_and_resolve("WRONG.h5", &pipestance_root, &agg_csv_path,)
-            .is_err());
+        assert!(
+            FieldKind::FilePath
+                .validate_and_resolve("WRONG.h5", &pipestance_root, &agg_csv_path)
+                .is_err()
+        );
 
-        assert!(FieldKind::FilePath
-            .validate_and_resolve("../WRONG/molecule.h5", &pipestance_root, &agg_csv_path,)
-            .is_err());
+        assert!(
+            FieldKind::FilePath
+                .validate_and_resolve("../WRONG/molecule.h5", &pipestance_root, &agg_csv_path)
+                .is_err()
+        );
 
         Ok(())
     }
@@ -1565,14 +1569,18 @@ mod tests {
         );
         // absolute path is not a correct multi out
         let abs_path_str = abs_path.to_str().unwrap();
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(abs_path_str, &pipestance_root, &agg_csv_path,)
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(abs_path_str, &pipestance_root, &agg_csv_path)
+                .is_err()
+        );
 
         // Expected a file, for a folder
-        assert!(FieldKind::FilePath
-            .validate_and_resolve(abs_path_str, &pipestance_root, &agg_csv_path,)
-            .is_err());
+        assert!(
+            FieldKind::FilePath
+                .validate_and_resolve(abs_path_str, &pipestance_root, &agg_csv_path)
+                .is_err()
+        );
 
         // path can be resolved
         assert_eq!(
@@ -1584,13 +1592,15 @@ mod tests {
             )?
         );
         // path can be resolved but it's not a correct multi out
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(
-                "another_dir", // relative to pipestance root
-                &pipestance_root,
-                &agg_csv_path,
-            )
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(
+                    "another_dir", // relative to pipestance root
+                    &pipestance_root,
+                    &agg_csv_path,
+                )
+                .is_err()
+        );
 
         // path can be resolved
         assert_eq!(
@@ -1602,13 +1612,15 @@ mod tests {
             )?
         );
         // path can be resolved but it's not a correct multi out
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(
-                "pipe_root/another_dir", // relative to agg.csv dir
-                &pipestance_root,
-                &agg_csv_path,
-            )
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(
+                    "pipe_root/another_dir", // relative to agg.csv dir
+                    &pipestance_root,
+                    &agg_csv_path,
+                )
+                .is_err()
+        );
 
         // test 2: resolve a multi directory
         // test/parse_aggr_csv/path_resolution/
@@ -1696,25 +1708,31 @@ mod tests {
             "test_resources/parse_aggr_csv/path_resolution/pipe_root/multi_dir_w_empty_subdirs",
         );
         // absolute path
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(abs_path.to_str().unwrap(), &pipestance_root, &agg_csv_path)
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(abs_path.to_str().unwrap(), &pipestance_root, &agg_csv_path)
+                .is_err()
+        );
         // relative to pipestance root
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(
-                "multi_dir_w_empty_subdirs/",
-                &pipestance_root,
-                &agg_csv_path
-            )
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(
+                    "multi_dir_w_empty_subdirs/",
+                    &pipestance_root,
+                    &agg_csv_path
+                )
+                .is_err()
+        );
         // relative to agg.csv dir
-        assert!(FieldKind::MultiFolderPath
-            .validate_and_resolve(
-                "pipe_root/multi_dir_w_empty_subdirs/",
-                &pipestance_root,
-                &agg_csv_path
-            )
-            .is_err());
+        assert!(
+            FieldKind::MultiFolderPath
+                .validate_and_resolve(
+                    "pipe_root/multi_dir_w_empty_subdirs/",
+                    &pipestance_root,
+                    &agg_csv_path
+                )
+                .is_err()
+        );
         Ok(())
     }
 

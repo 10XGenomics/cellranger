@@ -1,13 +1,14 @@
 //! Martian stage GET_GDNA_METRICS
+#![deny(missing_docs)]
 
 use crate::gdna_utils::compute_gdna_metrics;
 use anyhow::Result;
-use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::H5File;
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use martian::{MartianMain, MartianRover};
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeWrite;
+use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
@@ -37,7 +38,7 @@ pub struct GetGdnaMetricsStageOutputs {
     pub gdna_plot_sufficient_stats: JsonFile<GdnaPlottingSummary>,
 }
 
-// This is our stage struct
+/// Martian stage GET_GDNA_METRICS
 pub struct GetGdnaMetrics;
 
 #[make_mro(mem_gb = 4, volatile = strict)]

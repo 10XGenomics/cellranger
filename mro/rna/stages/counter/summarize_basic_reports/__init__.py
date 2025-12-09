@@ -6,20 +6,16 @@
 
 from __future__ import annotations
 
-import numpy as np
+import h5py
 
-import cellranger.matrix as cr_matrix
 import cellranger.report as cr_report
 import cellranger.rna.library as rna_library
 import cellranger.rna.refactor_report_matrix as refactor_rna_report_mat
 import cellranger.rna.report_matrix as rna_report_mat
 import cellranger.utils as cr_utils
 from cellranger.cell_calling_helpers import CellCallingParam, get_recovered_cells
-from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
-    FilteredBarcodes,
-)
-from cellranger.metrics import REFERENCE_PATH
-from cellranger.reference_paths import get_reference_genomes
+from cellranger.fast_utils import FilteredBarcodes
+from cellranger.matrix import CountMatrix
 
 __MRO__ = """
 stage SUMMARIZE_BASIC_REPORTS(
@@ -30,7 +26,6 @@ stage SUMMARIZE_BASIC_REPORTS(
     in  json             matrix_computer_summary,
     in  h5               barcode_summary,
     in  CellCallingParam recovered_cells,
-    in  path             reference_path,
     in  json[]           summary_jsons,
     in  tps.json         target_panel_summary,
     in  bool             sample_bcs_only,
@@ -44,41 +39,30 @@ stage SUMMARIZE_BASIC_REPORTS(
 
 
 def split(args):
-    mem_gb = int(np.ceil(cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5) + 3.5))
-
-    return {
-        "chunks": [],
-        "join": {
-            "__mem_gb": mem_gb,
-        },
-    }
+    _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(args.matrices_h5)
+    matrix_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=0.7)
+    with h5py.File(args.barcode_summary) as f:
+        len_barcode_summary = len(f["bc_sequence"])
+    barcode_summary_gib = round(272 * len_barcode_summary / 1024**3, 1)
+    mem_gib = 3 + matrix_gib + barcode_summary_gib
+    print(
+        f"{len_barcode_summary=},{num_barcodes=},{nnz=},{matrix_gib=},{barcode_summary_gib=},{mem_gib=}"
+    )
+    return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
 def join(args, outs, chunk_defs, chunk_outs):
     if args.target_panel_summary is not None:
         args.summary_jsons.append(args.target_panel_summary)
-    library_types = cr_matrix.CountMatrix.load_library_types_from_h5_file(args.matrices_h5)
-    raw_matrix = cr_matrix.CountMatrix.load_h5_file(args.matrices_h5)
-    if (
-        rna_library.GENE_EXPRESSION_LIBRARY_TYPE not in library_types
-        and rna_library.ANTIBODY_LIBRARY_TYPE in library_types
-    ):
-        # If we are in this branch, then antibody-only mode is being run.
-        # Antibody-only submatrix does not have a 'genome' tag, so infer
-        # the genome from the reference instead
-        genomes: list[str] = get_reference_genomes(args.reference_path)
-    else:
-        genomes: list[str] = raw_matrix.get_genomes()
-
+    raw_matrix = CountMatrix.load_h5_file(args.matrices_h5)
+    genomes = raw_matrix.get_genomes()
     filtered_barcodes = FilteredBarcodes(args.filtered_barcodes)
-
     genome_filtered_bcs = {
-        genome: set(barcodes)
-        for genome, barcodes in filtered_barcodes.per_genome_barcodes().items()
+        genome: set(barcodes or ())
+        for genome, barcodes in (
+            dict.fromkeys(genomes) | filtered_barcodes.per_genome_barcodes()
+        ).items()
     }
-    for genome in genomes:
-        if genome not in genome_filtered_bcs:
-            genome_filtered_bcs[genome] = set()
 
     # Re-compute various metrics on the filtered matrix
     reads_summary = cr_utils.merge_jsons_as_dict([args.matrix_computer_summary])
@@ -98,6 +82,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     del genome_filtered_bcs
     del raw_matrix
 
+    library_types = CountMatrix.load_library_types_from_h5_file(args.matrices_h5)
     antibody_present = rna_library.ANTIBODY_LIBRARY_TYPE in library_types
     crispr_present = rna_library.CRISPR_LIBRARY_TYPE in library_types
     custom_present = rna_library.CUSTOM_LIBRARY_TYPE in library_types
@@ -110,7 +95,4 @@ def join(args, outs, chunk_defs, chunk_outs):
         custom_present=custom_present,
         is_targeted=is_targeted,
     )
-    ref_path = {REFERENCE_PATH: args.reference_path}
-    cr_report.merge_jsons(
-        args.summary_jsons, outs.summary, [matrix_summary, per_cell_metrics, ref_path]
-    )
+    cr_report.merge_jsons(args.summary_jsons, outs.summary, [matrix_summary, per_cell_metrics])

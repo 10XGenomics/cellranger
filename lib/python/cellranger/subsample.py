@@ -5,13 +5,12 @@
 from __future__ import annotations
 
 import pickle
-from collections.abc import Collection, Iterable
+from collections.abc import Collection
 from copy import copy
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 
 import numpy as np
 import pandas as pd
-from six import ensure_binary
 
 import cellranger.molecule_counter as cr_mc
 import cellranger.rna.feature_ref as rna_feature_ref
@@ -19,19 +18,15 @@ import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 import tenkit.stats as tk_stats
 from cellranger.constants import OFF_TARGET_SUBSAMPLE, ON_TARGET_SUBSAMPLE
-from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
-    FilteredBarcodes,
-)
-
-if TYPE_CHECKING:
-    from cellranger.molecule_counter import MoleculeCounter
+from cellranger.cr_io import open_maybe_gzip
+from cellranger.fast_utils import FilteredBarcodes
 
 #####################################
 # Subsampling types and target depths
 
 # Fixed depths (reads per cell) for subsampling
 #   - for targeted gene expression libraries
-SUBSAMPLE_TARGETED_FIXED_DEPTHS = [
+SUBSAMPLE_TARGETED_FIXED_DEPTHS = (
     100,
     250,
     500,
@@ -45,30 +40,36 @@ SUBSAMPLE_TARGETED_FIXED_DEPTHS = [
     30000,
     40000,
     50000,
-]
+)
 
 #  - for bulk comparisons
-SUBSAMPLE_BULK_FIXED_DEPTHS = [
-    int(_x)
-    for _x in [
-        1e4,
-        5e4,
-        1e5,
-        2.5e5,
-        5e5,
-        1e6,
-        2.5e6,
-        5e6,
-        7.5e6,
-        1e7,
-        5e7,
-        1e8,
-        1e9,
-    ]
-]
+SUBSAMPLE_BULK_FIXED_DEPTHS = (
+    10_000,
+    50_000,
+    100_000,
+    250_000,
+    500_000,
+    1_000_000,
+    2_500_000,
+    5_000_000,
+    7_500_000,
+    10_000_000,
+    50_000_000,
+    100_000_000,
+    1_000_000_000,
+)
+
 
 #  - for all other libraries
-SUBSAMPLE_FIXED_DEPTHS = [1000, 3000, 5000, 10000, 20000, 30000, 50000]
+SUBSAMPLE_FIXED_DEPTHS = (
+    1_000,
+    3_000,
+    5_000,
+    10_000,
+    20_000,
+    30_000,
+    50_000,
+)
 
 # Number of additional quantile-based depth targets
 SUBSAMPLE_NUM_ADDITIONAL_DEPTHS = 10
@@ -78,18 +79,12 @@ RAW_SUBSAMPLE_TYPE = "raw_rpc"
 MAPPED_SUBSAMPLE_TYPE = "conf_mapped_barcoded_filtered_bc_rpc"
 RAW_CELLS_SUBSAMPLE_TYPE = "raw_barcoded_filtered_bc_rpc"
 BULK_SUBSAMPLE_TYPE = "raw_reads"
+LIBRARY_SUBSAMPLE_RATES = "library_subsample_rates"
+
 
 ALL_SUBSAMPLE_TYPES = [RAW_SUBSAMPLE_TYPE, MAPPED_SUBSAMPLE_TYPE]
 
 SUBSAMPLE_TARGET_MODES = [ON_TARGET_SUBSAMPLE, OFF_TARGET_SUBSAMPLE, None]
-
-
-def get_genomes(molecule_info: MoleculeCounter) -> list[str]:
-    assert molecule_info.feature_reference is not None
-    genomes = {genome: () for genome in molecule_info.feature_reference.get_genomes()}
-    for genome in molecule_info.get_barcode_info().genomes:
-        genomes[genome] = ()
-    return sorted(genomes)
 
 
 def get_num_cells_per_library(library_info, filtered_barcodes_csv):
@@ -112,29 +107,6 @@ def get_num_cells_per_library(library_info, filtered_barcodes_csv):
         [num_cells_per_gg.get(lib["gem_group"], 0) for lib in library_info]
     )
     return num_cells_per_lib
-
-
-def get_cell_associated_barcodes(genomes: Iterable[str], filtered_barcodes_csv):
-    """Get cell-associated barcodes by genome.
-
-    Args:
-        genomes (list of str): Genome names.
-        filtered_barcodes_csv (str): Path to CSV file.
-
-    Returns:
-        dict of (str, set): Map genome to list of cell-assoc barcodes.
-            Empty-string key is for all genomes.
-    """
-    # Get all cell-assoc barcodes (ignoring genome) for the '' (blank) genome string
-    cell_bcs = {
-        genome: cr_utils.get_cell_associated_barcode_set(
-            filtered_barcodes_csv, ensure_binary(genome)
-        )
-        for genome in genomes
-    }
-    # All cell-associated barcodes
-    cell_bcs[""] = set.union(*cell_bcs.values())
-    return cell_bcs
 
 
 def compute_target_depths(
@@ -207,6 +179,8 @@ def _subsampling_for_depth(
         if max_rate != 0.0:
             subsample_rates = subsample_rates / max_rate
     # zero out rates that are > 1
+    # NOT: On 10/2024 Nigel changed this to no longer run subsampling jobs with rate =0,
+    # as it was not clear why we would want this as described in the comments below.
     # This can only apply to the the default subsampling targets,
     # for which we still want to run subsampling jobs with rate=0.
     subsample_rates[subsample_rates > 1.0] = 0.0
@@ -215,7 +189,7 @@ def _subsampling_for_depth(
         "library_type": library_type,
         "subsample_type": subsample_type,
         "target_read_pairs_per_cell": int(target_depth),
-        "library_subsample_rates": list(subsample_rates),
+        LIBRARY_SUBSAMPLE_RATES: list(subsample_rates),
     }
 
 
@@ -226,7 +200,7 @@ def make_subsamplings(
     num_cells_per_lib: np.ndarray,
     raw_reads_per_lib: np.ndarray,
     usable_reads_per_lib: np.ndarray,
-    fixed_depths: list[int],
+    fixed_depths: tuple[int, ...],
     num_additional_depths: int,
 ) -> list[SubsamplingDef]:
     """Create metadata for subsampling jobs of a specified subsampling type.
@@ -242,7 +216,7 @@ def make_subsamplings(
         num_cells_per_lib (np.array of int): number of filtered barcodes per library
         raw_reads_per_lib (np.array of int): number of raw reads per library
         usable_reads_per_lib (np.array of int): number of usable reads per library
-        fixed_depths (list of int): fixed subsampling depths (reads per cell)
+        fixed_depths (tuple of int): fixed subsampling depths (reads per cell)
             to include by default
         num_additional_depths (int): number of subsampling depths to use,
             in addition to the defaults
@@ -290,7 +264,6 @@ def make_subsamplings(
     )
     target_depths.sort()
     target_depths = np.unique(target_depths)
-
     return [
         _subsampling_for_depth(
             target_depth,
@@ -448,9 +421,6 @@ def run_subsampling(
     """
     # NOTE: setting the random seed below, within each task
     with cr_mc.MoleculeCounter.open(molecule_info_h5, "r") as mc:
-        # Get cell-associated barcodes
-        genomes = get_genomes(mc)
-
         # Load chunk of relevant data from the mol_info
         chunk = slice(int(chunk_start), int(chunk_start) + int(chunk_len))
         mol_library_idx = mc.get_column_lazy("library_idx")[chunk]
@@ -478,6 +448,7 @@ def run_subsampling(
         filtered_barcodes = FilteredBarcodes(filtered_barcodes_csv)
 
         # Give each genome an integer index
+        genomes = mc.get_genomes_with_empty_string()
         genome_to_int = {g: i for i, g in enumerate(genomes)}
         assert mc.feature_reference is not None
         feature_int_to_genome_int = np.fromiter(
@@ -589,7 +560,7 @@ def _run_subsample_task(
     # Set random seed
     np.random.seed(1)
     # Per-library subsampling rates
-    rates_per_library = np.array(task["library_subsample_rates"], dtype=np.float64)
+    rates_per_library = np.array(task[LIBRARY_SUBSAMPLE_RATES], dtype=np.float64)
     is_bulk_subsampling = task["subsample_type"] == BULK_SUBSAMPLE_TYPE
     is_raw_cells_subsampling = task["subsample_type"] == RAW_CELLS_SUBSAMPLE_TYPE
 
@@ -670,20 +641,19 @@ def compute_dup_frac(read_pairs, umis):
     return tk_stats.robust_divide(read_pairs - umis, read_pairs) if read_pairs > 0 else 0.0
 
 
-def join_metrics(metrics):
+def join_metrics(metrics: list[str]):
     """Join together a list of metric dicts (each value is a numpy vector).
 
-    :param metrics: list of metrics
+    :param metrics: list of metrics pickle files
     :return: joined dictionary
     """
     if len(metrics) == 0:
         return {}
-    with open(metrics[0], "rb") as f:
+    with open_maybe_gzip(metrics[0], "rb") as f:
         data = pickle.load(f)
     for m in metrics[1:]:
-        with open(m, "rb") as f:
-            chunk_data = pickle.load(f)
-            for k, v in chunk_data.items():
+        with open_maybe_gzip(m, "rb") as f:
+            for k, v in pickle.load(f).items():
                 data[k] += v
     return data
 
@@ -705,7 +675,7 @@ def calculate_subsampling_metrics(
     summary = {}
 
     with cr_mc.MoleculeCounter.open(molecule_info_h5, "r") as mc:
-        genomes = get_genomes(mc)
+        genomes = mc.get_genomes_with_empty_string()
         assert mc.library_info is not None
         lib_types = rna_library.sorted_library_types(mc.library_info)
         lib_type_map = {lt: idx for (idx, lt) in enumerate(lib_types)}

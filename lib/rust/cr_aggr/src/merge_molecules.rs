@@ -1,14 +1,19 @@
 //! Martian stage MERGE_MOLECULES
+#![expect(missing_docs)]
 
-use anyhow::{bail, Result};
-use barcode::Barcode;
+use anyhow::Result;
+use barcode::BarcodeContent;
 use cr_h5::molecule_info::{
     BarcodeIdxType, LibraryIdxType, MoleculeInfoIterator, MoleculeInfoReader, MoleculeInfoWriter,
+    bin_barcodes, open_for_modification, trim_barcodes,
 };
-use cr_types::{aggr, LibraryInfo};
+use cr_types::aggr::SampleDef;
+use cr_types::probe_set::Probe;
+use cr_types::reference::feature_reference::FeatureReference;
+use cr_types::{LibraryInfo, aggr};
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use metric::{JsonReporter, TxHashSet};
 use ndarray::s;
 use serde::{Deserialize, Serialize};
@@ -21,18 +26,18 @@ martian_filetype!(H5File, "h5");
 
 #[derive(Debug, Deserialize, Clone, MartianStruct)]
 pub struct MergeMoleculesStageInputs {
-    sample_defs: Vec<aggr::SampleDef>,
+    sample_defs: Vec<SampleDef>,
     libraries: Vec<aggr::LibraryInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, MartianStruct)]
 pub struct MergeMoleculesChunkInputs {
-    sample_def: aggr::SampleDef,
+    sample_def: SampleDef,
 }
 
 #[derive(Debug, Serialize, Deserialize, MartianStruct)]
 pub struct MergeMoleculesChunkOutputs {
-    sample_def: aggr::SampleDef,
+    sample_def: SampleDef,
 }
 
 #[derive(Debug, Serialize, Deserialize, MartianStruct)]
@@ -41,6 +46,9 @@ pub struct MergeMoleculesStageOutputs {
     #[mro_type = "map<int[]>"]
     gem_group_barcode_ranges: HashMap<String, Vec<u64>>,
 }
+
+// NOTE: Sync with switchboard.py
+const HD_BINNING_SCALE: u32 = 8;
 
 pub struct MergeMolecules;
 
@@ -56,43 +64,45 @@ impl MartianStage for MergeMolecules {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let bc_mem: Vec<_> = args
+        /// Return the memory required to load n barcodes.
+        fn barcode_mem_gib(num_barcodes: usize) -> usize {
+            (num_barcodes * size_of::<BarcodeContent>()).div_ceil(1024 * 1024 * 1024)
+        }
+
+        // The number of non-zero barcodes per chunk.
+        let num_nz_barcodes: Vec<_> = args
             .sample_defs
             .iter()
-            .map(|sample_def| {
-                anyhow::Ok(
-                    std::mem::size_of::<Barcode>()
-                        * MoleculeInfoReader::read_barcodes_size(&sample_def.molecule_h5)?,
-                )
-            })
+            .map(|sample_def| MoleculeInfoReader::count_non_zero_bcs(&sample_def.molecule_h5))
             .try_collect()?;
+        let num_barcodes: Vec<_> = args
+            .sample_defs
+            .iter()
+            .map(|sample_def| MoleculeInfoReader::read_barcodes_size(&sample_def.molecule_h5))
+            .try_collect()?;
+        let chunk_mem_gib: Vec<_> = num_barcodes
+            .iter()
+            .map(|&n| 1 + barcode_mem_gib(n))
+            .collect();
 
-        // Max mem for join step depends mostly on the size of the merged barcodes,
-        // which are a concatenation of the (trimmed) barcodes of each sample.
-        // In the worst case (when no barcodes are trimmed) that's the sum of
-        // the length of all barcodes.
-        // set up a lower bound on the allocation
-        // From CELLRANGER-5358: analysing QA runs for aggr show that 2.1x the barcode mem
-        // is sufficient for the join stage.
-        let bc_mem_sum: usize = bc_mem.iter().sum();
-        let join_mem = 2.1 * (bc_mem_sum as f64);
-        let join_mem_gb = (join_mem / 1e9).max(6.0).ceil() as isize;
+        // The maximum number of barcodes is the sum of the non-zero barcodes in each chunk.
+        let num_nz_barcodes_sum: usize = num_nz_barcodes.iter().sum();
+        let join_mem_gib = 5 + barcode_mem_gib(num_nz_barcodes_sum);
 
-        Ok(zip(args.sample_defs, bc_mem)
-            .map(|(sample_def, bc_mem)| {
-                // Using 3.5x the memory here because of multiple copies:
-                // - barcode_index takes a slice and collect a vec of the barcodes (~2x required)
-                // - after barcodes are sorted, still has to allocate HashMap (~2x required again)
-                // using 3.5x to leave some space to account for other operations during processing
-                let chunk_mem = 3.5 * (bc_mem as f64);
-                let chunk_mem_gb = (chunk_mem / 1e9).ceil() as isize;
+        for (i, (n, mem_gib)) in zip(num_barcodes, &chunk_mem_gib).enumerate() {
+            println!("chunk={i},num_barcodes={n},mem_gib={mem_gib}");
+        }
+        println!("chunk=join,num_barcodes={num_nz_barcodes_sum},mem_gib={join_mem_gib}");
+
+        Ok(zip(args.sample_defs, chunk_mem_gib)
+            .map(|(sample_def, mem_gib)| {
                 (
                     MergeMoleculesChunkInputs { sample_def },
-                    Resource::with_mem_gb(chunk_mem_gb),
+                    Resource::with_mem_gb(mem_gib as isize),
                 )
             })
             .collect::<StageDef<_>>()
-            .join_resource(Resource::with_mem_gb(join_mem_gb)))
+            .join_resource(Resource::with_mem_gb(join_mem_gib as isize)))
     }
 
     fn main(
@@ -106,10 +116,18 @@ impl MartianStage for MergeMolecules {
             chunk_args.sample_def.library_id
         ));
         std::fs::copy(chunk_args.sample_def.molecule_h5, &molecule_h5)?;
-        MoleculeInfoWriter::from_file(&molecule_h5)?.trim_barcodes(false)?;
+
+        // Ensure we can write to the file and that it is a compatible version.
+        open_for_modification(&molecule_h5)?;
+
+        if MoleculeInfoReader::is_visium_hd(&molecule_h5)? {
+            let tmp_shard_path: PathBuf = rover.make_path("tmp_shard.shard");
+            bin_barcodes(&molecule_h5, HD_BINNING_SCALE, &tmp_shard_path)?;
+        }
+        trim_barcodes(&molecule_h5, false)?;
 
         Ok(MergeMoleculesChunkOutputs {
-            sample_def: aggr::SampleDef {
+            sample_def: SampleDef {
                 molecule_h5,
                 ..chunk_args.sample_def
             },
@@ -123,30 +141,21 @@ impl MartianStage for MergeMolecules {
         chunk_outs: Vec<Self::ChunkOutputs>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
+        let new_sample_defs: Vec<_> = chunk_outs.into_iter().map(|x| x.sample_def).collect();
+
         // TODO: merged_barcodes can have duplicated barcodes,
         // since new barcode_idx is calculated by updating an offset
         // into the concatenated trimmed barcodes from previous step.
         // But this can be collected into a BTreeSet, sorted,
         // and reuse idx. Maybe? Need to check.
-        let new_sample_defs: Vec<_> = chunk_outs.into_iter().map(|x| x.sample_def).collect();
         let merged_barcodes: Vec<_> = new_sample_defs
             .iter()
             .map(|x| MoleculeInfoReader::read_barcodes(&x.molecule_h5))
             .flatten_ok()
+            .map(|x| x?)
             .try_collect()?;
 
-        let mut feature_ref = None;
-        for sample_def in &new_sample_defs {
-            let fref = MoleculeInfoIterator::new(&sample_def.molecule_h5)?.feature_ref;
-            if fref.has_target_features() {
-                feature_ref = Some(fref);
-                break;
-            }
-            feature_ref = Some(fref);
-        }
-        let Some(feature_ref) = feature_ref else {
-            bail!("Invalid feature reference");
-        };
+        let (feature_ref, probes) = get_fref_and_probes(&new_sample_defs)?;
 
         let mut gem_group_barcode_ranges: HashMap<String, Vec<u64>> = Default::default();
         let mut barcode_idx_offset: usize = 0;
@@ -208,7 +217,7 @@ impl MartianStage for MergeMolecules {
 
             bc_idx_offsets.push(barcode_idx_offset as BarcodeIdxType);
 
-            let (mut pass_filter, genomes) = MoleculeInfoReader::read_barcode_info(&in_h5)?;
+            let mut pass_filter = MoleculeInfoReader::read_barcode_info_pass_filter(&in_h5)?;
             // Offset the barcode index
             for x in pass_filter.slice_mut(s![.., 0]) {
                 *x += barcode_idx_offset as u64;
@@ -218,6 +227,7 @@ impl MartianStage for MergeMolecules {
                 *x = lib_idx_map[*x as usize] as u64;
             }
 
+            let genomes = MoleculeInfoReader::read_barcode_info_genomes(&in_h5)?;
             bc_infos.push((pass_filter, genomes));
 
             // Now get the metrics
@@ -229,7 +239,7 @@ impl MartianStage for MergeMolecules {
                 .into_iter()
                 .map(|(k, v)| {
                     if k == "gem_groups" {
-                        let new_gg_metrics: serde_json::Map<String, serde_json::Value> = v
+                        let new_gg_metrics: serde_json::Map<String, Value> = v
                             .as_object()
                             .unwrap()
                             .into_iter()
@@ -239,7 +249,7 @@ impl MartianStage for MergeMolecules {
                             .collect();
                         (k, Value::from(new_gg_metrics))
                     } else if k == "libraries" {
-                        let new_lib_metrics: serde_json::Map<String, serde_json::Value> = v
+                        let new_lib_metrics: serde_json::Map<String, Value> = v
                             .as_object()
                             .unwrap()
                             .into_iter()
@@ -294,12 +304,17 @@ impl MartianStage for MergeMolecules {
             .map(|v| LibraryInfo::Aggr(v.lib))
             .collect();
 
+        // Pass a placeholder vec of true for filtered probes.
+        // TODO: it might be best to derive this from the inputs, but at present
+        // nothing in the pipeline reads this data.
+        let filtered_probes = probes.as_ref().map(|probes| vec![true; probes.len()]);
+
         let mut merged = MoleculeInfoWriter::new(
             &merged_molecules,
             &feature_ref,
-            None,
-            None,
-            &merged_barcodes,
+            probes.as_deref(),
+            filtered_probes.as_deref(),
+            merged_barcodes,
             &library_info,
         )?;
         drop(feature_ref);
@@ -328,11 +343,62 @@ impl MartianStage for MergeMolecules {
     }
 }
 
+enum ProbesState {
+    /// Initial state.
+    Undetermined,
+    /// We are using probes.
+    Probes(Vec<Probe>),
+    /// One or more inputs do not have probes.
+    Skip,
+}
+
+impl ProbesState {
+    /// Update our probes collection state with an optional collection.
+    ///
+    /// If we have more than one collection of probes, assert they are identical.
+    fn update(self, probes: Option<Vec<Probe>>) -> Self {
+        match (self, probes) {
+            (Self::Undetermined, Some(p)) => Self::Probes(p),
+            (Self::Probes(existing), Some(p)) => {
+                assert_eq!(existing, p);
+                Self::Probes(existing)
+            }
+            (_, None) | (Self::Skip, _) => Self::Skip,
+        }
+    }
+
+    fn into_option(self) -> Option<Vec<Probe>> {
+        match self {
+            Self::Probes(p) => Some(p),
+            _ => None,
+        }
+    }
+}
+
+/// Extract feature reference and probes data.
+/// Prefer targeted feature reference if present.
+/// Only include probes data if all inputs have probes.
+fn get_fref_and_probes(
+    new_sample_defs: &[SampleDef],
+) -> Result<(FeatureReference, Option<Vec<Probe>>)> {
+    let mut feature_ref = None;
+    let mut probes = ProbesState::Undetermined;
+
+    for sample_def in new_sample_defs {
+        let reader = MoleculeInfoIterator::new(&sample_def.molecule_h5)?;
+        probes = probes.update(reader.probes);
+        let fref = reader.feature_ref;
+        if feature_ref.is_none() || fref.has_target_features() {
+            feature_ref = Some(fref);
+        }
+    }
+    // The only way this unwrap can fail is if we have no samples...
+    Ok((feature_ref.unwrap(), probes.into_option()))
+}
+
 #[cfg(test)]
 mod merge_molecules_tests {
     use super::*;
-    use barcode::BarcodeContent;
-    use cr_h5::molecule_info::FullUmiCount;
     use cr_types::reference::feature_reference::FeatureReferenceFile;
     use cr_types::{LibraryType, UmiCount};
     use martian::MartianTempFile;
@@ -408,21 +474,19 @@ mod merge_molecules_tests {
             .map(|barcodes| {
                 let tfile = tempfile::NamedTempFile::new().expect("Failed to create temp file");
 
-                let library_info = [cr_types::LibraryInfo::Count(
-                    cr_types::rna_read::LibraryInfo {
-                        library_id: 0,
-                        gem_group: 0,
-                        target_set_name: None,
-                        library_type: LibraryType::Gex,
-                    },
-                )];
+                let library_info = [LibraryInfo::Count(cr_types::rna_read::LibraryInfo {
+                    library_id: 0,
+                    gem_group: 0,
+                    target_set_name: None,
+                    library_type: LibraryType::Gex,
+                })];
 
                 let mut molinfo = MoleculeInfoWriter::new(
                     tfile.as_ref(),
                     &feature_def,
                     None,
                     None,
-                    &barcodes,
+                    barcodes,
                     &library_info,
                 )
                 .expect("unable to create molecule file");
@@ -441,22 +505,20 @@ mod merge_molecules_tests {
                     .expect("error writing metrics");
 
                 for j in 0..10 {
-                    let umi = FullUmiCount {
-                        // There are 3 barcodes per file, but the third one didn't pass_filter
-                        barcode_idx: j % 2_u64,
-                        gem_group: 0,
-                        umi_data: UmiCount {
-                            library_idx: 0,
-                            feature_idx: (j % 3) as _,
-                            probe_idx: None, //TODO: no aggring of probe_idx for now.
-                            umi: j as _,
-                            read_count: (j * 2) as _,
-                            utype: UmiType::Txomic,
-                        },
-                    };
-
+                    // There are 3 barcodes per file, but the third one didn't pass_filter
                     molinfo
-                        .consume_iterator_value(umi)
+                        .write(
+                            0,
+                            j % 2_u64,
+                            &UmiCount {
+                                library_idx: 0,
+                                feature_idx: (j % 3) as _,
+                                probe_idx: None, //TODO: no aggring of probe_idx for now.
+                                umi: j as _,
+                                read_count: (j * 2) as _,
+                                utype: UmiType::Txomic,
+                            },
+                        )
                         .expect("error adding umi to molecule_info");
                 }
                 molinfo.flush().expect("error flushing molinfo to disk");
@@ -483,7 +545,7 @@ mod merge_molecules_tests {
         let sample_defs: Vec<_> = tfiles
             .iter()
             .enumerate()
-            .map(|(i, tfile)| aggr::SampleDef {
+            .map(|(i, tfile)| SampleDef {
                 library_id: format!("mi_{i}"),
                 molecule_h5: tfile.as_ref().into(),
             })
@@ -509,17 +571,24 @@ mod merge_molecules_tests {
         assert_eq!(res.gem_group_barcode_ranges, gem_group_barcode_ranges);
 
         // Verify barcodes length for original and merged files
-        let original_bcs: Vec<_> = tfiles
+        let original_bcs: Vec<Vec<BarcodeContent>> = tfiles
             .iter()
             .map(|t| {
-                MoleculeInfoReader::read_barcodes(t.as_ref())
-                    .expect("Error reading original barcodes")
+                MoleculeInfoReader::read_barcodes(t.path())
+                    .unwrap()
+                    .try_collect()
+                    .unwrap()
             })
             .collect();
-        let merged_bcs = MoleculeInfoReader::read_barcodes(&res.merged_molecules)
-            .expect("Error reading original barcodes");
+        for bcs in &original_bcs {
+            assert_eq!(bcs.len(), 3);
+        }
 
-        original_bcs.iter().for_each(|bcs| assert_eq!(bcs.len(), 3));
+        let merged_bcs: Vec<BarcodeContent> =
+            MoleculeInfoReader::read_barcodes(&res.merged_molecules)
+                .unwrap()
+                .try_collect()
+                .unwrap();
         assert_eq!(merged_bcs.len(), 4);
 
         // Iter over all UMIs for both merged and original files

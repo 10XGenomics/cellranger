@@ -4,7 +4,7 @@ from __future__ import annotations
 import enum
 import itertools
 from collections import Counter, OrderedDict
-from collections.abc import Collection, Container, Iterable, Mapping
+from collections.abc import Collection, Container, Iterable, Mapping, Sized
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -27,7 +27,7 @@ from cellranger.rna.report_matrix import load_per_barcode_metrics
 from tenkit.stats import robust_divide
 
 if TYPE_CHECKING:
-    from cellranger import matrix as cr_matrix
+    from cellranger.matrix import CountMatrix, CountMatrixView
 
 ## Cell calling constants
 ORDMAG_NUM_BOOTSTRAP_SAMPLES = 100
@@ -42,16 +42,19 @@ MAX_RECOVERED_CELLS_PER_GEM_GROUP = 1 << 18
 ## High occupancy GEM filtering constants (multiplex FRP only)
 RECOVERY_FACTOR = 1 / 1.65  # suggested by assaydev
 TOTAL_INSTRUMENT_PARTITIONS = 115000  # assumes typical standard kit run
+CUMULATIVE_CELLS_CUT_OFF = (
+    0.999  # Pick a HOGs filter threshold such that on simulated data, this many cells are kept
+)
 
 
 class MitoStats:  # pylint: disable=too-few-public-methods
     """Holds mitochondrial stats for diagnotic plots to be used in the websummary."""
 
-    def __init__(self, matrix: cr_matrix.CountMatrix):
+    def __init__(self, matrix: CountMatrix):
         """Class initialized with various stats.
 
         Args:
-            matrix (cr_matrix.CountMatrix): Count matrix.
+            matrix (CountMatrix): Count matrix.
             mt_index (list): List of indices of mitochondrial genes in the count matrix.
         """
         self._get_mito_loc(matrix)
@@ -63,7 +66,7 @@ class MitoStats:  # pylint: disable=too-few-public-methods
         self.total_umi_log = np.log1p(self.total_umi) / np.log(10)
         # TO DO: add genome information for BY samples.
 
-    def _get_mito_loc(self, matrix: cr_matrix.CountMatrix):
+    def _get_mito_loc(self, matrix: CountMatrix):
         """Function to get indices of mitochondrial genes."""
         mt_ensembl_ids = [
             # human
@@ -143,7 +146,7 @@ def get_filter_method_name(fm: FilterMethod) -> str:
     elif fm == FilterMethod.TARGETED:
         return "targeted"
     else:
-        raise ValueError("Unsupported filter method value %d" % fm)
+        raise ValueError(f"Unsupported filter method value {fm}")
 
 
 def get_filter_method_from_string(name: str) -> FilterMethod:
@@ -160,7 +163,7 @@ def get_filter_method_from_string(name: str) -> FilterMethod:
     elif name == "targeted":
         return FilterMethod.TARGETED
     else:
-        raise ValueError("Unknown filter method value %d" % name)
+        raise ValueError(f"Unknown filter method value {name}")
 
 
 def validate_cell_calling_args(
@@ -270,15 +273,38 @@ def remove_antibody_antigen_aggregates(
     return cleaned_matrix, metrics_to_report, removed_bcs_df
 
 
+def _find_cells_per_gem_cutoff(
+    simulated_barcode_counts: Collection[int],
+    cumulative_cells_cut_off: float,
+) -> int:
+    """Find the cutoff for high occupancy GEMs based on simulated barcode counts.
+
+    The cutoff should keep cumulative_cells_cut_off fraction of cells in the simulated data.
+    """
+    gem_cell_count_to_gem_freq = Counter(simulated_barcode_counts)
+    gem_cell_count_to_gem_freq = [
+        cell_count * gem_cell_count_to_gem_freq[cell_count]
+        for cell_count in range(max(gem_cell_count_to_gem_freq.keys()) + 1)
+    ]
+    cum_freq = np.cumsum(gem_cell_count_to_gem_freq) / sum(gem_cell_count_to_gem_freq)
+
+    for i, freq in enumerate(cum_freq):
+        if freq >= cumulative_cells_cut_off:
+            return i
+    raise ValueError(
+        f"Could not find a cutoff for {cumulative_cells_cut_off=} in simulated data: {cum_freq=}"
+    )
+
+
 def _get_high_occupancy_gem_threshold(
-    estimated_lambda: float,
+    mean_cells_per_gem: float,
     probe_barcodes_observed: list[str],
     total_simulated_gems: int = 1000000,
 ) -> int:
     """Determine threshold for classifying GEMs as having more probe barcodes than expected.
 
     Args:
-        estimated_lambda (float): estimated lambda for the run
+        mean_cells_per_gem (float): observed average cells per GEM, including empty GEMs (i.e. estimated lambda)
         probe_barcodes_observed (Iterable[str]): full list of probe barocodes from each filtered cell barcode (one entry per filtered barcode).
             Used to get the total number of probe barcodes and account for the frequency of each probe barcode within filtered barcodes.
         total_simulated_gems (int): total number of simulated GEMs to generate at specified lambda
@@ -287,11 +313,15 @@ def _get_high_occupancy_gem_threshold(
     Returns:
         int: the number of probe barcodes per GEM over which a GEMs will be considered high occupancy
     """
-    if estimated_lambda == 0:
+    if mean_cells_per_gem == 0:
         return 0
 
     np.random.seed(0)
-    random_gems = np.random.poisson(estimated_lambda, total_simulated_gems)
+    random_gems = np.random.negative_binomial(
+        n=mean_cells_per_gem,  # With p=0.5, this will generate a distribution of GEMs with mean equal to mean_cells_per_gem
+        p=0.5,  # Setting p=0.5 will generate a distribution of GEMs with variance equal to 2 * mean_cells_per_gem
+        size=total_simulated_gems,
+    )
     random_gems = list(random_gems[random_gems > 0])
     max_cells_in_gem = np.max(random_gems)
 
@@ -309,7 +339,7 @@ def _get_high_occupancy_gem_threshold(
         for i, barcode_count in enumerate(random_gems)
     ]
 
-    return int(np.ceil(np.quantile(simulated_barcode_counts, 0.999)))
+    return _find_cells_per_gem_cutoff(simulated_barcode_counts, CUMULATIVE_CELLS_CUT_OFF)
 
 
 def remove_bcs_from_high_occupancy_gems(
@@ -345,16 +375,15 @@ def remove_bcs_from_high_occupancy_gems(
     barcodes_per_gem = Counter(gem_bcs)
     gem_bc_count_distribution = Counter(barcodes_per_gem.values())
 
-    gem_bc_count_distribution[0] = max(
-        0, int((total_instrument_partitions * recovery_factor) - gems_with_filtered_barcodes)
-    )  # don't let this go negative
-
-    # Estimate lambda
-    estimated_lambda = float(
-        np.average(
-            list(gem_bc_count_distribution.keys()), weights=list(gem_bc_count_distribution.values())
-        )
+    # Assumed total number of GEMs
+    total_gems = max(
+        int(total_instrument_partitions * recovery_factor),
+        gems_with_filtered_barcodes,
     )
+    gem_bc_count_distribution[0] = total_gems - gems_with_filtered_barcodes
+
+    # Estimate lambda to be the average number of cells per GEM, including those with no cells
+    estimated_lambda = len(filtered_bcs) / total_gems
 
     # Compute high occupancy GEM threshold
     high_occupancy_gem_threshold = _get_high_occupancy_gem_threshold(estimated_lambda, probe_bcs)
@@ -416,10 +445,8 @@ def remove_bcs_from_high_occupancy_gems(
 
     # Revised filtered barcodes
     filtered_bcs = [bc for bc in filtered_bcs if bc not in barcodes_in_high_occupancy_gem_set]
-    for k in genome_filtered_bcs:
-        genome_filtered_bcs[k] = [
-            bc for bc in genome_filtered_bcs[k] if bc not in barcodes_in_high_occupancy_gem_set
-        ]
+    for k, v in genome_filtered_bcs.items():
+        genome_filtered_bcs[k] = [bc for bc in v if bc not in barcodes_in_high_occupancy_gem_set]
 
     return filtered_bcs, genome_filtered_bcs, summary
 
@@ -433,21 +460,21 @@ class MetricGroups(NamedTuple):
 
 
 def call_initial_cells(
-    matrix,
+    matrix: CountMatrix | CountMatrixView,
     genomes: Iterable[str],
     sample: str,
     unique_gem_groups: Collection[int],
     method: FilterMethod,
     recovered_cells: int | None,
     cell_barcodes: str | bytes,
-    force_cells: int,
+    force_cells: int | None,
     feature_types: Container,
     chemistry_description: str | None,
     target_features: Iterable[int] | None = None,
     has_cmo_data: bool | None = False,
     *,
     num_probe_barcodes: int | None = None,
-):
+) -> tuple[dict[MetricGroups, BarcodeFilterResults], OrderedDict[tuple[int, str], list[bytes]]]:
     """Call initial cells using the ordmag algorithm.
 
     Args:
@@ -460,7 +487,7 @@ def call_initial_cells(
     # (gem_group, genome) => dict
     filtered_metrics_groups: dict[MetricGroups, BarcodeFilterResults] = {}
     # (gem_group, genome) => list of barcode strings
-    filtered_bcs_groups = OrderedDict()
+    filtered_bcs_groups: OrderedDict[tuple[int, str], list[bytes]] = OrderedDict()
 
     if recovered_cells:
         gg_recovered_cells = recovered_cells // len(unique_gem_groups)
@@ -573,15 +600,15 @@ def _call_cells_by_gem_group(
 
 
 def call_additional_cells(
-    matrix,
+    matrix: CountMatrix,
     unique_gem_groups: list[int],
     genomes: list[str],
-    filtered_bcs_groups,
-    feature_types,
-    chemistry_description,
-    probe_barcode_sample_id,
+    filtered_bcs_groups: Mapping[tuple[int, str], list[bytes]],
+    feature_types: Container[str],
+    chemistry_description: str,
+    probe_barcode_sample_id: str,
     *,
-    num_probe_barcodes,
+    num_probe_barcodes: int | None,
     emptydrops_minimum_umis: dict[tuple[str, int], int] | int,
     num_sims: int = cr_cell.NUM_SIMS,
 ):
@@ -603,7 +630,7 @@ def call_additional_cells(
     genome_call_arrays = []
     sample_id_arrays = []
 
-    emptydrops_threshold = dict()
+    emptydrops_threshold: dict[tuple[str, int], int] = dict()
     matrix = matrix.select_features_by_types(feature_types)
 
     for gg in unique_gem_groups:
@@ -676,7 +703,7 @@ def call_additional_cells(
 
 
 def apply_mitochondrial_threshold(
-    matrix: cr_matrix.CountMatrix,
+    matrix: CountMatrix,
     genomes: list[str],
     unique_gem_groups: list[int],
     filtered_bcs_groups: OrderedDict,
@@ -685,7 +712,7 @@ def apply_mitochondrial_threshold(
     """Subsets to barcodes that do not exceed set threshold of mitochondrial read percentage.
 
     Args:
-        matrix (cr_matrix.CountMatrix): feature barcode matrix
+        matrix (CountMatrix): feature barcode matrix
         genomes (list[str]): list of genomes
         unique_gem_groups (list[int]): list of gem groups
         filtered_bcs_groups (OrderedDict): list of filtered barcodes
@@ -794,7 +821,7 @@ def apply_global_minimum_umis_threshold(
 
 ################################################################################
 def merge_filtered_metrics(
-    filtered_metrics: Mapping[MetricGroups, BarcodeFilterResults]
+    filtered_metrics: Mapping[MetricGroups, BarcodeFilterResults],
 ) -> dict[str, float | int]:
     """Merge all the barcode filter results and return them as a dictionary."""
     total_filtered_bcs = 0
@@ -817,22 +844,19 @@ def merge_filtered_metrics(
 
 
 def combine_initial_metrics(
-    genomes: Iterable[str],
     filtered_metrics_groups: Mapping[MetricGroups, BarcodeFilterResults],
-    genome_filtered_bcs,
-    summary,
+    genome_filtered_bcs: Mapping[str, Sized],
+    summary: dict[str, Any],
 ):
+    """Flatten filtered_metrics_groups by concatenating the genome prefix with each metric."""
     # Combine initial-cell-calling metrics
-    for genome in genomes:
+    for genome, barcodes in genome_filtered_bcs.items():
         # Merge metrics over all gem groups and samples for this genome
         txome_metrics = {k: v for k, v in filtered_metrics_groups.items() if k.genome == genome}
         txome_summary = merge_filtered_metrics(txome_metrics)
-
         prefix = genome + "_" if genome else ""
         summary.update({(f"{prefix}{key}"): summary for key, summary in txome_summary.items()})
-
-        summary[f"{prefix}filtered_bcs"] = len(genome_filtered_bcs.get(genome, {}))
-
+        summary[f"{prefix}filtered_bcs"] = len(barcodes)
     return summary
 
 

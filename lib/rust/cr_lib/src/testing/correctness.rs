@@ -1,11 +1,12 @@
-#![allow(dead_code, unused_variables)]
+#![cfg(test)]
+#![deny(missing_docs)]
 
 use crate::aligner::BarcodeSummary;
 use crate::testing::diff_metrics;
 use anyhow::{Context, Result};
 use cr_bam::bam::BamPosSort;
 use cr_types::{FeatureBarcodeType, MetricsFile};
-use itertools::{zip_eq, Itertools};
+use itertools::{Itertools, zip_eq};
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, LazyFileTypeIO};
 use metric::join_metric_name;
@@ -18,10 +19,9 @@ use std::fs::File;
 use std::path::Path;
 use std::process::Command;
 
-// ##################################################################################
-// Correctness checks for the metric summary json
-// ##################################################################################
-pub fn check_metrics_correctness(actual: &MetricsFile, expected: &MetricsFile) -> Result<()> {
+/// Correctness checks for the metric summary json
+#[expect(dead_code)]
+fn check_metrics_correctness(actual: &MetricsFile, expected: &MetricsFile) -> Result<()> {
     let mut actual_metrics: HashMap<_, _> = actual.read()?;
     let mut expected_metrics: HashMap<_, _> = expected.read()?;
 
@@ -40,10 +40,10 @@ pub fn check_metrics_correctness(actual: &MetricsFile, expected: &MetricsFile) -
         FeatureBarcodeType::Multiplexing,
     ] {
         for (old, new) in remapped_metrics {
-            if let Some(v) = expected_metrics.remove(&join_metric_name(feature_barcode_type, old)) {
-                if let Some(new) = new {
-                    expected_metrics.insert(join_metric_name(feature_barcode_type, new), v);
-                }
+            if let Some(v) = expected_metrics.remove(&join_metric_name(feature_barcode_type, old))
+                && let Some(new) = new
+            {
+                expected_metrics.insert(join_metric_name(feature_barcode_type, new), v);
             }
         }
     }
@@ -70,10 +70,9 @@ pub fn check_metrics_correctness(actual: &MetricsFile, expected: &MetricsFile) -
     Ok(())
 }
 
-// ##################################################################################
-// Correctness checks for the barcode_correction.csv
-// ##################################################################################
-pub fn check_barcode_csv_correctness(
+/// Correctness checks for the barcode_correction.csv
+#[expect(dead_code)]
+fn check_barcode_csv_correctness(
     actual: &CsvFile<BarcodeSummary>,
     expected: &CsvFile<BarcodeSummary>,
 ) -> Result<()> {
@@ -87,10 +86,9 @@ pub fn check_barcode_csv_correctness(
     Ok(())
 }
 
-// ##################################################################################
-// Correctness checks for the gzipped files storing the mtx
-// ##################################################################################
-pub fn check_mtx_correctness(actual: &Path, expected: &Path) -> Result<()> {
+/// Correctness checks for the gzipped files storing the mtx
+#[expect(dead_code)]
+fn check_mtx_correctness(actual: &Path, expected: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
     use std::io::{BufRead, BufReader};
 
@@ -113,11 +111,10 @@ pub fn check_mtx_correctness(actual: &Path, expected: &Path) -> Result<()> {
     Ok(())
 }
 
-// ##################################################################################
-// Correctness checks for the h5 files using h5diff
-// TODO: Replace this with crate::h5::compare::H5Compare
-// ##################################################################################
-pub fn check_h5_correctness(actual: &Path, expected: &Path) -> Result<()> {
+/// Correctness checks for the h5 files using h5diff
+/// TODO: Replace this with crate::h5::compare::H5Compare
+#[expect(dead_code)]
+fn check_h5_correctness(actual: &Path, expected: &Path) -> Result<()> {
     let output = Command::new("h5diff")
         .arg("-cr")
         .arg(actual.display().to_string())
@@ -151,10 +148,7 @@ pub fn check_h5_correctness(actual: &Path, expected: &Path) -> Result<()> {
     Ok(())
 }
 
-// ##################################################################################
-// BAM file correctness is broken down into multiple smaller functions
-// ##################################################################################
-
+/// BAM file correctness is broken down into multiple smaller functions
 fn collect_tags(rec: &Record) -> Vec<(String, Option<Aux<'_>>)> {
     use cr_bam::bam_tags::{
         ANTISENSE_TAG, EXTRA_FLAGS_TAG, FEATURE_IDS_TAG, FEATURE_QUAL_TAG, FEATURE_RAW_TAG,
@@ -269,7 +263,7 @@ fn check_bam_record_correctness(slfe_rec: &Record, master_rec: &Record) -> Resul
     Ok(())
 }
 
-pub fn check_bam_file_correctness(actual_bam: &Path, expected_bam: &Path) -> Result<()> {
+pub(crate) fn check_bam_file_correctness(actual_bam: &Path, expected_bam: &Path) -> Result<()> {
     check_bam_header_correctness(actual_bam, expected_bam)?;
 
     let mut slfe_records: Vec<_> = bam::Reader::from_path(actual_bam)?
@@ -295,12 +289,7 @@ pub fn check_bam_file_correctness(actual_bam: &Path, expected_bam: &Path) -> Res
 
 fn check_bam_header_correctness(actual_bam: &Path, expected_bam: &Path) -> Result<()> {
     let tags_to_check = ["@HD", "@SQ", "@RG", "@CO\t10x_bam_to_fastq:R"];
-    let pred = |x: &&str| -> bool {
-        tags_to_check
-            .iter()
-            .map(|tag| x.starts_with(tag))
-            .any(|x| x)
-    };
+    let pred = |x: &&str| -> bool { tags_to_check.iter().any(|tag| x.starts_with(tag)) };
 
     let actual_header = String::from_utf8(
         bam::Reader::from_path(actual_bam)?

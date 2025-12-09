@@ -1,9 +1,10 @@
+#![deny(missing_docs)]
 use crate::parse_aggr_csv::MULTI_OUTS;
 use itertools::Itertools;
 use std::path::PathBuf;
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub enum FieldResolutionErrors {
+pub(super) enum FieldResolutionErrors {
     #[error(
         "Could not resolve path {path:?}. The paths specified in the CSV needs to be one of:\n\
         - An absolute path\n\
@@ -55,7 +56,7 @@ pub enum FieldResolutionErrors {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ParseAggrCsvErrors {
+pub(super) enum ParseAggrCsvErrors {
     #[error("The provided CSV file is empty: {path:?}")]
     EmptyCsv { path: PathBuf },
 

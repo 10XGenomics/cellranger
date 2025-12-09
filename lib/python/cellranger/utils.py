@@ -18,9 +18,7 @@ import numpy as np
 
 import cellranger.constants as cr_constants
 import tenkit.seq as tk_seq
-from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
-    FilteredBarcodes,
-)
+from cellranger.fast_utils import FilteredBarcodes
 
 
 def get_gem_group_from_barcode(barcode: bytes | None) -> int | None:
@@ -198,7 +196,7 @@ def get_read_transcripts_iter(
         not compatible with annotated splice junctions. We ignore these.
     """
     # Method used to work directly with BAM records, since moved to rust/pyo3
-    # s = _get_read_tag(read, cr_constants.TRANSCRIPTS_TAG)
+    # s = _get_read_tag(read, bam_constants.TRANSCRIPTS_TAG)
     if not read:
         return
 
@@ -360,26 +358,13 @@ def load_barcode_csv(barcode_csv: str | bytes | os.PathLike) -> dict[bytes, list
     }
 
 
-def get_cell_associated_barcode_set(
-    barcode_csv_filename: str | bytes | os.PathLike, genome: bytes | None = None
-) -> set[bytes]:
+def get_cell_associated_barcode_set(barcode_csv_filename: str | bytes | os.PathLike) -> set[bytes]:
     """Get set of cell-associated barcode strings.
-
-    Args:
-      barcode_csv_filename: TODO
-      genome (bytes): Only get cell-assoc barcodes for this genome. If None, disregard genome.
 
     Returns:
       set of bytes: Cell-associated barcode strings (seq and gem-group).
     """
-    if isinstance(genome, str):
-        genome = genome.encode()
-    cell_bcs_per_genome: dict[bytes, list[bytes]] = load_barcode_csv(barcode_csv_filename)
-    cell_bcs: set[bytes] = set()
-    for g, bcs in cell_bcs_per_genome.items():
-        if genome is None or g == genome:
-            cell_bcs.update(bcs)
-    return cell_bcs
+    return set(FilteredBarcodes(barcode_csv_filename).sorted_barcodes())
 
 
 def string_is_ascii(input_string: bytes | str) -> bool:

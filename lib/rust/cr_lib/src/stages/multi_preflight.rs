@@ -1,24 +1,28 @@
 //! Martian stage MULTI_PREFLIGHT
 //! Run pre-flight checks.
+#![deny(missing_docs)]
 
 use crate::preflight::{
-    check_crispr_target_genes, check_resource_limits, check_target_panel,
-    check_vdj_inner_enrichment_primers, check_vdj_known_enrichment_primers, hostname,
+    check_crispr_target_genes, check_resource_limits, check_vdj_inner_enrichment_primers,
+    check_vdj_known_enrichment_primers, hostname, validate_target_panel,
 };
-use anyhow::{bail, ensure, Result};
+use anyhow::{Context, Result, bail, ensure};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use cr_types::AlignerParam;
 use cr_types::chemistry::ChemistryName;
 use cr_types::probe_set::merge_probe_set_csvs;
 use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::types::FileOrBytes;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use multi::config::preflight::{
-    build_feature_reference_with_cmos, check_gex_reference, check_libraries, check_samples,
-    check_vdj_reference, SectionCtx,
+    SectionCtx, build_feature_reference_with_cmos, check_gex_reference, check_libraries,
+    check_samples, check_vdj_reference,
 };
-use multi::config::{multiconst, ChemistryParam, MultiConfigCsv, MultiConfigCsvFile};
-use parameters_toml::max_multiplexing_tags;
+use multi::config::{ChemistryParam, MultiConfigCsv, MultiConfigCsvFile, multiconst};
+use multi::oscheck;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
@@ -32,10 +36,10 @@ pub struct MultiPreflightInputs {
 #[cfg_attr(test, derive(Debug))]
 pub struct MultiPreflightOutputs {}
 
-// This is our stage struct
+/// Martian stage MULTI_PREFLIGHT
 pub struct MultiPreflight;
 
-#[make_mro(volatile = strict)]
+#[make_mro(volatile = strict, mem_gb = 2)]
 impl MartianMain for MultiPreflight {
     type StageInputs = MultiPreflightInputs;
     type StageOutputs = MultiPreflightOutputs;
@@ -43,13 +47,21 @@ impl MartianMain for MultiPreflight {
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let hostname = hostname();
         check_resource_limits()?;
+        if std::env::var("TENX_IGNORE_DEPRECATED_OS")
+            .map(|s| s != "1")
+            .unwrap_or(true)
+        {
+            oscheck(|warning| {
+                rover.alarm(warning).unwrap();
+            })?;
+        }
         // make a new chunk per sample_def to do chemistry detection
         let cfg = match args.config {
             FileOrBytes {
                 bytes: Some(ref bytes),
                 file: None,
             } => {
-                let bytes = base64::decode(bytes)?;
+                let bytes = BASE64_STANDARD.decode(bytes)?;
                 MultiConfigCsv::from_reader(Cursor::new(bytes), "bytes")
             }
             FileOrBytes {
@@ -108,8 +120,26 @@ impl MartianMain for MultiPreflight {
                 [] => None,
                 [probe_set] => Some(probe_set.clone()),
                 probe_sets => {
+                    // Ensure that the input probe CSVs themselves are valid before
+                    // merging them.
+                    for probe_set in probe_sets {
+                        validate_target_panel(
+                            &rover,
+                            transcriptome.as_ref(),
+                            ref_info.as_ref(),
+                            probe_set,
+                            gex.targeting_method().unwrap(),
+                            false, // allow merging very small probe sets
+                        )
+                        .with_context(|| probe_set.to_string_lossy().to_string())?;
+                    }
+
                     let probe_set_csv: TargetSetFile = rover.make_path("combined_probe_set");
-                    merge_probe_set_csvs(probe_sets, probe_set_csv.buf_writer()?)?;
+                    merge_probe_set_csvs(
+                        probe_sets,
+                        probe_set_csv.buf_writer()?,
+                        gex.reference_path.as_deref(),
+                    )?;
                     Some(probe_set_csv)
                 }
             };
@@ -117,11 +147,13 @@ impl MartianMain for MultiPreflight {
             let target_genes = probe_set_csv
                 .as_ref()
                 .map(|probe_set_csv| {
-                    check_target_panel(
+                    validate_target_panel(
+                        &rover,
                         transcriptome.as_ref(),
                         ref_info.as_ref(),
                         probe_set_csv,
                         gex.targeting_method().unwrap(),
+                        true,
                     )
                 })
                 .transpose()?;
@@ -130,16 +162,13 @@ impl MartianMain for MultiPreflight {
             (None, None)
         };
 
-        if cfg.libraries.has_gene_expression() && !cfg.is_rtl() {
-            ensure!(
-                transcriptome.is_some(),
-                "A reference transcriptome or probe set is required to analyze a Gene Expression library."
-            );
+        let aligner = gene_expression.and_then(|gex| gex.aligner.as_ref());
+        if !args.is_pd && aligner == Some(&AlignerParam::Minimap2) {
+            bail!("minimap2 is an unsupported aligner");
         }
 
-        let max_multiplexing_tags = *max_multiplexing_tags()?;
         let (feature_reference, _tenx_cmos) =
-            build_feature_reference_with_cmos(&cfg, args.is_pd, &hostname, max_multiplexing_tags)?;
+            build_feature_reference_with_cmos(&cfg, args.is_pd, &hostname)?;
 
         if let (Some(transcriptome), Some(feature_reference)) = (&transcriptome, &feature_reference)
         {
@@ -147,34 +176,39 @@ impl MartianMain for MultiPreflight {
         }
 
         if let Some(ref vdj) = cfg.vdj {
-            let vdj_ref = check_vdj_reference(
-                &SectionCtx {
-                    section: "vdj",
-                    field: "reference",
-                },
-                &vdj.reference_path,
-                &hostname,
-            )?;
+            if let Some(ref reference_path) = vdj.reference_path {
+                let vdj_ref = check_vdj_reference(
+                    &SectionCtx {
+                        section: "vdj",
+                        field: "reference",
+                    },
+                    reference_path,
+                    &hostname,
+                )?;
+                if let Some(ref primers) = vdj.inner_enrichment_primers {
+                    check_vdj_inner_enrichment_primers(
+                        Some(reference_path),
+                        Some(&vdj_ref),
+                        primers,
+                    )?;
+                } else {
+                    check_vdj_known_enrichment_primers(reference_path, &vdj_ref)?;
+                }
+            }
+            // denovo mode
             if let Some(ref primers) = vdj.inner_enrichment_primers {
-                check_vdj_inner_enrichment_primers(&vdj.reference_path, &vdj_ref, primers)?;
-            } else {
-                check_vdj_known_enrichment_primers(&vdj.reference_path, &vdj_ref)?;
+                check_vdj_inner_enrichment_primers(None, None, primers)?;
+            }
+            if vdj.denovo == Some(true) {
+                ensure!(
+                    cfg.samples.is_none() || args.is_pd,
+                    "Multiplexing with denovo mode is unsupported.",
+                );
             }
         }
 
-        check_libraries(
-            &cfg,
-            feature_reference.clone(),
-            args.is_pd,
-            &hostname,
-            max_multiplexing_tags,
-        )?;
-        check_samples(
-            &cfg,
-            feature_reference.clone(),
-            args.is_pd,
-            max_multiplexing_tags,
-        )?;
+        check_libraries(&cfg, feature_reference.clone(), args.is_pd, &hostname)?;
+        check_samples(&cfg, feature_reference.clone(), args.is_pd)?;
         // TODO(CELLRANGER-7837) remove this check once PD support is removed
         if !args.is_pd
             && cfg
@@ -182,7 +216,9 @@ impl MartianMain for MultiPreflight {
                 .values()
                 .any(|chem| chem.refined() == Some(ChemistryName::ThreePrimeV3LT))
         {
-            bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
+            bail!(
+                "The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier."
+            );
         }
 
         Ok(MultiPreflightOutputs {})
@@ -196,7 +232,9 @@ mod tests {
     use insta::{assert_debug_snapshot, assert_snapshot};
     use itertools::Itertools;
     use multi::config::preflight::check_feature_reference;
+    use std::io::Write;
     use std::path::Path;
+    use tempfile::NamedTempFile;
     use test_refdata::refdata_available;
 
     fn test_run_stage_is_pd(
@@ -403,6 +441,62 @@ mod tests {
         assert_debug_snapshot!(&outs.unwrap_err().to_string());
     }
 
+    #[test]
+    fn test_misspelled_hash_tag() {
+        let feature_ref = r"id,name,read,pattern,sequence,feature_type
+TotalSeqB_Hashtag_1,TotalB_HashTag_1,R2,^NNNNNNNNNN(BC)NNNNNNNNN,GTCAACTCTTTAGCG,FEATURETEST
+TotalSeqB_Hashtag_2,TotalB_HashTag_2,R2,^NNNNNNNNNN(BC)NNNNNNNNN,TGATGGCCTATTGGG,FEATURETEST
+TotalSeqB_Hashtag_3,TotalB_HashTag_3,R2,^NNNNNNNNNN(BC)NNNNNNNNN,TTCCGCCTCTCTTTG,FEATURETEST
+TotalSeqB_Hashtag_4,TotalB_HashTag_4,R2,^NNNNNNNNNN(BC)NNNNNNNNN,AGTAAGTTCAGCGTA,FEATURETEST";
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        write!(temp_file, "{feature_ref}").expect("Failed to write to temp file");
+
+        let csv = format!(
+            r"[gene-expression]
+ref,/blah/reporters
+create-bam,false
+
+[feature]
+ref,{}
+
+[libraries]
+fastq_path,sample_indices,lanes,physical_library_id,feature_types,subsample_rate,chemistry
+blah/fastq_path,CGTGACATGC,1|2|3|4|5|6|7|8,1384285,Gene Expression,,
+blah/fastq_path,AGATGAGAAT,1|2|3|4|5|6|7|8,1384321,Multiplexing Capture,,
+
+[samples]
+sample_id,cmo_ids,description
+Samp1,TotalB_HashTag_1,Samp1,,,,
+Samp2,TotalB_HashTag_2,Samp2,,,,
+Samp3,TotalB_HashTag_3,Samp3,,,,
+Samp4,TotalB_HashTag_4,Samp4,,,,",
+            temp_file.path().display()
+        );
+        let mut csv_file = NamedTempFile::new().expect("Failed to make temp file");
+        write!(csv_file, "{csv}").expect("Failed write");
+
+        let cfg = MultiConfigCsv::from_csv(csv_file.path()).unwrap();
+        let (feature_reference, _tenx_cmos) =
+            build_feature_reference_with_cmos(&cfg, true, &hostname()).unwrap();
+
+        let error_msg = r"Unknown cmo_ids ('TotalB_HashTag_1') provided for sample 'Samp1', please ensure you are either using valid 10x CMO IDs or are providing the correct [gene-expression] cmo-set.
+
+Valid IDs are currently:
+TotalSeqB_Hashtag_1
+TotalSeqB_Hashtag_2
+TotalSeqB_Hashtag_3
+TotalSeqB_Hashtag_4
+
+Did you perhaps mean any of the following? (Input -> Intended Value)?
+TotalB_HashTag_1 -> TotalSeqB_Hashtag_1
+";
+
+        let result = check_samples(&cfg, feature_reference, true);
+        match result {
+            Err(e) => assert_eq!(e.to_string(), error_msg),
+            Ok(()) => panic!("Failed to flag invalid sequence."),
+        };
+    }
     #[test]
     fn test_invalid_hashtag_ids() {
         if !refdata_available() {

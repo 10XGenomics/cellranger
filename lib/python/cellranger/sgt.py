@@ -117,7 +117,7 @@ def sgt_proportions(frequencies: np.ndarray):
 
     if len(use_freqs) < 10:
         raise SimpleGoodTuringError(
-            "Too few non-zero frequency items (%d). Aborting SGT." % len(use_freqs)
+            f"Too few non-zero frequency items ({len(use_freqs)}). Aborting SGT."
         )
 
     rstar, p0 = simple_good_turing(use_freqs, freqfreqs[use_freqs])

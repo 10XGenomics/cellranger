@@ -1,8 +1,8 @@
+#![expect(missing_docs)]
 use crate::filter_log::{AsmCellFilter, FilterLogEntry, FilterLogger};
 use serde::Serialize;
 use std::collections::HashMap;
-use strum::IntoEnumIterator;
-use strum_macros::{Display, EnumIter};
+use strum::{Display, EnumIter, IntoEnumIterator};
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_asm_utils::exact_clonotyping::ExactClonotype;
 
@@ -33,7 +33,7 @@ impl WhitelistContamInfo {
 
 /// Construct a nested vector where each inner vector corresponds to an exact clonotype and contains
 /// `WhitelistContamInfo` for each barcode. The `WhitelistContamInfo` includes the barcode and
-/// total UMI counts associated with with productive contigs for that barcode.  
+/// total UMI counts associated with with productive contigs for that barcode.
 pub fn build_wlcontaminfo_per_exact_clonotype(
     contigs: &[ContigAnnotation],
     clonotypes: Vec<ExactClonotype>,

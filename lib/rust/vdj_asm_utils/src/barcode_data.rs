@@ -1,22 +1,18 @@
-// This captures and analyzes data about barcodes.
-
-#![allow(clippy::many_single_char_names)]
-// TODO: fix these.
-#![allow(clippy::needless_range_loop)]
+//! This captures and analyzes data about barcodes.
+#![expect(missing_docs)]
 
 use crate::constants::{CHAIN_TYPES, CHAIN_TYPESX, PRIMER_EXT_LEN};
+use crate::reverse_complement;
+use io_utils::{fwrite, fwriteln};
 use itertools::Itertools;
-use metric::{JsonReporter, PercentMetric, SimpleHistogram, TxHashMap};
+use metric::{Histogram, JsonReporter, PercentMetric, SimpleHistogram, TxHashMap};
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
-use stats_utils::{len_weighted_mean, mean, n50, n90};
 use std::cmp::max;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use string_utils::strme;
-use tenkit2::pack_dna::reverse_complement;
 use vdj_ann::refx::RefData;
-use vector_utils::{contains_at, next_diff, unique_sort};
+use vector_utils::{contains_at, unique_sort};
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // BARCODE DATA STRUCTURES
@@ -218,6 +214,19 @@ impl Default for BarcodeDataBrief {
     }
 }
 
+impl From<BarcodeData> for BarcodeDataBrief {
+    fn from(src: BarcodeData) -> BarcodeDataBrief {
+        BarcodeDataBrief {
+            barcode: src.barcode,
+            read_pairs: src.nreads as u64,
+            total_ucounts: src.total_ucounts,
+            xucounts: src.xucounts,
+            ncontigs: src.ncontigs as usize,
+            frac_reads_used: src.frac,
+        }
+    }
+}
+
 // The number of read pairs and Vdj chain-assignment of a single UMI
 #[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Clone, PartialOrd, Ord, Eq)]
 pub struct VdjUmi {
@@ -290,8 +299,8 @@ impl BarcodeDataSum {
             chain_sample: {
                 let mut s = vec![0_i64; 15];
                 for bc_data in barcode_data_list {
-                    for i in 0..15 {
-                        s[i] += bc_data.chain_sample[i] as i64;
+                    for (si, &samp) in s.iter_mut().zip(bc_data.chain_sample.iter()) {
+                        *si += samp as i64;
                     }
                 }
                 s
@@ -300,11 +309,9 @@ impl BarcodeDataSum {
             adj_chain_sample: {
                 let mut s = vec![0_f64; 15];
                 for bc_data in barcode_data_list {
-                    for i in 0..15 {
+                    for (si, &samp) in s.iter_mut().zip(bc_data.chain_sample.iter()) {
                         if bc_data.frac != 0.0 {
-                            s[i] += bc_data.chain_sample[i] as f64 / bc_data.frac;
-                        } else {
-                            s[i] += 0.0;
+                            *si += samp as f64 / bc_data.frac;
                         }
                     }
                 }
@@ -329,12 +336,7 @@ impl BarcodeDataSum {
                         .good_refseqs
                         .iter()
                         // filter out any non constant segment refdata indexes
-                        .filter(|&&refseq_idx| {
-                            refdata
-                                .cs
-                                .iter()
-                                .any(|constant_idx| constant_idx == &(refseq_idx as usize))
-                        })
+                        .filter(|&&refseq_idx| refdata.cs.contains(&(refseq_idx as usize)))
                         // map refdata index to name
                         .map(|&refseq_idx| refdata.name[refseq_idx as usize].clone())
                 },
@@ -346,16 +348,12 @@ impl BarcodeDataSum {
                 } else {
                     let mut s = vec![0.0; barcode_data_list[0].inner_hit.len()];
                     for bc_data in barcode_data_list {
-                        for i in 0..bc_data.inner_hit.len() {
-                            s[i] +=
-                                bc_data.inner_hit[i] as f64 * bc_data.primer_inv_subsample_frac();
+                        let frac = bc_data.primer_inv_subsample_frac();
+                        for (si, &hit) in s.iter_mut().zip(bc_data.inner_hit.iter()) {
+                            *si += hit as f64 * frac;
                         }
                     }
-                    let mut t = Vec::<NotNan<f64>>::new();
-                    for i in 0..s.len() {
-                        t.push(NotNan::new(s[i]).unwrap());
-                    }
-                    t
+                    s.into_iter().map(|v| NotNan::new(v).unwrap()).collect()
                 }
             },
             inner_hit_good_total: {
@@ -364,16 +362,15 @@ impl BarcodeDataSum {
                 } else {
                     let mut sum_vec = vec![0.0; barcode_data_list[0].inner_hit_good.len()];
                     for bc_data in barcode_data_list {
-                        for i in 0..bc_data.inner_hit_good.len() {
-                            sum_vec[i] += bc_data.inner_hit_good[i] as f64
-                                * bc_data.primer_inv_subsample_frac();
+                        let frac = bc_data.primer_inv_subsample_frac();
+                        for (si, &hit) in sum_vec.iter_mut().zip(bc_data.inner_hit_good.iter()) {
+                            *si += hit as f64 * frac;
                         }
                     }
-                    let mut t = Vec::<NotNan<f64>>::new();
-                    for i in 0..sum_vec.len() {
-                        t.push(NotNan::new(sum_vec[i]).unwrap());
-                    }
-                    t
+                    sum_vec
+                        .into_iter()
+                        .map(|f| NotNan::new(f).unwrap())
+                        .collect()
                 }
             },
             outer_hit_total: {
@@ -382,16 +379,12 @@ impl BarcodeDataSum {
                 } else {
                     let mut s = vec![0.0; barcode_data_list[0].outer_hit.len()];
                     for bc_data in barcode_data_list {
-                        for i in 0..bc_data.outer_hit.len() {
-                            s[i] +=
-                                bc_data.outer_hit[i] as f64 * bc_data.primer_inv_subsample_frac();
+                        let frac = bc_data.primer_inv_subsample_frac();
+                        for (si, &hit) in s.iter_mut().zip(bc_data.outer_hit.iter()) {
+                            *si += hit as f64 * frac;
                         }
                     }
-                    let mut t = Vec::<NotNan<f64>>::new();
-                    for i in 0..s.len() {
-                        t.push(NotNan::new(s[i]).unwrap());
-                    }
-                    t
+                    s.into_iter().map(|v| NotNan::new(v).unwrap()).collect()
                 }
             },
             outer_hit_good_total: {
@@ -400,16 +393,12 @@ impl BarcodeDataSum {
                 } else {
                     let mut s = vec![0.0; barcode_data_list[0].outer_hit_good.len()];
                     for bc_data in barcode_data_list {
-                        for i in 0..bc_data.outer_hit_good.len() {
-                            s[i] += bc_data.outer_hit_good[i] as f64
-                                * bc_data.primer_inv_subsample_frac();
+                        let frac = bc_data.primer_inv_subsample_frac();
+                        for (si, &hit) in s.iter_mut().zip(bc_data.outer_hit_good.iter()) {
+                            *si += hit as f64 * frac;
                         }
                     }
-                    let mut t = Vec::<NotNan<f64>>::new();
-                    for i in 0..s.len() {
-                        t.push(NotNan::new(s[i]).unwrap());
-                    }
-                    t
+                    s.into_iter().map(|v| NotNan::new(v).unwrap()).collect()
                 }
             },
             inner_hit_good_contigs_total: {
@@ -418,8 +407,8 @@ impl BarcodeDataSum {
                 } else {
                     let mut s = vec![0; barcode_data_list[0].inner_hit_good_contigs.len()];
                     for bc_data in barcode_data_list {
-                        for i in 0..bc_data.inner_hit_good_contigs.len() {
-                            s[i] += bc_data.inner_hit_good_contigs[i] as usize;
+                        for (si, &hit) in s.iter_mut().zip(bc_data.inner_hit_good_contigs.iter()) {
+                            *si += hit as usize;
                         }
                     }
                     s
@@ -431,8 +420,8 @@ impl BarcodeDataSum {
                 } else {
                     let mut s = vec![0; barcode_data_list[0].outer_hit_good_contigs.len()];
                     for bc_data in barcode_data_list {
-                        for i in 0..bc_data.outer_hit_good_contigs.len() {
-                            s[i] += bc_data.outer_hit_good_contigs[i] as usize;
+                        for (si, &hit) in s.iter_mut().zip(bc_data.outer_hit_good_contigs.iter()) {
+                            *si += hit as usize;
                         }
                     }
                     s
@@ -451,14 +440,6 @@ impl Default for BarcodeDataSum {
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // COMPUTE METRICS YIELDING JSON STRING
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-pub fn write_json_metric_f64(metric_name: &str, value: f64, json: &mut Vec<u8>) {
-    if value.is_nan() {
-        fwriteln!(json, "    \"{}\": null,", metric_name);
-    } else {
-        fwriteln!(json, "    \"{}\": {},", metric_name, value);
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn metrics_json(
@@ -515,7 +496,7 @@ pub fn metrics_json(
     let mut chains = CHAIN_TYPES.to_vec();
     chains.push("multi");
     let mut umi_dist = x.umi_dist.clone();
-    for (vdj_umi, value) in x.umi_dist.distribution() {
+    for (vdj_umi, value) in &x.umi_dist {
         if &vdj_umi.chain_type != "None" {
             umi_dist.observe_by_owned(
                 VdjUmi {
@@ -533,7 +514,7 @@ pub fn metrics_json(
 
         let metric_key = format!("{chain}_vdj_recombinome_readpairs_per_umi_distribution");
         let mut metric_val = TxHashMap::<usize, usize>::default();
-        for (vdj_umi, value) in umi_dist.distribution() {
+        for (vdj_umi, value) in &umi_dist {
             if vdj_umi.chain_type == chain {
                 metric_val.insert(vdj_umi.npairs, value.count().try_into().unwrap());
             }
@@ -545,9 +526,9 @@ pub fn metrics_json(
     // _vdj_recombinome_antisense_reads_frac metrics.
 
     let (mut chain_total_fw, mut chain_total_rc) = (0, 0);
-    for i in 0..CHAIN_TYPESX.len() {
+    for (i, chain_type) in CHAIN_TYPESX.into_iter().enumerate() {
         let (fw, rc) = (x.chain_sample[i] as usize, x.chain_sample[i + 7] as usize);
-        let metric_key = format!("{}_vdj_recombinome_antisense_reads_frac", CHAIN_TYPESX[i]);
+        let metric_key = format!("{chain_type}_vdj_recombinome_antisense_reads_frac");
         let metric_val = PercentMetric::from_parts(rc as i64, (fw + rc).try_into().unwrap());
         json.insert(metric_key, metric_val.fraction());
         chain_total_fw += fw;
@@ -567,8 +548,8 @@ pub fn metrics_json(
 
     // Using adjusted chain_sample to account for capping number of reads used in assembly
     let adj_chain_total = x.adj_chain_sample.iter().sum::<f64>();
-    for i in 0..CHAIN_TYPESX.len() {
-        let metric_key = format!("{}_vdj_recombinome_mapped_reads_frac", CHAIN_TYPESX[i]);
+    for (i, chain_type) in CHAIN_TYPESX.into_iter().enumerate() {
+        let metric_key = format!("{chain_type}_vdj_recombinome_mapped_reads_frac");
         let metric_val = PercentMetric::from_parts(
             (x.adj_chain_sample[i] + x.adj_chain_sample[i + 7]) as i64,
             adj_chain_total as i64,
@@ -594,139 +575,13 @@ pub fn metrics_json(
     };
     json.insert("vdj_sequencing_efficiency", sequencing_efficiency);
 
-    fwrite!(report, "{}", strme(&log));
+    fwrite!(report, "{}", std::str::from_utf8(&log).unwrap());
     json
 }
 
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // ANALYZE BARCODE DATA
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-pub fn analyze_barcode_data(
-    d: &[BarcodeData],
-    refdata: &RefData,
-    inner_primers: &[Vec<u8>],
-    outer_primers: &[Vec<u8>],
-    single_end: bool,
-) {
-    println!("\nBARCODE SUMMARY STATS\n");
-
-    let dsum: BarcodeDataSum = BarcodeDataSum::sum(d, refdata);
-
-    // Compute mean pairs per umi having more than one pair.
-
-    let mut ucounts_all = Vec::<i32>::new();
-    for x in d {
-        for i in 0..x.ucounts.len() {
-            ucounts_all.push(x.ucounts[i]);
-        }
-    }
-    println!("{:<6.1} = mean pairs per nonsolo umi", mean(&ucounts_all));
-    println!("{:<6.1} = N50 pairs per nonsolo umi", n50(&ucounts_all));
-    println!("{:<6.1} = N90 pairs per nonsolo umi", n90(&ucounts_all));
-    println!(
-        "{:<6.1} = length-weighted mean pairs per nonsolo umi",
-        len_weighted_mean(&ucounts_all)
-    );
-
-    // Compute fraction of reads that survive.
-
-    let mut nreads_all_all = 0_i64;
-    for x in d {
-        nreads_all_all += x.nreads as i64;
-    }
-    let mut surviving_pairs = 0_i64;
-    for x in d {
-        surviving_pairs += x.xucounts.iter().sum::<i32>() as i64;
-    }
-    let surper = 100_f64 * (surviving_pairs * 2) as f64 / nreads_all_all as f64;
-    println!("{surper:<6.1} = percent surviving reads");
-
-    // Compute total number of surviving umis.
-
-    let mut sumi = 0_i64;
-    for x in d {
-        sumi += x.xucounts.len() as i64;
-    }
-    println!("{sumi:<6.0} = total surviving umis");
-
-    // Compute TRBV:TRAV read ratio.
-
-    let (mut trav_reads, mut trbv_reads) = (0, 0);
-    for x in d {
-        trav_reads += x.trav_reads as usize;
-        trbv_reads += x.trbv_reads as usize;
-    }
-    if trav_reads > 0 {
-        let ba = trbv_reads as f64 / trav_reads as f64;
-        println!("{ba:<6.2} = TRBV/TRAV read ratio");
-    }
-
-    let (mut travj_reads, mut trbvj_reads) = (0, 0);
-    for x in d {
-        travj_reads += x.travj_reads as usize;
-        trbvj_reads += x.trbvj_reads as usize;
-    }
-    if travj_reads > 0 {
-        let ba = trbvj_reads as f64 / travj_reads as f64;
-        println!("{ba:<6.2} = TRBVJ/TRAVJ read ratio");
-    }
-
-    // Report number of contigs.
-
-    let mut ntigs = 0;
-    for x in d {
-        ntigs += x.ncontigs;
-    }
-    println!("{ntigs:<6.0} = total contigs");
-
-    // Find abundance of C segments in productive contigs.
-
-    let mut cs = Vec::<String>::new();
-    for x in d {
-        for id in &x.good_refseqs {
-            if refdata.is_c(*id as usize) {
-                cs.push(refdata.name[*id as usize].clone());
-            }
-        }
-    }
-    cs.sort();
-    let mut i = 0;
-    while i < cs.len() {
-        let j = next_diff(&cs, i);
-        println!(
-            "{:<6.0} = total occurrences of {} in productive contigs",
-            j - i,
-            cs[i]
-        );
-        i = j;
-    }
-
-    // Give up if no barcodes.
-
-    if d.is_empty() {
-        return;
-    }
-
-    // Analyze primer hits.
-
-    let mut json = JsonReporter::default();
-    let mut log = Vec::<u8>::new();
-    analyze_primer_hits(
-        &dsum,
-        refdata,
-        inner_primers,
-        outer_primers,
-        single_end,
-        &mut json,
-        &mut log,
-    );
-    print!("{}", strme(&log));
-
-    // Done.
-
-    println!();
-}
 
 fn analyze_primer_hits(
     dsum: &BarcodeDataSum,
@@ -737,11 +592,12 @@ fn analyze_primer_hits(
     json: &mut JsonReporter,
     log: &mut Vec<u8>,
 ) {
-    let all_pairs = match single_end {
-        true => dsum.nreads as f64,
-        false => PercentMetric::from_parts(dsum.nreads, 2)
+    let all_pairs = if single_end {
+        dsum.nreads as f64
+    } else {
+        PercentMetric::from_parts(dsum.nreads, 2)
             .fraction()
-            .unwrap_or(0.0),
+            .unwrap_or_default()
     };
     if all_pairs == 0.0 {
         return;
@@ -753,69 +609,89 @@ fn analyze_primer_hits(
     let mut inner_hit_total: Vec<f64> = dsum
         .inner_hit_total
         .iter()
-        .map(|n| n.into_inner())
+        .copied()
+        .map(NotNan::into_inner)
         .collect();
     let mut inner_hit_good_total: Vec<f64> = dsum
         .inner_hit_good_total
         .iter()
-        .map(|n| n.into_inner())
+        .copied()
+        .map(NotNan::into_inner)
         .collect();
     let mut outer_hit_total: Vec<f64> = dsum
         .outer_hit_total
         .iter()
-        .map(|n| n.into_inner())
+        .copied()
+        .map(NotNan::into_inner)
         .collect();
     let mut outer_hit_good_total: Vec<f64> = dsum
         .outer_hit_good_total
         .iter()
-        .map(|n| n.into_inner())
+        .copied()
+        .map(NotNan::into_inner)
         .collect();
 
     if !single_end {
-        inner_hit_total.iter_mut().for_each(|x| *x /= 2.0);
-        inner_hit_good_total.iter_mut().for_each(|x| *x /= 2.0);
-        outer_hit_total.iter_mut().for_each(|x| *x /= 2.0);
-        outer_hit_good_total.iter_mut().for_each(|x| *x /= 2.0);
+        for x in &mut inner_hit_total {
+            *x /= 2.0;
+        }
+        for x in &mut inner_hit_good_total {
+            *x /= 2.0;
+        }
+        for x in &mut outer_hit_total {
+            *x /= 2.0;
+        }
+        for x in &mut outer_hit_good_total {
+            *x /= 2.0;
+        }
     }
 
     let inner_offtarget_rate: Vec<f64> = inner_hit_good_total
         .iter()
         .zip(inner_hit_total.iter())
-        .map(|(n, d)| if d > &0.0 { 1.0 - (n / d) } else { *d })
+        .map(|(&n, &d)| if d > 0.0 { 1.0 - (n / d) } else { d })
         .collect();
     let outer_offtarget_rate: Vec<f64> = outer_hit_good_total
         .iter()
         .zip(outer_hit_total.iter())
-        .map(|(n, d)| if d > &0.0 { 1.0 - (n / d) } else { *d })
+        .map(|(&n, &d)| if d > 0.0 { 1.0 - (n / d) } else { d })
         .collect();
-
     let primed_pairs = inner_hit_total.iter().sum::<f64>() + outer_hit_total.iter().sum::<f64>();
-    let inner_hit_primer_frac: Vec<f64> =
-        inner_hit_total.iter().map(|i| i / primed_pairs).collect();
-    let outer_hit_primer_frac: Vec<f64> =
-        outer_hit_total.iter().map(|i| i / primed_pairs).collect();
+    assert!(primed_pairs >= 0.0, "primed_pairs = {primed_pairs}");
+    // can return -0.0 if all of the values are zero. We don't want that.
+    let primed_pairs = primed_pairs.max(0.0);
+    let inner_hit_primer_frac: Vec<f64> = inner_hit_total
+        .into_iter()
+        .map(|i| i / primed_pairs)
+        .collect();
+    let outer_hit_primer_frac: Vec<f64> = outer_hit_total
+        .into_iter()
+        .map(|i| i / primed_pairs)
+        .collect();
 
     let inner_hit_good_contigs = &dsum.inner_hit_good_contigs_total;
     let outer_hit_good_contigs = &dsum.outer_hit_good_contigs_total;
 
-    let mut locs_all = Vec::<Vec<String>>::new();
-    for i in 0..inner_primers.len() {
-        let mut p = inner_primers[i].clone();
-        reverse_complement(&mut p);
-        let mut locs = Vec::<String>::new();
-        for j in 0..refdata.refs.len() {
-            if refdata.is_c(j) {
-                let c = refdata.refs[j].to_ascii_vec();
-                for l in 0..c.len() {
-                    if contains_at(&c, &p, l) && l + p.len() >= PRIMER_EXT_LEN {
-                        locs.push(refdata.name[j].clone());
+    let locs_all: Vec<_> = inner_primers
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            reverse_complement(&mut p);
+            let mut locs = Vec::<&str>::new();
+            for (j, r) in refdata.refs.iter().enumerate() {
+                if refdata.is_c(j) {
+                    let c = r.to_ascii_vec();
+                    for l in 0..c.len() {
+                        if contains_at(&c, &p, l) && l + p.len() >= PRIMER_EXT_LEN {
+                            locs.push(refdata.name[j].as_ref());
+                        }
                     }
                 }
+                unique_sort(&mut locs);
             }
-            unique_sort(&mut locs);
-        }
-        locs_all.push(locs);
-    }
+            locs
+        })
+        .collect();
     let total_offtarget_frac = inner_hit_primer_frac
         .iter()
         .zip(inner_offtarget_rate.iter())
@@ -826,6 +702,12 @@ fn analyze_primer_hits(
             .zip(outer_offtarget_rate.iter())
             .map(|(t, o)| t * o)
             .sum::<f64>();
+    assert!(
+        total_offtarget_frac.is_nan() || total_offtarget_frac >= 0.0,
+        "total_offtarget_frac = {total_offtarget_frac}"
+    );
+    // can return NaN if all of the values are zero. We don't want that.
+    let total_offtarget_frac = total_offtarget_frac.max(0.0);
     let total_primer_frac: f64 = primed_pairs / all_pairs;
 
     fwriteln!(
@@ -896,7 +778,7 @@ fn analyze_primer_hits(
         row.push(format!("{}", i + 1));
         row.push(format!("{}", inner_primers[i].len()));
         let metric = format!("inner_primer_{}", i + 1);
-        json.insert(metric, strme(&inner_primers[i]));
+        json.insert(metric, std::str::from_utf8(&inner_primers[i]).unwrap());
         let locs = format!("{}", locs_all[i].iter().format("+"));
         row.push(locs.clone());
         let metric = format!("binding_sites_of_inner_primer_{}", i + 1);
@@ -924,29 +806,31 @@ fn analyze_primer_hits(
         json.insert(metric, inner_hit_primer_frac[i] * inner_offtarget_rate[i]);
         rows.push(row);
     }
-    print_tabular(log, &rows, 2, Some(b"lrlrrrr".to_vec()));
+    print_tabular(log, &rows, 2, Some(b"lrlrrrr"));
     fwriteln!(
         log,
         "--------------------------------------------------------------------"
     );
-    let mut locs_all = Vec::<Vec<String>>::new();
-    for i in 0..outer_primers.len() {
-        let mut p = outer_primers[i].clone();
-        reverse_complement(&mut p);
-        let mut locs = Vec::<String>::new();
-        for j in 0..refdata.refs.len() {
-            if refdata.is_c(j) {
-                let c = refdata.refs[j].to_ascii_vec();
-                for l in 0..c.len() {
-                    if contains_at(&c, &p, l) && l + p.len() >= PRIMER_EXT_LEN {
-                        locs.push(refdata.name[j].clone());
+    let locs_all: Vec<_> = outer_primers
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            reverse_complement(&mut p);
+            let mut locs = Vec::<&str>::new();
+            for (j, r) in refdata.refs.iter().enumerate() {
+                if refdata.is_c(j) {
+                    let c = r.to_ascii_vec();
+                    for l in 0..c.len() {
+                        if contains_at(&c, &p, l) && l + p.len() >= PRIMER_EXT_LEN {
+                            locs.push(refdata.name[j].as_ref());
+                        }
                     }
                 }
+                unique_sort(&mut locs);
             }
-            unique_sort(&mut locs);
-        }
-        locs_all.push(locs);
-    }
+            locs
+        })
+        .collect();
     let mut rows = Vec::<Vec<String>>::new();
     fwriteln!(log, "OUTER PRIMER STATS");
     fwriteln!(
@@ -967,7 +851,7 @@ fn analyze_primer_hits(
         row.push(format!("{}", i + 1));
         row.push(format!("{}", outer_primers[i].len()));
         let metric = format!("outer_primer_{}", i + 1);
-        json.insert(metric, strme(&outer_primers[i]));
+        json.insert(metric, std::str::from_utf8(&outer_primers[i]).unwrap());
         let locs = format!("{}", locs_all[i].iter().format("+"));
         row.push(locs.clone());
         let metric = format!("binding_sites_of_outer_primer_{}", i + 1);
@@ -995,7 +879,7 @@ fn analyze_primer_hits(
         json.insert(metric, outer_hit_primer_frac[i] * outer_offtarget_rate[i]);
         rows.push(row);
     }
-    print_tabular(log, &rows, 2, Some(b"lrlrrrr".to_vec()));
+    print_tabular(log, &rows, 2, Some(b"lrlrrrr"));
     fwriteln!(
         log,
         "--------------------------------------------------------------------"
@@ -1024,12 +908,7 @@ fn analyze_primer_hits(
 /// Print out a matrix, with left-justified entries, and given separation between
 /// columns.  (Justification may be changed by supplying an optional argument
 /// consisting of a string of l's and r's.)
-pub fn print_tabular(
-    log: &mut Vec<u8>,
-    rows: &[Vec<String>],
-    sep: usize,
-    justify: Option<Vec<u8>>,
-) {
+pub fn print_tabular(log: &mut Vec<u8>, rows: &[Vec<String>], sep: usize, justify: Option<&[u8]>) {
     let just = justify.unwrap_or_default();
     let nrows = rows.len();
     let mut ncols = 0;

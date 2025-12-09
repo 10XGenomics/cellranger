@@ -13,8 +13,8 @@ stage CALL_CLOUD_CELL_TYPES(
     in  string          cell_annotation_model,
     in  file            tenx_cloud_token_path,
     in  string          pipestance_type,
+    in  bool            is_pd,
     in  bool            override_num_bc_limit,
-    in  cloupe          sample_cloupe,
     out CellTypeResults cell_type_results,
     out bool            cas_success,
     out bool            disable_cas_ws,
@@ -32,9 +32,10 @@ from dataclasses import dataclass
 
 import martian
 
-import cellranger.cell_typing.cloud_cas_client as cloud_client_lib
-import cellranger.cell_typing.cloud_cas_utils as cloud_utils
-import cellranger.cell_typing.common as ct_common
+import cellranger.cell_typing.broad_tenx.cloud_cas_client as cloud_client_lib
+import cellranger.cell_typing.broad_tenx.cloud_cas_utils as cloud_utils
+import cellranger.cell_typing.broad_tenx.common as broad_tenx_common
+import cellranger.cell_typing.common_cell_typing as ct_common
 import cellranger.matrix as cr_matrix
 from tenkit import safe_json
 
@@ -67,7 +68,6 @@ def write_analysis_files(
         )
         cell_type_results.results = results_json_gz_path
     else:
-
         cell_type_results.results = None
 
     if cell_annotation_results.cell_types:
@@ -148,13 +148,17 @@ def get_annotation_params(
         martian.log_info(
             f"Trying to get annotation params for pipestance {args.pipestance_type}, genome {genome_name}, model {model_name}"
         )
+        pipeline_requirements = [broad_tenx_common.CELL_ANNOTATION_REQUIRES_JSON_RESULTS]
+        if args.is_pd:
+            pipeline_requirements.append(broad_tenx_common.CELL_ANNOTATION_REQUIRES_QUALITY_SCORES)
+
         annotation_params = cloud_utils.run_get_annotation_defaults(
             server_url=token_info.server_url,
             cli_token=token_info.cli_token,
             cfa_tokens=token_info.cfa_tokens,
             pipestance_type=args.pipestance_type,
             genome_name=genome_name,
-            pipeline_requirements=[ct_common.CELL_ANNOTATION_REQUIRES_JSON_RESULTS],
+            pipeline_requirements=pipeline_requirements,
             cell_annotation_model=model_name,
         )
         martian.log_info(f"resolved annotation params: {annotation_params}")
@@ -212,6 +216,7 @@ def run_cell_annotation(
             cli_token=token_info.cli_token,
             cfa_tokens=token_info.cfa_tokens,
             pipestance_type=args.pipestance_type,
+            with_quality_scores=args.is_pd,
             genome_name=genome_name,
             pipeline_params=pipeline_params,
             filtered_matrix_path=args.filtered_matrix,
@@ -293,14 +298,18 @@ def split(args):
             "join": {"__mem_gb": 1},
         }
 
-    _, num_bcs, _ = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_matrix)
+    _, num_bcs, nnz = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_matrix)
+    # indices are 64 bit ints. So 1GB=134_217_728 indices
+    index_iteration_mem_gb = math.ceil(nnz / 134_000_000)
     # rough estimate -- JSON representation of output will be 20k per barcode (it's verbose)
-    join_mem_gb = int(math.ceil((20_000 * num_bcs) / (1024 * 1024 * 1024)))
+    json_mem_gb = math.ceil((20_000 * num_bcs) / (1024 * 1024 * 1024))
+    join_mem_gb = math.ceil(max(index_iteration_mem_gb, json_mem_gb) * 1.5)
 
     return {
         "chunks": [],
         "join": {
             "__mem_gb": join_mem_gb,
+            "__vmem_gb": max(join_mem_gb * 2, join_mem_gb + 4),
         },
     }
 
@@ -336,6 +345,23 @@ def join(
     run_info = RunInfo(
         num_features=num_features, num_bcs=num_bcs, num_entries=num_entries, is_cra=is_cra
     )
+
+    martian.log_info("Computing the number of non-zero GEX entries!")
+    non_zero_entries = cr_matrix.CountMatrix.get_non_zero_entries_by_library_type_from_h5(
+        args.filtered_matrix, "Gene Expression"
+    )
+    martian.log_info(f"non-zero GEX entries = {non_zero_entries}")
+    if non_zero_entries == 0:
+        martian.clear(outs)
+        outs.cell_type_results = error_cell_type_results
+        alarm_vs_exit(
+            message="Gene Expression matrix supplied contains all zeros; skipping annotation",
+            use_exit=run_info.is_cra,
+        )
+        outs.cas_success = False
+        outs.disable_cas_ws = True
+        outs.disable_summarize = True
+        return
 
     if run_info.num_bcs < cloud_utils.MIN_BARCODE_THRESHOLD:
         martian.clear(outs)
@@ -376,11 +402,15 @@ def join(
         martian.log_warn(
             f"Multi-genome references, {ref}, are not supported by cell annotation at this time."
         )
+        martian.clear(outs)
+        outs.cell_type_results = error_cell_type_results
+        outs.cas_success = False
+        outs.disable_cas_ws = True
         outs.disable_summarize = True
         return
 
     # Make sure the genome is some version of GRCh38 or mm10 but there aren't more than 1 and that there is a GEX library
-    valid_genome_library, _, genome_name = ct_common.check_valid_genome_and_library(
+    valid_genome_library, _, genome_name = broad_tenx_common.check_valid_genome_and_library(
         matrix=args.filtered_matrix
     )
     if not valid_genome_library:

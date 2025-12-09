@@ -1,4 +1,5 @@
 //! I/O helper functions
+#![deny(missing_docs)]
 
-pub mod csv;
-pub mod h5;
+pub(crate) mod csv;
+pub(crate) mod h5;

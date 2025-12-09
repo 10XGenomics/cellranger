@@ -44,3 +44,10 @@ H5_METADATA_ATTRS = [
     H5_ORIG_GEM_GROUP_MAPPING_KEY,
     H5_CHEMISTRY_DESC_KEY,
 ]
+
+# Names in barcode summary H5
+BC_SUMMARY_BARCODE_KEY = "bc_sequence"
+BC_SUMMARY_GEX_TOTAL_READS_KEY = "sequenced_reads"
+BC_SUMMARY_GEX_UNMAPPED_READS_KEY = "unmapped_reads"
+BC_SUMMARY_GEX_HALF_MAPPED_KEY = "_multi_transcriptome_half_mapped_barcoded_reads"
+BC_SUMMARY_GEX_SPLIT_MAPPED_KEY = "_multi_transcriptome_split_mapped_barcoded_reads"

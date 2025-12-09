@@ -39,6 +39,7 @@ TSNE_CLUSTER_DESCRIPTION = ""
 MAX_TOP_N_GENES = 50
 MAX_DE_TABLE_ENTRIES = 10000
 TOP_DE_GENES_MIN_MEAN = 1.0
+TOP_DE_GENES_MIN_MEAN_HD = 0.1
 MAX_WEBSHIM_BCS_DIM = 10000
 MAX_WEBSHIM_KMEANS_K = 20
 CLUSTERS_FILTER_TITLE = "Clustering Type"
@@ -92,8 +93,8 @@ GOOD_BCS_METRIC = {
 
 GOOD_UMIS_METRIC = {
     "name": "good_umi_frac",
-    "display_name": "Valid UMIs",
-    "description": "Fraction of reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
+    "display_name": "Valid UMI Sequences",
+    "description": "Fraction of reads with valid UMI sequences; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
     "format": "percent",
 }
 
@@ -389,7 +390,7 @@ Q30_METRICS = [
     {
         "name": "read_bases_with_q30_frac",
         "display_name": "Q30 Bases in RNA Read",
-        "description": "Fraction of RNA read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 1 for the Single Cell 3' v1 chemistry and Read 2 for the Single Cell 3' v2 chemistry.",
+        "description": "Fraction of RNA read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator (R2 for the Single Cell Universal 3').",
         "format": "percent",
     },
     {
@@ -431,7 +432,7 @@ CRISPR_Q30_METRICS = [
     {
         "name": REPORT_PREFIX_CRISPR + "read_bases_with_q30_frac",
         "display_name": DISPLAY_PREFIX_CRISPR + "Q30 Bases in CRISPR Read",
-        "description": "Fraction of CRISPR library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3' v3 and Single Cell 5' chemistries.",
+        "description": "Fraction of CRISPR library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator (R2 for Single Cell Universal 3' and 5').",
         "format": "percent",
     },
     {
@@ -469,8 +470,8 @@ CRISPR_SEQUENCING_METRICS = [
     },
     {
         "name": REPORT_PREFIX_CRISPR + "good_umi_frac",
-        "display_name": DISPLAY_PREFIX_CRISPR + "Valid UMIs",
-        "description": "Fraction of CRISPR library reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
+        "display_name": DISPLAY_PREFIX_CRISPR + "Valid UMI Sequences",
+        "description": "Fraction of CRISPR library reads with valid UMI sequences; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
         "format": "percent",
     },
     {
@@ -607,7 +608,7 @@ ANTIBODY_Q30_METRICS = [
     {
         "name": REPORT_PREFIX_ANTIBODY + "read_bases_with_q30_frac",
         "display_name": DISPLAY_PREFIX_ANTIBODY + "Q30 Bases in Antibody Read",
-        "description": "Fraction of Antibody library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3' v3 and Single Cell 5' chemistries.",
+        "description": "Fraction of Antibody library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator (R2 for Single Cell Universal 3' and 5').",
         "format": "percent",
     },
     {
@@ -646,8 +647,8 @@ ANTIBODY_SEQUENCING_METRICS = [
     },
     {
         "name": REPORT_PREFIX_ANTIBODY + "good_umi_frac",
-        "display_name": DISPLAY_PREFIX_ANTIBODY + "Valid UMIs",
-        "description": "Fraction of Antibody library reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
+        "display_name": DISPLAY_PREFIX_ANTIBODY + "Valid UMI Sequences",
+        "description": "Fraction of Antibody library reads with valid UMI sequences; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
         "format": "percent",
     },
     {
@@ -714,7 +715,7 @@ MULTIPLEXING_Q30_METRICS = [
     {
         "name": REPORT_PREFIX_MULTIPLEXING + "read_bases_with_q30_frac",
         "display_name": DISPLAY_PREFIX_MULTIPLEXING + "Q30 Bases in MULTIPLEXING Read",
-        "description": "Fraction of MULTIPLEXING library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3' v3 and Single Cell 5' chemistries.",
+        "description": "Fraction of MULTIPLEXING library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator (R2 for Single Cell Universal 3' and 5').",
         "format": "percent",
     },
     {
@@ -770,7 +771,7 @@ CUSTOM_FEATURE_Q30_METRICS = [
     {
         "name": "read_bases_with_q30_frac",
         "display_name": "%s: Q30 Bases in Feature Read",
-        "description": "Fraction of Custom library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator. This is Read 2 for the Single Cell 3' v3 and Single Cell 5' chemistries.",
+        "description": "Fraction of Custom library read bases with Q-score >= 30, excluding very low quality/no-call (Q <= 2) bases from the denominator (R2 for Single Cell Universal 3' and 5').",
         "format": "percent",
         "prefix": "custom_features",
     },
@@ -815,8 +816,8 @@ CUSTOM_FEATURE_SEQUENCING_METRICS = [
     },
     {
         "name": "good_umi_frac",
-        "display_name": "%s: Valid UMIs",
-        "description": "Fraction of Custom library reads with valid UMIs; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
+        "display_name": "%s: Valid UMI Sequences",
+        "description": "Fraction of Custom library reads with valid UMI sequences; i.e., UMI sequences that do not contain Ns and that are not homopolymers.",
         "format": "percent",
         "prefix": "custom_features",
     },
@@ -1202,8 +1203,11 @@ CHARTS = [
         ],
         "config": shared.CHARTS_PLOTLY_MOVABLE_CONFIG,
         "name": "tsne_counts",
-        "description": "Shown here are the total UMI counts for each cell-barcode. Cells with greater UMI counts likely have higher RNA content than cells with fewer UMI counts. The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. The display is limited to a random subset of %d cells."
-        % MAX_WEBSHIM_BCS_DIM,
+        "description": "Shown here are the total UMI counts for each cell-barcode. "
+        "Cells with greater UMI counts likely have higher RNA content than cells with fewer UMI counts. "
+        "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
+        "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
+        f"The display is limited to a random subset of {MAX_WEBSHIM_BCS_DIM} cells.",
         "function": "plot_tsne_totalcounts",
     },
     {
@@ -1217,22 +1221,33 @@ CHARTS = [
             "yaxis": {"title": "t-SNE2"},
         },
         "name": "tsne_clustering",
-        "description": "These are the assignments of each cell-barcode a clusters by an automated clustering algorithm. The clustering groups together cells that have similar expression profiles. The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. The display is limited to a random subset of %d cells and K-means up to K=%d. Please use Loupe Browser to view the entire dataset."
-        % (MAX_WEBSHIM_BCS_DIM, MAX_WEBSHIM_KMEANS_K),
+        "description": "These are the assignments of each cell-barcode a clusters by an automated clustering algorithm. "
+        "The clustering groups together cells that have similar expression profiles. "
+        "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
+        "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
+        f"The display is limited to a random subset of {MAX_WEBSHIM_BCS_DIM} cells and K-means up to K={MAX_WEBSHIM_KMEANS_K}. "
+        "Please use Loupe Browser to view the entire dataset.",
         "function": "plot_tsne",
     },
     {
         "table": {"width": 999, "height": 1000},
         "title": "Top Genes By Cluster (Log2 fold-change, p-value)",
         "name": "differential_expression",
-        "description": 'The differential expression analysis seeks to find, for each cluster, genes that are more highly expressed in that cluster relative to the rest of the sample. Here a differential expression test was performed between each cluster and the rest of the sample for each gene. The Log2 fold-change (L2FC) is an estimate of the log2 ratio of expression in a cluster to that in all other cells. A value of 1.0 indicates 2-fold greater expression in the cluster of interest. The p-value is a measure of the statistical significance of the expression difference and is based on a negative binomial test. The p-value reported here has been adjusted for multiple testing via the Benjamini-Hochberg procedure. In this table you can click on a column to sort by that value. Also, in this table genes were filtered by (Mean UMI counts > %0.1f) and the top N genes by L2FC for each cluster were retained. Genes with L2FC < 0 or adjusted p-value >= %0.2f were grayed out. The number of top genes shown per cluster, N, is set to limit the number of table entries shown to %d; N=%d/K^2 where K is the number of clusters. N can range from 1 to %d. For the full table, please refer to the "differential_expression.csv" files produced by the pipeline.'
-        % (
-            TOP_DE_GENES_MIN_MEAN,
-            PVALUE_DEEMPHASIS_CUTOFF,
-            MAX_DE_TABLE_ENTRIES,
-            MAX_DE_TABLE_ENTRIES,
-            MAX_TOP_N_GENES,
-        ),
+        "description": "The differential expression analysis seeks to find, for each cluster, "
+        "genes that are more highly expressed in that cluster relative to the rest of the sample. "
+        "Here a differential expression test was performed between each cluster and the rest of the sample for each gene. "
+        "The Log2 fold-change (L2FC) is an estimate of the log2 ratio of expression in a cluster to that in all other cells. "
+        "A value of 1.0 indicates 2-fold greater expression in the cluster of interest. "
+        "The p-value is a measure of the statistical significance of the expression difference and is based on a negative binomial test. "
+        "The p-value reported here has been adjusted for multiple testing via the Benjamini-Hochberg procedure. "
+        "In this table you can click on a column to sort by that value. "
+        f"Also, in this table genes were filtered by (Mean UMI counts > {TOP_DE_GENES_MIN_MEAN:0.1f}) "
+        "and the top N genes by L2FC for each cluster were retained. "
+        f"Genes with L2FC < 0 or adjusted p-value >= {PVALUE_DEEMPHASIS_CUTOFF:0.2f} were grayed out. "
+        "The number of top genes shown per cluster, N, is set to limit the number of table entries shown to "
+        f"{MAX_DE_TABLE_ENTRIES}; N={MAX_DE_TABLE_ENTRIES}/K^2 where K is the number of clusters. "
+        f"N can range from 1 to {MAX_TOP_N_GENES}. "
+        'For the full table, please refer to the "differential_expression.csv" files produced by the pipeline.',
         "function": "plot_differential_expression",
     },
     {
@@ -1337,12 +1352,12 @@ METRIC_ALARMS = [
         "name": GOOD_UMIS_METRIC["name"],
         "format": GOOD_UMIS_METRIC["format"],
         "error": {
-            "title": "Low Fraction Valid UMIs",
+            "title": "Low Fraction Valid UMI Sequences",
             "message": "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance is likely to be affected.",
             "test": "< 0.5",
         },
         "warn": {
-            "title": "Low Fraction Valid UMIs",
+            "title": "Low Fraction Valid UMI Sequences",
             "message": "Ideal > 75%. This may indicate a quality issue with the R1 read. Application performance may be affected.",
             "test": "< 0.75",
         },
@@ -1379,12 +1394,12 @@ METRIC_ALARMS = [
         "name": "bc_bases_with_q30_frac",
         "format": "percent",
         "error": {
-            "title": "Low Barcode Q30 Fraction (Illumina I7 Read for Single Cell 3' v1, R1 for Single Cell 3' v2/v3 and Single Cell 5')",
+            "title": "Low Barcode Q30 Fraction (R1 for Single Cell Universal 3' and 5')",
             "message": "Ideal > 55%. Application performance is likely to be affected.",
             "test": "< 0.45",
         },
         "warn": {
-            "title": "Low Barcode Q30 Fraction (Illumina I7 Read for Single Cell 3' v1, R1 for Single Cell 3' v2/v3 and Single Cell 5')",
+            "title": "Low Barcode Q30 Fraction (R1 for Single Cell Universal 3' and 5')",
             "message": "Ideal > 55%. Application performance may be affected.",
             "test": "< 0.55",
         },
@@ -1393,12 +1408,12 @@ METRIC_ALARMS = [
         "name": "read_bases_with_q30_frac",
         "format": "percent",
         "error": {
-            "title": "Low RNA Read Q30 Fraction (Illumina R1 for Single Cell 3' v1 and Single Cell 5' paired end, R2 for Single Cell 3' v2/v3 and Single Cell 5' R2-only)",
+            "title": "Low RNA Read Q30 Fraction (R1 for Single Cell 5' paired end, R2 for Single Cell Universal 3' and 5' R2-only)",
             "message": "Ideal > 65%. Application performance is likely to be affected.",
             "test": "< 0.55",
         },
         "warn": {
-            "title": "Low RNA Read Q30 Fraction (Illumina R1 for Single Cell 3' v1 and Single Cell 5' paired end, R2 for Single Cell 3' v2/v3 and Single Cell 5' R2-only)",
+            "title": "Low RNA Read Q30 Fraction (R1 for Single Cell 5' paired end, R2 for Single Cell Universal 3' and 5' R2-only)",
             "message": "Ideal > 65%. Application performance may be affected.",
             "test": "< 0.65",
         },
@@ -1407,12 +1422,12 @@ METRIC_ALARMS = [
         "name": "umi_bases_with_q30_frac",
         "format": "percent",
         "error": {
-            "title": "Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3' v1, R1 for Single Cell 3' v2/v3 and Single Cell 5')",
+            "title": "Low UMI Q30 Fraction (R1 for Single Cell Universal 3' and 5')",
             "message": "Ideal > 75%. Application performance is likely to be affected.",
             "test": "< 0.65",
         },
         "warn": {
-            "title": "Low UMI Q30 Fraction (Illumina R2 Read for Single Cell 3' v1, R1 for Single Cell 3' v2/v3 and Single Cell 5')",
+            "title": "Low UMI Q30 Fraction (R1 for Single Cell Universal 3' and 5')",
             "message": "Ideal > 75%. Application performance may be affected.",
             "test": "< 0.75",
         },

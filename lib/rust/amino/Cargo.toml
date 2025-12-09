@@ -2,15 +2,15 @@
 [dependencies.debruijn]
 workspace = true
 
-[dependencies.string_utils]
-path = '../string_utils'
-
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'amino'
 publish = false
 version = '0.1.0'

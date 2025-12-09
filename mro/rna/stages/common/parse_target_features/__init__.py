@@ -25,7 +25,6 @@ stage PARSE_TARGET_FEATURES(
     in  path     reference_path,
     in  json     gene_index,
     in  bool     filter_probes,
-    in  bool     no_target_umi_filter,
     in  bool     no_bam,
     in  bool     is_pd,
     in  bool     is_antibody_only,
@@ -35,7 +34,6 @@ stage PARSE_TARGET_FEATURES(
     out csv      target_panel_or_probe_set,
     out csv      target_gene_indices,
     out bool     disable_targeted,
-    out bool     disable_target_umi_filter,
     out bool     no_bam,
     out string   target_set_name,
     out string   targeting_method,
@@ -54,7 +52,6 @@ def main(args, outs):
         ## Set relevant flags
         outs.no_bam = args.no_bam
         outs.disable_targeted = True
-        outs.disable_target_umi_filter = True
 
         ## These will all be null if not targeted data.
         ## (Also, don't rely on deprecated martian behavior that initializes paths)
@@ -115,7 +112,6 @@ def main(args, outs):
             outs.target_panel = martian.make_path("target_panel.csv")
             outs.probe_set = None
             outs.target_panel_or_probe_set = outs.target_panel
-            outs.disable_target_umi_filter = args.no_target_umi_filter
             # The stages CALCULATE_TARGETED_METRICS_PD and TARGETED_WEBSUMMARY_PD
             # in the pipeline _TARGETED_ANALYZER_PD require a BAM file.
             if args.is_pd:
@@ -124,7 +120,6 @@ def main(args, outs):
             outs.target_panel = None
             outs.probe_set = martian.make_path("probe_set.csv")
             outs.target_panel_or_probe_set = outs.probe_set
-            outs.disable_target_umi_filter = True
         else:
             raise Exception(f"Unexpected targeting_method: {targeting_method}")
 

@@ -1,6 +1,8 @@
+#![deny(missing_docs)]
+
 use anyhow::Result;
-use hdf5::types::FixedAscii;
 use hdf5::Group;
+use hdf5::types::FixedAscii;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

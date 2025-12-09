@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use anyhow::Result;
 use martian::MartianFileType;
 use martian_derive::martian_filetype;

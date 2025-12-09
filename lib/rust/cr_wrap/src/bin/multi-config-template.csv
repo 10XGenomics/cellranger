@@ -34,6 +34,7 @@ reference,/path/to/vdj_reference
 # inner-enrichment-primers,/path/to/primers
 # r1-length,<int>
 # r2-length,<int>
+# denovo,<true|false>
 
 [libraries]
 fastq_id,fastqs,feature_types

@@ -11,7 +11,6 @@ import cellranger.webshim.common as cr_webshim
 import cellranger.websummary.sample_properties as sp
 from cellranger.analysis.singlegenome import TSNE_NAME
 from cellranger.matrix import CountMatrix
-from cellranger.reference_paths import get_reference_genomes
 from cellranger.webshim.constants.shared import PIPELINE_COUNT
 from cellranger.websummary.react_components import ReactComponentEncoder
 from cellranger.websummary.web_summary_builder import build_web_summary_html_sc
@@ -22,7 +21,7 @@ stage SUMMARIZE_REPORTS(
     in  json[]            summaries,
     in  string            sample_id,
     in  string            sample_desc,
-    in  path              reference_path,
+    in  ReferenceInfo     reference_info,
     in  path              analysis,
     in  h5                barcode_summary_h5,
     in  h5                filtered_gene_bc_matrices_h5,
@@ -36,6 +35,7 @@ stage SUMMARIZE_REPORTS(
     in  string            target_set_name,
     in  csv               per_feature_metrics_csv,
     in  bool              include_introns,
+    in  bool              cell_annotation_viable_but_not_requested,
     out json              metrics_summary_json,
     out csv               metrics_summary_csv,
     out html              web_summary,
@@ -76,17 +76,21 @@ def join(args, outs, _chunk_defs, _chunk_outs):
         antigen_treemap_path=args.antigen_treemap,
     )
 
-    genomes = get_reference_genomes(args.reference_path)
     sample_properties = sp.ExtendedCountSampleProperties(
         sample_id=args.sample_id,
         sample_desc=args.sample_desc,
-        genomes=genomes,
-        reference_path=args.reference_path,
+        genomes=CountMatrix.get_genomes_from_h5(args.filtered_gene_bc_matrices_h5),
+        reference_path=(
+            args.reference_info["transcriptome_info"]["reference_path"]
+            if args.reference_info["transcriptome_info"]
+            else None
+        ),
         chemistry_defs=args.chemistry_defs,
         include_introns=args.include_introns,
         target_set=args.target_set_name,
         target_panel_summary=args.target_panel_summary,
         cmdline=os.environ.get("CMDLINE", "NA"),
+        cell_annotation_viable_but_not_requested=args.cell_annotation_viable_but_not_requested,
     )
 
     # TODO: Move metrics CSV somewhere else

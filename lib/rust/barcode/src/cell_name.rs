@@ -1,14 +1,15 @@
-//!
 //! Barcodes which are defined based segmented spatial cells
-//!
+#![expect(missing_docs)]
 use anyhow::ensure;
+use pyo3::{pyclass, pymethods};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-pub(crate) const CELL_ID_PREFIX: &str = "cellid";
+pub(super) const CELL_ID_PREFIX: &str = "cellid";
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
+#[pyclass(eq, str, get_all)]
 pub struct CellId {
     pub id: u32,
 }
@@ -33,9 +34,7 @@ impl FromStr for CellId {
         let prefix = parts.next().ok_or_else(|| error(s))?;
         ensure!(
             prefix == CELL_ID_PREFIX,
-            "Invalid prefix {} in {}",
-            prefix,
-            s
+            "Cell-IDs should have the prefix {CELL_ID_PREFIX}. Found cell-ID {s} which has prefix {prefix}"
         );
 
         let id = parts
@@ -45,6 +44,27 @@ impl FromStr for CellId {
             .ok_or_else(|| error(s))?;
 
         Ok(CellId { id })
+    }
+}
+
+#[pymethods]
+impl CellId {
+    #[new]
+    #[pyo3(signature = (barcode=None, id=None))]
+    pub fn new(barcode: Option<String>, id: Option<usize>) -> pyanyhow::Result<Self> {
+        match (barcode, id) {
+            (Some(barcode), None) => Ok(barcode.parse()?),
+            (None, Some(id)) => Ok(CellId { id: id as u32 }),
+            bad_args => Err(anyhow::anyhow!(
+                "Cell-ID either has to \
+             be a string with prefix {CELL_ID_PREFIX} or an integer. Found: {bad_args:?}"
+            )
+            .into()),
+        }
+    }
+
+    pub fn with_default_gem_group(&self) -> String {
+        format!("{self}-1")
     }
 }
 
@@ -59,6 +79,7 @@ mod tests {
         let b = CellId { id: 717 };
         println!("{b}");
         assert_eq!(b.to_string(), "cellid_000000717");
+        assert_eq!(b.with_default_gem_group(), "cellid_000000717-1");
         assert_eq!(b, "cellid_000000717".parse()?);
         assert_eq!(b, "cellid_000000717-1".parse()?);
         Ok(())

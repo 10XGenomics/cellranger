@@ -1,4 +1,7 @@
 [dependencies]
+[dependencies.ahash]
+workspace = true
+
 [dependencies.anyhow]
 workspace = true
 
@@ -7,9 +10,6 @@ workspace = true
 
 [dependencies.byteseq]
 path = '../byteseq'
-
-[dependencies.fxhash]
-workspace = true
 
 [dependencies.itertools]
 workspace = true
@@ -20,6 +20,9 @@ workspace = true
 [dependencies.martian-derive]
 workspace = true
 
+[dependencies.metric]
+path = '../metric'
+
 [dependencies.serde]
 workspace = true
 
@@ -29,18 +32,18 @@ workspace = true
 [dependencies.strum]
 workspace = true
 
-[dependencies.strum_macros]
-workspace = true
-
 [dependencies.vdj_types]
 path = '../vdj_types'
 
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'vdj_reference'
 publish = false
 version = '0.1.0'

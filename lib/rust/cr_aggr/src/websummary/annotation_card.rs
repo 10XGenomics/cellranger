@@ -1,8 +1,13 @@
-//
-use crate::websummary::{
-    CardWithMetric, GenericTable, PrettyMetric, TableRow, TermDesc, TitleWithTermDesc,
-};
-use serde::Serialize;
+#![deny(missing_docs)]
+
+use crate::websummary::{GenericTable, PrettyMetric, TableRow, TermDesc, TitleWithTermDesc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CardWithMetric {
+    pub table: GenericTable,
+    pub help: TitleWithTermDesc,
+}
 
 const PRODUCTIVE_CONTIG: (&str, &str) = (
     "Productive Contig",
@@ -111,7 +116,7 @@ impl From<VdjAggrAnnotationTable> for CardWithMetric {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::websummary::check_eq_json;
+    use cr_vdj::check_eq_json;
 
     #[test]
     fn test_vdj_annotation_table_tcr() {

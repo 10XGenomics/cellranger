@@ -46,7 +46,7 @@ def _copy_start(data, dest):
             return True
         elif len(line) > MAX_LINE_LEN:
             dest.write(line[: MAX_LINE_LEN - 4])
-            dest.write("...\n")
+            dest.write("...\n".encode())  # noqa: UP012
             if len(line) == OUT_SIZE:
                 # Didn't actually find the end of the line. Stop reading lines
                 # and prepare to seek ahead.
@@ -62,7 +62,7 @@ def _copy_start(data, dest):
     if size <= start_point:
         return True
     if size > MAX_LOAD_SIZE and size > start_point + OUT_SIZE:
-        dest.write("... %d bytes elided ...\n" % (size - OUT_SIZE - start_point))
+        dest.write(f"... {size - OUT_SIZE - start_point} bytes elided ...\n".encode())
         data.seek(-OUT_SIZE, os.SEEK_END)
     else:
         # Continue from where we left off.
@@ -84,10 +84,10 @@ def truncate_text(data, dest):
         if len(buf) >= END_LINES:
             elided += 1
         if len(line) > MAX_LINE_LEN:
-            line = line[: MAX_LINE_LEN - 4] + "...\n"
+            line = line[: MAX_LINE_LEN - 4] + b"...\n"
         buf.append(line)
     if elided:
-        dest.write("... %d lines elided ...\n" % elided)
+        dest.write(f"... {elided} lines elided ...\n".encode())
     for line in buf:
         dest.write(line)
 
@@ -139,7 +139,7 @@ def _truncate_report(obj, size):
     - non-empty lists recurse.
     """
     if isinstance(obj, STRING_TYPES):
-        return "[%d more]" % size
+        return f"[{size} more]"
     elif isinstance(obj, dict):
         return {"truncated elements": size}
     elif isinstance(obj, list):
@@ -160,25 +160,31 @@ def truncate_json(obj, dest):
 
 def truncate_file(filename):
     """Open the given named file and print a truncated version to stdout."""
-    with open(filename) as data:
+    with open(filename, "rb") as data_binary:
         is_json = False
-        data.seek(0, os.SEEK_END)
-        size = data.tell()
-        data.seek(0)
+        data_binary.seek(0, os.SEEK_END)
+        size = data_binary.tell()
+        data_binary.seek(0)
         if size <= MAX_LOAD_SIZE:
             is_json = True
             try:
+                data = os.fdopen(data_binary.fileno())
                 obj = json.load(data)
             except:
+                data_binary.seek(0)
                 is_json = False
-        try:
-            if is_json:
+        if is_json:
+            try:
                 truncate_json(obj, sys.stdout)
-            else:
-                data.seek(0)
-                truncate_text(data, sys.stdout)
-        except UnicodeDecodeError:
-            sys.stdout.write("[binary data]\n")
+            except UnicodeDecodeError:
+                sys.stdout.write("[binary data]\n")
+        else:
+            data_binary.seek(0)
+            with open(1, "wb") as stdout_binary:
+                try:
+                    truncate_text(data_binary, stdout_binary)
+                except UnicodeDecodeError:
+                    stdout_binary.write("[binary data]\n".encode())  # noqa UP012
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use crate::websummary::{CardWithTable, GenericTable, PrettyMetric, TableRow, TitleWithHelp};
 use serde::Serialize;
 use std::convert::Into;
@@ -62,7 +64,7 @@ impl From<VdjAggrCellsRow> for TableRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::websummary::check_eq_json;
+    use cr_vdj::check_eq_json;
 
     #[test]
     fn test_vdj_aggr_cells_table_row() {

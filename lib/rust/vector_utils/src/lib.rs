@@ -1,4 +1,6 @@
+//! vector_utils
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![expect(missing_docs)]
 
 // This file contains miscellaneous vector utilities.
 
@@ -61,37 +63,16 @@ pub fn contains<T: Eq>(x: &[T], y: &[T]) -> bool {
     false
 }
 
-// ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-// UNSIGNED VECTOR SIZE AND SOME SPECIAL SIZES
-// ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-
-pub trait VecUtils<'a> {
-    fn ilen(&self) -> isize;
-
-    fn solo(&self) -> bool;
-
-    fn duo(&self) -> bool;
-}
-
-impl<'a, T> VecUtils<'a> for [T] {
-    fn ilen(&self) -> isize {
-        self.len() as isize
-    }
-
-    fn solo(&self) -> bool {
-        self.len() == 1
-    }
-
-    fn duo(&self) -> bool {
-        self.len() == 2
-    }
-}
-
 /// Erase elements in a vector that are flagged by another vector.  Both vectors
 /// should have the same length.
+///
+/// No-op if the input vector to delete from is already empty.
 pub fn erase_if<T>(x: &mut Vec<T>, to_delete: &[bool]) {
-    // Adding this line means that enclone starts failing, and I don't want to
-    // run down those errors. Sigh.  COME ON PEOPLE, ADD ASSERTIONS.
+    if x.is_empty() {
+        return;
+    }
+    // in a sane world we could turn this very sensible assertion on
+    // someday...
     // assert_eq!(x.len(), to_delete.len());
     erase_if_iter(x, to_delete.iter().copied());
 }
@@ -324,10 +305,6 @@ pub fn next_diff1_3<T: Eq, U: Eq, V: Eq>(x: &[(T, U, V)], i: usize) -> usize {
 }
 
 pub fn next_diff12_3<T: Eq, U: Eq, V: Eq>(x: &[(T, U, V)], i: usize) -> usize {
-    next_diff_any(x, i, |a, b| a.0 == b.0 && a.1 == b.1)
-}
-
-pub fn next_diff12_4<T: Eq, U: Eq, V: Eq, W: Eq>(x: &[(T, U, V, W)], i: usize) -> usize {
     next_diff_any(x, i, |a, b| a.0 == b.0 && a.1 == b.1)
 }
 

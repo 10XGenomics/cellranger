@@ -1,26 +1,27 @@
-use super::scsv::{eof, rstrip_space, take_until_eof, Span};
-use anyhow::{bail, Result};
+#![deny(missing_docs)]
+use super::scsv::{Span, eof, rstrip_space, take_until_eof};
+use anyhow::{Result, bail};
+use nom::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{alpha1, digit1, one_of, space0, space1};
+use nom::character::complete::{space0, space1};
 use nom::combinator::peek;
 use nom::multi::many0;
 use nom::sequence::{delimited, preceded, terminated};
-use nom::{AsChar, IResult, InputTakeAtPosition};
 use regex::bytes::Regex;
 use std::fmt::{Display, Formatter};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 
 #[derive(Clone, Copy)]
-pub enum ParseCtx<'a, T: Display> {
+pub(crate) enum ParseCtx<'a, T: Display> {
     Hdr(T),
     HdrCol(T, &'a str),
     HdrRow(T, usize),
     HdrRowCol(T, usize, &'a str),
 }
 
-impl<'a, T: Display> Display for ParseCtx<'a, T> {
+impl<T: Display> Display for ParseCtx<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use ParseCtx::{Hdr, HdrCol, HdrRow, HdrRowCol};
         match self {
@@ -31,7 +32,7 @@ impl<'a, T: Display> Display for ParseCtx<'a, T> {
 }
 
 impl<'a, T: Display> ParseCtx<'a, T> {
-    pub fn with_col(self, col: &'a str) -> Self {
+    pub(crate) fn with_col(self, col: &'a str) -> Self {
         use ParseCtx::{Hdr, HdrCol, HdrRow, HdrRowCol};
         match self {
             Hdr(hdr) => HdrCol(hdr, col),
@@ -42,14 +43,14 @@ impl<'a, T: Display> ParseCtx<'a, T> {
     }
 }
 
-pub trait Parse<T: Display> {
+pub(crate) trait Parse<T: Display> {
     fn parse<R>(&self, ctx: ParseCtx<'_, T>) -> Result<R>
     where
         R: FromStr,
         <R as FromStr>::Err: Display;
 }
 
-impl<'a, T: Display> Parse<T> for Span<'a> {
+impl<T: Display> Parse<T> for Span<'_> {
     fn parse<R>(&self, ctx: ParseCtx<'_, T>) -> Result<R>
     where
         R: FromStr,
@@ -91,7 +92,9 @@ fn val2(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     delimited(many0(alt((space1, tag("|")))), not_end_val, end_val)(input)
 }
 
-pub fn parse_vec(input: Span<'_>) -> Result<Vec<Span<'_>>, nom::Err<nom::error::Error<Span<'_>>>> {
+pub(crate) fn parse_vec(
+    input: Span<'_>,
+) -> Result<Vec<Span<'_>>, nom::Err<nom::error::Error<Span<'_>>>> {
     let (mut input, val) = val1(input)?;
     let mut vals = vec![val];
     // custom many_till because I don't want to insert(0, x) into a vec
@@ -105,23 +108,7 @@ pub fn parse_vec(input: Span<'_>) -> Result<Vec<Span<'_>>, nom::Err<nom::error::
     }
 }
 
-#[allow(dead_code)]
-pub fn parse_ident<T>(input: T) -> IResult<T, T>
-where
-    T: InputTakeAtPosition + Clone,
-    <T as InputTakeAtPosition>::Item: AsChar + Copy,
-{
-    let (s, _) = peek(alpha1)(input)?;
-    s.split_at_position_complete(|c| !(c.is_alphanum() || c.as_char() == '_'))
-}
-
-#[allow(dead_code)]
-fn number(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
-    let (s, _) = peek(one_of("123456789"))(input)?;
-    digit1(s)
-}
-
-pub fn parse_range<T>(input: Span<'_>) -> Result<RangeInclusive<T>>
+pub(crate) fn parse_range<T>(input: Span<'_>) -> Result<RangeInclusive<T>>
 where
     T: FromStr + PartialOrd<T> + Clone,
     <T as FromStr>::Err: std::error::Error + Send + Sync + 'static,
@@ -148,7 +135,7 @@ where
     )
 }
 
-pub fn parse_prefixed_range(input: Span<'_>) -> Result<Vec<String>> {
+pub(crate) fn parse_prefixed_range(input: Span<'_>) -> Result<Vec<String>> {
     let r = Regex::new(r"([1-9][0-9]*)(-[1-9][0-9]*)?$")?;
     if let Some(cap) = r.captures(input.fragment().as_bytes()) {
         let m = cap.get(1).unwrap();
@@ -172,10 +159,21 @@ mod tests {
     use super::super::scsv::{Span, XtraData};
     use super::*;
     use anyhow::Result;
+    use nom::character::complete::alpha1;
+    use nom::{AsChar, InputTakeAtPosition};
 
     fn span(s: &str) -> Span<'_> {
         let xtra = XtraData::new("parse::tests");
         Span::new_extra(s, xtra)
+    }
+
+    pub(crate) fn parse_ident<T>(input: T) -> IResult<T, T>
+    where
+        T: InputTakeAtPosition + Clone,
+        <T as InputTakeAtPosition>::Item: AsChar + Copy,
+    {
+        let (s, _) = peek(alpha1)(input)?;
+        s.split_at_position_complete(|c| !(c.is_alphanum() || c.as_char() == '_'))
     }
 
     #[test]

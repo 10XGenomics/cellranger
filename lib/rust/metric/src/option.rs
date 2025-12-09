@@ -2,6 +2,7 @@
 //! This module implements `Metric` and `JsonReport` for `Option<T>`
 //! where T is a `Metric` or `JsonReport`
 //!
+#![deny(missing_docs)]
 
 use crate::{JsonReport, JsonReporter, Metric};
 

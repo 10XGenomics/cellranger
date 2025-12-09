@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import os
 from collections import OrderedDict
-from typing import TypedDict
 
+from cellranger.mro_types.structs import ChemistryDef
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
 
+type ChemistryDefs = dict[str, ChemistryDef]
+
 # NOTE: The rust code in `cr_types` also loads chemistry definitions from the same file.
-CHEMISTRY_DEFS: dict[str, ChemistryDef] = json.load(
+CHEMISTRY_DEFS: ChemistryDefs = json.load(
     open(os.path.join(os.path.dirname(__file__), "chemistry_defs.json"))
 )
 
@@ -82,6 +84,24 @@ SC5P_CHEMISTRIES = [
 
 SC_GEMX_CHEMISTRIES = SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
 
+# GEM-X Flex v2 chemistries
+FLEX_V2_CHEMISTRIES = [
+    CHEMISTRY_DEFS["Flex-v2-96-R1"],
+    CHEMISTRY_DEFS["Flex-v2-96-RNA-R2"],
+    CHEMISTRY_DEFS["Flex-v2-R1"],
+    CHEMISTRY_DEFS["Flex-v2-RNA-R2"],
+    CHEMISTRY_DEFS["Flex-v2-Ab-R2:45"],
+    CHEMISTRY_DEFS["Flex-v2-Ab-R2:64"],
+    CHEMISTRY_DEFS["Flex-v2-CRISPR-R2:1"],
+    CHEMISTRY_DEFS["Flex-v2-singleplex"],
+]
+assert FLEX_V2_CHEMISTRIES == [
+    chem for name, chem in CHEMISTRY_DEFS.items() if name.startswith("Flex-v2")
+], (
+    "FLEX_V2_CHEMISTRIES must include all chemistries whose names start with 'Flex-v2': "
+    f"{[name for name in CHEMISTRY_DEFS if name.startswith("Flex-v2")]}."
+)
+
 # Single Cell V(D)J (5-prime) chemistries
 SCVDJ_CHEMISTRIES = [
     CHEMISTRY_DEFS["SCVDJ"],
@@ -144,22 +164,6 @@ def get_whitelist_name_from_chemistry_description(description: str) -> None | st
     if barcode_section is not None and len(barcode_section) == 1:
         return barcode_section[0].get("whitelist")
     return None
-
-
-class ChemistryDef(TypedDict):
-    """A chemistry definition."""
-
-    name: str
-    description: str
-    barcode: list[dict[str, int | str | dict[str, str]]]
-    umi: list[dict[str, int | str]]
-    rna: dict[str, int | str | None]
-    rna2: dict[str, int | str | None] | None
-    endedness: str
-    strandedness: str
-
-
-ChemistryDefs = dict[str, ChemistryDef]
 
 
 def get_primary_chemistry_def(chemistry_defs: ChemistryDefs) -> ChemistryDef:

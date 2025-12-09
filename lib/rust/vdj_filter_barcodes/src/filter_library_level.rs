@@ -1,17 +1,18 @@
 // TODO: fix these.
+#![expect(missing_docs)]
 #![allow(clippy::needless_range_loop)]
 
 use crate::filter_barcode_level::BarcodeCellInfo;
 use crate::filter_log::{
     AsmCellFilter, FilterLogEntry, FilterLogger, FilterSwitch, IndelErrorMode,
 };
+use crate::pack_dna::unpack_bases_80;
 use barcode::{Barcode, BcSeq};
 use debruijn::dna_string::DnaString;
 use fastq_set::sseq::{HammingIterOpt, InsertionIterOpt};
 use itertools::Itertools;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
-use tenkit2::pack_dna::unpack_bases_80;
 use vdj_asm_utils::barcode_data::ContigChimeraData;
 use vdj_asm_utils::exact_clonotyping::{BarcodeContigUMI, ProductiveContig};
 use vector_utils::{
@@ -103,10 +104,8 @@ pub fn whitelist_indel_filter(
                 .filter(|bc| source.umi >= bc.umi * GB_UMI_MULT)
                 .map(|bc| (bc.barcode, bc.umi))
                 .collect();
-            let mut sink_fulllen: HashSet<&[u8]> = sink_umi_map
-                .keys()
-                .map(barcode::Barcode::sequence_bytes)
-                .collect();
+            let mut sink_fulllen: HashSet<&[u8]> =
+                sink_umi_map.keys().map(Barcode::sequence_bytes).collect();
             let mut sink_truncated: HashSet<&[u8]> = sink_umi_map
                 .keys()
                 .map(|bc| &bc.sequence_bytes()[..bc.sequence_bytes().len() - 1])
@@ -316,7 +315,7 @@ fn junction_filters(
                         println!("{} = possible plasma cell leakage", x.barcode);
                         println!("alt counts = {}", alt_counts.iter().format(","));
                         kills.push(x.barcode.clone());
-                        if let Some(ref mut logger) = filter_logger {
+                        if let Some(logger) = filter_logger {
                             logger.log(&FilterLogEntry::cell_calling(
                                 x.barcode.clone(),
                                 AsmCellFilter::NonDominantJunction {
@@ -389,7 +388,7 @@ fn junction_filters(
                         let x = &d[i2];
                         println!("{} = possible type two plasma cell leakage", x.barcode);
                         kills.push(x.barcode.clone());
-                        if let Some(ref mut logger) = filter_logger {
+                        if let Some(logger) = filter_logger {
                             logger.log(&FilterLogEntry::cell_calling(
                                 x.barcode.clone(),
                                 AsmCellFilter::WeakJunction {
@@ -465,7 +464,7 @@ fn chimeric_filters(
                 if bin_member(&bads, &t) {
                     kills.push(all_chimdata[k].barcode.clone());
                     println!("{} = possible chimera", all_chimdata[k].barcode);
-                    if let Some(ref mut logger) = filter_logger {
+                    if let Some(logger) = filter_logger {
                         logger.log(&FilterLogEntry::cell_calling(
                             all_chimdata[k].barcode.clone(),
                             AsmCellFilter::ChimericContig {
@@ -691,7 +690,7 @@ fn common_clone_filters(
                 }
             }
             kills.push(x.barcode.clone());
-            if let Some(ref mut logger) = filter_logger {
+            if let Some(logger) = filter_logger {
                 logger.log(&FilterLogEntry::cell_calling(
                     x.barcode.clone(),
                     AsmCellFilter::CommonCloneShadowSingleUmi {

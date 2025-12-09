@@ -1,8 +1,9 @@
+#![expect(missing_docs)]
 use crate::arc::count::CountMro;
 use crate::env;
 use crate::fastqs::FastqArgs;
 use crate::mrp_args::MrpArgs;
-use crate::utils::{validate_id, CliPath};
+use crate::utils::{CliPath, validate_id};
 use anyhow::Result;
 use clap::{self, Parser};
 use cr_types::LibraryType;
@@ -70,6 +71,12 @@ impl TestrunArgs {
             peak_qval: None,
             k_means_max_clusters: None,
             no_bam: false,
+            no_secondary_analysis: false,
+            rna_r1_length: None,
+            rna_r2_length: None,
+            tenx_cloud_token_path: None,
+            cell_annotation_model: None,
+            skip_cell_annotation: true,
         })
     }
 }

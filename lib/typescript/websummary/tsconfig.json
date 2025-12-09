@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "jsx": "react",
+    "esModuleInterop": true,
+    "lib": [
+      "es2019",
+      "dom"
+    ],
+    "noImplicitAny": true,
+    "module": "es6",
+    "moduleResolution": "bundler",
+    "outDir": "./dist",
+    "sourceMap": true,
+    "target": "es5",
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
+    "skipLibCheck": true,
+    "strictNullChecks": true
+  },
+  "exclude": [
+    // this is being symlinked from websummary submodule
+    "./src/shared/websummary/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+  ],
+}

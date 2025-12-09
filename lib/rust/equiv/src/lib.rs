@@ -1,4 +1,5 @@
 // Copyright (c) 2024 10X Genomics, Inc. All rights reserved.
+#![deny(missing_docs)]
 
 //! This file contains an equivalence relation struct.  There is a literature on
 //! this and multiple rust implementations of sophisticated algorithms, see:
@@ -196,7 +197,7 @@ impl<'a> SetIterator<'a> {
     }
 }
 
-impl<'a> Iterator for SetIterator<'a> {
+impl Iterator for SetIterator<'_> {
     type Item = usize;
 
     fn size_hint(&self) -> (usize, Option<usize>) {

@@ -1,23 +1,23 @@
 //! Martian stage WRITE_CONCAT_REF_OUTS creates concat_ref.bam and concat_ref.bam.bai.
+#![expect(missing_docs)]
 
 use crate::assigner::{
-    bam_record_from_align, replace_sam_by_indexed_bam, BamBaiFile, BamFile, ProtoBinFile, SamFile,
-    QUALITY_OFFSET,
+    BamBaiFile, BamFile, ProtoBinFile, QUALITY_OFFSET, SamFile, bam_record_from_align,
+    replace_sam_by_indexed_bam,
 };
 use anyhow::Result;
 use bio::alignment::pairwise::Aligner;
 use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::read_proto;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::LazyFileTypeIO;
+use martian_filetypes::json_file::JsonFile;
 use rayon::prelude::*;
 use rust_htslib::bam;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
-use string_utils::strme;
 use vdj_ann::annotate::ContigAnnotation;
 use vdj_asm_utils::bam_utils::add_ref_to_bam_header;
 
@@ -91,7 +91,7 @@ impl MartianMain for WriteConcatRefOuts {
 
                 writeln!(writer, ">{record_name}")?;
                 bytes_written += record_name.len() + 2;
-                writeln!(writer, "{}", strme(seq))?;
+                writeln!(writer, "{}", std::str::from_utf8(seq).unwrap())?;
                 writeln!(
                     writer_fai,
                     "{}\t{}\t{}\t{}\t{}",

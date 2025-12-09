@@ -2,6 +2,7 @@
 //!
 //! Contains tools for loading barcode whitelists, check barcodes against the whitelist
 //! and correcting sequencing errors in barcodes.
+#![expect(missing_docs)]
 
 use std::fmt;
 use std::iter::{self, FromIterator};
@@ -10,24 +11,26 @@ use std::str::FromStr;
 
 pub mod binned;
 pub mod cell_name;
+mod correct_indel;
 pub mod corrector;
 mod io_utils;
+mod short_string;
 pub mod whitelist;
 
-pub mod short_string;
-use anyhow::{anyhow, bail, Result};
+use BarcodeConstruct::{GelBeadAndProbe, GelBeadOnly, Segmented};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use binned::{SquareBinIndex, SquareBinRowOrColumnIndex};
 use cell_name::CellId;
+pub use correct_indel::CorrectSubNotIndel;
 pub use corrector::BarcodeCorrector;
 use fastq_set::squality::SQualityGen;
 use fastq_set::sseq::SSeqGen;
-use itertools::{zip_eq, Itertools};
+use itertools::{Itertools, zip_eq};
 use metric::{JsonReport, JsonReporter, Metric};
 use serde::{Deserialize, Serialize};
-pub use short_string::*;
+pub(crate) use short_string::ShortString7;
 pub use whitelist::{Whitelist, WhitelistSource, WhitelistSpec};
-use BarcodeConstruct::{GelBeadAndProbe, GelBeadOnly, Segmented};
 
 /* ---------------------------------------------------------------------------------------------- */
 
@@ -93,19 +96,7 @@ impl BarcodeContent {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         std::str::from_utf8(bytes)?.parse()
     }
-    /// The spatial index of the barcode, if it has one. Panics for
-    /// sequence barcodes
-    pub fn spatial_index(&self) -> SquareBinIndex {
-        match self {
-            BarcodeContent::Sequence(_) => {
-                panic!("Cannot get spatial index from sequence barcode")
-            }
-            BarcodeContent::SpatialIndex(index) => *index,
-            BarcodeContent::CellName(_) => {
-                panic!("Cannot get spatial index from segmented cell barcode")
-            }
-        }
-    }
+
     /// The sequence of the barcode, if it has one. Panics for
     /// spatial index barcodes
     pub fn sequence(&self) -> &BcSeq {
@@ -117,20 +108,6 @@ impl BarcodeContent {
             BarcodeContent::CellName(_) => {
                 panic!("Cannot get sequence from segmented cell barcode")
             }
-        }
-    }
-
-    // The sequence of the barcode, if it has one. Panics for
-    /// spatial index barcodes
-    pub fn cell_id(&self) -> CellId {
-        match self {
-            BarcodeContent::Sequence(_) => {
-                panic!("Cannot get cell ID from sequence barcode")
-            }
-            BarcodeContent::SpatialIndex(_) => {
-                panic!("Cannot get cell ID from spatial barcode")
-            }
-            BarcodeContent::CellName(cell_id) => *cell_id,
         }
     }
 }
@@ -315,18 +292,29 @@ pub enum BarcodeSegmentState {
     ValidAfterCorrection,
     /// The sequence does not exist in the whitelist
     Invalid,
+    /// The sequence is not corrected, because multiple corrections are possible.
+    InvalidAmbiguous,
+    /// The sequence is not corrected, because it is an indel.
+    InvalidIndel,
+    /// The sequence is not corrected, because the molecule has unusual structure.
+    InvalidStructure,
 }
 
 impl BarcodeSegmentState {
-    pub fn is_valid(self) -> bool {
+    pub(crate) fn is_valid(self) -> bool {
         match self {
             BarcodeSegmentState::ValidBeforeCorrection
             | BarcodeSegmentState::ValidAfterCorrection => true,
-            BarcodeSegmentState::NotChecked | BarcodeSegmentState::Invalid => false,
+            BarcodeSegmentState::NotChecked
+            | BarcodeSegmentState::Invalid
+            | BarcodeSegmentState::InvalidAmbiguous
+            | BarcodeSegmentState::InvalidIndel
+            | BarcodeSegmentState::InvalidStructure => false,
         }
     }
+
     /// Change the state given the evidence on whether the sequence is in the whitelist
-    pub fn change(&mut self, is_in_whitelist: bool) {
+    pub(crate) fn change(&mut self, is_in_whitelist: bool) {
         *self = match self {
             BarcodeSegmentState::NotChecked => {
                 if is_in_whitelist {
@@ -395,6 +383,21 @@ impl<G> GelBeadAndProbeConstruct<G> {
             gel_bead: (self.gel_bead, other.gel_bead),
             probe: (self.probe, other.probe),
         }
+    }
+}
+
+impl<T, U> GelBeadAndProbeConstruct<(T, U)> {
+    fn unzip(self) -> (GelBeadAndProbeConstruct<T>, GelBeadAndProbeConstruct<U>) {
+        (
+            GelBeadAndProbeConstruct {
+                gel_bead: self.gel_bead.0,
+                probe: self.probe.0,
+            },
+            GelBeadAndProbeConstruct {
+                gel_bead: self.gel_bead.1,
+                probe: self.probe.1,
+            },
+        )
     }
 }
 
@@ -476,13 +479,36 @@ impl<G> Segments<G> {
     pub fn zip<K>(self, other: Segments<K>) -> Segments<(G, K)> {
         zip_eq(self, other).collect()
     }
-    pub fn array_vec(self) -> ArrayVec<[G; 4]> {
+    pub fn array_vec(self) -> ArrayVec<G, 4> {
         self.into()
     }
 }
 
-impl<G> From<Segments<G>> for ArrayVec<[G; 4]> {
-    fn from(v: Segments<G>) -> ArrayVec<[G; 4]> {
+impl<T, U> Segments<(T, U)> {
+    fn unzip(self) -> (Segments<T>, Segments<U>) {
+        let (s1t, s1u) = self.segment1;
+        let (s2t, s2u) = self.segment2;
+        let (s3t, s3u) = self.segment3.unzip();
+        let (s4t, s4u) = self.segment4.unzip();
+        (
+            Segments {
+                segment1: s1t,
+                segment2: s2t,
+                segment3: s3t,
+                segment4: s4t,
+            },
+            Segments {
+                segment1: s1u,
+                segment2: s2u,
+                segment3: s3u,
+                segment4: s4u,
+            },
+        )
+    }
+}
+
+impl<G> From<Segments<G>> for ArrayVec<G, 4> {
+    fn from(v: Segments<G>) -> ArrayVec<G, 4> {
         ArrayVec::from_iter(v)
     }
 }
@@ -506,7 +532,7 @@ impl<G> FromIterator<G> for Segments<G> {
 
 impl<G> IntoIterator for Segments<G> {
     type Item = G;
-    type IntoIter = std::iter::Flatten<std::array::IntoIter<Option<G>, 4>>;
+    type IntoIter = iter::Flatten<std::array::IntoIter<Option<G>, 4>>;
 
     fn into_iter(self) -> Self::IntoIter {
         [
@@ -585,15 +611,8 @@ impl<G> BarcodeConstruct<G> {
         }
     }
 
-    pub fn any<F, K>(self, f: F) -> bool
-    where
-        F: FnMut(G) -> bool,
-    {
-        self.iter().any(f)
-    }
-
-    pub fn array_vec(self) -> ArrayVec<[G; 4]> {
-        let mut xs = ArrayVec::<[G; 4]>::new();
+    pub fn array_vec(self) -> ArrayVec<G, 4> {
+        let mut xs = ArrayVec::<G, 4>::new();
         match self {
             GelBeadOnly(g) => xs.push(g),
             GelBeadAndProbe(x) => xs.extend(x),
@@ -630,6 +649,13 @@ impl<G> BarcodeConstruct<G> {
         }
     }
 
+    pub fn gel_bead_and_probe(self) -> (G, G) {
+        let GelBeadAndProbe(GelBeadAndProbeConstruct { gel_bead, probe }) = self else {
+            panic!("cannot unpack gel_bead_and_probe");
+        };
+        (gel_bead, probe)
+    }
+
     pub fn option_segments(self) -> Option<Segments<G>> {
         match self {
             GelBeadOnly(_) => None,
@@ -644,17 +670,17 @@ impl<G> BarcodeConstruct<G> {
 
     pub fn as_ref(&self) -> BarcodeConstruct<&G> {
         match self {
-            GelBeadOnly(ref g) => GelBeadOnly(g),
-            GelBeadAndProbe(ref x) => GelBeadAndProbe(x.as_ref()),
+            GelBeadOnly(g) => GelBeadOnly(g),
+            GelBeadAndProbe(x) => GelBeadAndProbe(x.as_ref()),
             Segmented(t) => Segmented(t.as_ref()),
         }
     }
 
     pub fn as_mut_ref(&mut self) -> BarcodeConstruct<&mut G> {
         match self {
-            GelBeadOnly(ref mut g) => GelBeadOnly(g),
-            GelBeadAndProbe(ref mut x) => GelBeadAndProbe(x.as_mut_ref()),
-            Segmented(ref mut t) => Segmented(t.as_mut_ref()),
+            GelBeadOnly(g) => GelBeadOnly(g),
+            GelBeadAndProbe(x) => GelBeadAndProbe(x.as_mut_ref()),
+            Segmented(t) => Segmented(t.as_mut_ref()),
         }
     }
 
@@ -668,9 +694,36 @@ impl<G> BarcodeConstruct<G> {
     }
 }
 
+impl<T, U> BarcodeConstruct<(T, U)> {
+    /// Unzips a barcode construct containing a tuple of two types.
+    pub fn unzip(self) -> (BarcodeConstruct<T>, BarcodeConstruct<U>) {
+        match self {
+            GelBeadOnly((t, u)) => (GelBeadOnly(t), GelBeadOnly(u)),
+            GelBeadAndProbe(x) => {
+                let (t, u) = x.unzip();
+                (GelBeadAndProbe(t), GelBeadAndProbe(u))
+            }
+            Segmented(x) => {
+                let (t, u) = x.unzip();
+                (Segmented(t), Segmented(u))
+            }
+        }
+    }
+}
+
+impl<G> BarcodeConstruct<&G> {
+    /// Returns an owned version of this construct by cloning the contents.
+    pub fn cloned(self) -> BarcodeConstruct<G>
+    where
+        G: Clone,
+    {
+        self.map(Clone::clone)
+    }
+}
+
 impl<G> IntoIterator for BarcodeConstruct<G> {
     type Item = G;
-    type IntoIter = arrayvec::IntoIter<[G; 4]>;
+    type IntoIter = arrayvec::IntoIter<G, 4>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.array_vec().into_iter()
@@ -798,7 +851,7 @@ impl BarcodeSegment {
         self.state.is_valid()
     }
 
-    pub fn is_valid_after_correction(self) -> bool {
+    fn is_valid_after_correction(self) -> bool {
         matches!(self.state, BarcodeSegmentState::ValidAfterCorrection)
     }
 
@@ -848,7 +901,7 @@ impl SegmentedBarcode {
     ) -> SegmentedBarcode {
         SegmentedBarcode {
             gem_group,
-            segments: BarcodeConstruct::GelBeadOnly(BarcodeSegment::with_sequence(sequence, state)),
+            segments: GelBeadOnly(BarcodeSegment::with_sequence(sequence, state)),
         }
     }
 
@@ -896,7 +949,7 @@ impl SegmentedBarcode {
 }
 
 impl fmt::Display for SegmentedBarcode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", Barcode::from(*self))
     }
 }
@@ -975,7 +1028,7 @@ mod tests {
         assert_eq!(
             Barcode::from(SegmentedBarcode {
                 gem_group: 1,
-                segments: BarcodeConstruct::GelBeadOnly(BarcodeSegment::with_sequence(
+                segments: GelBeadOnly(BarcodeSegment::with_sequence(
                     b"ACAGTCATGTCCAAAT",
                     BarcodeSegmentState::NotChecked,
                 )),
@@ -1071,7 +1124,7 @@ mod tests {
     fn test_barcode_from_segmented_barcode() {
         let barcode = Barcode::from(SegmentedBarcode {
             gem_group: 1,
-            segments: BarcodeConstruct::GelBeadOnly(BarcodeSegment::with_sequence(
+            segments: GelBeadOnly(BarcodeSegment::with_sequence(
                 b"ACAGTCATGTCCAAAT",
                 BarcodeSegmentState::Invalid,
             )),
@@ -1103,7 +1156,7 @@ mod tests {
 
         let barcode = Barcode::from(SegmentedBarcode {
             gem_group: 1,
-            segments: BarcodeConstruct::Segmented(Segments {
+            segments: Segmented(Segments {
                 segment1: BarcodeSegment {
                     state: BarcodeSegmentState::ValidBeforeCorrection,
                     content: spatial_segment(b"ACAGTCATGTCCAAAT", 2),
@@ -1122,7 +1175,7 @@ mod tests {
 
         let barcode = Barcode::from(SegmentedBarcode {
             gem_group: 1,
-            segments: BarcodeConstruct::Segmented(Segments {
+            segments: Segmented(Segments {
                 segment1: BarcodeSegment::with_sequence(
                     b"ACAGTCATGTCCAAAT",
                     BarcodeSegmentState::Invalid,

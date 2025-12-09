@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 struct PlannerOutput {
     /// An MRO source string
     mro: String,

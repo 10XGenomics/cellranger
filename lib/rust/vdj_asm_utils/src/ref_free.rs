@@ -1,7 +1,7 @@
-// The file contains reference-free code for finding paths in a graph and
-// simplifying it.
-
-#![allow(clippy::many_single_char_names)]
+//! The file contains reference-free code for finding paths in a graph and
+//! simplifying it.
+#![deny(missing_docs)]
+#![expect(clippy::many_single_char_names)]
 
 use graph_simple::GraphSimple;
 use hyperbase::Hyper;
@@ -19,11 +19,11 @@ use vector_utils::{
 
 // umis1: append all UMIs supporting an edge, in order.
 
-pub fn umis1(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<i32>) {
+fn umis1(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<i32>) {
     u.extend(x.ids[f as usize].iter().map(|&id| umi_id[id as usize]));
 }
 
-pub fn umis1_u(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<usize>) {
+fn umis1_u(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<usize>) {
     u.extend(
         x.ids[f as usize]
             .iter()
@@ -33,7 +33,7 @@ pub fn umis1_u(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<usize>) {
 
 // umis2: append all UMIs supporting an edge or its involution.
 
-pub fn umis2(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<i32>) {
+pub(super) fn umis2(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<i32>) {
     for pass in 0..2 {
         let g = if pass == 1 {
             x.inv[f as usize] as i32
@@ -46,7 +46,7 @@ pub fn umis2(x: &Hyper, umi_id: &[i32], f: i32, u: &mut Vec<i32>) {
 
 // Determine if at a particular vertex, the majority of reads appear to be fw.
 
-pub fn looks_fw(x: &mut Hyper, v: usize) -> bool {
+fn looks_fw(x: &mut Hyper, v: usize) -> bool {
     let mut fw = 0;
     let mut rc = 0;
     let n = x.h.g.n_from(v);
@@ -66,12 +66,7 @@ pub fn looks_fw(x: &mut Hyper, v: usize) -> bool {
 // most read support.  In the event of a tie, a choice is made in a manner that is
 // independent of graph numbering.
 
-pub fn find_strongest_edges(
-    x: &Hyper,
-    umi_id: &[i32],
-    best: &mut Vec<i32>,
-    best_val: &mut Vec<i32>,
-) {
+fn find_strongest_edges(x: &Hyper, umi_id: &[i32], best: &mut Vec<i32>, best_val: &mut Vec<i32>) {
     let numi = umi_id.iter().copied().max().map_or(0, |u| u + 1);
     best.resize(numi as usize, -1);
     best_val.resize(numi as usize, 0);
@@ -111,7 +106,7 @@ pub fn find_strongest_edges(
 //    support ratio requirement.
 // This is a very conservative path definition.
 
-pub fn strong_paths(x: &mut Hyper, umi_id: &[i32], strong: &mut Vec<(i32, Vec<i32>)>) {
+fn strong_paths(x: &mut Hyper, umi_id: &[i32], strong: &mut Vec<(i32, Vec<i32>)>) {
     let numi = umi_id.iter().copied().max().map_or(0, |u| u + 1);
     let mut best = Vec::<i32>::new();
     let mut best_val = Vec::<i32>::new();
@@ -212,7 +207,7 @@ pub fn strong_paths(x: &mut Hyper, umi_id: &[i32], strong: &mut Vec<(i32, Vec<i3
 // Find strong paths, in a way appropriate for plasma cells where there are very large
 // numbers of umis, each having a tiny number of reads.
 
-pub fn alt_strong_paths(x: &mut Hyper, umi_id: &[i32], alt_strong: &mut Vec<Vec<i32>>) {
+pub(super) fn alt_strong_paths(x: &Hyper, umi_id: &[i32], alt_strong: &mut Vec<Vec<i32>>) {
     alt_strong.clear();
     const MIN_WIN: usize = 10;
 
@@ -309,7 +304,7 @@ pub fn alt_strong_paths(x: &mut Hyper, umi_id: &[i32], alt_strong: &mut Vec<Vec<
 // The next function is similar to strong_paths but uses a much more aggressive
 // extension rule.  The rule itself is laden with a bunch of heuristics.
 
-pub fn uber_strong_paths(x: &mut Hyper, umi_id: &[i32], strong: &mut Vec<(i32, Vec<i32>)>) {
+pub(super) fn uber_strong_paths(x: &Hyper, umi_id: &[i32], strong: &mut Vec<(i32, Vec<i32>)>) {
     let numi = umi_id.iter().copied().max().map_or(0, |u| u + 1);
     let mut best = Vec::<i32>::new();
     let mut best_val = Vec::<i32>::new();
@@ -415,7 +410,7 @@ pub fn uber_strong_paths(x: &mut Hyper, umi_id: &[i32], strong: &mut Vec<(i32, V
 // 2. If any edge e with support by u does not lie in a path that includes the
 //    strongpath, delete the support by u of e.
 
-pub fn incompat_clean(x: &mut Hyper, umi_id: &[i32]) {
+fn incompat_clean(x: &mut Hyper, umi_id: &[i32]) {
     // Find strongpath for each UMI.
 
     let mut strong = Vec::<(i32, Vec<i32>)>::new();
@@ -493,7 +488,7 @@ pub fn incompat_clean(x: &mut Hyper, umi_id: &[i32]) {
 // support by each UMI, and delete the support for that UMI in that component if
 // the support lies in the bottom 1% of total support for that component.
 
-pub fn drop_bottom(x: &mut Hyper, umi_id: &[i32]) {
+fn drop_bottom(x: &mut Hyper, umi_id: &[i32]) {
     let mut comp = Vec::<Vec<u32>>::new();
     x.h.g.components_e(&mut comp);
     for c in comp {
@@ -533,7 +528,7 @@ pub fn drop_bottom(x: &mut Hyper, umi_id: &[i32]) {
 // For each branch, and each UMI, if one branch has ten times more reads
 // supporting it, delete the read support on the weak branch.
 
-pub fn branch_clean(x: &mut Hyper, umi_id: &[i32]) {
+fn branch_clean(x: &mut Hyper, umi_id: &[i32]) {
     let mut dels = vec![Vec::<i32>::new(); x.h.g.edge_count()];
     for v in 0..x.h.g.node_count() {
         let n = x.h.g.n_from(v);
@@ -640,7 +635,7 @@ pub fn branch_clean(x: &mut Hyper, umi_id: &[i32]) {
 // that UMI than another component, delete support in the weak component.
 // ◼ Unnecessarily O( numis x ncomponents ).
 
-pub fn comp_clean(x: &mut Hyper, umi_id: &[i32]) {
+fn comp_clean(x: &mut Hyper, umi_id: &[i32]) {
     const MIN_RATIO: i32 = 10;
     let mut comp = Vec::<Vec<u32>>::new();
     x.h.g.components_e(&mut comp);
@@ -722,7 +717,7 @@ pub fn comp_clean(x: &mut Hyper, umi_id: &[i32]) {
 // If a branch has ten times as many UMIs and ten times as many reads as another
 // branch, delete the weak branch.
 
-pub fn power_clean(x: &mut Hyper, umi_id: &[i32]) {
+fn power_clean(x: &mut Hyper, umi_id: &[i32]) {
     let mut dels = Vec::<u32>::new();
     for v in 0..x.h.g.node_count() {
         let n = x.h.g.n_from(v);
@@ -756,7 +751,7 @@ pub fn power_clean(x: &mut Hyper, umi_id: &[i32]) {
 
 // Remove components that have less than 'cap' kmers or less than 5 reads.
 
-pub fn tiny_comp_clean(x: &mut Hyper, cap: i32) {
+fn tiny_comp_clean(x: &mut Hyper, cap: i32) {
     let mut dels = Vec::<u32>::new();
     let mut comp = Vec::<Vec<u32>>::new();
     x.h.g.components_e(&mut comp);
@@ -783,7 +778,7 @@ pub fn tiny_comp_clean(x: &mut Hyper, cap: i32) {
 // Note: could only look at branches that are at a SNP.  We could also require that
 // branches rejoin eventually, which might be safer.
 
-pub fn solo_clean(x: &mut Hyper, umi_id: &[i32]) {
+fn solo_clean(x: &mut Hyper, umi_id: &[i32]) {
     let mut dels = Vec::<u32>::new();
     for v in 0..x.h.g.node_count() {
         let n = x.h.g.n_from(v);
@@ -870,7 +865,7 @@ pub fn solo_clean(x: &mut Hyper, umi_id: &[i32]) {
 // 3. The length of the branches is at most K+1 kmers.
 // Then we delete the weak branch.
 
-pub fn pop_bubbles(x: &mut Hyper, umi_id: &[i32]) {
+fn pop_bubbles(x: &mut Hyper, umi_id: &[i32]) {
     let mut dels = Vec::<u32>::new();
     for v in 0..x.h.g.node_count() {
         if x.h.g.n_to(v) != 1 || x.h.g.n_from(v) != 2 {
@@ -913,7 +908,7 @@ pub fn pop_bubbles(x: &mut Hyper, umi_id: &[i32]) {
 // the edges is at least min_ratio times the number of reads on e, and this holds
 // for all UMIs present on e, kill e.
 
-pub fn simple_simp(x: &mut Hyper, umi_id: &[i32], min_ratio: i32, max_kill: i32) {
+fn simple_simp(x: &mut Hyper, umi_id: &[i32], min_ratio: i32, max_kill: i32) {
     let mut dels = Vec::<u32>::new();
     let numi = umi_id.iter().copied().max().map_or(0, |u| u + 1);
     for v in 0..x.h.g.node_count() {
@@ -978,7 +973,7 @@ pub fn simple_simp(x: &mut Hyper, umi_id: &[i32], min_ratio: i32, max_kill: i32)
 //     with at most one possible exception, where it can have just one read.
 // This could probably be strengthened.
 
-pub fn simple_simp_type(x: &mut Hyper, umi_id: &[i32]) {
+fn simple_simp_type(x: &mut Hyper, umi_id: &[i32]) {
     let mut dels = Vec::<u32>::new();
     for v in 0..x.h.g.node_count() {
         let n = x.h.g.n_from(v);
@@ -1042,7 +1037,7 @@ pub fn simple_simp_type(x: &mut Hyper, umi_id: &[i32]) {
 // Kill edges that are not on a UMI path, as defined by uber_strong_paths
 // and alt_strong_paths.
 
-pub fn path_clean(x: &mut Hyper, umi_id: &[i32]) {
+fn path_clean(x: &mut Hyper, umi_id: &[i32]) {
     let mut strong = Vec::<(i32, Vec<i32>)>::new();
     uber_strong_paths(x, umi_id, &mut strong);
     let mut alt_strong = Vec::<Vec<i32>>::new();
@@ -1071,6 +1066,15 @@ pub fn path_clean(x: &mut Hyper, umi_id: &[i32]) {
     x.kill_edges(&dels);
 }
 
+// Print a list of things, useful for debugging.
+// Example: if x is 3 and y is y, then printme!(x,y) yields
+// x = 3, y = 7,
+macro_rules! printme {
+    ( $( $x:expr ),* ) => {
+        println!(concat!( $( stringify!($x), " = {}, ", )* ), $($x,)*)
+    }
+}
+
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 // MASTER GRAPH CLEANER
 // ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
@@ -1080,7 +1084,7 @@ pub fn path_clean(x: &mut Hyper, umi_id: &[i32]) {
 // dozen or so samples, and relative to the metrics we used to evaluate them, this
 // was the best choice amongst those tested.
 
-pub fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32]) {
+pub(super) fn simplify_without_ref(x: &mut Hyper, umi_id: &[i32]) {
     let verbose = false;
     if verbose {
         printme!(x.h.g.edge_count(), x.checksum());

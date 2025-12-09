@@ -1,18 +1,21 @@
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![expect(missing_docs)]
 
 // Code that analyzes transcripts.
 
-use crate::annotate::{get_cdr3_using_ann, Annotation};
+use crate::annotate::{Annotation, get_cdr3_using_ann};
 use crate::refx::RefData;
 use amino::{have_start, have_stop};
-use debruijn::{dna_string::DnaString, kmer::Kmer20, Mer, Vmer};
+use debruijn::dna_string::DnaString;
+use debruijn::kmer::Kmer20;
+use debruijn::{Mer, Vmer};
 use hyperbase::Hyper;
 use itertools::iproduct;
 use kmer_lookup::make_kmer_lookup_20_single;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::str::FromStr;
-use vdj_types::{VdjChain, VDJ_CHAINS};
+use vdj_types::{VDJ_CHAINS, VdjChain};
 use vector_utils::{lower_bound1_3, unique_sort};
 
 const MIN_DELTA: i32 = -25;
@@ -108,8 +111,7 @@ fn find_inframe_vdj_pair(vstarts: Vec<Vstart>, jstops: Vec<Jstop>) -> Option<(Vs
         .filter(|(_, _, n)| n % 3 == 1)
         .collect();
     vj_combinations.sort_by_key(|x| x.2);
-    let inframe_pair = vj_combinations.last().map(|(v, j, _)| (*v, *j));
-    inframe_pair
+    vj_combinations.last().map(|(v, j, _)| (*v, *j))
 }
 
 fn evaluate_contig_status(
@@ -143,12 +145,12 @@ fn evaluate_contig_status(
         })
         .collect();
 
-    if vstarts.is_empty() & jstops.is_empty() {
+    if vstarts.is_empty() && jstops.is_empty() {
         return None;
     }
 
     let mut contig_status = ContigStatus {
-        full_length: Some(!vstarts.is_empty() & !jstops.is_empty()),
+        full_length: Some(!vstarts.is_empty() && !jstops.is_empty()),
         ..Default::default()
     };
 
@@ -195,11 +197,11 @@ fn evaluate_contig_status(
         .iter()
         .map(|a| reference.segtype[a.ref_id as usize])
         .map(|s| match s {
-            "U" => 0,
-            "V" => 1,
-            "D" => 2,
-            "J" => 3,
-            "C" => 4,
+            b'U' => 0,
+            b'V' => 1,
+            b'D' => 2,
+            b'J' => 3,
+            b'C' => 4,
             _ => panic!("Invalid segtype"),
         })
         .collect();
@@ -240,7 +242,7 @@ pub fn junction_seq(tig: &DnaString, refdata: &RefData, ann: &[Annotation], jseq
     let jstop = ann
         .iter()
         .filter_map(|a| {
-            if segtype[a.ref_id as usize] == "J"
+            if segtype[a.ref_id as usize] == b'J'
                 && (a.ref_start + a.match_len) as usize == refs[a.ref_id as usize].len()
                 && a.tig_start + a.match_len >= TAG
             {
@@ -265,18 +267,11 @@ pub fn junction_seq(tig: &DnaString, refdata: &RefData, ann: &[Annotation], jseq
 // Note that it is possible to find zero UMIs, because each UMI individually may
 // not cover the junction.
 
-pub fn junction_supp(
-    tig: &DnaString,
-    reads: &[DnaString],
-    x: &Hyper,
-    umi_id: &[i32],
-    refdata: &RefData,
-    ann: &[Annotation],
-    jsupp: &mut (i32, i32),
-) {
-    let mut jseq = DnaString::new();
-    junction_seq(tig, refdata, ann, &mut jseq);
-    junction_supp_core(reads, x, umi_id, &jseq, jsupp);
+#[derive(Default, Clone)]
+pub struct JunctionSupportCore {
+    pub reads: i32,
+    pub umis: i32,
+    pub umi_ids: Vec<i32>,
 }
 
 pub fn junction_supp_core(
@@ -284,8 +279,7 @@ pub fn junction_supp_core(
     x: &Hyper,
     umi_id: &[i32],
     jseq: &DnaString,
-    jsupp: &mut (i32, i32),
-) {
+) -> JunctionSupportCore {
     let mut ids = Vec::<i32>::new();
     // ◼ What we're doing here is converting a Vec<u32> into a Vec<i32>.
     // ◼ There should be a function to do that.
@@ -300,8 +294,7 @@ pub fn junction_supp_core(
     make_kmer_lookup_20_single(&tigs, &mut kmers_plus);
     let mut idi = 0;
     let k = x.h.k as usize;
-    jsupp.0 = 0;
-    jsupp.1 = 0;
+    let mut jsupp = JunctionSupportCore::default();
     while idi < ids.len() {
         let mut idj = idi + 1;
         while idj < ids.len() && umi_id[ids[idj] as usize] == umi_id[ids[idi] as usize] {
@@ -353,9 +346,11 @@ pub fn junction_supp_core(
             cov = false;
         }
         if cov {
-            jsupp.0 += 1;
-            jsupp.1 += mm.len() as i32;
+            jsupp.umis += 1;
+            jsupp.reads += mm.len() as i32;
+            jsupp.umi_ids.push(umi_id[ids[idi] as usize]);
         }
         idi = idj;
     }
+    jsupp
 }

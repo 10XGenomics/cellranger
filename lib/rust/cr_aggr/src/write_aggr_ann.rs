@@ -1,13 +1,14 @@
 //! WriteAggrAnn stage code
+#![expect(missing_docs)]
 
 use crate::parse_aggr_csv::{DONOR_HEADER, ORIGIN_HEADER};
 use crate::setup_vdj_aggr::EncloneProtoMetaFormat;
 use anyhow::Result;
 use enclone_proto::types::Metadata;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::tabular_file::CsvFile;
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::tabular_file::CsvFile;
 use serde::{Deserialize, Serialize};
 
 const META_HEADER_PREFIX: &str = "Meta:";
@@ -62,7 +63,11 @@ impl MartianMain for WriteAggrAnn {
 
         for r in rdr.records() {
             let mut records: Vec<_> = r?.iter().map(String::from).collect();
-            let gem_well: u32 = records[bc_col_num].split('-').last().unwrap().parse()?;
+            let gem_well: u32 = records[bc_col_num]
+                .split('-')
+                .next_back()
+                .unwrap()
+                .parse()?;
             records.extend(meta_records(&metadata, gem_well));
             wtr.write_record(&records)?;
         }

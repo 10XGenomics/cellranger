@@ -31,8 +31,13 @@ import cellranger.webshim.constants.vdj as ws_vdj_constants
 import tenkit.safe_json as tk_safe_json
 from cellranger.analysis.multigenome import MultiGenomeAnalysis
 from cellranger.analysis.singlegenome import Projection, SingleGenomeAnalysis
+from cellranger.fast_utils import simplify_line
 from cellranger.reference_paths import get_ref_name_from_genomes
-from cellranger.webshim.data import SampleData, generate_counter_barcode_rank_plot_data
+from cellranger.webshim.data import (
+    BarcodeRankPlotSegment,
+    SampleData,
+    generate_counter_barcode_rank_plot_data,
+)
 from cellranger.webshim.jibes_plotting import _make_rc_vectors, make_color_map, make_histogram_plot
 from cellranger.websummary.helpers import get_projection_key
 from cellranger.websummary.sample_properties import CountSampleProperties, SampleProperties
@@ -291,12 +296,15 @@ def build_tables(
     return tables, list(alarms.values())
 
 
-def convert_numpy_array_to_line_chart(array, ntype):
+BarcodeRankPoint = tuple[int, int]
+
+
+def create_ranking_steps(array, offset):
     """Given an array of values, sort them in descending order.
 
     Args:
         array: a numpy array
-        ntype: a datatype to return the array values as
+        offset: offset to add to each x coordinate
 
     Returns:
         the x,y coordinates for a line that could represent the sorted order by
@@ -306,77 +314,54 @@ def convert_numpy_array_to_line_chart(array, ntype):
         .. code-block:: python
 
             array = np.array([1,1,1,2,3,3,3,3,3,4,5,9,20])
-            convert_numpy_array_to_line_chart(array, float)
+            create_ranking_steps(array, float)
             # Result
-            [[0, 20.0],
-            [1, 9.0],
-            [2, 5.0],
-            [3, 4.0],
-            [4, 3.0],
-            [8, 3.0],
-            [9, 2.0],
-            [10, 1.0],
-            [12, 1.0]]
+            ((0, 20.0),
+            (1, 9.0),
+            (2, 5.0),
+            (3, 4.0),
+            (4, 3.0),
+            (8, 3.0),
+            (9, 2.0),
+            (10, 1.0),
+            (12, 1.0)]
     """
     array = np.sort(array)[::-1]
-    rows = []
+    rows: list[BarcodeRankPoint] = []
     previous_count = None
     for (index,), count in np.ndenumerate(array):
+        rank = index + offset
         if index in (0, len(array) - 1):
-            rows.append([index, ntype(count)])
+            rows.append((rank, int(count)))
         elif previous_count != count:
             assert previous_count is not None
-            previous_index = rows[-1][0]
-            if previous_index != index - 1:
-                rows.append([index - 1, ntype(previous_count)])
-            rows.append([index, ntype(count)])
+            # for any rank transition where we have moved more than one point horizontally,
+            # add a second point so the joining lines form a staircase instead of a ramp.
+            last_rank, last_count = rows[-1]
+            if rank > last_rank + 1:
+                rows.append((rank - 1, last_count))
+            rows.append((rank, int(count)))
         previous_count = count
+
     return rows
 
 
-def _plot_barcode_rank(chart, counts, num_cells):
-    """Generate a generic barcode rank plot."""
-    rows = convert_numpy_array_to_line_chart(counts, int)
-
-    for row in rows:
-        index, count = row[0], row[1]
-        if index < num_cells:
-            series_list = [chart["data"][0]]
-        elif index == num_cells:
-            # Connect the two lines
-            series_list = [chart["data"][0], chart["data"][1]]
-        else:
-            series_list = [chart["data"][1]]
-
-        for series in series_list:
-            series["x"].append(index)
-            series["y"].append(count)
-
-    # Handle case where there is no background
-    bg_series = chart["data"][1]
-    if len(bg_series["x"]) == 0:
-        bg_series["x"].append(0)
-        bg_series["y"].append(0)
-
-    return chart
-
-
-def build_plot_data_dict(plot_segment, counts, show_name_and_hover=True, color=None):
-    """Construct the data for a plot segment by appropriately slicing the counts.
+def build_plot_data_dict(
+    plot_segment: BarcodeRankPlotSegment,
+    points: list[BarcodeRankPoint],
+    show_name_and_hover=True,
+    color=None,
+):
+    """Construct the data object for a pre-constructed set of points.
 
     Args:
         plot_segment: BarcodeRankPlotSegment containing [start, end)
           of the segment, the cell density and legend visibility option
-        counts: Reverse sorted UMI counts for all barcodes.
+        points: pre-constructed list of points to insert into the data.
         show_name_and_hover: boolean whether to add hover and name text specific
             to the classic CR rank plot (the user might want to set these
             themselves for alternate rank plots)
     """
-    # -1 for continuity between two charts
-    start = max(0, plot_segment.start - 1)
-    end = plot_segment.end
-    plot_rows = convert_numpy_array_to_line_chart(counts[start:end], int)
-
     if color is None:
         color = shared_constants.BC_PLOT_CMAP(plot_segment.cell_density)
 
@@ -390,10 +375,24 @@ def build_plot_data_dict(plot_segment, counts, show_name_and_hover=True, color=N
             "width": shared_constants.BC_RANK_PLOT_LINE_WIDTH,
         },
         "showlegend": plot_segment.legend,
+        # This is not a part of the plotly config; we include this for use
+        # downstream for replotting the data.
+        "cell_density": plot_segment.cell_density,
     }
-    offset = 1 + start  # it's a log-log plot, hence the 1
-    for index, count in plot_rows:
-        data_dict["x"].append(index + offset)
+
+    # Use hovertemplate to avoid a large text blob for hover data.
+    if plot_segment.cell_density > 0.0:
+        n_barcodes = plot_segment.end - plot_segment.start
+        n_cells = round(plot_segment.cell_density * n_barcodes)
+        hoverbase = f"{100 * plot_segment.cell_density:.0f}% Cells<br>({n_cells}/{n_barcodes})"
+    else:
+        hoverbase = "Background"
+
+    hovertemplate = hoverbase + r"<br>Rank %{x:,}<br>UMIs %{y:,}<extra></extra>"
+
+    for rank, count in points:
+        rank_from_one = rank + 1
+        data_dict["x"].append(rank_from_one)  # it's a log-log plot, hence the 1
         data_dict["y"].append(count)
 
     # Handle case where the data is empty
@@ -404,23 +403,12 @@ def build_plot_data_dict(plot_segment, counts, show_name_and_hover=True, color=N
     if show_name_and_hover:
         name = "Cells" if plot_segment.cell_density > 0 else "Background"
         data_dict["name"] = name
-        if plot_segment.cell_density > 0.0:
-            n_barcodes = plot_segment.end - plot_segment.start
-            n_cells = int(round(plot_segment.cell_density * n_barcodes))
-            hoverbase = f"{100 * plot_segment.cell_density:.0f}% Cells<br>({n_cells}/{n_barcodes})"
-        else:
-            hoverbase = "Background"
-        hover = []
-        for index, count in plot_rows:
-            rank = index + offset
-            hover.append(f"{hoverbase}<br>Rank {rank:,}<br>UMIs {count:,}")
-        data_dict["hoverinfo"] = "text"
-        data_dict["text"] = hover
+        data_dict["hovertemplate"] = hovertemplate
 
     return data_dict
 
 
-def _plot_segmented_barcode_rank(chart, counts, plot_segments):
+def _plot_segmented_barcode_rank(chart, counts, plot_segments: list[BarcodeRankPlotSegment]):
     """Generate the RNA counter barcode rank plot.
 
     Inputs:
@@ -428,14 +416,48 @@ def _plot_segmented_barcode_rank(chart, counts, plot_segments):
         - counts: UMI counts reverse sorted
         - plot_segments: A list of BarcodeRankPlotSegments
     """
-    for segment in plot_segments:
-        chart["data"].append(build_plot_data_dict(segment, counts))
+    if len(counts) == 0:
+        return
+    # generate reduced points for the entire counts array
+    all_points = create_ranking_steps(counts, 0)
 
-    return chart
+    # transform the resulting curve into normalized log-log space, then simplify it, returning
+    # the indices of the original points to be kept. This is making the assumption
+    # that the plot we're drawing will be square, thus why we normalize both axes to 1.
+    log_x_scale = np.log10(len(counts))
+    log_y_scale = np.log10(counts[0])
+    normalized_log_log_points = [
+        (np.log10(x + 1) / log_x_scale, np.log10(y) / log_y_scale) for x, y in all_points
+    ]
+
+    # since we are working in normalized coordinates, we'll use 1e-4 as our epsilon
+    # that would be about 1 pixel at 10,000x10,000, the usual plot size zoomed in
+    # approximately 20-fold.
+    keep_index = set(simplify_line(normalized_log_log_points, 1e-4))
+
+    # keep every rank below 100 verbatim, also keep the segment boundaries
+    keep_rank = set(range(100))
+    for segment in plot_segments:
+        keep_rank.add(segment.start)
+        keep_rank.add(segment.end - 1)
+    filtered_points = [
+        (x, y) for i, (x, y) in enumerate(all_points) if x in keep_rank or i in keep_index
+    ]
+
+    last_point = None
+    for segment in plot_segments:
+        # Include the previous point for line continuity between segemnts
+        points = []
+        if last_point is not None:
+            points.append(last_point)
+        points.extend((x, y) for x, y in filtered_points if segment.start <= x < segment.end)
+        if points:
+            last_point = points[-1]
+        chart["data"].append(build_plot_data_dict(segment, points))
 
 
 def plot_basic_barcode_rank(
-    chart, cell_barcodes: set[bytes], barcode_summary, genomes, lib_prefix, restrict_barcodes=None
+    chart, cell_barcodes: set[bytes], barcode_summary, genomes, lib_prefix, restrict_barcodes
 ):
     """Generate a basic RNA counter barcode rank plot without depending on SampleData/SampleProperties.
 
@@ -444,7 +466,8 @@ def plot_basic_barcode_rank(
         cell_barcodes: set of cell barcodes as bytes
         barcode_summary: barcode summary from the barcode_summary.h5
         lib_prefix: The library prefix to create the plot for
-        restrict_barcodes: Optional list of cell barcodes to restrict to
+        restrict_barcodes: Optional set of cell barcodes to restrict to; if empty,
+            use all barcodes.
     """
     genome = rna_library.MULTI_REFS_PREFIX
 
@@ -464,11 +487,11 @@ def plot_basic_barcode_rank(
 
     if key not in barcode_summary:
         return None
-
     counts_per_bc, plot_segments = generate_counter_barcode_rank_plot_data(
         cell_barcodes, barcode_summary, key, restrict_barcodes=restrict_barcodes
     )
-    return _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+    _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+    return chart
 
 
 def plot_barcode_rank(chart, sample_properties, sample_data):
@@ -519,10 +542,12 @@ def plot_barcode_rank(chart, sample_properties, sample_data):
 
     if gex_key in sample_data.barcode_summary:
         counts_per_bc, plot_segments = sample_data.counter_barcode_rank_plot_data(gex_key)
-        return _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+        _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+        return chart
     elif ab_key in sample_data.barcode_summary:  # in case there was only Antibody library
         counts_per_bc, plot_segments = sample_data.counter_barcode_rank_plot_data(ab_key)
-        return _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+        _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+        return chart
     else:
         # Not guaranteed to exist, depending on pipeline
         return None
@@ -531,11 +556,12 @@ def plot_barcode_rank(chart, sample_properties, sample_data):
 # TODO: This unneccesary argument is needed because of how the PD code is structured.
 def plot_vdj_barcode_rank(chart, sample_properties, sample_data):
     """Generate the VDJ barcode rank plot."""
-    if not sample_data.cell_barcodes or sample_data.vdj_barcode_support is None:
+    if not sample_data.cell_barcodes or sample_data.vdj_all_contig_annotations is None:
         return None
 
     counts_per_bc, plot_segments = sample_data.vdj_barcode_rank_plot_data()
-    return _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+    _plot_segmented_barcode_rank(chart, counts_per_bc, plot_segments)
+    return chart
 
 
 def plot_clonotype_table(chart, sample_properties, sample_data):
@@ -657,16 +683,25 @@ def plot_histogram_metric(
     return chart
 
 
-def plot_barnyard_barcode_counts(chart, sample_properties, sample_data):
+# _sample_properties is kept for compatibility with cellranger.webshim.constants.gex.CHARTS funcs
+def plot_barnyard_barcode_counts(chart, _sample_properties, sample_data):
+    """Generate barnyard bi-plot of counts from two genomes."""
     analysis = sample_data.get_analysis(MultiGenomeAnalysis)
     if analysis is None:
         return None
 
+    populate_biplot_chart(chart, analysis)
+
+    return chart
+
+
+def populate_biplot_chart(chart, multi_genome_analysis):
+    """Populate a scatter plot chart with barnyard bi-plot data."""
     chart["data"] = []
     for label_info in ws_gex_constants.GEM_CALL_LABELS:
         name = label_info["label"]
-        name = name.replace("genome0", analysis.result["genome0"])
-        name = name.replace("genome1", analysis.result["genome1"])
+        name = name.replace("genome0", multi_genome_analysis.result["genome0"])
+        name = name.replace("genome1", multi_genome_analysis.result["genome1"])
         chart["data"].append(
             {
                 "x": [],
@@ -679,26 +714,26 @@ def plot_barnyard_barcode_counts(chart, sample_properties, sample_data):
 
     call_to_series = {v["key"]: i for i, v in enumerate(ws_gex_constants.GEM_CALL_LABELS)}
     for count0, count1, call in zip(
-        analysis.result["count0"], analysis.result["count1"], analysis.result["call"]
+        multi_genome_analysis.result["count0"],
+        multi_genome_analysis.result["count1"],
+        multi_genome_analysis.result["call"],
     ):
         series = chart["data"][call_to_series[call]]
         series["x"].append(int(count0))
         series["y"].append(int(count1))
 
     chart["layout"]["xaxis"] = {
-        "title": "{} UMI counts".format(analysis.result["genome0"]),
+        "title": "{} UMI counts".format(multi_genome_analysis.result["genome0"]),
         "rangemode": "tozero",
         "autorange": True,
         "fixedrange": False,
     }
     chart["layout"]["yaxis"] = {
-        "title": "{} UMI counts".format(analysis.result["genome1"]),
+        "title": "{} UMI counts".format(multi_genome_analysis.result["genome1"]),
         "rangemode": "tozero",
         "autorange": True,
         "fixedrange": False,
     }
-
-    return chart
 
 
 def plot_preprocess(analyses):
@@ -913,14 +948,14 @@ def _plot_differential_expression(
             {
                 "type": "number",
                 "label": "L2FC",
-                "title": "Log2 fold-change in cluster %d vs other cells" % (i + 1),
+                "title": f"Log2 fold-change in cluster {i + 1} vs other cells",
             }
         )
         cols.append(
             {
                 "type": "number",
                 "label": "p-value",
-                "title": "Adjusted p-value of differential expression in cluster %d" % (i + 1),
+                "title": f"Adjusted p-value of differential expression in cluster {i + 1}",
             }
         )
 
@@ -1269,10 +1304,7 @@ def get_custom_features(sample_data):
 def get_genomes(sample_data):
     """Infer the set of genomes present in a dataset."""
     analysis = sample_data.get_analysis(SingleGenomeAnalysis)
-    if analysis:
-        return [x for x in analysis.matrix.get_genomes() if x != ""]
-    else:
-        return ["dummy"]
+    return analysis.matrix.get_genomes() if analysis else ["dummy"]
 
 
 def build_web_summary_json(sample_properties, sample_data, pipeline):

@@ -1,7 +1,8 @@
+#![expect(missing_docs)]
 use crate::constants::UmiType;
 use bio;
 use bio::alignment::{Alignment, AlignmentOperation};
-use itertools::Itertools;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::cmp;
 pub type Scoring = bio::alignment::pairwise::Scoring<bio::alignment::pairwise::MatchParams>;
@@ -42,7 +43,7 @@ impl AlignmentPacket {
 
     /// Compute the edit distance implied by the alignment.
     /// The clipped regions are not considered in the computation
-    pub fn edit_distance(&self) -> usize {
+    pub(super) fn edit_distance(&self) -> usize {
         let mut d = 0;
         for &op in &self.alignment.operations {
             d += match op {
@@ -56,7 +57,7 @@ impl AlignmentPacket {
     }
 }
 
-pub fn pos_base_quals_helper<F>(reads: &[(UmiType, u8, u8)], rt_err: f64, lse: F) -> [u8; 4]
+pub(super) fn pos_base_quals_helper<F>(reads: &[(UmiType, u8, u8)], rt_err: f64, lse: F) -> [u8; 4]
 where
     F: Fn(&[f64], f64) -> f64,
 {
@@ -66,7 +67,7 @@ where
     let factor1 = (1.0_f64 - rt_err).log10();
     let factor2 = (rt_err / 3.0_f64).log10();
 
-    for (_, umi_reads) in &reads.iter().group_by(|x| x.0) {
+    for umi_reads in reads.chunk_by(|x, y| x.0 == y.0) {
         // base_probs[r][b] is the log-probability of the observed reads given that
         // the real base is r and the transcript/UMI base is b.
         let mut base_probs = [[0.0_f64; 4]; 4];
@@ -221,9 +222,10 @@ mod tests {
             }
             all_kmer_matches.sort_unstable();
             let mut aligner = banded::Aligner::with_scoring(self.scoring, self.k, self.w);
-            for (ref_idx, match_group) in &all_kmer_matches.into_iter().group_by(|x| x.1) {
+            for match_group in all_kmer_matches.chunk_by(|x, y| x.1 == y.1) {
+                let ref_idx = match_group[0].1;
                 let matches = match_group
-                    .into_iter()
+                    .iter()
                     .map(|x| (x.2 as u32, x.3 as u32))
                     .collect();
                 let ref_seq = &self.refs[ref_idx].to_string();

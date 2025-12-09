@@ -19,7 +19,7 @@ stage DISABLE_TARGETED_STAGES(
 )
 """
 # also in Rust in cr_lib/stages/collate_probe_metrics.rs
-GDNA_GENE_THRESHOLD = 10
+GDNA_GENE_THRESHOLD = 25
 
 
 def main(args, outs):

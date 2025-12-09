@@ -1,18 +1,20 @@
 //! SubsetAssemblyOuts stage code
+#![expect(missing_docs)]
 
-use crate::assembly::BarcodeDataFile;
-use crate::assembly_types::{AsmReadsPerBcFormat, BarcodeSupport, UmiSummaryRow};
 use crate::BarcodeDataBriefFile;
+use crate::assembly::BarcodeDataFile;
+use crate::assembly_types::UmiSummaryRow;
 use anyhow::Result;
 use barcode::whitelist::BarcodeId;
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
 use cr_types::{BarcodeMultiplexingType, Fingerprint, FingerprintFile, ReadLevel};
+use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::{Json, JsonFile, JsonFormat};
-use martian_filetypes::tabular_file::{CsvFile, TsvFile};
+use martian_filetypes::tabular_file::TsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO, LazyWrite};
-use metric::{SimpleHistogram, TxHashSet};
+use metric::{Histogram, SimpleHistogram, TxHashSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use vdj_ann::annotate::ContigAnnotation;
@@ -28,9 +30,7 @@ pub struct SubsetAssemblyOutsStageInputs {
     pub merged_annotations: Option<JsonFile<Vec<ContigAnnotation>>>,
     pub total_read_pairs: i64,
     pub corrected_barcode_counts: JsonFile<SimpleHistogram<String>>,
-    pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
     pub umi_summary: TsvFile<UmiSummaryRow>,
-    pub barcode_support: CsvFile<BarcodeSupport>,
     pub barcode_brief: BarcodeDataBriefFile,
     pub barcode_full: BarcodeDataFile,
 }
@@ -40,9 +40,7 @@ pub struct SubsetAssemblyOutsStageOutputs {
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub total_read_pairs: Option<i64>,
     pub corrected_barcode_counts: Option<JsonFile<SimpleHistogram<String>>>,
-    pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
     pub umi_summary: TsvFile<UmiSummaryRow>,
-    pub barcode_support: Option<CsvFile<BarcodeSupport>>,
     pub barcode_brief: BarcodeDataBriefFile,
     pub barcode_full: BarcodeDataFile,
 }
@@ -76,19 +74,15 @@ fn get_valid_barcodes_read_level_multiplexing(
     valid_bcs
 }
 
+/// Return barcodes declared a cell by both the VDJ assembler and Gene Expression
 fn get_valid_barcodes_cell_level_multiplexing(
     contig_annotations: &JsonFile<Vec<ContigAnnotation>>,
-) -> TxHashSet<String> {
-    let mut valid_bcs = TxHashSet::default();
-    let contig_reader = contig_annotations.lazy_reader().unwrap();
-    for ann in contig_reader {
-        let ann: ContigAnnotation = ann.unwrap();
-        // Was the barcode declared a cell by both the VDJ assembler and Gene Expression
-        if ann.is_asm_cell.map_or(false, |a| a) && ann.is_gex_cell.map_or(false, |g| g) {
-            valid_bcs.insert(ann.barcode.clone());
-        }
-    }
-    valid_bcs
+) -> Result<TxHashSet<String>> {
+    contig_annotations
+        .lazy_reader()?
+        .filter_ok(|x| x.is_asm_cell.unwrap_or(false) && x.is_gex_cell.unwrap_or(false))
+        .map_ok(|x| x.barcode)
+        .collect()
 }
 
 #[make_mro]
@@ -108,9 +102,7 @@ impl MartianMain for SubsetAssemblyOuts {
                 contig_annotations: annot,
                 total_read_pairs: Some(args.total_read_pairs),
                 corrected_barcode_counts: Some(args.corrected_barcode_counts),
-                assemblable_reads_per_bc: args.assemblable_reads_per_bc,
                 umi_summary: args.umi_summary,
-                barcode_support: Some(args.barcode_support),
                 barcode_brief: args.barcode_brief,
                 barcode_full: args.barcode_full,
             });
@@ -126,7 +118,7 @@ impl MartianMain for SubsetAssemblyOuts {
                 ),
             ),
             BarcodeMultiplexingType::CellLevel(_) => {
-                (false, get_valid_barcodes_cell_level_multiplexing(&annot))
+                (false, get_valid_barcodes_cell_level_multiplexing(&annot)?)
             }
             BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL) => {
                 panic!("Unsupported multiplexing method!")
@@ -169,13 +161,6 @@ impl MartianMain for SubsetAssemblyOuts {
             }
         }
 
-        // subset assemblable_reads_per_bc
-        let mut bc_read_counts = args.assemblable_reads_per_bc.read()?;
-        bc_read_counts.retain(|k, _| valid_bcs.contains(k));
-        let assemblable_reads_per_bc_file: AsmReadsPerBcFormat =
-            rover.make_path("assemblable_reads_per_bc");
-        assemblable_reads_per_bc_file.write(&bc_read_counts)?;
-
         // subset corrected_barcode_counts
         let mut bc_counts_corrected = args.corrected_barcode_counts.read()?;
         bc_counts_corrected.retain(|k, _| valid_bcs.contains(k));
@@ -194,25 +179,12 @@ impl MartianMain for SubsetAssemblyOuts {
         }
         umi_summary_writer.finish()?;
 
-        // subset barcode_support.csv
-        let barcode_support_file: CsvFile<BarcodeSupport> = rover.make_path("barcode_support");
-        let mut barcode_support_writer = barcode_support_file.lazy_writer()?;
-        for row in args.barcode_support.lazy_reader()? {
-            let row = row?;
-            if valid_bcs.contains(&row.barcode) {
-                barcode_support_writer.write_item(&row)?;
-            }
-        }
-        barcode_support_writer.finish()?;
-
         Ok(SubsetAssemblyOutsStageOutputs {
             contig_annotations: contig_ann_json_file,
             total_read_pairs: is_read_level_multiplexed.then_some(total_read_pairs),
             corrected_barcode_counts: is_read_level_multiplexed
                 .then_some(corrected_barcode_counts_file),
-            assemblable_reads_per_bc: assemblable_reads_per_bc_file,
             umi_summary: umi_summary_file,
-            barcode_support: is_read_level_multiplexed.then_some(barcode_support_file),
             barcode_brief: barcode_data_brief_file,
             barcode_full: barcode_full_file,
         })

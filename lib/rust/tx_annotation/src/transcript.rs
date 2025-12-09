@@ -1,9 +1,11 @@
+#![expect(missing_docs)]
 use anyhow::{Context, Result};
+use barcode::whitelist::ReqStrand;
 use cr_types::reference::genome_of_chrom::genome_of_chrom;
-use cr_types::{utils, GenomeName, ReqStrand};
+use cr_types::{AlignerParam, GenomeName, utils};
 use fastq_set::WhichEnd;
-use martian_filetypes::tabular_file::TsvFileNoHeader;
 use martian_filetypes::FileTypeRead;
+use martian_filetypes::tabular_file::TsvFileNoHeader;
 use metric::AsMetricPrefix;
 use rust_htslib::bam::record::{Cigar, CigarString, Record};
 use serde::de::DeserializeOwned;
@@ -13,7 +15,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::{cmp, str};
-use strum_macros::{Display, IntoStaticStr};
+use strum::{Display, IntoStaticStr};
 use transcriptome::{Gene, TranscriptIndex, Transcriptome};
 
 #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
@@ -107,11 +109,7 @@ impl AnnotationData {
     }
 
     pub fn make_mm_tag(&self) -> Option<i32> {
-        if self.rescued {
-            Some(1)
-        } else {
-            None
-        }
+        if self.rescued { Some(1) } else { None }
     }
 }
 
@@ -221,13 +219,13 @@ impl AnnotationRegion {
 /// transcriptInfo.tab produced by STAR, which has no header.
 #[derive(Deserialize, Serialize)]
 pub struct StarTranscript {
-    pub(crate) id: String,
-    pub(crate) start: i64,
-    pub(crate) end: i64, // inclusive
-    pub(crate) max_end: i64,
-    pub(crate) strand: u8,
-    pub(crate) num_exons: usize,
-    pub(crate) break_idx: usize, // TODO rename
+    pub(super) id: String,
+    pub(super) start: i64,
+    pub(super) end: i64, // inclusive
+    pub(super) max_end: i64,
+    pub(super) strand: u8,
+    pub(super) num_exons: usize,
+    pub(super) break_idx: usize, // TODO rename
 }
 
 /// A STAR exon.
@@ -256,6 +254,7 @@ pub struct AnnotationParams {
     pub region_min_overlap: f64,
     pub include_exons: bool,
     pub include_introns: bool,
+    pub aligner: AlignerParam,
 }
 
 #[derive(Debug)]
@@ -266,7 +265,7 @@ struct SpliceSegment {
 }
 
 pub struct TranscriptAnnotator {
-    params: AnnotationParams,
+    pub params: AnnotationParams,
     transcript_info: Vec<StarTranscript>,
     exon_info: Vec<StarExon>,
     chrom_starts: Vec<i64>,
@@ -289,7 +288,7 @@ impl TranscriptAnnotator {
         let transcript_info: Vec<StarTranscript> =
             read_star_tab(&reference_path.join("star/transcriptInfo.tab"))?;
         let exon_info: Vec<StarExon> = read_star_tab(&reference_path.join("star/exonInfo.tab"))?;
-        let chrom_starts = cr_types::utils::load_txt(&reference_path.join("star/chrStart.txt"))?;
+        let chrom_starts = utils::load_txt(&reference_path.join("star/chrStart.txt"))?;
         let genome_of_tid = genome_of_chrom(reference_path)?;
         let txome = Transcriptome::from_reference_path(reference_path)?;
         let transcript_index = TranscriptIndex::from_transcriptome(&txome);
@@ -302,10 +301,6 @@ impl TranscriptAnnotator {
             transcript_index,
             genome_of_tid,
         })
-    }
-
-    pub fn get_params(&self) -> &AnnotationParams {
-        &self.params
     }
 
     pub fn annotate_alignment(&self, read: &Record) -> AnnotationData {
@@ -321,7 +316,7 @@ impl TranscriptAnnotator {
         let clipped_read_end = clipped_read_start + cr_bam::bam::alen(read) - 1;
 
         // find maximum index of transcripts that could possibly overlap the read
-        let mut tx_idx = cr_types::utils::bisect(
+        let mut tx_idx = utils::bisect(
             &self.transcript_info,
             clipped_read_end,
             &|tx| tx.start,
@@ -606,21 +601,21 @@ fn find_exons(
     intergenic_trim_bases: i64,
     intronic_trim_bases: i64,
 ) -> Option<(usize, usize)> {
-    let ex_start = cr_types::utils::bisect(
+    let ex_start = utils::bisect(
         &exon_info[first_exon..last_exon + 1],
         read_start,
         &|ex| ex.end,
         utils::BisectDirection::Right,
     ) + first_exon; // find first exon that ends to the right of the read start
-    let ex_end = cr_types::utils::bisect(
+    let ex_end = utils::bisect(
         &exon_info[first_exon..last_exon + 1],
         read_end,
         &|ex| ex.start,
-        cr_types::utils::BisectDirection::Left,
+        utils::BisectDirection::Left,
     ) - 1
         + first_exon; // find first exon that starts to the left of the read end
-                      //let ex_start = exon_info.binary_search_by_key(&read_start, |ex| ex.end - 1).unwrap() as u64; // find first exon that ends to the right of the read start
-                      //let ex_end = exon_info.binary_search_by_key(&read_end, |ex| ex.start - 1).unwrap() as u64 - 1; // find first exon that starts to the left of the read end
+    //let ex_start = exon_info.binary_search_by_key(&read_start, |ex| ex.end - 1).unwrap() as u64; // find first exon that ends to the right of the read start
+    //let ex_end = exon_info.binary_search_by_key(&read_end, |ex| ex.start - 1).unwrap() as u64 - 1; // find first exon that starts to the left of the read end
 
     if (ex_start > last_exon) | (ex_end < first_exon) {
         // read is out of bounds
@@ -895,14 +890,6 @@ mod tests {
     use rust_htslib::bam::record::CigarString;
     use std::collections::HashMap;
 
-    #[allow(dead_code)]
-    struct TranscriptomeTest {
-        chrom_starts: Vec<i64>,
-        transcript_info: Vec<StarTranscript>,
-        exon_info: Vec<StarExon>,
-        transcript_index: TranscriptIndex,
-    }
-
     fn make_test_annotator(params: AnnotationParams) -> TranscriptAnnotator {
         /*
         Build a transcriptome. Things to test:
@@ -1057,6 +1044,7 @@ mod tests {
             region_min_overlap: 0.5,
             include_exons: true,
             include_introns: false,
+            aligner: AlignerParam::Star,
         }
     }
 
@@ -1070,6 +1058,7 @@ mod tests {
             region_min_overlap: 0.5,
             include_exons: true,
             include_introns: true,
+            aligner: AlignerParam::Star,
         }
     }
 

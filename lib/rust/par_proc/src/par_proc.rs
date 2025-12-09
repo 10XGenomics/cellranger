@@ -1,7 +1,9 @@
-use anyhow::{anyhow, Result};
+#![deny(missing_docs)]
+
+use anyhow::{Result, anyhow};
 use core::iter::IntoIterator;
 use cr_types::spill_vec::SpillVec;
-use crossbeam_channel::{bounded, Receiver};
+use crossbeam_channel::{Receiver, bounded};
 use crossbeam_utils::thread::{Scope, ScopedJoinHandle};
 use itertools::Itertools;
 use martian_filetypes::LazyFileTypeIO;
@@ -41,6 +43,7 @@ fn process<P: Proc<Item = T, Err = E>, T: Send, E>(
     Ok(processor)
 }
 
+/// The maximum number of items to hold in memory before spilling to disk.
 pub const MAX_ITEMS_IN_MEM: usize = 500_000;
 
 #[allow(clippy::type_complexity)]
@@ -130,7 +133,7 @@ where
 
         for (key, group_iter) in &iterable
             .into_iter()
-            .group_by(move |item_result: &Result<T>| {
+            .chunk_by(move |item_result: &Result<T>| {
                 // Map an Error to None and Ok(t) to Some(key(&t)). This is needed because
                 // `failure::Error` doesn't satisfy all the traits to be a valid key to group by
                 // We will bubble up the error via the `group_iter`
@@ -201,7 +204,7 @@ where
 
         for (key, group_iter) in &iterable
             .into_iter()
-            .group_by(move |item_result: &Result<T>| {
+            .chunk_by(move |item_result: &Result<T>| {
                 // Map an Error to None and Ok(t) to Some(key(&t)). This is needed because
                 // `failure::Error` doesn't satisfy all the traits to be a valid key to group by
                 // We will bubble up the error via the `group_iter`
@@ -213,7 +216,7 @@ where
             for (_, piece) in &group_iter
                 .map(Result::unwrap)
                 .enumerate()
-                .group_by(|(i, _)| *i / max_items)
+                .chunk_by(|&(i, _)| i / max_items)
             {
                 let items: Vec<T> = piece.map(|(_, item)| item).collect();
                 let send_res = send.send((key.clone(), items));
@@ -322,7 +325,7 @@ mod proc_tests {
     where
         BincodeFile<Vec<T>>: LazyFileTypeIO<T>,
     {
-        pub fn new() -> ProcIntoVec<K, T> {
+        fn new() -> ProcIntoVec<K, T> {
             ProcIntoVec {
                 items: Vec::new(),
                 phantom: PhantomData,

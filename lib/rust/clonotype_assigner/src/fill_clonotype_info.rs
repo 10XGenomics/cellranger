@@ -1,11 +1,12 @@
 //! FillClonotypeInfo stage code
+#![expect(missing_docs)]
 
 use crate::assigner::ProtoBinFile;
 use anyhow::Result;
 use cr_types::clonotype::ClonotypeId;
 use enclone_proto::proto_io::ClonotypeIter;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
 use serde::{Deserialize, Serialize};

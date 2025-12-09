@@ -1,43 +1,24 @@
 [dependencies]
-[dependencies.anyhow]
-workspace = true
-
-[dependencies.cr_types]
-path = '../cr_types'
-
-[dependencies.heck]
-workspace = true
-
-[dependencies.itertools]
-workspace = true
-
 [dependencies.proc-macro2]
 workspace = true
 
 [dependencies.quote]
 workspace = true
 
-[dependencies.serde]
-workspace = true
-
 [dependencies.syn]
 features = ['full']
-workspace = true
-
-[dependencies.toml]
 workspace = true
 
 [lib]
 proc-macro = true
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'websummary_derive'
 publish = false
 version = '0.1.0'
-
-[package.metadata]
-[package.metadata.cargo-machete]
-ignored = ['itertools']

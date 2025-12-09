@@ -19,14 +19,16 @@ def get_overhang_bc_defn(barcode_def):
     return offset, length
 
 
-def get_sample_tag_barcodes(multi_graph: MultiGraph, barcode_def):
+def get_sample_tag_barcodes(
+    multi_graph: MultiGraph, barcode_def: list[dict[str, dict[str, str]]]
+) -> dict[str, list[str]]:
     """Return a mapping from sample ID to the tag barcodes associated with them."""
     probe_bc_wl_spec = get_probe_bc_whitelist(barcode_def)
     wl_map = load_probe_barcode_map(
-        name=probe_bc_wl_spec.get("name", None),
-        path=probe_bc_wl_spec.get("translation_whitelist_path", None),
+        name=probe_bc_wl_spec["name"],
+        path=probe_bc_wl_spec["translation_whitelist_path"],
+        strand=probe_bc_wl_spec["strand"],
     )
-    assert wl_map is not None
     return {
         sample_id: [wl_map[tag_name] for tag_name in tag_names]
         for sample_id, tag_names in multi_graph.sample_tag_ids().items()

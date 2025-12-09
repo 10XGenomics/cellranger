@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Generator
 
 import numpy as np
@@ -16,8 +17,8 @@ def multinomial_comb(cnts):
     from a vector of counts k_i summing to N
     """
     N = np.sum(cnts)
-    numerator = np.math.factorial(N)
-    denominator = np.array([np.math.factorial(x) for x in cnts])
+    numerator = math.factorial(N)
+    denominator = np.array([math.factorial(x) for x in cnts])
     return numerator / np.prod(denominator)
 
 

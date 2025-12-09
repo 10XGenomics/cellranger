@@ -8,12 +8,14 @@ import pandas as pd
 import polars as pl
 
 import cellranger.altair_utils as alt_utils
-import cellranger.matrix as cr_matrix
+import cellranger.rna.library as rna_library
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
+from cellranger.fast_utils import per_barcode_umis_in_library
 from cellranger.webshim.data import SampleData
 from cellranger.websummary.numeric_converters import round_floats_in_list
 
 alt.data_transformers.disable_max_rows()
+SAMPLING_THRESHOLD = 1000
 
 
 def _make_boxplot(counts: str):
@@ -215,7 +217,7 @@ def make_gene_umi_violin_plots(
 
 def make_cell_types_df(
     h5_path: str,
-    cell_types: str,
+    cell_types_path: str,
     barcode_lower_bound: int,
     group_by_name: str,
 ):
@@ -223,30 +225,57 @@ def make_cell_types_df(
 
     Args:
         h5_path (str): path to filtered_feature_bc_matrix.h5
-        cell_types (str): path to cell_types.csv
+        cell_types_path (str): path to cell_types.csv
         barcode_lower_bound(int): minimum number of barcodes per cell type for plot
         group_by_name (string): name of the column that data should be grouped by
 
     Returns:
         tupel: [cell_types (DataFrame), cell_levels(int)]
     """
-    mat = cr_matrix.CountMatrix.load_h5_file(h5_path)
-    mat = mat.select_features_by_type("Gene Expression")
-    counts = mat.get_counts_per_bc()
-    bcs = cr_matrix.CountMatrix.load_bcs_from_h5_file_handle(h5_path)
-    bcs = [b.decode("utf-8") for b in bcs]
+    per_bc_counts = per_barcode_umis_in_library(
+        matrix_path=h5_path, library=rna_library.GENE_EXPRESSION_LIBRARY_TYPE
+    )
+    bcs, counts = list(zip(*per_bc_counts.items()))
     counts_per_bcs = pl.DataFrame({"barcode": bcs, "umi_counts": counts})
-    cell_types = pl.read_csv(cell_types)
-    cell_types = cell_types.join(counts_per_bcs, on="barcode")
-    cell_types = cell_types.select([group_by_name, "umi_counts"])
-    cell_types = cell_types.join(
+    cell_types = (
+        pl.read_csv(cell_types_path, null_values=["NA"])
+        .join(counts_per_bcs, on="barcode")
+        .select([group_by_name, "umi_counts"])
+    )
+
+    valid_cell_types = (
         cell_types.group_by(group_by_name)
         .agg(pl.count().alias("count"))
-        .filter(pl.col("count") >= barcode_lower_bound),
-        on=group_by_name,
-        how="inner",
+        .filter(pl.col("count") >= barcode_lower_bound)
     )
-    cell_types = cell_types.with_columns(pl.col("umi_counts") + 1)
+    cell_types = cell_types.join(valid_cell_types, on=group_by_name, how="inner")
+    cell_types = cell_types.with_columns((pl.col("umi_counts") + 1).alias("umi_counts"))
+
+    # If there are cell types with over 1000 entries split into large and small groups
+    is_large = pl.col("count") > SAMPLING_THRESHOLD
+    large = cell_types.filter(is_large)
+    small = cell_types.filter(~is_large)
+    max_min_rows = cell_types.filter(
+        (pl.col("umi_counts") == pl.col("umi_counts").min().over(group_by_name))
+        | (pl.col("umi_counts") == pl.col("umi_counts").max().over(group_by_name))
+    )
+    if large.height > 0:
+        non_group_cols = [col for col in cell_types.columns if col != group_by_name]
+        sampled_large = (
+            large.group_by(group_by_name)
+            .agg(
+                pl.all().sample(n=SAMPLING_THRESHOLD, with_replacement=False, shuffle=True, seed=42)
+            )
+            .explode(non_group_cols)
+        )
+    else:
+        sampled_large = pl.DataFrame(schema=cell_types.schema)
+
+    kept_small = small if small.height > 0 else pl.DataFrame(schema=cell_types.schema)
+
+    cell_types = pl.concat([sampled_large, kept_small, max_min_rows], how="vertical")
+    # Ensure there are no duplicate rows
+    cell_types.unique(maintain_order=True)
     cell_levels = cell_types[group_by_name].n_unique()
     return cell_types, cell_levels
 
@@ -330,7 +359,6 @@ def make_cell_types_boxplot(
     cell_types, cell_levels = make_cell_types_df(
         h5_path, cell_types, barcode_lower_bound, group_by_name
     )
-
     box_width = final_plot_width / (cell_levels + 1)
     box_plot = alt.Chart(cell_types).mark_boxplot(size=box_width).encode(
         alt.X(
@@ -358,13 +386,14 @@ def make_cell_types_boxplot(
         y="q1:Q",
         y2="q3:Q",
         tooltip=[
+            alt.Tooltip(f"{group_by_name}:N", title="Cell Type"),
+            alt.Tooltip("count:Q", title="# Barcodes"),
             alt.Tooltip("min:Q", title="Minimum UMI", format=".2f"),
             alt.Tooltip("q1:Q", title="Lower Quartile", format=".2f"),
             alt.Tooltip("mean:Q", title="Mean UMI", format=".2f"),
             alt.Tooltip("median:Q", title="Median UMI", format=".2f"),
             alt.Tooltip("q3:Q", title="Upper Quartile", format=".2f"),
             alt.Tooltip("max:Q", title="Maximum UMI", format=".2f"),
-            alt.Tooltip("count:Q", title="# Barcodes"),
         ],
     ).properties(
         width=final_plot_width

@@ -1,11 +1,12 @@
+#![deny(missing_docs)]
 use anyhow::Result;
 use serde::de::Visitor;
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de};
 use std::convert::TryFrom;
 use std::fmt::Formatter;
 
 #[derive(Debug)]
-pub enum NumberOrStr {
+pub(super) enum NumberOrStr {
     Number(u64),
     Str(String),
 }
@@ -38,7 +39,7 @@ impl<'de> Deserialize<'de> for NumberOrStr {
         D: Deserializer<'de>,
     {
         struct NumberOrStrVisitor;
-        impl<'de> Visitor<'de> for NumberOrStrVisitor {
+        impl Visitor<'_> for NumberOrStrVisitor {
             type Value = NumberOrStr;
             fn expecting(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 f.write_str("A number or string")

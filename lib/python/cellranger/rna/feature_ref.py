@@ -45,6 +45,9 @@ BASE_FEATURE_FIELDS = ["id", "name", "feature_type"]
 # These feature tag keys are required for feature barcode extraction
 REQUIRED_TAGS = ["read", "pattern", "sequence"]
 
+TARGET_GENE_ID = "target_gene_id"
+TARGET_GENE_NAME = "target_gene_name"
+
 
 # Type conversion and validation
 def convert_bool_tag(tagstr: str, tag_name: str) -> bool:
@@ -329,8 +332,8 @@ def check_crispr_target_gene_name(features: list[FeatureDef]):
     for feature in features:
         if feature.feature_type == rna_library.CRISPR_LIBRARY_TYPE:
             # Check for case-insensitive "Non-Targeting" variants
-            target_gene_name = feature.tags.get("target_gene_name")
-            target_gene_id = feature.tags.get("target_gene_id")
+            target_gene_name = feature.tags.get(TARGET_GENE_NAME)
+            target_gene_id = feature.tags.get(TARGET_GENE_ID)
             if not target_gene_name or not target_gene_id:
                 continue
 
@@ -366,7 +369,7 @@ def check_crispr_target_gene(
     special_ids: list[bytes] = [ensure_binary(x.lower()) for x in cellranger.constants.FILTER_LIST]
 
     for feat in features:
-        target_id_str = feat.tags.get("target_gene_id")
+        target_id_str = feat.tags.get(TARGET_GENE_ID)
         if target_id_str:
             target_id: bytes = ensure_binary(target_id_str)
             # Cut-out for special CRISPR guide types
@@ -388,7 +391,7 @@ def check_crispr_target_gene(
                     )
                     raise FeatureDefException(msg)
 
-            target_name = feat.tags.get("target_gene_name")
+            target_name = feat.tags.get(TARGET_GENE_NAME)
             if target_name is None or target_name == "":
                 msg = f"CRISPR: No target_gene_name specified for this target_gene_id ({ensure_str(target_id)}) in the feature reference."
                 raise FeatureDefException(msg)
@@ -438,7 +441,7 @@ def compile_pattern(pattern_str, length: int):
     regex_str = re.sub("N", ".", pattern_str)
 
     # Capture the feature barcode
-    regex_str = re.sub(r"\(BC\)", "(.{%d,%d})" % (length, length), regex_str)
+    regex_str = re.sub(r"\(BC\)", f"(.{{{length},{length}}})", regex_str)
 
     try:
         regex = re.compile(regex_str)
@@ -489,10 +492,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
         # Check that there aren't extra columns, which you
         for key in row:
             if key is None:
-                msg = (
-                    "Your feature reference csv file contains more columns than the header on line %d. Please use a csv file with a header for each column."
-                    % (row_num + 2)
-                )
+                msg = f"Your feature reference csv file contains more columns than the header on line {row_num + 2}. Please use a csv file with a header for each column."
                 msg += "\nYou might have an comma character in a field. Commas are permitted in some fields, but fields containing commas must be enclosed in quotes."
                 raise FeatureDefException(msg)
 
@@ -500,10 +500,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
         # tolerate missing values
         for key in row:
             if row[key] is None:
-                msg = (
-                    "Your feature reference csv file is missing fields on line %d. Ensure that each row has an entry for every header column."
-                    % (row_num + 2)
-                )
+                msg = f"Your feature reference csv file is missing fields on line {row_num + 2}. Ensure that each row has an entry for every header column."
                 msg += "\nYou might have an extra comma character in the CSV header."
                 raise FeatureDefException(msg)
 
@@ -551,7 +548,7 @@ def parse_feature_def_file(filename, index_offset: int = 0) -> tuple[list[Featur
                         "Feature id field cannot contain whitespace: '{}'".format(row["id"])
                     )
                 else:
-                    msg = "Feature id field contains an illegal character at position %d: '%s'" % (
+                    msg = "Feature id field contains an illegal character at position {}: '{}'".format(
                         idx,
                         row["id"],
                     )

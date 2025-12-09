@@ -1,17 +1,24 @@
 //! Graph-clustering (Louvain) + merge-clusters stage code
+#![expect(missing_docs)]
 
 use crate::io::{csv, h5};
 use crate::louvain::{run_louvain, run_louvain_parallel};
-use crate::types::{ClusteringResult, ClusteringType, H5File};
-use anyhow::Result;
+use crate::types::{ClusteringResult, ClusteringType, H5File, ReductionType};
+use anyhow::{Context, Result};
 use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::read_adaptive_csr_matrix;
 use log::info;
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct, MartianType};
+use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeRead;
+use martian_filetypes::tabular_file::CsvFile;
+use ndarray::Array;
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use scan_rs::merge_clusters::merge_clusters;
-use scan_rs::nn::knn;
+use scan_rs::nn::{find_nn, knn};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::default::Default;
 use std::path::PathBuf;
 
@@ -23,23 +30,24 @@ const RANDOM_SEED: usize = 0xBADC0FFEE0DDF00D;
 const ACTIVE_FEATURE_TYPES: &[FeatureType] = &[
     FeatureType::Gene,
     FeatureType::Barcode(cr_types::FeatureBarcodeType::Antibody),
+    FeatureType::ProteinExpression,
 ];
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, MartianType, Default,
-)]
-pub enum SimilarityType {
-    #[serde(rename = "nn")]
-    #[default]
-    NN,
-    #[serde(rename = "snn")]
-    SNN,
+const SKETCH_SAMPLE_SIZE: usize = 500_000;
+
+#[derive(Serialize, Deserialize)]
+struct BarcodeAndCluster {
+    #[serde(alias = "Barcode")]
+    barcode: String,
+    #[serde(alias = "Cluster")]
+    cluster: usize,
 }
 
 #[derive(Debug, Deserialize, MartianStruct)]
 pub struct GraphClusteringStageInputs {
     matrix_h5: H5File,
     pca_h5: H5File,
+    graphclust_init: Option<CsvFile<BarcodeAndCluster>>,
     num_neighbors: Option<usize>,
     neighbor_a: Option<f64>,
     neighbor_b: Option<f64>,
@@ -48,6 +56,7 @@ pub struct GraphClusteringStageInputs {
     random_seed: Option<usize>,
     threads: usize,
     parallel_clustering: bool,
+    sketch: bool,
 }
 
 impl GraphClusteringStageInputs {
@@ -57,9 +66,14 @@ impl GraphClusteringStageInputs {
             .next()
             .unwrap()
             .0;
-        let num_bcs = h5::load_transformed_pca(&self.pca_h5, feature_type, self.input_pcs)?
-            .1
-            .num_bcs;
+        let num_bcs = h5::load_transformed_reduction_h5(
+            &self.pca_h5,
+            feature_type,
+            self.input_pcs,
+            ReductionType::pca,
+        )?
+        .1
+        .num_bcs;
         let neighbor_a = self.neighbor_a.unwrap_or(NEIGHBOR_A);
         let neighbor_b = self.neighbor_b.unwrap_or(NEIGHBOR_B);
         let k = (neighbor_a + neighbor_b * (num_bcs as f64).log10()).round() as usize;
@@ -96,14 +110,15 @@ impl MartianStage for GraphClusteringStage {
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
-        let num_bcs = h5::load_transformed_pca(
+        let num_bcs = h5::load_transformed_reduction_h5(
             &args.pca_h5,
             *feature_types.iter().next().unwrap().0,
             args.input_pcs,
+            ReductionType::pca,
         )?
         .1
         .num_bcs;
-        let k = args.compute_k()?;
+        let k: usize = args.compute_k()?;
         // (adjacency matrix + observed edge list + weighted edge list) * max no. edges
         // (u32 = 4 + u32 = 4 + usize = 8 + f64 = 8) = 24 * num_edges
         let mem_gib = (2.5
@@ -121,7 +136,7 @@ impl MartianStage for GraphClusteringStage {
             .map(|&feature_type| {
                 (
                     Self::ChunkInputs { feature_type },
-                    Resource::with_mem_gb(mem_gib).threads(args.threads.try_into().unwrap()),
+                    Resource::with_mem_gb(mem_gib + 2).threads(args.threads.try_into().unwrap()),
                 )
             })
             .collect())
@@ -136,23 +151,124 @@ impl MartianStage for GraphClusteringStage {
         rayon::ThreadPoolBuilder::new()
             .num_threads(args.threads)
             .build_global()?;
-        let proj =
-            h5::load_transformed_pca_matrix(&args.pca_h5, chunk_args.feature_type, args.input_pcs)?;
+        let proj = h5::load_transformed_matrix(
+            &args.pca_h5,
+            chunk_args.feature_type,
+            args.input_pcs,
+            ReductionType::pca,
+        )?;
+        let doing_sketching = args.sketch && SKETCH_SAMPLE_SIZE < proj.nrows();
+        if doing_sketching {
+            info!(
+                "Decided to sketch {SKETCH_SAMPLE_SIZE} rows from proj which has {} rows",
+                proj.nrows()
+            );
+        } else {
+            info!(
+                "Decided to not sketch because args.sketch={}, SKETCH_SAMPLE_SIZE={SKETCH_SAMPLE_SIZE}, number of rows in proj={}",
+                args.sketch,
+                proj.nrows()
+            );
+        }
+
         let (matrix, _) = read_adaptive_csr_matrix(&args.matrix_h5, None, None)?;
         let k = args.compute_k()?;
+        let init_clusters = if let Some(graphclust_init_file) = args.graphclust_init {
+            let bc_to_cluster_map: HashMap<_, _> = graphclust_init_file
+                .read()?
+                .into_iter()
+                .map(|x| (x.barcode, x.cluster))
+                .collect();
+            let init_clusters: Vec<_> = matrix
+                .barcodes
+                .iter()
+                .map(|x| {
+                    bc_to_cluster_map
+                        .get(x)
+                        .copied()
+                        .with_context(|| format!("barcode {x} not found in barcode to cluster map"))
+                })
+                .collect::<Result<_>>()?;
+            Some(Array::from_vec(init_clusters))
+        } else {
+            None
+        };
 
-        info!("computing k-nearest neighbors with k = {}", k);
-        let neighbors = knn::<u32>(&proj.view(), k);
+        info!("computing k-nearest neighbors with k = {k}");
+        let sampled_indices = if doing_sketching {
+            info!("sampling {SKETCH_SAMPLE_SIZE} rows from proj");
+            Some(
+                rand::seq::index::sample(
+                    &mut SmallRng::seed_from_u64(0),
+                    proj.nrows(),
+                    SKETCH_SAMPLE_SIZE,
+                )
+                .into_vec(),
+            )
+        } else {
+            None
+        };
+
+        let (selected_proj, selected_init_clusters) =
+            if let Some(ref sampled_indices_vec) = sampled_indices {
+                (
+                    &proj.select(ndarray::Axis(0), sampled_indices_vec),
+                    init_clusters.map(|x| x.select(ndarray::Axis(0), sampled_indices_vec)),
+                )
+            } else {
+                (&proj, init_clusters)
+            };
+
+        let downsampled_indices_to_sampled_indices_map: Option<HashMap<_, _>> = sampled_indices
+            .map(|sampled_indices_vec| {
+                sampled_indices_vec
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ind, val)| (val, ind))
+                    .collect()
+            });
+
+        let (kneighbors, ball_tree) = knn::<u32>(&selected_proj.view(), k);
 
         info!("running louvain");
         let labels = if args.parallel_clustering {
-            run_louvain_parallel(&neighbors, args.resolution.unwrap_or(RESOLUTION))
+            run_louvain_parallel(
+                &kneighbors,
+                args.resolution.unwrap_or(RESOLUTION),
+                selected_init_clusters.as_ref(),
+            )
         } else {
             let seed = args.random_seed.or(Some(RANDOM_SEED));
-            run_louvain(&neighbors, args.resolution.unwrap_or(RESOLUTION), seed)
+            run_louvain(
+                &kneighbors,
+                args.resolution.unwrap_or(RESOLUTION),
+                selected_init_clusters.as_ref(),
+                seed,
+            )
+        };
+
+        let labels = if let Some(downsampled_indices_to_sampled_indices_map) =
+            downsampled_indices_to_sampled_indices_map
+        {
+            let all_neighbors = find_nn::<usize>(&proj.view(), 1, &ball_tree, true);
+            all_neighbors
+                .into_iter()
+                .enumerate()
+                .map(|(ind, nbr)| {
+                    if downsampled_indices_to_sampled_indices_map.contains_key(&ind) {
+                        labels[downsampled_indices_to_sampled_indices_map[&ind]]
+                    } else {
+                        labels[nbr]
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            labels
         };
 
         info!("merging clusters");
+        let label_hashset: HashSet<_> = labels.iter().collect();
+        info!("cluster labels: {label_hashset:?}");
         let labels = merge_clusters(&matrix, &proj, labels)
             .into_iter()
             .map(|v| v as i64 + 1)

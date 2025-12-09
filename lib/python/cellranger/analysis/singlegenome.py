@@ -8,7 +8,6 @@ from __future__ import annotations
 import os.path
 import re
 from collections.abc import Sequence
-from typing import TypeAlias
 
 import h5py as h5
 import numpy as np
@@ -38,7 +37,7 @@ TSNE_NAME = "tsne"
 UMAP_NAME = "umap"
 PROJECTION_TITLE = {TSNE_NAME: "t-SNE", UMAP_NAME: "UMAP"}
 
-Projection: TypeAlias = str
+type Projection = str
 
 
 class SingleGenomeAnalysis:

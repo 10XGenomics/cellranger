@@ -1,6 +1,7 @@
 #
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
+@include "_cr_lib_stages.mro"
 
 filetype bam;
 filetype bam.bai;
@@ -13,7 +14,6 @@ filetype pickle;
 filetype fa;
 filetype h5;
 
-# duplicating this here to avoid circular dependency
 struct SampleSlfeOuts(
     string  sample,
     bam     bam_file,
@@ -29,9 +29,6 @@ struct SampleSlfeOuts(
     path    raw_matrix_mex,
     csv     filtered_barcodes,
     csv     aggregate_barcodes,
-    csv     feature_reference,
-    csv     target_panel,
-    csv     probe_set,
     csv     per_probe_metrics,
 )
 
@@ -64,8 +61,10 @@ stage DISABLE_FEATURE_STAGES(
     in  bool                disable_count,
     in  bool                is_pd,
     in  bool                in_disable_targeted,
+    in  bool                no_secondary_analysis,
     in  map<SampleSlfeOuts> sample_outs,
     in  json                multi_graph,
+    in  ReferenceInfo       reference_info,
     out bool                disable_crispr,
     out bool                disable_antibody,
     out bool                disable_antigen,
@@ -73,6 +72,8 @@ stage DISABLE_FEATURE_STAGES(
     out bool                disable_targeted,
     out bool                disable_legacy_stages,
     out bool                disable_library_cloupe,
+    out bool                disable_library_crispr,
+    out bool                disable_library_rna,
     out bool                disable_gex,
     src py                  "stages/common/disable_feature_stages",
 ) using (
@@ -85,6 +86,8 @@ stage DISABLE_SECONDARY_ANALYSIS(
     in  bool no_secondary_analysis,
     in  bool is_visium_hd_main_run  "Boolean indicating if this is being called from a main (not-binning) Visium HD run",
     out bool no_secondary_analysis,
+    out bool sketch_graphclust      "Boolean indicating if sketch based graphclust should be enabled",
+    out bool parallel_umap          "Boolean indicating if parallel UMAP should be enabled",
     src py   "stages/common/disable_secondary_analysis",
 ) using (
     volatile = strict,
@@ -96,7 +99,6 @@ stage PARSE_TARGET_FEATURES(
     in  path     reference_path,
     in  json     gene_index,
     in  bool     filter_probes,
-    in  bool     no_target_umi_filter,
     in  bool     no_bam,
     in  bool     is_pd,
     in  bool     is_antibody_only,
@@ -106,12 +108,12 @@ stage PARSE_TARGET_FEATURES(
     out csv      target_panel_or_probe_set,
     out csv      target_gene_indices,
     out bool     disable_targeted,
-    out bool     disable_target_umi_filter,
     out bool     no_bam,
     out string   target_set_name,
     out string   targeting_method,
     out tps.json target_panel_summary,
     src py       "stages/common/parse_target_features",
 ) using (
-    mem_gb = 4,
+    mem_gb   = 4,
+    volatile = strict,
 )

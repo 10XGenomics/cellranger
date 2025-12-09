@@ -1,8 +1,10 @@
-//!
 //! This module defines the `MeanMetric` struct. This struct
 //! helps accumulate a mean value over observations.
+#![deny(missing_docs)]
 
 use crate::Metric;
+use metric_derive::Metric;
+use serde::{Deserialize, Serialize};
 use std::iter::{FromIterator, Sum};
 
 /// Use this struct to accumulate mean metrics
@@ -19,8 +21,8 @@ use std::iter::{FromIterator, Sum};
 /// ```
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default, PartialOrd, Metric)]
 pub struct MeanMetric {
-    pub(crate) numerator: f64,
-    pub(crate) denominator: usize,
+    pub(super) numerator: f64,
+    pub(super) denominator: usize,
 }
 
 impl MeanMetric {
@@ -106,7 +108,7 @@ mod tests {
         assert_eq!(xs.into_iter().collect::<MeanMetric>().mean(), 4.5);
     }
 
-    proptest! {
+    proptest::proptest! {
         #[test]
         fn prop_test_mean_metric_add_and_addassign(
             x in any::<f64>(),

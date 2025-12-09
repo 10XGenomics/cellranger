@@ -5,16 +5,17 @@
 """For a single sample, generate the gene expression clustering/umap plots, antibody clustering/umap plots,.
 
 and sample-level rank plots as plotly JSON, so that they can be passed forward to the
-WRITE_MULTI_WEB_SUMMARY_JSON stage and inserted into the sample web summary
+WRITE_MULTI_WEB_SUMMARY stage and inserted into the sample web summary
 """
 
 import json
-from math import ceil
+from typing import Any
 
 import h5py
 
 import cellranger.rna.library as rna_library
 from cellranger.analysis.singlegenome import UMAP_NAME
+from cellranger.hdf5 import estimate_mem_gib_for_dataset
 from cellranger.matrix import CountMatrix
 from cellranger.multi.barcode_rank_plots import write_library_to_barcode_rank_json
 from cellranger.websummary.analysis_tab_core import (
@@ -56,15 +57,23 @@ UMI_ON_UMAP_PLOT_NAMES = [
 
 
 def split(args):
-    _features, _cells, nnz = CountMatrix.load_dims_from_h5(args.matrices_h5)
-    mem_gib = ceil(
-        CountMatrix.get_mem_gb_from_matrix_h5(args.matrices_h5) + (3 + 31 * nnz / 1024**3)
-    )
+    _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(args.matrices_h5)
+    matrix_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=4)
 
-    return {
-        "chunks": [],
-        "join": {"__mem_gb": mem_gib},
-    }
+    if args.raw_matrices_h5 is None:
+        raw_barcodes_gib = 0
+    else:
+        with h5py.File(args.raw_matrices_h5) as f:
+            raw_barcodes_gib = round(estimate_mem_gib_for_dataset(f["matrix/barcodes"]), 1)
+
+    with h5py.File(args.barcode_summary) as f:
+        barcode_summary_gib = round(estimate_mem_gib_for_dataset(f["bc_sequence"]), 1)
+
+    mem_gib = 3 + matrix_gib + raw_barcodes_gib + barcode_summary_gib
+    print(
+        f"{num_barcodes=},{nnz=},{matrix_gib=},{raw_barcodes_gib=},{barcode_summary_gib=},{mem_gib=}"
+    )
+    return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
 def write_umap_plots(args, outs):
@@ -75,7 +84,7 @@ def write_umap_plots(args, outs):
 
     # build umap/clustering, differential expression plots for gene expression
     library_types = CountMatrix.load_library_types_from_h5_file(args.matrices_h5)
-    umap_plots = {
+    umap_plots: dict[str, Any] = {
         plot_name: (
             projection_diffexp_plots_from_path(
                 args.analysis, projection=UMAP_NAME, library_type=library_type
@@ -86,15 +95,10 @@ def write_umap_plots(args, outs):
         for plot_name, library_type in DIFFEXP_CLUSTERING_PLOT_NAMES
     }
 
-    umap_plots.update(
-        (
-            plot_name,
-            umi_on_projection_from_path(
-                args.analysis, projection=UMAP_NAME, library_type=library_type
-            ),
+    for plot_name, library_type in UMI_ON_UMAP_PLOT_NAMES:
+        umap_plots[plot_name] = umi_on_projection_from_path(
+            args.analysis, projection=UMAP_NAME, library_type=library_type
         )
-        for plot_name, library_type in UMI_ON_UMAP_PLOT_NAMES
-    )
 
     with open(outs.sample_projection_plots, "w") as out:
         json.dump(umap_plots, out, sort_keys=True, cls=ReactComponentEncoder)
@@ -108,7 +112,9 @@ def write_barcode_rank_plots(args, outs):
 
     # If raw matrix for this specific sample is available, restrict to those barcodes in rank plot
     restrict_barcodes = (
-        None if args.raw_matrices_h5 is None else CountMatrix.load_bcs_from_h5(args.raw_matrices_h5)
+        set()
+        if args.raw_matrices_h5 is None
+        else set(CountMatrix.load_bcs_from_h5(args.raw_matrices_h5))
     )
 
     write_library_to_barcode_rank_json(

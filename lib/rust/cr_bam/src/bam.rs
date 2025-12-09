@@ -1,13 +1,16 @@
+#![expect(missing_docs)]
 use crate::bam_tags::{
-    ExtraFlags, EXTRA_FLAGS_TAG, FEATURE_IDS_TAG, PROC_BC_SEQ_TAG, PROC_UMI_SEQ_TAG,
+    EXTRA_FLAGS_TAG, ExtraFlags, FEATURE_IDS_TAG, PROC_BC_SEQ_TAG, PROC_UMI_SEQ_TAG,
     RAW_BARCODE_SEQ_TAG, RAW_UMI_SEQ_TAG,
 };
 use crate::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_GIB};
 use barcode::{Barcode, BarcodeContent};
+use metric::TxHasher;
 use rust_htslib::bam::record::{Aux, Cigar, Record};
-use shardio::{ShardReader, SortKey, SHARD_ITER_SZ as SHARD_SZ};
+use serde::{Deserialize, Serialize};
+use shardio::{ShardReader, SortKey};
 use std::borrow::Cow;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use umi::UmiSeq;
 
 // a gibibyte is 1024**3 bytes
@@ -46,7 +49,7 @@ pub trait AuxExt {
     }
 }
 
-impl<'a> AuxExt for Aux<'a> {
+impl AuxExt for Aux<'_> {
     fn integer(&self) -> i32 {
         // From the spec: <https://samtools.github.io/hts-specs/SAMv1.pdf>
         // While all single (i.e., non-array) integer types are stored in SAM
@@ -136,48 +139,6 @@ impl CrRecord for Record {
     }
 }
 
-/// Get an alignment record's cell barcode
-pub fn get_read_barcode(record: &Record) -> Option<Vec<u8>> {
-    record
-        .aux(PROC_BC_SEQ_TAG)
-        .map(|x| x.str_bytes().to_owned())
-        .ok()
-}
-
-/// Get an alignment record's processed UMI sequence
-pub fn get_read_umi(record: &Record) -> Option<Vec<u8>> {
-    record
-        .aux(PROC_UMI_SEQ_TAG)
-        .map(|x| x.str_bytes().to_owned())
-        .ok()
-}
-
-/// Produce a processed BC sequence.
-pub fn get_processed_bc(corrected_seq: &str, gem_group: u8) -> String {
-    format!("{corrected_seq}-{gem_group}")
-}
-
-pub fn is_read_umi_count(read: &Record) -> bool {
-    read.cr_extra_flags().intersects(ExtraFlags::UMI_COUNT)
-}
-
-pub fn is_read_low_support_umi(read: &Record) -> bool {
-    read.cr_extra_flags()
-        .intersects(ExtraFlags::LOW_SUPPORT_UMI)
-}
-
-pub fn is_read_conf_mapped_to_transcriptome(read: &Record, high_conf_mapq: u8) -> bool {
-    if (read.is_unmapped()) || (read.mapq() < high_conf_mapq) {
-        false
-    } else {
-        get_read_gene_ids(read).is_some_and(|l| l.len() == 1)
-    }
-}
-
-pub fn is_read_conf_mapped_to_feature(read: &Record) -> bool {
-    read.cr_extra_flags().intersects(ExtraFlags::CONF_FEATURE)
-}
-
 pub fn get_read_gene_ids(record: &Record) -> Option<Vec<String>> {
     record
         .aux(RAW_UMI_SEQ_TAG)
@@ -185,65 +146,52 @@ pub fn get_read_gene_ids(record: &Record) -> Option<Vec<String>> {
         .ok()
 }
 
-/// Get an alignment record's processed UMI sequence
-pub fn get_read_raw_umi(record: &Record) -> Option<Vec<u8>> {
-    record
-        .aux(RAW_UMI_SEQ_TAG)
-        .map(|x| x.str_bytes().to_owned())
-        .ok()
-}
-
-/// Return true if a read should be considered for PCR-duplicate marking
-pub fn is_read_dup_candidate(record: &Record) -> bool {
-    let is_primary_alignment = !record.is_secondary();
-    let extra_flags = record.cr_extra_flags();
-    let is_conf_mapped = extra_flags.intersects(ExtraFlags::CONF_FEATURE)
-        || extra_flags.intersects(ExtraFlags::CONF_MAPPED);
-    is_primary_alignment && is_conf_mapped
-}
-
-/// Get the metric prefix for a given library type.
-/// Some are hardcoded for historical reasons.
-pub fn get_library_type_metric_prefix(lib_type: &str) -> String {
-    match lib_type {
-        "Gene Expression" => String::new(),
-        "CRISPR Guide Capture" => "CRISPR_".to_owned(),
-        "Antibody Capture" => "ANTIBODY_".to_owned(),
-        _ => format!("{lib_type}_"),
-    }
-}
-
 /// Marker trait to sort BAM records by their position, used for ShardIO
 pub struct BamPosSort;
 
-// fxhash has issues with the least bytes of byte arrays, use siphash
 fn hash32<T: Hash + ?Sized>(v: &T) -> u32 {
-    let h = hash64(v);
+    let h = TxHasher::hash(v);
     let mask = u32::MAX as u64;
     (h & mask) as u32 ^ ((h >> 32) & mask) as u32
 }
 
-pub fn hash64<T: Hash + ?Sized>(v: &T) -> u64 {
-    let mut s = wyhash::WyHash::with_seed(0);
-    v.hash(&mut s);
-    s.finish()
+/// Sort key to use for BAM Records.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct BamPosSortKey {
+    /// Target ID; set to (-1 as u32) for unmapped reads.
+    pub target_id: u32,
+    /// Position.
+    pub position: i64,
+    /// true if the read is not mapped.
+    pub is_unmapped: bool,
+    /// hash of the read name, generated using TxHasher.
+    pub read_name_hash: u64,
+    /// hash of the cigar string, reduced to 32 bits.
+    pub cigar_hash: u32,
+    /// The verbatim BAM flags.
+    pub flags: u16,
+}
+
+/// Return true if this BAM record is not mapped to the genome and does not contain the field FEATURE_IDS_TAG.
+pub fn is_unmapped_to_any(rec: &Record) -> bool {
+    rec.is_unmapped() && rec.aux(FEATURE_IDS_TAG).is_err()
 }
 
 impl SortKey<Record> for BamPosSort {
-    type Key = (u32, i64, bool, u64, u32, u16);
+    type Key = BamPosSortKey;
 
     fn sort_key(rec: &Record) -> Cow<'_, Self::Key> {
-        Cow::Owned((
-            rec.tid() as u32,
-            rec.pos(),
+        Cow::Owned(BamPosSortKey {
+            target_id: rec.tid() as u32,
+            position: rec.pos(),
             // We parse unmapped reads in REPORT_UNMAPPED_READS_PD stage downstream
             // This allows us to avoid decompresssing blocks of reads that
-            // are mapped to the genome or feature barcodes
-            rec.is_unmapped() && rec.aux(FEATURE_IDS_TAG).is_err(),
-            hash64(rec.qname()),
-            hash32(rec.raw_cigar()),
-            rec.flags(),
-        ))
+            // are mapped to the genome or feature barcodes.
+            is_unmapped: is_unmapped_to_any(rec),
+            read_name_hash: TxHasher::hash(rec.qname()),
+            cigar_hash: hash32(rec.raw_cigar()),
+            flags: rec.flags(),
+        })
     }
 }
 
@@ -252,7 +200,7 @@ pub fn estimate_memory_for_range_gib(
     range: &shardio::Range<<BamPosSort as SortKey<Record>>::Key>,
     reader: &ShardReader<Record, BamPosSort>,
 ) -> f64 {
-    // BufReader + lz4 buffer + 1KB record
+    // shard iter + 1KB record
     let n_blocks = (reader.est_len_range(range) as f64 / ALN_BC_DISK_CHUNK_SZ as f64).ceil();
-    (SHARD_SZ + 1_024) as f64 * n_blocks / ALN_BC_GIB
+    (reader.shard_iter_size() + 1_024) as f64 * n_blocks / ALN_BC_GIB
 }

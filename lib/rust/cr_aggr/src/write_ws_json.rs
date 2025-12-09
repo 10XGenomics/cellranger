@@ -1,26 +1,27 @@
 //! WriteWsJson stage code
+#![expect(missing_docs)]
 
 use crate::parse_aggr_csv::VdjAggrCsvLibrary;
 use crate::setup_vdj_aggr::EncloneProtoMetaFormat;
 use crate::websummary::annotation_card::VdjAggrAnnotationTable;
 use crate::websummary::cdr3_table::{VdjAggrSharedCdr3, VdjAggrSharedCdr3Row};
 use crate::websummary::cells_card::{VdjAggrCellsRow, VdjAggrCellsTable};
-use crate::websummary::clonotype_hist::ClonotypeHist;
-use crate::websummary::clonotype_table::{VdjAggrClonotypeRow, VdjAggrClonotypeTable};
 use crate::websummary::hero_metrics::VdjAggrHeroMetrics;
 use crate::websummary::{VdjAggrPipelineInfo, VdjAggrWsContent, VdjAggrWsSummaryTab};
 use crate::write_contig_proto::ProtoFile;
 use anyhow::Result;
 use cr_types::clonotype::ClonotypeId;
+use cr_vdj::clonotype_hist::{ClonotypeHist, ProportionsType};
+use cr_vdj::clonotype_table::{VdjAggrClonotypeRow, VdjAggrClonotypeTable};
 use cr_websummary::{Percent, WsSample};
 use enclone_proto::proto_io::ClonotypeIter;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric::SimpleHistogram;
+use metric::{Histogram, SimpleHistogram};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
@@ -96,11 +97,11 @@ fn top_shared_cdr3(
     let mut rows = BinaryHeap::with_capacity(TOP_N + 1);
     for (cdr3_aa, hist) in per_cdr3_gw_hist {
         let mut per_cat_hist = SimpleHistogram::default();
-        for (gw, n) in hist.distribution() {
+        for (gw, n) in hist {
             per_cat_hist.observe_by(&f(*gw), n.count());
         }
         rows.push(Reverse(VdjAggrSharedCdr3Row {
-            num_categories: per_cat_hist.distribution().len(),
+            num_categories: per_cat_hist.len(),
             num_cells: per_cat_hist.raw_counts().map(|c| *c as usize).sum(),
             cdr3_aa: cdr3_aa.to_string(),
         }));
@@ -145,7 +146,7 @@ impl MartianMain for WriteWsJson {
                     })
                     .collect();
                 for bc in ex_cl.cell_barcodes {
-                    let gem_well = bc.split('-').last().unwrap().parse()?;
+                    let gem_well = bc.split('-').next_back().unwrap().parse()?;
                     cbc_summaries.push(CellBarcodeSummary {
                         gem_well,
                         clonotype_id: i + 1,
@@ -239,18 +240,20 @@ impl MartianMain for WriteWsJson {
         )?;
 
         let top_cl_ids: Vec<_> = cl_table_rows.iter().map(|c| c.id).collect();
-        let proportions = per_origin_hist
-            .iter()
-            .map(|((_library_id, _donor, origin), hist)| {
-                (
-                    origin.clone(),
-                    top_cl_ids
-                        .iter()
-                        .map(|id| (hist.get(id) as f64) / (num_cells as f64))
-                        .collect(),
-                )
-            })
-            .collect();
+        let proportions: ProportionsType = ProportionsType::Aggr(
+            per_origin_hist
+                .iter()
+                .map(|((_library_id, _donor, origin), hist)| {
+                    (
+                        origin.clone(),
+                        top_cl_ids
+                            .iter()
+                            .map(|id| (hist.get(id) as f64) / (num_cells as f64))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        );
         let vdj_clonotype_hist = ClonotypeHist {
             ids: top_cl_ids,
             proportions,
@@ -264,7 +267,7 @@ impl MartianMain for WriteWsJson {
                     donor,
                     origin,
                     cells: hist.raw_counts().map(|c| *c as usize).sum(),
-                    clonotypes: hist.distribution().len(),
+                    clonotypes: hist.len(),
                     diversity: hist.effective_diversity(),
                 })
                 .collect(),

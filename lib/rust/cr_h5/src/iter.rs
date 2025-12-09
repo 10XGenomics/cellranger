@@ -1,15 +1,13 @@
 //! A generalized approach for streaming 1D data from HDF5 using chunked reads.
 //!
-//! This could be further optimized to pre-fetch the next buffer asynchronously
-//! in a worker thread.
-//!
-//! TODO: refactor MoleculeInfoIterator to use this as the underlying backing.
+//! Variants are provided for doing the reading synchronously or using a thread.
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use hdf5::{Dataset, H5Type};
 use ndarray::Array1;
 use std::cmp::min;
-use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::mpsc::{Receiver, sync_channel};
 use std::thread;
 
 struct H5Buffer<T: H5Type> {
@@ -94,24 +92,22 @@ impl<T: H5Type + Clone> Iterator for H5Iterator<T> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = if self.index < self.size {
-            self.size - self.index
-        } else {
-            0
-        };
+        let remaining = self.size.saturating_sub(self.index);
         (remaining, Some(remaining))
     }
 }
 
 /// Spawn a thread to read chunks asynchronously.
 /// Chunks are sent back to the calling thread on a channel bounded to hold no
-/// more than max_chunks.
+/// more than max_chunks - 1.  If max_chunks is set to 1, this implies that the
+/// reader will read a chunk and then wait until the consumer is ready for it
+/// before starting to read another.
 fn read_chunks_async<T: H5Type + Send>(
     dataset: Dataset,
     chunk_size: usize,
     max_chunks: usize,
 ) -> Receiver<Result<H5Buffer<T>>> {
-    let (sender, receiver) = sync_channel(max_chunks);
+    let (sender, receiver) = sync_channel(max_chunks.max(1) - 1);
     thread::spawn(move || {
         let size = dataset.size();
         let mut start = 0;
@@ -141,7 +137,7 @@ pub struct ThreadedH5Iterator<T: H5Type + Send> {
     /// Lazily initialized on the first call to the iterator.
     receiver: Option<Receiver<Result<H5Buffer<T>>>>,
     /// Iterator over the last chunk receieved from the reader.
-    cur_iter: Option<<Array1<T> as std::iter::IntoIterator>::IntoIter>,
+    cur_iter: Option<<Array1<T> as IntoIterator>::IntoIter>,
     /// Current iteration index into the dataset.
     index: usize,
     /// Total elements in the dataset.
@@ -150,9 +146,8 @@ pub struct ThreadedH5Iterator<T: H5Type + Send> {
     read_error_returned: bool,
 }
 
-#[allow(unused)]
 impl<T: H5Type + Send> ThreadedH5Iterator<T> {
-    fn new(dataset: Dataset, chunk_size: usize, max_chunks: usize) -> Self {
+    pub fn new(dataset: Dataset, chunk_size: usize, max_chunks: usize) -> Self {
         let size = dataset.size();
         Self {
             dataset,
@@ -214,11 +209,7 @@ impl<T: H5Type + Clone + Send> Iterator for ThreadedH5Iterator<T> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = if self.index < self.size {
-            self.size - self.index
-        } else {
-            0
-        };
+        let remaining = self.size.saturating_sub(self.index);
         (remaining, Some(remaining))
     }
 }

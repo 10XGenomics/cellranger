@@ -1,19 +1,17 @@
 //! Specification of analysis chemistries.
+#![expect(missing_docs)]
 
 mod chemistry_defs;
 
-use crate::types::ReqStrand;
 use crate::LibraryType;
-use anyhow::{bail, Result};
-use barcode::whitelist::{find_slide_design, BarcodeId};
-use barcode::{
-    BarcodeConstruct, BcSegSeq, GelBeadAndProbeConstruct, Segments, WhitelistSource, WhitelistSpec,
-};
+use anyhow::{Result, bail, ensure};
+use barcode::whitelist::{BarcodeId, ReqStrand, find_slide_design};
+use barcode::{BarcodeConstruct, BcSegSeq, Segments, Whitelist, WhitelistSource, WhitelistSpec};
 use chemistry_defs::get_chemistry_def;
 pub use chemistry_defs::{known_chemistry_defs, normalize_chemistry_def};
-use fastq_set::read_pair::{RpRange, WhichRead};
 use fastq_set::WhichEnd;
-use itertools::{chain, Itertools};
+use fastq_set::read_pair::{RpRange, WhichRead};
+use itertools::{Itertools, chain};
 use martian::{AsMartianPrimaryType, MartianPrimaryType};
 use martian_derive::{MartianStruct, MartianType};
 use metric::{JsonReport, JsonReporter, TxHashMap, TxHashSet};
@@ -26,7 +24,7 @@ use std::io::{BufWriter, Write};
 use std::iter::FromIterator;
 use std::path::PathBuf;
 use std::str::FromStr;
-use strum_macros::{Display, EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString};
 
 // "Auto" chemistries which are not fully specified and need to be further
 // refined into one of
@@ -84,12 +82,11 @@ const FIVE_PRIME_AUTO_CHEMS: [ChemistryName; 4] = [
     ChemistryName::FivePrimePEV3,
 ];
 
-const VDJ_AUTO_CHEMS: [ChemistryName; 6] = [
+const VDJ_AUTO_CHEMS: [ChemistryName; 5] = [
     ChemistryName::VdjPE,
     ChemistryName::VdjR2,
     ChemistryName::VdjPEV3,
     ChemistryName::VdjR2V3,
-    ChemistryName::VdjR2FRP,
     ChemistryName::ThreePrimeV3PolyA,
 ];
 
@@ -124,10 +121,17 @@ impl AutoChemistryName {
                                 ChemistryName::MFRP_RNA,
                                 ChemistryName::MFRP_Ab,
                                 ChemistryName::MFRP_47,
+                                ChemistryName::MFRP_96_R1,
+                                ChemistryName::MFRP_96_RNA_R2,
                                 ChemistryName::MFRP_RNA_R1,
                                 ChemistryName::MFRP_Ab_R1,
                                 ChemistryName::MFRP_Ab_R2pos50,
                                 ChemistryName::MFRP_CRISPR,
+                                ChemistryName::Flex_v2_R1,
+                                ChemistryName::Flex_v2_RNA_R2,
+                                ChemistryName::Flex_v2_Ab_R2_45,
+                                ChemistryName::Flex_v2_Ab_R2_64,
+                                ChemistryName::Flex_v2_CRISPR_R2_1,
                             ]
                             .as_slice()
                         }
@@ -140,12 +144,17 @@ impl AutoChemistryName {
                             ChemistryName::MFRP_Ab_R1,
                             ChemistryName::MFRP_Ab_R2pos50,
                             ChemistryName::MFRP_CRISPR,
+                            ChemistryName::Flex_v2_R1,
+                            ChemistryName::Flex_v2_RNA_R2,
+                            ChemistryName::Flex_v2_Ab_R2_45,
+                            ChemistryName::Flex_v2_Ab_R2_64,
+                            ChemistryName::Flex_v2_CRISPR_R2_1,
                         ]
                         .as_slice()
                     }
                 } else {
                     // Without a [samples] section
-                    [ChemistryName::SFRP].as_slice()
+                    [ChemistryName::SFRP, ChemistryName::Flex_v2_singleplex].as_slice()
                 };
                 chain!(&THREE_PRIME_AUTO_CHEMS, &FIVE_PRIME_AUTO_CHEMS, frp_chems)
                     .copied()
@@ -197,6 +206,16 @@ pub enum ChemistryName {
     #[strum(serialize = "MFRP-47")]
     MFRP_47,
 
+    /// Flex 96-plex beta
+    #[serde(rename = "MFRP-96-R1")]
+    #[strum(serialize = "MFRP-96-R1")]
+    MFRP_96_R1,
+
+    /// Flex Gene Expression 96-plex beta
+    #[serde(rename = "MFRP-96-RNA-R2")]
+    #[strum(serialize = "MFRP-96-RNA-R2")]
+    MFRP_96_RNA_R2,
+
     /// Multiplex fixed RNA profiling without collapsing base-balanced barcodes
     #[serde(rename = "MFRP-uncollapsed")]
     #[strum(serialize = "MFRP-uncollapsed")]
@@ -227,6 +246,46 @@ pub enum ChemistryName {
     #[strum(serialize = "MFRP-CRISPR")]
     MFRP_CRISPR,
 
+    /// Flex v2 96-plex beta
+    #[serde(rename = "Flex-v2-96-R1")]
+    #[strum(serialize = "Flex-v2-96-R1")]
+    Flex_v2_96_R1,
+
+    /// Flex v2 Gene Expression 96-plex beta
+    #[serde(rename = "Flex-v2-96-RNA-R2")]
+    #[strum(serialize = "Flex-v2-96-RNA-R2")]
+    Flex_v2_96_RNA_R2,
+
+    /// GEM-X Flex v2
+    #[serde(rename = "Flex-v2-R1")]
+    #[strum(serialize = "Flex-v2-R1")]
+    Flex_v2_R1,
+
+    /// GEM-X Flex v2 Gene Expression
+    #[serde(rename = "Flex-v2-RNA-R2")]
+    #[strum(serialize = "Flex-v2-RNA-R2")]
+    Flex_v2_RNA_R2,
+
+    /// GEM-X Flex v2 Antibody (R2:45)
+    #[serde(rename = "Flex-v2-Ab-R2:45")]
+    #[strum(serialize = "Flex-v2-Ab-R2:45")]
+    Flex_v2_Ab_R2_45,
+
+    /// GEM-X Flex v2 Antibody (R2:64)
+    #[serde(rename = "Flex-v2-Ab-R2:64")]
+    #[strum(serialize = "Flex-v2-Ab-R2:64")]
+    Flex_v2_Ab_R2_64,
+
+    /// GEM-X Flex v2 CRISPR (R2:1)
+    #[serde(rename = "Flex-v2-CRISPR-R2:1")]
+    #[strum(serialize = "Flex-v2-CRISPR-R2:1")]
+    Flex_v2_CRISPR_R2_1,
+
+    /// GEM-X Flex v2 singleplex
+    #[serde(rename = "Flex-v2-singleplex")]
+    #[strum(serialize = "Flex-v2-singleplex")]
+    Flex_v2_singleplex,
+
     #[serde(rename = "SC-FB")]
     #[strum(serialize = "SC-FB")]
     FeatureBarcodingOnly,
@@ -243,9 +302,6 @@ pub enum ChemistryName {
     #[serde(rename = "SCVDJ-v3-OCM")]
     #[strum(serialize = "SCVDJ-v3-OCM")]
     VdjPEOCMV3,
-    #[serde(rename = "SCVDJ-Splint-R2-FRP")]
-    #[strum(serialize = "SCVDJ-Splint-R2-FRP")]
-    VdjR2FRP,
     #[serde(rename = "SCVDJ-R2-v3")]
     #[strum(serialize = "SCVDJ-R2-v3")]
     VdjR2V3,
@@ -357,7 +413,11 @@ pub enum ChemistryName {
 
     #[serde(rename = "SPATIAL-HD-v1")]
     #[strum(serialize = "SPATIAL-HD-v1")]
-    SpatialHdV1,
+    SpatialHdV1Rtl,
+
+    #[serde(rename = "SPATIAL-HD-v1-3P")]
+    #[strum(serialize = "SPATIAL-HD-v1-3P")]
+    SpatialHdV1ThreePrime,
 
     #[serde(rename = "ARC-v1")]
     #[strum(serialize = "ARC-v1")]
@@ -387,8 +447,8 @@ impl ChemistryName {
             Custom | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
             | SpatialThreePrimeV4 | SpatialThreePrimeV5 => None,
 
-            // Visium HD v1 is RTL
-            SpatialHdV1 => Some(true),
+            SpatialHdV1Rtl => Some(true),
+            SpatialHdV1ThreePrime => Some(false),
 
             // FRP chemistries are RTL.
             SFRP
@@ -396,20 +456,30 @@ impl ChemistryName {
             | MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
-            | MfrpR1NoTrimR2 => Some(true),
+            | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1
+            | Flex_v2_singleplex => Some(true),
 
             // All other chemistries are not RTL.
             // These are explicitly listed for future exhaustiveness checks.
-            FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3 | VdjR1
-            | VdjPEOCMV3 | VdjR2OCMV3 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OCM
-            | FivePrimeHT | FivePrimePE | FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3
-            | FivePrimeR2OCMV3 | FivePrimePEV3 | FivePrimePEOCMV3 | ThreePrimeV1 | ThreePrimeV2
+            FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2V3 | VdjR1 | VdjPEOCMV3
+            | VdjR2OCMV3 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OCM | FivePrimeHT
+            | FivePrimePE | FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3 | FivePrimeR2OCMV3
+            | FivePrimePEV3 | FivePrimePEOCMV3 | ThreePrimeV1 | ThreePrimeV2
             | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
             | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 | ThreePrimeV4PolyA
             | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM | ArcV1 | AtacV1 => {
@@ -418,20 +488,17 @@ impl ChemistryName {
         }
     }
 
-    /// Return true if a multiplexed RTL chemistry.
-    pub fn is_rtl_multiplexed(&self) -> bool {
-        self.is_rtl().unwrap_or(false) && self != &ChemistryName::SFRP
-    }
-
     /// Return true if a this is an SFRP chemistry.
     pub fn is_sfrp(&self) -> bool {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
         match self {
-            SFRP | SfrpNoTrimR2 => true,
+            SFRP | SfrpNoTrimR2 | Flex_v2_singleplex => true,
             MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
@@ -439,12 +506,18 @@ impl ChemistryName {
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
             | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1
             | Custom
             | FeatureBarcodingOnly
             | VdjPE
             | VdjR2
             | VdjPEV3
-            | VdjR2FRP
             | VdjR2V3
             | VdjR1
             | VdjPEOCMV3
@@ -478,7 +551,8 @@ impl ChemistryName {
             | SpatialThreePrimeV3
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
-            | SpatialHdV1
+            | SpatialHdV1Rtl
+            | SpatialHdV1ThreePrime
             | ArcV1
             | AtacV1 => false,
         }
@@ -492,22 +566,67 @@ impl ChemistryName {
             MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
-            | MfrpR1NoTrimR2 => true,
-            Custom | SFRP | FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2FRP | VdjR2V3
-            | VdjR1 | VdjPEOCMV3 | VdjR2OCMV3 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OCM
-            | FivePrimeHT | FivePrimePE | FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3
-            | FivePrimeR2OCMV3 | FivePrimePEV3 | FivePrimePEOCMV3 | ThreePrimeV1 | ThreePrimeV2
-            | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 | ThreePrimeV4PolyA
-            | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM | SpatialThreePrimeV1
-            | SpatialThreePrimeV2 | SpatialThreePrimeV3 | SpatialThreePrimeV4
-            | SpatialThreePrimeV5 | SpatialHdV1 | ArcV1 | AtacV1 | SfrpNoTrimR2 => false,
+            | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1 => true,
+            Custom
+            | SFRP
+            | Flex_v2_singleplex
+            | FeatureBarcodingOnly
+            | VdjPE
+            | VdjR2
+            | VdjPEV3
+            | VdjR2V3
+            | VdjR1
+            | VdjPEOCMV3
+            | VdjR2OCMV3
+            | FivePrimeR1
+            | FivePrimeR2
+            | FivePrimeR2OCM
+            | FivePrimeHT
+            | FivePrimePE
+            | FivePrimeR1V3
+            | FivePrimeR1OCMV3
+            | FivePrimeR2V3
+            | FivePrimeR2OCMV3
+            | FivePrimePEV3
+            | FivePrimePEOCMV3
+            | ThreePrimeV1
+            | ThreePrimeV2
+            | ThreePrimeV3PolyA
+            | ThreePrimeV3CS1
+            | ThreePrimeV3PolyAOCM
+            | ThreePrimeV3CS1OCM
+            | ThreePrimeV3LT
+            | ThreePrimeV3HTPolyA
+            | ThreePrimeV3HTCS1
+            | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1
+            | ThreePrimeV4PolyAOCM
+            | ThreePrimeV4CS1OCM
+            | SpatialThreePrimeV1
+            | SpatialThreePrimeV2
+            | SpatialThreePrimeV3
+            | SpatialThreePrimeV4
+            | SpatialThreePrimeV5
+            | SpatialHdV1Rtl
+            | SpatialHdV1ThreePrime
+            | ArcV1
+            | AtacV1
+            | SfrpNoTrimR2 => false,
         }
     }
 
@@ -524,6 +643,8 @@ impl ChemistryName {
             | MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
@@ -531,11 +652,18 @@ impl ChemistryName {
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
             | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1
+            | Flex_v2_singleplex
             | FeatureBarcodingOnly
             | VdjPE
             | VdjR2
             | VdjPEV3
-            | VdjR2FRP
             | VdjR2V3
             | VdjR1
             | VdjPEOCMV3
@@ -562,7 +690,8 @@ impl ChemistryName {
             | SpatialThreePrimeV3
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
-            | SpatialHdV1
+            | SpatialHdV1Rtl
+            | SpatialHdV1ThreePrime
             | ArcV1
             | AtacV1 => false,
         }
@@ -580,6 +709,8 @@ impl ChemistryName {
             | MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
@@ -587,11 +718,18 @@ impl ChemistryName {
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
             | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1
+            | Flex_v2_singleplex
             | FeatureBarcodingOnly
             | VdjPE
             | VdjR2
             | VdjPEV3
-            | VdjR2FRP
             | VdjR2V3
             | VdjR1
             | VdjPEOCMV3
@@ -621,7 +759,8 @@ impl ChemistryName {
             | SpatialThreePrimeV3
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
-            | SpatialHdV1
+            | SpatialHdV1Rtl
+            | SpatialHdV1ThreePrime
             | ArcV1
             | AtacV1 => false,
         }
@@ -640,6 +779,8 @@ impl ChemistryName {
             | MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
@@ -647,11 +788,18 @@ impl ChemistryName {
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
             | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1
+            | Flex_v2_singleplex
             | FeatureBarcodingOnly
             | VdjPE
             | VdjR2
             | VdjPEV3
-            | VdjR2FRP
             | VdjR2V3
             | VdjR1
             | VdjPEOCMV3
@@ -679,7 +827,8 @@ impl ChemistryName {
             | SpatialThreePrimeV3
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
-            | SpatialHdV1
+            | SpatialHdV1Rtl
+            | SpatialHdV1ThreePrime
             | ArcV1
             | AtacV1 => false,
         }
@@ -692,19 +841,34 @@ impl ChemistryName {
     /// This can be expanded in the future if other products
     /// need to answer this question.
     pub fn compatible_with_library_type(&self, library_type: LibraryType) -> bool {
-        assert!(self.is_mfrp() || self.is_sfrp() || self.is_sc_3p_v3() || self.is_sc_3p_v4());
+        assert!(
+            self.is_mfrp()
+                || self.is_sfrp()
+                || self.is_sc_3p_v3()
+                || self.is_sc_3p_v4()
+                || self == &Custom
+        );
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
         match library_type {
             LibraryType::Gex => matches!(
                 self,
-                SFRP | SfrpNoTrimR2
+                Custom
+                    | SFRP
+                    | SfrpNoTrimR2
                     | MFRP_RNA
                     | MFRP_47
+                    | MFRP_96_R1
+                    | MFRP_96_RNA_R2
                     | MFRP_uncollapsed
                     | MFRP_RNA_R1
                     | MFRP_R1_48_uncollapsed
                     | MfrpR1NoTrimR2
+                    | Flex_v2_96_R1
+                    | Flex_v2_96_RNA_R2
+                    | Flex_v2_R1
+                    | Flex_v2_RNA_R2
+                    | Flex_v2_singleplex
                     | ThreePrimeV3PolyA
                     | ThreePrimeV3PolyAOCM
                     | ThreePrimeV3HTPolyA
@@ -714,12 +878,20 @@ impl ChemistryName {
             ),
             LibraryType::Antibody | LibraryType::Custom => matches!(
                 self,
-                SFRP | MFRP_Ab
+                Custom
+                    | SFRP
+                    | MFRP_Ab
                     | MFRP_47
+                    | MFRP_96_R1
                     | MFRP_uncollapsed
                     | MFRP_Ab_R1
                     | MFRP_R1_48_uncollapsed
                     | MFRP_Ab_R2pos50
+                    | Flex_v2_96_R1
+                    | Flex_v2_R1
+                    | Flex_v2_Ab_R2_45
+                    | Flex_v2_Ab_R2_64
+                    | Flex_v2_singleplex
                     | ThreePrimeV3PolyA
                     | ThreePrimeV3CS1
                     | ThreePrimeV3PolyAOCM
@@ -734,10 +906,20 @@ impl ChemistryName {
             ),
             LibraryType::Crispr => matches!(
                 self,
-                SFRP | MFRP_47
+                Custom
+                    | SFRP
+                    | MFRP_47
+                    | MFRP_96_R1
+                    | MFRP_96_RNA_R2
                     | MFRP_uncollapsed
                     | MFRP_R1_48_uncollapsed
                     | MFRP_CRISPR
+                    | Flex_v2_96_R1
+                    | Flex_v2_96_RNA_R2
+                    | Flex_v2_R1
+                    | Flex_v2_RNA_R2
+                    | Flex_v2_CRISPR_R2_1
+                    | Flex_v2_singleplex
                     | ThreePrimeV3PolyA
                     | ThreePrimeV3CS1
                     | ThreePrimeV3PolyAOCM
@@ -752,7 +934,8 @@ impl ChemistryName {
             ),
             LibraryType::Cellplex => matches!(
                 self,
-                ThreePrimeV3CS1
+                Custom
+                    | ThreePrimeV3CS1
                     | ThreePrimeV3CS1OCM
                     | ThreePrimeV3HTCS1
                     | ThreePrimeV4CS1
@@ -775,7 +958,8 @@ impl ChemistryName {
                 | SpatialThreePrimeV3
                 | SpatialThreePrimeV4
                 | SpatialThreePrimeV5
-                | SpatialHdV1
+                | SpatialHdV1Rtl
+                | SpatialHdV1ThreePrime
         )
     }
 
@@ -785,15 +969,8 @@ impl ChemistryName {
         use ChemistryName::*;
         matches!(
             self,
-            SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1
+            SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1Rtl | SpatialHdV1ThreePrime
         )
-    }
-
-    // Returns true if a spatial HD chemistry is an RTL chemistry
-    pub fn is_spatial_hd_rtl(&self) -> bool {
-        #[allow(clippy::enum_glob_use)]
-        use ChemistryName::*;
-        matches!(self, SpatialHdV1)
     }
 
     /// Return true if a spatial chemistry that supports feature barcoding
@@ -832,15 +1009,7 @@ impl ChemistryName {
         use ChemistryName::*;
         matches!(
             self,
-            VdjPE
-                | VdjR1
-                | VdjR2
-                | VdjPEV3
-                | VdjR2V3
-                | VdjR2FRP
-                | ThreePrimeV3PolyA
-                | VdjPEOCMV3
-                | VdjR2OCMV3
+            VdjPE | VdjR1 | VdjR2 | VdjPEV3 | VdjR2V3 | ThreePrimeV3PolyA | VdjPEOCMV3 | VdjR2OCMV3
         )
     }
 }
@@ -915,11 +1084,6 @@ impl AutoOrRefinedChemistry {
         }
     }
 
-    /// Return true if this is custom chemistry.
-    pub fn is_custom(&self) -> bool {
-        *self == Self::Custom
-    }
-
     /// Return Some if the chemistry is refined, None if auto.
     pub fn refined(&self) -> Option<ChemistryName> {
         if let Self::Refined(name) = *self {
@@ -958,7 +1122,7 @@ impl ChemistryName {
             | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
             | SpatialThreePrimeV4 | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OCM
             | FivePrimeHT | FivePrimeR2V3 | FivePrimeR2OCMV3 | FeatureBarcodingOnly | SFRP
-            | SfrpNoTrimR2 | ArcV1 => &[
+            | SfrpNoTrimR2 | Flex_v2_singleplex | ArcV1 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],
@@ -967,13 +1131,22 @@ impl ChemistryName {
             MFRP_RNA
             | MFRP_Ab
             | MFRP_47
+            | MFRP_96_R1
+            | MFRP_96_RNA_R2
             | MFRP_uncollapsed
             | MFRP_RNA_R1
             | MFRP_Ab_R1
             | MFRP_R1_48_uncollapsed
             | MFRP_Ab_R2pos50
             | MFRP_CRISPR
-            | MfrpR1NoTrimR2 => &[
+            | MfrpR1NoTrimR2
+            | Flex_v2_96_R1
+            | Flex_v2_96_RNA_R2
+            | Flex_v2_R1
+            | Flex_v2_RNA_R2
+            | Flex_v2_Ab_R2_45
+            | Flex_v2_Ab_R2_64
+            | Flex_v2_CRISPR_R2_1 => &[
                 "10x_bam_to_fastq:R1(GR:GY,UR:UY,1R:1Y)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL,2R:2Y)",
             ],
@@ -987,7 +1160,7 @@ impl ChemistryName {
 
             // VDJ chemistry should not be coming through here - may need changing if
             // we decide to make bamtofastq compatible BAMs from VDJ in the future.
-            VdjR1 | VdjR2 | VdjPE | VdjR2V3 | VdjPEV3 | VdjR2FRP | VdjPEOCMV3 | VdjR2OCMV3 => {
+            VdjR1 | VdjR2 | VdjPE | VdjR2V3 | VdjPEV3 | VdjPEOCMV3 | VdjR2OCMV3 => {
                 panic!("VDJ don't yet make a normal BAM file")
             }
 
@@ -1012,7 +1185,7 @@ impl ChemistryName {
                 "10x_bam_to_fastq:I2(CR:CY)",
                 "10x_bam_to_fastq_seqnames:R1,R3,I1,R2",
             ],
-            SpatialHdV1 => &[
+            SpatialHdV1Rtl | SpatialHdV1ThreePrime => &[
                 "10x_bam_to_fastq:R1(1R:1Y)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL,2R:2Y)",
             ],
@@ -1078,7 +1251,7 @@ pub struct UmiReadComponent {
     Serialize, Deserialize, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug, MartianType,
 )]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum BarcodeKind {
+pub(super) enum BarcodeKind {
     GelBead,
     LeftProbe,
     RightProbe,
@@ -1091,11 +1264,11 @@ pub(crate) enum BarcodeKind {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug, MartianStruct)]
 pub struct BarcodeReadComponent {
     #[mro_type = "string"]
-    pub(crate) read_type: WhichRead,
-    pub(crate) kind: BarcodeKind,
-    pub(crate) offset: usize,
-    pub(crate) length: usize,
-    pub(crate) whitelist: WhitelistSpec,
+    pub(super) read_type: WhichRead,
+    pub(super) kind: BarcodeKind,
+    pub(super) offset: usize,
+    pub(super) length: usize,
+    pub(super) whitelist: WhitelistSpec,
 }
 
 impl BarcodeReadComponent {
@@ -1118,18 +1291,13 @@ impl BarcodeReadComponent {
         RpRange::new(self.read_type, self.offset, Some(self.length))
     }
 
-    /// Return whether this barcode componenet is a gel bead barcode.
-    pub fn is_gel_bead(&self) -> bool {
-        self.kind == BarcodeKind::GelBead
-    }
-
     /// Return whether this barcode componenet is a probe barcode.
     pub fn is_probe(&self) -> bool {
         matches!(self.kind, BarcodeKind::LeftProbe | BarcodeKind::RightProbe)
     }
 
     /// Replace the whitelist with a dynamically generated translation.
-    /// Use the provided other whitelist for the translated sequenced.
+    /// Use the provided other whitelist for the translated sequences.
     /// The whitelist will be written to the provided path.
     pub fn translate_whitelist_with_id_map(
         &mut self,
@@ -1165,10 +1333,7 @@ fn bc_vec_to_construct(comps: &[BarcodeReadComponent]) -> BarcodeConstruct<&Barc
         }
         [first, other] => match (first.kind, other.kind) {
             (GelBead, LeftProbe) | (GelBead, RightProbe) => {
-                BarcodeConstruct::GelBeadAndProbe(GelBeadAndProbeConstruct {
-                    gel_bead: first,
-                    probe: other,
-                })
+                BarcodeConstruct::new_gel_bead_and_probe(first, other)
             }
             (GelBead, Overhang) => BarcodeConstruct::GelBeadOnly(first),
             (SpotSegment, SpotSegment) => BarcodeConstruct::Segmented(Segments::from_iter(comps)),
@@ -1207,15 +1372,19 @@ fn bc_vec_to_overhang_read_component(
 }
 
 /// Methods by which barcodes are extracted from the read
-#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "method", content = "params")]
 pub enum BarcodeExtraction {
-    /// Extract each part of the barcode independently using the offset
-    /// and length specified in the `BarcodeReadComponent`. This works
-    /// for all chemistries where barcodes are present at a fixed position in read1
-    #[default]
-    Independent,
+    /// A barcode chemistry where the multiplexing barcode may have a variable position.
+    /// All possible positions will be checked, starting from the offset specified
+    /// in the chemistry, up to max_offset (inclusive).
+    /// For offset: 10, min_offset: -1, max_offset: 2, we would check each of positions
+    /// [9, 10, 11, 12]
+    ///
+    /// TODO: decide if we want to generalize this across BarcodeConstruct instead
+    /// of special-casing to only multiplexing barcodees.
+    VariableMultiplexingBarcode { min_offset: i64, max_offset: i64 },
     /// A two part barcode chemistry, where the two parts are adjacent to
     /// each other. The position of bc1 is flexible due to variable length
     /// regions upstream of bc1 and the possibility of indels. Instead of an
@@ -1376,9 +1545,25 @@ impl ChemistryDef {
         self.barcode_construct().map(|bc| bc.read_type)
     }
 
-    pub fn barcode_whitelist(&self) -> BarcodeConstruct<&WhitelistSpec> {
+    /// Get the whitelist specification for each portion of the barcode.
+    pub fn barcode_whitelist_spec(&self) -> BarcodeConstruct<&WhitelistSpec> {
         self.barcode_construct()
             .map(BarcodeReadComponent::whitelist)
+    }
+
+    /// Get the whitelist source for each portion of the barcode.
+    /// This is fallible because it inspects the content of disk to determine
+    /// where to get each whitelist.
+    pub fn barcode_whitelist_source(&self) -> Result<BarcodeConstruct<WhitelistSource>> {
+        self.barcode_whitelist_spec()
+            .map_result(WhitelistSpec::as_source)
+    }
+
+    /// Load all of the whitelists for this chemistry into memory and return them.
+    pub fn barcode_whitelist(&self) -> Result<BarcodeConstruct<Whitelist>> {
+        self.barcode_whitelist_source()?
+            .as_ref()
+            .map_result(WhitelistSource::as_whitelist)
     }
 
     pub fn min_read_length(&self, which: WhichRead) -> usize {
@@ -1396,6 +1581,9 @@ impl ChemistryDef {
         }
 
         let mut result = 0;
+        // FIXME: CELLRANGER-9135 we probably should update this method to account
+        // for cases where we have variable-position probe barcodes to ensure
+        // that length filtering and other checks still work correctly.
         for bc in &self.barcode {
             if bc.read_type == which {
                 result = result.max(bc.offset + bc.length);
@@ -1411,10 +1599,10 @@ impl ChemistryDef {
         if self.rna.read_type == which {
             result = result.max(self.rna.offset + self.rna.min_length.unwrap_or(MIN_RNA_BASES));
         }
-        if let Some(rna2) = self.rna2 {
-            if rna2.read_type == which {
-                result = result.max(rna2.offset + rna2.length.unwrap_or(MIN_RNA_BASES));
-            }
+        if let Some(rna2) = self.rna2
+            && rna2.read_type == which
+        {
+            result = result.max(rna2.offset + rna2.length.unwrap_or(MIN_RNA_BASES));
         }
 
         result
@@ -1439,6 +1627,19 @@ impl ChemistryDef {
             .exactly_one()
             .unwrap()
             .translate_whitelist_with_id_map(id_map, translate_to, path)
+    }
+
+    /// Override the probe barcode read component's offset to be the provided
+    /// value on R2.
+    ///
+    /// Note that this also removes any existing barcode extraction strategy.
+    /// The caller must pre-verify that this is in fact an MFRP chemistry.
+    pub fn override_probe_barcode_extraction(&mut self, r2_offset: usize) {
+        assert_eq!(2, self.barcode.len());
+        assert_eq!(BarcodeKind::RightProbe, self.barcode[1].kind);
+        self.barcode[1].offset = r2_offset;
+        self.barcode[1].read_type = WhichRead::R2;
+        self.barcode_extraction = None;
     }
 }
 
@@ -1487,7 +1688,7 @@ impl ChemistryDefsExt for ChemistryDefs {
     /// Return a comma-separated list of the chemistry names.
     fn name(&self) -> String {
         self.iter()
-            .sorted_by_key(|(&library_type, _)| library_type)
+            .sorted_by_key(|&(library_type, _)| library_type)
             .map(|(_, chem)| &chem.name)
             .unique()
             .join(", ")
@@ -1496,7 +1697,7 @@ impl ChemistryDefsExt for ChemistryDefs {
     /// Return a comma-separated list of the chemistry descriptions.
     fn description(&self) -> String {
         self.iter()
-            .sorted_by_key(|(&library_type, _)| library_type)
+            .sorted_by_key(|&(library_type, _)| library_type)
             .map(|(_, chem)| &chem.description)
             .unique()
             .join(", ")
@@ -1559,17 +1760,21 @@ struct ReadDefs {
     right_probe_barcode_read_offset: Option<usize>,
     right_probe_barcode_read_length: Option<usize>,
     right_probe_barcode_whitelist: Option<String>,
+    right_probe_barcode_strand: Option<ReqStrand>,
+    right_probe_barcode_kind: Option<BarcodeKind>,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
 pub struct IndexScheme {
     name: String,
     read_defs: ReadDefs,
+    barcode_extraction: Option<BarcodeExtraction>,
 }
 
 impl IndexScheme {
+    /// Convert this IndexScheme to a ChemistryDef.
     /// Match logic from lib/python/puppy/argshim/lena.py, function `make_custom_chemistry_def`
-    pub fn to_chemistry_def(self, barcode_whitelist: &str) -> ChemistryDef {
+    pub fn to_chemistry_def(self, barcode_whitelist: &str) -> Result<ChemistryDef> {
         let name = ChemistryName::Custom;
         let description = format!("custom: {}", self.name);
         let strandedness = self.read_defs.strand;
@@ -1593,6 +1798,7 @@ impl IndexScheme {
             whitelist: WhitelistSpec::TxtFile {
                 name: barcode_whitelist.into(),
                 translation,
+                strand: ReqStrand::Forward,
             },
         };
 
@@ -1600,19 +1806,59 @@ impl IndexScheme {
             let right_probe_barcode_whitelist =
                 self.read_defs.right_probe_barcode_whitelist.unwrap();
             assert!(!right_probe_barcode_whitelist.is_empty());
+            let strand = self
+                .read_defs
+                .right_probe_barcode_strand
+                .unwrap_or_else(|| {
+                    if read_type == WhichRead::R1 && !right_probe_barcode_whitelist.ends_with("-r1")
+                    {
+                        ReqStrand::Reverse
+                    } else {
+                        ReqStrand::Forward
+                    }
+                });
+            let whitelist = WhitelistSpec::TxtFile {
+                name: right_probe_barcode_whitelist,
+                translation: true,
+                strand,
+            };
+
+            let length = whitelist.as_source()?.barcode_seq_len()?;
+            if let Some(right_probe_barcode_read_length) =
+                self.read_defs.right_probe_barcode_read_length
+            {
+                assert_eq!(right_probe_barcode_read_length, length);
+            }
+            let bc_kind = self
+                .read_defs
+                .right_probe_barcode_kind
+                .unwrap_or(BarcodeKind::RightProbe);
             Some(BarcodeReadComponent {
                 read_type,
-                kind: BarcodeKind::RightProbe,
+                kind: bc_kind,
                 offset: self.read_defs.right_probe_barcode_read_offset.unwrap(),
-                length: self.read_defs.right_probe_barcode_read_length.unwrap(),
-                whitelist: WhitelistSpec::TxtFile {
-                    name: right_probe_barcode_whitelist,
-                    translation: true,
-                },
+                length,
+                whitelist,
             })
         } else {
             None
         };
+
+        if let Some(barcode_extraction) = self.barcode_extraction.as_ref() {
+            match barcode_extraction {
+                BarcodeExtraction::JointBc1Bc2 { .. } => {
+                    // TODO: validate that we actually have an index scheme that looks like spatial
+                }
+                BarcodeExtraction::VariableMultiplexingBarcode { .. } => {
+                    ensure!(
+                        probe_barcode.is_some(),
+                        "invalid index scheme: \
+                        variable multiplexing barcode extraction strategy but does \
+                        not have a probe barcode read component defined"
+                    );
+                }
+            }
+        }
 
         let barcode = std::iter::once(gel_bead_barcode)
             .chain(probe_barcode)
@@ -1643,7 +1889,7 @@ impl IndexScheme {
                 min_length: self.read_defs.rna_read2_min_length,
             });
 
-        ChemistryDef {
+        Ok(ChemistryDef {
             name,
             description,
             endedness,
@@ -1652,8 +1898,8 @@ impl IndexScheme {
             umi,
             rna,
             rna2,
-            barcode_extraction: None,
-        }
+            barcode_extraction: self.barcode_extraction,
+        })
     }
 }
 
@@ -1690,21 +1936,25 @@ mod tests {
     #[test]
     fn test_index_scheme_to_chemistry_def() {
         let index_scheme = IndexScheme {
-            name: "RTL R1 test".into(),
+            name: "MFRP (probeBC at R2:69)".to_string(),
             read_defs: ReadDefs {
                 strand: ReqStrand::Reverse,
                 endedness: Some(WhichEnd::ThreePrime),
                 barcode_read_type: WhichRead::R1,
                 barcode_read_length: 16,
                 barcode_read_offset: 0,
-                right_probe_barcode_read_type: Some(WhichRead::R1),
-                right_probe_barcode_whitelist: Some("probe-barcodes-whitelist".into()),
-                right_probe_barcode_read_offset: Some(40),
-                right_probe_barcode_read_length: Some(8),
+                right_probe_barcode_read_type: Some(WhichRead::R2),
+                right_probe_barcode_whitelist: Some(
+                    "probe-barcodes-fixed-rna-profiling-rna".to_string(),
+                ),
+                right_probe_barcode_read_offset: Some(68),
+                right_probe_barcode_read_length: None,
+                right_probe_barcode_strand: None,
+                right_probe_barcode_kind: None,
                 rna_read_type: WhichRead::R2,
                 rna_read_offset: 0,
                 rna_read_length: Some(50),
-                rna_read_min_length: None,
+                rna_read_min_length: Some(50),
                 rna_read2_type: None,
                 rna_read2_offset: None,
                 rna_read2_length: None,
@@ -1712,76 +1962,21 @@ mod tests {
                 umi_read_type: WhichRead::R1,
                 umi_read_offset: 16,
                 umi_read_length: 12,
-                umi_read_min_length: None,
+                umi_read_min_length: Some(10),
             },
+            barcode_extraction: None,
         };
-
-        let chemistry_def = index_scheme.to_chemistry_def("737k-whitelist");
-
-        assert_eq!(chemistry_def.description, "custom: RTL R1 test");
-        assert_eq!(chemistry_def.name, ChemistryName::Custom);
-        assert_eq!(chemistry_def.strandedness, ReqStrand::Reverse);
-        assert_eq!(chemistry_def.endedness, Some(WhichEnd::ThreePrime));
-
-        assert_eq!(chemistry_def.rna2, None);
-
-        assert_eq!(chemistry_def.umi.len(), 1);
-        assert_eq!(chemistry_def.umi[0].read_type, WhichRead::R1);
-        assert_eq!(chemistry_def.umi[0].offset, 16);
-        assert_eq!(chemistry_def.umi[0].length, 12);
-        assert_eq!(chemistry_def.umi[0].min_length, None);
-
-        assert_eq!(chemistry_def.rna.read_type, WhichRead::R2);
-        assert_eq!(chemistry_def.rna.offset, 0);
-        assert_eq!(chemistry_def.rna.length, Some(50));
-        assert_eq!(chemistry_def.rna.min_length, None);
-
-        assert_eq!(chemistry_def.barcode.len(), 2);
         assert_eq!(
-            chemistry_def
-                .barcode
-                .iter()
-                .filter(|b| b.kind == BarcodeKind::GelBead)
-                .count(),
-            1
-        );
-        assert_eq!(
-            chemistry_def
-                .barcode
-                .iter()
-                .filter(|b| b.kind == BarcodeKind::RightProbe)
-                .count(),
-            1
-        );
-        for barcode in chemistry_def.barcode {
-            match barcode.kind {
-                BarcodeKind::GelBead => {
-                    assert_eq!(barcode.read_type, WhichRead::R1);
-                    assert_eq!(barcode.offset, 0);
-                    assert_eq!(barcode.length, 16);
-                    assert_eq!(
-                        barcode.whitelist,
-                        WhitelistSpec::TxtFile {
-                            name: "737k-whitelist".into(),
-                            translation: false,
-                        }
-                    );
-                }
-                BarcodeKind::RightProbe => {
-                    assert_eq!(barcode.read_type, WhichRead::R1);
-                    assert_eq!(barcode.offset, 40);
-                    assert_eq!(barcode.length, 8);
-                    assert_eq!(
-                        barcode.whitelist,
-                        WhitelistSpec::TxtFile {
-                            name: "probe-barcodes-whitelist".into(),
-                            translation: true,
-                        }
-                    );
-                }
-                _ => panic!("Invalid barcode detected"),
+            index_scheme
+                .to_chemistry_def("737K-fixed-rna-profiling")
+                .unwrap(),
+            ChemistryDef {
+                name: ChemistryName::Custom,
+                description: "custom: MFRP (probeBC at R2:69)".to_string(),
+                barcode_extraction: None,
+                ..ChemistryDef::named(ChemistryName::MFRP_RNA)
             }
-        }
+        );
     }
 
     #[test]
@@ -1919,6 +2114,7 @@ mod tests {
             whitelist: WhitelistSpec::TxtFile {
                 name: "737K-august-2016".to_string(),
                 translation: false,
+                strand: ReqStrand::Forward,
             },
         }];
         assert_eq!(
@@ -1938,6 +2134,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -1948,6 +2145,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1a-right".to_string(),
                     translation: true,
+                    strand: ReqStrand::Forward,
                 },
             },
         ];
@@ -1969,6 +2167,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -1979,6 +2178,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1a-left".to_string(),
                     translation: true,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -1989,6 +2189,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1a-right".to_string(),
                     translation: true,
+                    strand: ReqStrand::Forward,
                 },
             },
         ];
@@ -2006,6 +2207,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part1.txt".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -2016,6 +2218,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part2.txt".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -2026,6 +2229,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part3.txt".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -2036,6 +2240,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "omni-part4.txt".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
         ];
@@ -2080,6 +2285,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -2090,6 +2296,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "737K-august-2016".to_string(),
                     translation: false,
+                    strand: ReqStrand::Forward,
                 },
             },
         ];
@@ -2108,6 +2315,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1-right".to_string(),
                     translation: true,
+                    strand: ReqStrand::Forward,
                 },
             },
             BarcodeReadComponent {
@@ -2118,6 +2326,7 @@ mod tests {
                 whitelist: WhitelistSpec::TxtFile {
                     name: "turtle-scheme1-right".to_string(),
                     translation: true,
+                    strand: ReqStrand::Forward,
                 },
             },
         ];
@@ -2136,6 +2345,7 @@ mod tests {
             WhitelistSpec::TxtFile {
                 name: "3M-february-2018_TRU".into(),
                 translation: false,
+                strand: ReqStrand::Forward,
             }
         );
 
@@ -2150,6 +2360,7 @@ mod tests {
             WhitelistSpec::TxtFile {
                 name: "3M-february-2018_TRU".into(),
                 translation: false,
+                strand: ReqStrand::Forward,
             }
         );
 
@@ -2164,6 +2375,7 @@ mod tests {
             WhitelistSpec::TxtFile {
                 name: "3M-february-2018_TRU".into(),
                 translation: true,
+                strand: ReqStrand::Forward,
             }
         );
 

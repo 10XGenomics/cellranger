@@ -60,6 +60,7 @@ def filter_correction_table(correction_data: pd.DataFrame, library_type: str) ->
     Also indexes the resulting dataframe by barcode.
     """
     filtered = correction_data[correction_data[rna_library.LIBRARY_TYPE] == library_type]
+    filtered["barcode"] = filtered["barcode"].astype("string").str.encode("utf-8")
     filtered.set_index("barcode", inplace=True)
     return filtered
 

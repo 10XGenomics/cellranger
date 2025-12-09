@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufRead, BufReader};

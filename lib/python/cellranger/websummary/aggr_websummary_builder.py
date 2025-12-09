@@ -185,7 +185,7 @@ def build_web_summary_data_aggr(
         web_sum_data.summary_tab["aggr_batch_projection"] = PlotWithHeader(
             clustering_plot_title,
             clustering_plot,
-            help_text="Number of cells for each sample is provided in parentheses.",
+            help_text="Number of cells for each sample is provided in parentheses. Total number of displayed cells is downsampled to 10,000 for plotting.",
         )
 
     return web_sum_data

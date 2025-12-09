@@ -23,7 +23,7 @@ stage SUMMARIZE_REPORTS(
     in  json[]            summaries,
     in  string            sample_id,
     in  string            sample_desc,
-    in  path              reference_path,
+    in  ReferenceInfo     reference_info,
     in  path              analysis,
     in  h5                barcode_summary_h5,
     in  h5                filtered_gene_bc_matrices_h5,
@@ -37,6 +37,7 @@ stage SUMMARIZE_REPORTS(
     in  string            target_set_name,
     in  csv               per_feature_metrics_csv,
     in  bool              include_introns,
+    in  bool              cell_annotation_viable_but_not_requested,
     out json              metrics_summary_json,
     out csv               metrics_summary_csv,
     out html              web_summary,
@@ -48,4 +49,5 @@ stage SUMMARIZE_REPORTS(
     volatile = strict,
 ) retain (
     metrics_summary_json,
+    ws_data,
 )

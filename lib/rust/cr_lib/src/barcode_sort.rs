@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 use anyhow::Result;
 use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, Whitelist};
 use cr_bam::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_ITEM_BUFFER_SZ};
@@ -6,11 +8,10 @@ use cr_types::rna_read::{RnaChunk, RnaProcessor, RnaRead};
 use fastq_set::read_pair::{ReadPair, ReadPairStorage};
 use fastq_set::{FastqProcessor, ProcessResult};
 use metric::{CountMetric, Metric};
-use shardio::{BufHandler, SortAndWriteHandler, SortKey};
+use shardio::{BufHandler, Compressor, SortAndWriteHandler, SortKey};
 use std::borrow::Cow;
-use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// The maximum number of reads we will pre-buffer in the fastq reader.
 const BG_FASTA_READAHEAD: usize = 1024;
@@ -35,19 +36,6 @@ pub trait ReadVisitor {
     fn visit_unprocessed_read(&mut self, read: ReadPair, reason: String) -> Result<()>;
 }
 
-struct DefaultVisitor<T> {
-    phantom: PhantomData<T>,
-}
-impl<T> ReadVisitor for DefaultVisitor<T> {
-    type ReadType = T;
-    fn visit_processed_read(&mut self, _: &mut Self::ReadType) -> Result<()> {
-        Ok(())
-    }
-    fn visit_unprocessed_read(&mut self, _: ReadPair, _: String) -> Result<()> {
-        Ok(())
-    }
-}
-
 pub fn execute_barcode_sort_with_visitor<V: ReadVisitor<ReadType = RnaRead>>(
     chunk: RnaChunk,
     valid_path: PathBuf,
@@ -57,10 +45,8 @@ pub fn execute_barcode_sort_with_visitor<V: ReadVisitor<ReadType = RnaRead>>(
     visitor: &mut V,
 ) -> Result<BarcodeSortMetrics> {
     let mut metrics = BarcodeSortMetrics::default();
-
+    let mut nreads: usize = 0;
     let (send_err, recv_err) = channel();
-
-    let mut nreads = 0;
 
     // Spawn shard writer threads.
     std::thread::scope(|s| {
@@ -118,19 +104,20 @@ pub fn execute_barcode_sort_with_visitor<V: ReadVisitor<ReadType = RnaRead>>(
                 }
             }
         }
-        Ok::<(), anyhow::Error>(())
+        anyhow::Ok(())
     })?;
+
+    println!("Processed {nreads} reads");
 
     // Check for processor error.
     if let Ok(err) = recv_err.try_recv() {
         return Err(err);
     }
 
-    println!("Processed {nreads} reads");
-
     Ok(metrics)
 }
 
+/// Sort by barcode.
 pub struct BarcodeOrder;
 impl SortKey<RnaRead> for BarcodeOrder {
     type Key = Barcode;
@@ -204,7 +191,7 @@ impl Drop for ReadBuffer {
 
 fn process_read_buffers(path: PathBuf, recv: Receiver<PoolMember<Vec<RnaRead>>>) -> Result<()> {
     let mut handler: SortAndWriteHandler<RnaRead, BarcodeOrder> =
-        SortAndWriteHandler::new(ALN_BC_DISK_CHUNK_SZ, &path)?;
+        SortAndWriteHandler::new(ALN_BC_DISK_CHUNK_SZ, Compressor::Lz4, &path)?;
     for mut buf in &recv {
         // RnaRead structs are quite large - sort_by_cached_key generates a vec
         // of just the keys+indices and sorts that, then performs the final
@@ -244,7 +231,10 @@ impl ReadBuffers {
             let (valid_buf_scale, invalid_buf_scale) = self.frac.valid_to_invalid_read_buf_ratio();
             self.valid.size = MAX_READ_BUF_SIZE / valid_buf_scale;
             self.invalid.size = MAX_READ_BUF_SIZE / invalid_buf_scale;
-            println!("Adjusting buffer ratios: valid: {valid_buf_scale}, invalid: {invalid_buf_scale}.  Valid rate: {:.2}", self.frac.prev_valid as f64 / self.frac.chunk_size as f64);
+            println!(
+                "Adjusting buffer ratios: valid: {valid_buf_scale}, invalid: {invalid_buf_scale}.  Valid rate: {:.2}",
+                self.frac.prev_valid as f64 / self.frac.chunk_size as f64
+            );
         }
     }
 

@@ -29,7 +29,6 @@ from cellranger.molecule_counter import (
 from cellranger.reference_paths import get_ref_name_from_genomes, get_reference_genomes
 from cellranger.targeted.targeted_constants import (
     TARGETING_METHOD_FILE_NAMES,
-    TARGETING_METHOD_TL_FILE_FORMAT,
     TargetingMethod,
 )
 from cellranger.targeted.targeted_spatial import SPATIAL_TARGET_DISALLOWED_PANEL_TYPES
@@ -193,7 +192,7 @@ def check_sample_def(sample_defs, feature_ref=None, pipeline=None, is_spatial=Fa
             ):
                 if not any(x.feature_type == library_type for x in feature_ref.feature_defs):
                     raise PreflightException(
-                        "You declared a library with "
+                        "TXRNGR10017: You declared a library with "
                         f"library_type = '{library_type}', but there are no features declared "
                         "with that feature_type in the feature reference.\n"
                         "Check that the 'library_type' field in the libraries csv matches at least "
@@ -203,12 +202,11 @@ def check_sample_def(sample_defs, feature_ref=None, pipeline=None, is_spatial=Fa
         elif pipeline == cr_constants.PIPELINE_VDJ:
             # library type can be missing, or VDJ
             library_type = sample_def.get(rna_library.LIBRARY_TYPE, None)
-            if library_type not in (None, rna_library.VDJ_LIBRARY_TYPE):
-                raise PreflightException(
-                    f"You declared a library with library_type = '{library_type}'. "
-                    "For the VDJ pipeline, the library_type field in sample_def must be missing "
-                    f"or '{rna_library.VDJ_LIBRARY_TYPE}'"
-                )
+            assert library_type in (None, rna_library.VDJ_LIBRARY_TYPE), (
+                f"You declared a library with library_type = '{library_type}'. "
+                "For the VDJ pipeline, the library_type field in sample_def must be missing "
+                f"or '{rna_library.VDJ_LIBRARY_TYPE}'"
+            )
 
 
 STAR_REQUIRED_FILES = [
@@ -269,10 +267,7 @@ def expand_libraries_csv(csv_path):
 
         for key in row:
             if key is None or row[key] is None:
-                msg = (
-                    "Invalid libraries CSV file: incorrrect number of columns on line number (after excluding comment lines) %d"
-                    % reader.line_num
-                )
+                msg = f"Invalid libraries CSV file: incorrrect number of columns on line number (after excluding comment lines) {reader.line_num}"
                 raise PreflightException(msg)
             row[key] = row[key].strip()
 
@@ -490,9 +485,9 @@ def check_targeting_preflights(
             )
 
         # Ensure that the reference genome of the transcriptome and probe set are identical for RTL only.
-        if TARGETING_METHOD_TL_FILE_FORMAT in target_panel_metadata:
+        if reference_path is not None:
             transcriptome_reference_genome = get_ref_name_from_genomes(
-                get_reference_genomes(reference_path, target_panel)
+                get_reference_genomes(reference_path)
             )
             probe_set_reference_genome = target_panel_metadata["reference_genome"]
             if not transcriptome_reference_genome == probe_set_reference_genome:

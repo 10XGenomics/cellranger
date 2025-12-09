@@ -9,19 +9,37 @@ from __future__ import annotations
 
 import csv
 import os.path
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import ExitStack
-from typing import NamedTuple, TypeVar, overload
+from typing import NamedTuple, overload
 
 import numpy as np
 
 import cellranger.h5_constants as h5_constants
 from cellranger.analysis.analysis_types import PCA
+from cellranger.library_constants import ATACSEQ_LIBRARY_TYPE, GENE_EXPRESSION_LIBRARY_TYPE
 from cellranger.wrapped_tables import tables
 
 # Version for HDF5 format
 VERSION_KEY = "version"
 VERSION = 2
+
+
+def format_library_type(library_type: str | None):
+    return library_type.lower().replace(" ", "_") if library_type else ""
+
+
+def get_library_type(assay):
+    """Get library type based on the assay type."""
+    if assay == "atac":
+        library_type = ATACSEQ_LIBRARY_TYPE
+    elif assay == "gex":
+        library_type = GENE_EXPRESSION_LIBRARY_TYPE
+    else:
+        library_type = ""
+
+    library_type = format_library_type(library_type)
+    return library_type
 
 
 def __encode_h5_arr(f: tables.File, arr, field: str, group: str, key: str, subgroup: tables.Group):
@@ -51,8 +69,7 @@ def save_h5(f: tables.File, group: str, key: str, namedtuple: NamedTuple):
         version = int(getattr(f.root, VERSION_KEY))
         if version != VERSION:
             raise ValueError(
-                "Attempted to write analysis HDF5 version %d data to a version %d file"
-                % (VERSION, version)
+                f"Attempted to write analysis HDF5 version {VERSION} data to a version {version} file"
             )
     else:
         f.create_array(f.root, VERSION_KEY, np.int64(VERSION))
@@ -117,9 +134,6 @@ def save_matrix_csv(
             writer.writerow(row)
 
 
-_T1 = TypeVar("_T1", bound=NamedTuple)  # pylint: disable=invalid-name
-
-
 def __get_table_node(group: tables.Group, field: str):
     try:
         field_value = getattr(group, field).read()
@@ -130,22 +144,22 @@ def __get_table_node(group: tables.Group, field: str):
         return getattr(group._v_attrs, field, None)  # pylint: disable=protected-access
 
 
-def load_h5_namedtuple(group: tables.Group, namedtuple: type[_T1]) -> _T1:
+def load_h5_namedtuple[T: NamedTuple](group: tables.Group, namedtuple: type[T]) -> T:
     """Load a single namedtuple from an h5 group."""
     return namedtuple._make([__get_table_node(group, field) for field in namedtuple._fields])
 
 
-def load_h5_iter(
-    group: tables.Group, namedtuple: type[_T1]
-) -> Generator[tuple[str, _T1], None, None]:
+def load_h5_iter[
+    T: NamedTuple
+](group: tables.Group, namedtuple: type[T]) -> Generator[tuple[str, T], None, None]:
     """Iterate through the subgroups of a group, converting each to the given type.
 
     Args:
         group (tables.Group): _description_
-        namedtuple (Type[_T1]): _description_
+        namedtuple (Type[T1]): _description_
 
     Yields:
-        Generator[Tuple[str, _T1], None, None]: _description_
+        Generator[Tuple[str, T1], None, None]: _description_
     """
     for subgroup in group:
         yield subgroup._v_name[1:], load_h5_namedtuple(  # pylint: disable=protected-access
@@ -192,33 +206,19 @@ def open_h5_for_writing(filename: str) -> tables.File:
     return tables.open_file(filename, "w", filters=filters)
 
 
-def _save_dimension_reduction_h5(
-    data_map: Mapping[int, _T1],
-    fname: str,
-    group_name: str,
-    key: Callable[[int], str],
-):
+def save_dimension_reduction_h5[
+    T: NamedTuple
+](data_map: Mapping[int, T], fname: str, group_name: str, library_type: str | None = None):
+    """Save dimensionality reduction into HDF5."""
     filters = tables.Filters(complevel=h5_constants.H5_COMPRESSION_LEVEL)
     with tables.open_file(fname, "w", filters=filters) as f:
         group = f.create_group(f.root, group_name)
         for n_components, reduction in data_map.items():
-            save_h5(f, group, key(n_components), reduction)
-
-
-def save_dimension_reduction_h5(data_map: Mapping[int, _T1], fname: str, group_name: str):
-    _save_dimension_reduction_h5(data_map, fname, group_name, str)
-
-
-def save_pca2_dimension_reduction_h5(
-    data_map: Mapping[int, _T1],
-    fname: str,
-    group_name: str,
-    library_type: str,
-):
-    """Save PCA dimension reduction info to HDF5."""
-    _save_dimension_reduction_h5(
-        data_map, fname, group_name, lambda n_components: f"{library_type}_{n_components}"
-    )
+            if library_type:
+                subgroup = f"{format_library_type(library_type)}_{n_components}"
+            else:
+                subgroup = f"{n_components}"
+            save_h5(f, group, subgroup, reduction)
 
 
 @overload
@@ -228,10 +228,14 @@ def load_dimension_reduction_from_h5(
 
 
 @overload
-def load_dimension_reduction_from_h5(filename: str, group_name: str, ntuple: type[_T1]) -> _T1: ...
+def load_dimension_reduction_from_h5[
+    T: NamedTuple
+](filename: str, group_name: str, ntuple: type[T]) -> T: ...
 
 
-def load_dimension_reduction_from_h5(filename: str, group_name: str, ntuple: type[_T1]):
+def load_dimension_reduction_from_h5[
+    T: NamedTuple
+](filename: str, group_name: str, ntuple: type[T]):
     """Iterate over the output of dim reduction and return a list of all projections if PCA."""
     with tables.open_file(filename, "r") as f:
         group: tables.Group = f.root._v_groups[group_name]  # pylint: disable=protected-access

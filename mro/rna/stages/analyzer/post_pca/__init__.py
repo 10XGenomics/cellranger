@@ -2,24 +2,20 @@
 #
 # Copyright (c) 2021 10x Genomics, Inc. All rights reserved.
 #
-"""Write pickle files for downstream consumption from the dimension reduced and full matrix.
+"""Write pickle files for downstream consumption from the dimension reduced and full matrix."""
 
-files
-"""
-import math
 import pickle
 
 import martian
 import numpy as np
 
-import cellranger.matrix as cr_matrix
+from cellranger.matrix import CountMatrix
 
 __MRO__ = """
 stage POST_PCA(
     in  h5     matrix_h5,
     in  h5     filt_matrix_h5,
     in  npy    dimred_matrix_npy,
-    in  float  mem_gb,
     out pickle dimred_matrix,
     out pickle matrix_barcode_feature_info,
     src py     "stages/analyzer/post_pca",
@@ -31,19 +27,16 @@ stage POST_PCA(
 
 
 def split(args):
-    mem_needed = math.ceil(3 + args.mem_gb * 0.14)
-    return {
-        "chunks": [],
-        "join": {
-            "__mem_gb": mem_needed,
-            "__vmem_gb": mem_needed + 10,
-        },
-    }
+    (num_features, num_barcodes, nnz) = CountMatrix.load_dims_from_h5(args.matrix_h5)
+    matrix_mem_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1)
+    mem_gib = 3 + 1.1 * matrix_mem_gib
+    print(f"{num_features=},{num_barcodes=},{nnz=},{matrix_mem_gib=},{mem_gib=}")
+    return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
 def join(args, outs, chunk_defs, chunk_outs):
-    all_bcs_matrix = cr_matrix.CountMatrix.load_h5_file(args.matrix_h5)
-    matrix = cr_matrix.CountMatrix.load_h5_file(args.filt_matrix_h5)
+    all_bcs_matrix = CountMatrix.load_h5_file(args.matrix_h5)
+    matrix = CountMatrix.load_h5_file(args.filt_matrix_h5)
     dimred_matrix = np.load(args.dimred_matrix_npy)
 
     # restore the zero count entries to the dimred matrix

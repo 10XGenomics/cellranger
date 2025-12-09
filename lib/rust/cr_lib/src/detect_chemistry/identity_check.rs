@@ -1,7 +1,8 @@
 //! Detect accidental duplication of FASTQ files.
+#![deny(missing_docs)]
 
 use super::chemistry_filter::DetectChemistryUnit;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
 use metric::{TxHashMap, TxHasher};
 use std::collections::hash_map::Entry;

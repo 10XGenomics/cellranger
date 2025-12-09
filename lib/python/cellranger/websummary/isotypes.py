@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 import altair as alt
 import numpy as np
 import pandas as pd
-import scipy.sparse as sp_sparse
 from scipy.cluster import hierarchy
 
 import cellranger.altair_utils as alt_utils
@@ -275,8 +274,8 @@ def gex_fbc_correlation_matrix(matrix: cr_matrix.CountMatrix):
         k: gene_expression_intersect[k] for k in sorted(gene_expression_intersect)
     }
 
-    ab_matrix = sp_sparse.csr_matrix.log1p(matrix.m[list(antibody_intersect.values()), :])
-    gex_matrix = sp_sparse.csr_matrix.log1p(matrix.m[list(gene_expression_intersect.values()), :])
+    ab_matrix = matrix.m[list(antibody_intersect.values()), :].log1p()
+    gex_matrix = matrix.m[list(gene_expression_intersect.values()), :].log1p()
 
     num_gex = gex_matrix.shape[0]
     corr_mat = np.corrcoef(gex_matrix.toarray(), ab_matrix.toarray())[:num_gex, -num_gex:]
@@ -334,8 +333,8 @@ def fbc_isotype_correlation(
         feat.index for feat in antibody_features if feat.tags.get("isotype_control") == "FALSE"
     ]
     if log_transform:
-        isotype_matrix = sp_sparse.csr_matrix.log1p(matrix.m[isotype_index, :])
-        antibody_matrix = sp_sparse.csr_matrix.log1p(matrix.m[antibody_index, :])
+        isotype_matrix = matrix.m[isotype_index, :].log1p()
+        antibody_matrix = matrix.m[antibody_index, :].log1p()
     else:
         isotype_matrix = matrix.m[isotype_index, :]
         antibody_matrix = matrix.m[antibody_index, :]

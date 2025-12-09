@@ -54,7 +54,7 @@ stage MULTI_WRITE_PER_SAMPLE_MATRICES(
 
 
 def split(args):
-    mem_gib = 4 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.5)
+    mem_gib = 4 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.6)
     return {
         "chunks": [
             {

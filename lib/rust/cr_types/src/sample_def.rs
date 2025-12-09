@@ -1,17 +1,14 @@
-//!
-//! There is code in fastq_set::sample_def, but having it in Cellranger makes
-//! more sense
-
-use crate::serde_helpers::NumberOrStr;
+#![expect(missing_docs)]
 use crate::LibraryType;
-use anyhow::{bail, ensure, Result};
-use fastq_set::filenames::bcl2fastq::SampleNameSpec;
+use crate::serde_helpers::NumberOrStr;
+use anyhow::{Result, bail, ensure};
+use fastq_set::SSeq;
 use fastq_set::filenames::bcl_processor::SampleIndexSpec;
+use fastq_set::filenames::bcl2fastq::SampleNameSpec;
 use fastq_set::filenames::fastq_dir::{BclProcessorDir, FastqChecker};
 use fastq_set::filenames::{FastqDef, FindFastqs, LaneSpec};
 use fastq_set::read_pair_iter::InputFastqs;
 use fastq_set::sample_index_map::SAMPLE_INDEX_MAP;
-use fastq_set::SSeq;
 use itertools::Itertools;
 use martian_derive::MartianType;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -95,7 +92,6 @@ impl Default for SampleDef {
 
 impl SampleDef {
     // Check for missing FASTQ files.
-    #[allow(unused)]
     pub fn check_fastqs(&self, help_text: &str) -> Result<()> {
         let read_path = self.read_path.display();
         match self.fastq_mode {
@@ -134,7 +130,10 @@ impl SampleDef {
                         if let LaneSpec::Lanes(lanes) = &lane_spec {
                             for sample_index in sample_indices {
                                 ensure!(
-                                    lanes.iter().any(|lane| dir.contains_index_with_lane(sample_index, *lane)),
+                                    lanes
+                                        .iter()
+                                        .any(|lane| dir
+                                            .contains_index_with_lane(sample_index, *lane)),
                                     "No input FASTQs were found for the sample index {sample_index} \
                                     and lanes {:?} in the path: {read_path}",
                                     lanes.iter().sorted().join(",")
@@ -354,7 +353,7 @@ impl SampleDef {
         self.check_fastqs(COUNT_HELP)?;
         let fastqs = self.get_fastq_def()?.find_fastqs()?;
         if fastqs.is_empty() {
-            bail!("No input FASTQs were found for the sample def: {:#?}", self);
+            bail!("No input FASTQs were found for the sample def: {self:#?}");
         }
         Ok(fastqs)
     }
@@ -449,7 +448,7 @@ mod sample_def_tests {
 
 #[cfg(test)]
 mod invalid_bcl2fastq_sample_def {
-    use super::{FastqMode, SampleDef, COUNT_HELP};
+    use super::{COUNT_HELP, FastqMode, SampleDef};
     use std::path::Path;
 
     fn test_invalid_bcl2fastq_input(
@@ -522,7 +521,7 @@ mod invalid_bcl2fastq_sample_def {
 
 #[cfg(test)]
 mod invalid_bcl_proc_sample_def {
-    use super::{FastqMode, SampleDef, COUNT_HELP};
+    use super::{COUNT_HELP, FastqMode, SampleDef};
     use std::path::Path;
 
     fn test_invalid_bcl_proc_input(

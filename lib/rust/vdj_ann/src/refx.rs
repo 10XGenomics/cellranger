@@ -1,4 +1,5 @@
 // Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
+#![expect(missing_docs)]
 
 // This file contains code to make reference data.
 //
@@ -9,11 +10,12 @@
 // ◼ create a reference for a new species will know the conventions used by the
 // ◼ code.
 
+use anyhow::{Context, Result, ensure};
 use debruijn::dna_string::DnaString;
 use debruijn::kmer::Kmer12;
-use io_utils::read_to_string_safe;
 use kmer_lookup::make_kmer_lookup_12_single;
 use std::collections::{HashMap, HashSet};
+use std::fs::read_to_string;
 use std::path::Path;
 use string_utils::TextUtils;
 use vector_utils::erase_if;
@@ -29,13 +31,13 @@ pub struct RefData {
     // which V segments have matched UTRs in the reference:
     pub has_utr: HashMap<String, bool>,
     pub name: Vec<String>,
-    pub segtype: Vec<&'static str>, // U, V, D, J or C
-    pub rtype: Vec<i32>,            // index in "IGH","IGK","IGL","TRA","TRB","TRD","TRG" or -1
-    pub igjs: Vec<usize>,           // index of all IGJ segments
-    pub cs: Vec<usize>,             // index of all C segments
-    pub ds: Vec<usize>,             // index of all D segments
-    pub id: Vec<i32>,               // the number after ">" on the header line
-    pub transcript: Vec<String>,    // transcript name from header line
+    pub segtype: Vec<u8>,        // U, V, D, J or C
+    pub rtype: Vec<i32>,         // index in "IGH","IGK","IGL","TRA","TRB","TRD","TRG" or -1
+    pub igjs: Vec<usize>,        // index of all IGJ segments
+    pub cs: Vec<usize>,          // index of all C segments
+    pub ds: Vec<usize>,          // index of all D segments
+    pub id: Vec<i32>,            // the number after ">" on the header line
+    pub transcript: Vec<String>, // transcript name from header line
 }
 
 impl RefData {
@@ -47,7 +49,7 @@ impl RefData {
             rkmers_plus: Vec::<(Kmer12, i32, i32)>::new(),
             has_utr: HashMap::<String, bool>::new(),
             name: Vec::<String>::new(),
-            segtype: Vec::<&'static str>::new(),
+            segtype: Vec::<u8>::new(),
             rtype: Vec::<i32>::new(),
             igjs: Vec::<usize>::new(),
             cs: Vec::<usize>::new(),
@@ -56,60 +58,51 @@ impl RefData {
             transcript: Vec::<String>::new(),
         }
     }
-    pub fn is_u(&self, i: usize) -> bool {
-        self.segtype[i] == "U"
+    pub(super) fn is_u(&self, i: usize) -> bool {
+        self.segtype[i] == b'U'
     }
     pub fn is_v(&self, i: usize) -> bool {
-        self.segtype[i] == "V"
+        self.segtype[i] == b'V'
     }
     pub fn is_d(&self, i: usize) -> bool {
-        self.segtype[i] == "D"
+        self.segtype[i] == b'D'
     }
     pub fn is_j(&self, i: usize) -> bool {
-        self.segtype[i] == "J"
+        self.segtype[i] == b'J'
     }
     pub fn is_c(&self, i: usize) -> bool {
-        self.segtype[i] == "C"
+        self.segtype[i] == b'C'
     }
 
-    pub fn from_fasta(path: impl AsRef<Path>) -> Self {
-        let path = path.as_ref();
-        let mut refdata = RefData::new();
-        let path_contents = read_to_string_safe(path);
-        assert!(
+    pub fn from_fasta(path: impl AsRef<Path>) -> Result<Self> {
+        Self::from_fasta_impl(path.as_ref(), None)
+    }
+
+    pub fn from_fasta_with_filter(
+        path: impl AsRef<Path>,
+        ids_to_use: &HashSet<i32>,
+    ) -> Result<Self> {
+        Self::from_fasta_impl(path.as_ref(), Some(ids_to_use))
+    }
+
+    fn from_fasta_impl(path: &Path, ids_to_use: Option<&HashSet<i32>>) -> Result<Self> {
+        let path_contents =
+            read_to_string(path).with_context(|| path.to_string_lossy().to_string())?;
+        ensure!(
             !path_contents.is_empty(),
             "Reference file at {} has zero length.",
-            path.to_string_lossy()
+            path.display()
         );
+        let mut refdata = RefData::new();
         make_vdj_ref_data_core(
             &mut refdata,
             &path_contents,
             "",
             true, // is_tcr
             true, // is_bcr
-            None,
+            ids_to_use,
         );
-        refdata
-    }
-
-    pub fn from_fasta_with_filter(path: impl AsRef<Path>, ids_to_use: &HashSet<i32>) -> Self {
-        let mut refdata = RefData::new();
-        let path = path.as_ref();
-        let path_contents = read_to_string_safe(path);
-        assert!(
-            !path_contents.is_empty(),
-            "Reference file at {} has zero length.",
-            path.to_string_lossy()
-        );
-        make_vdj_ref_data_core(
-            &mut refdata,
-            &path_contents,
-            "",
-            true, // is_tcr
-            true, // is_bcr
-            Some(ids_to_use),
-        );
-        refdata
+        Ok(refdata)
     }
 }
 
@@ -160,22 +153,22 @@ pub fn make_vdj_ref_data_core(
         rheaders2.push(format!("|{}|{}|{}|", v[0], v[2], v[3]));
         match v[3] {
             "5'UTR" => {
-                refdata.segtype.push("U");
+                refdata.segtype.push(b'U');
             }
             "L-REGION+V-REGION" => {
-                refdata.segtype.push("V");
+                refdata.segtype.push(b'V');
             }
             "D-REGION" => {
-                refdata.segtype.push("D");
+                refdata.segtype.push(b'D');
             }
             "J-REGION" => {
-                refdata.segtype.push("J");
+                refdata.segtype.push(b'J');
             }
             "C-REGION" => {
-                refdata.segtype.push("C");
+                refdata.segtype.push(b'C');
             }
             _ => {
-                refdata.segtype.push("?");
+                refdata.segtype.push(b'?');
             }
         }
         for (j, type_) in types.iter().enumerate() {
@@ -211,13 +204,13 @@ pub fn make_vdj_ref_data_core(
     // Fill in igjs and cs and ds.
 
     for i in 0..rheaders.len() {
-        if refdata.segtype[i] == "J" && refdata.rtype[i] >= 0 && refdata.rtype[i] < 3 {
+        if refdata.segtype[i] == b'J' && refdata.rtype[i] >= 0 && refdata.rtype[i] < 3 {
             refdata.igjs.push(i);
         }
-        if refdata.segtype[i] == "C" {
+        if refdata.segtype[i] == b'C' {
             refdata.cs.push(i);
         }
-        if refdata.segtype[i] == "D" {
+        if refdata.segtype[i] == b'D' {
             refdata.ds.push(i);
         }
     }

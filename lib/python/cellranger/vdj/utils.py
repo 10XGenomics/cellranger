@@ -77,7 +77,7 @@ def write_csv_row(row, f):
     row = [str(x) for x in row]
     for i, v in enumerate(row):
         if "," in v:
-            raise ValueError("Failed write to csv file: Column %d contains commas" % i)
+            raise ValueError(f"Failed write to csv file: Column {i} contains commas")
     f.write("{}\n".format(",".join(row)))
 
 
@@ -86,7 +86,7 @@ def format_clonotype_id(clonotype_index, inferred):
     if clonotype_index is None:
         return None
     prefix = "inferred_clonotype" if inferred else "clonotype"
-    return "%s%d" % (prefix, 1 + clonotype_index)
+    return f"{prefix}{1 + clonotype_index}"
 
 
 def get_mem_gb_from_annotations_json(filename):

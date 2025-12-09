@@ -1,15 +1,20 @@
-use crate::barcode_sort::ReadVisitor;
+#![deny(missing_docs)]
+
 use crate::SequencingMetrics;
+use crate::barcode_sort::ReadVisitor;
 use anyhow::Result;
 use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, BcSegSeq};
 use cr_types::chemistry::ChemistryDef;
 use cr_types::reference::feature_extraction::FeatureExtractor;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::{RnaChunk, RnaRead};
-use fastq_set::metric_utils::{PatternCheck, ILLUMINA_QUAL_OFFSET};
+use fastq_set::metric_utils::{ILLUMINA_QUAL_OFFSET, PatternCheck};
 use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
 use json_report_derive::JsonReport;
-use metric::{CountMetric, JsonReporter, Metric, PercentMetric, SimpleHistogram, TxHashMap};
+use metric::{
+    CountMetric, Histogram, JsonReporter, Metric, OrderedHistogram, PercentMetric, SimpleHistogram,
+    TxHashMap,
+};
 use metric_derive::Metric;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -49,7 +54,7 @@ pub struct MakeShardMetrics {
     good_umi: PercentMetric,
     has_n_barcode_property: PercentMetric,
     has_n_umi_property: PercentMetric,
-    pub(crate) homopolymer_barcode_property: PercentMetric,
+    pub(super) homopolymer_barcode_property: PercentMetric,
     homopolymer_umi_property: PercentMetric,
     low_min_qual_barcode_property: PercentMetric,
     low_min_qual_umi_property: PercentMetric,
@@ -59,7 +64,7 @@ pub struct MakeShardMetrics {
     /// If there are a total of `r1` read pairs in the input fastqs, we process `r2` read pairs
     /// through `MAKE_SHARD`. `r2` is the minimum of these numbers:
     /// - `r1` read pairs subsampled at a rate specified in the top level mro or `SampleDef` (PD)
-    /// - `initial_read_pairs` specified at the top level mro
+    /// - `initial_reads` specified at the top level mro
     ///
     /// Among the `r2` read pairs, we end up carrying `r3` reads forward from `MAKE_SHARD`, where
     /// `r3` is the number of reads among `r2` which are valid `RnaRead`s. The reads which are
@@ -132,16 +137,16 @@ impl MakeShardMetrics {
     pub fn report_unknown_fbc(
         &mut self,
         library_id: u16,
-        hist: SimpleHistogram<String>,
+        hist: &SimpleHistogram<String>,
         min_frac: f64,
     ) {
         // Report unknown feature barcode sequences that represent a non-trivial fraction of reads per library.
         if let Some(total_read_pairs) = self.total_read_pairs_per_library.get(&library_id) {
-            for (seq, read_count) in &hist {
+            for (seq, read_count) in hist {
                 let frac_reads: f64 = read_count.count() as f64 / *total_read_pairs as f64;
                 if frac_reads >= min_frac {
                     self.unknown_feature_bcs
-                        .get_or_insert_with(Default::default)
+                        .get_or_insert_default()
                         .insert(seq.clone(), frac_reads);
                 }
             }
@@ -153,16 +158,14 @@ impl MakeShardMetrics {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MakeShardHistograms {
-    pub(crate) valid_bc_counts: SimpleHistogram<Barcode>,
-    pub(crate) valid_bc_segment_counts: BarcodeConstruct<SimpleHistogram<BcSegSeq>>,
-    pub(crate) r1_lengths: SimpleHistogram<usize>,
-    pub(crate) unknown_feature_bcs: SimpleHistogram<String>,
+    pub(super) valid_bc_segment_counts: BarcodeConstruct<SimpleHistogram<BcSegSeq>>,
+    pub(super) r1_lengths: SimpleHistogram<usize>,
+    pub(super) unknown_feature_bcs: SimpleHistogram<String>,
 }
 
 impl MakeShardHistograms {
     pub fn new(barcode_construct: BarcodeConstruct<()>) -> Self {
         MakeShardHistograms {
-            valid_bc_counts: SimpleHistogram::default(),
             r1_lengths: SimpleHistogram::default(),
             valid_bc_segment_counts: barcode_construct.map(|()| SimpleHistogram::default()),
             unknown_feature_bcs: SimpleHistogram::default(),
@@ -179,12 +182,10 @@ impl MakeShardHistograms {
         // TODO: `Metric` can be defined for `Option<BarcodeConstruct<Metric>>`
         // in which case we can derive the trait
         let MakeShardHistograms {
-            valid_bc_counts,
             valid_bc_segment_counts,
             r1_lengths,
             unknown_feature_bcs,
         } = other;
-        self.valid_bc_counts.merge(valid_bc_counts);
         self.r1_lengths.merge(r1_lengths);
         self.unknown_feature_bcs.merge(unknown_feature_bcs);
         self.valid_bc_segment_counts
@@ -194,9 +195,6 @@ impl MakeShardHistograms {
             .for_each(|(this, that)| this.merge(that));
     }
     fn observe(&mut self, rna_read: &RnaRead) {
-        if rna_read.barcode_is_valid() {
-            self.valid_bc_counts.observe_owned(rna_read.barcode());
-        }
         if let Some(r1) = rna_read.read.get(WhichRead::R1, ReadPart::Seq) {
             self.r1_lengths.observe(&r1.len());
         }
@@ -220,8 +218,9 @@ pub struct MakeShardVisitor<'a> {
     poly_t_pattern: PatternCheck,
     metrics: MakeShardMetrics,
     histograms: MakeShardHistograms,
+    valid_bc_counts: OrderedHistogram<Barcode>,
     read_chunks: &'a [RnaChunk],
-    pub(crate) feature_counts: Vec<i64>,
+    pub(super) feature_counts: Vec<i64>,
     feature_extractor: Option<FeatureExtractor>,
 }
 
@@ -235,7 +234,7 @@ impl<'a> MakeShardVisitor<'a> {
         let (feature_counts, feature_extractor) = if let Some(reference) = reference {
             (
                 vec![0i64; reference.feature_defs.len()],
-                Some(FeatureExtractor::new(Arc::new(reference), None, None)?),
+                Some(FeatureExtractor::new(Arc::new(reference), None)?),
             )
         } else {
             (vec![], None)
@@ -256,6 +255,7 @@ impl<'a> MakeShardVisitor<'a> {
             feature_extractor,
             read_chunks,
             histograms: MakeShardHistograms::new(chemistry_def.barcode_construct().map(|_| ())),
+            valid_bc_counts: Default::default(),
         })
     }
 
@@ -268,9 +268,14 @@ impl<'a> MakeShardVisitor<'a> {
     pub fn histograms(&self) -> &MakeShardHistograms {
         &self.histograms
     }
+
+    /// Return the ordered valid barcode histogram.
+    pub fn valid_bc_counts(&self) -> &OrderedHistogram<Barcode> {
+        &self.valid_bc_counts
+    }
 }
 
-impl<'a> ReadVisitor for MakeShardVisitor<'a> {
+impl ReadVisitor for MakeShardVisitor<'_> {
     type ReadType = RnaRead;
 
     fn visit_processed_read(&mut self, rna_read: &mut Self::ReadType) -> Result<()> {
@@ -358,6 +363,9 @@ impl<'a> ReadVisitor for MakeShardVisitor<'a> {
         };
         self.metrics.merge(read_metrics);
         self.histograms.observe(rna_read);
+        if rna_read.barcode_is_valid() {
+            self.valid_bc_counts.observe_owned(rna_read.barcode());
+        }
 
         // collect initial feature barcode counts
         if let Some(res) = self

@@ -2,12 +2,18 @@
 #
 # Copyright (c) 2024 10X Genomics, Inc. All rights reserved.
 #
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import optimize
 from scipy.special import betaln, gammaln, loggamma
 
 import tenkit.stats as tk_stats
+
+if TYPE_CHECKING:
+    from scipy.sparse import csc_matrix, spmatrix
 
 # Pre-seed the RNG on package import
 RNG = np.random.default_rng(seed=42)
@@ -66,7 +72,11 @@ def collapse_draws_to_counts(sample_draws, num_features):
     return np.bincount(sample_draws, minlength=num_features)
 
 
-def eval_multinomial_loglikelihoods(matrix, logp, n=None):
+def eval_multinomial_loglikelihoods(
+    matrix: csc_matrix,
+    logp: np.ndarray[tuple[int], np.dtype[np.float64]],
+    total_umis: int | None = None,
+):
     """Computes the multinomial log-likelihood for many barcodes.
 
     Multinomial log-likelihood for a single barcode where the count of UMIs for
@@ -80,18 +90,19 @@ def eval_multinomial_loglikelihoods(matrix, logp, n=None):
       matrix (scipy.sparse.csc_matrix): Matrix of UMI counts (feature x barcode)
       logp (np.ndarray(float)): The natural log of the multinomial probability
         vector across features
-      n (int, optional): The total number of UMIs per barcode.  Saves computation
+      total_umis (int, optional): The total number of UMIs per barcode.  Saves computation
         if it can be precomputed.
 
     Returns:
       loglk (np.ndarray(float)): Log-likelihood for each barcode
     """
-    num_bcs = matrix.shape[1]
-    loglk = np.zeros(num_bcs, dtype=float)
-    if n is None:
-        n = np.asarray(matrix.sum(axis=0))[0]
+    num_bcs: int = matrix.shape[1]
+    loglk: np.ndarray[tuple[int], np.dtype[np.float64]] = np.zeros(num_bcs, dtype=float)
 
-    consts = gammaln(n + 1)
+    if total_umis is None:
+        total_umis = np.asarray(matrix.sum(axis=0))[0]
+    assert total_umis is not None
+    consts = gammaln(total_umis + 1)
     for i in range(num_bcs):
         idx_start, idx_end = matrix.indptr[i], matrix.indptr[i + 1]
         idxs = matrix.indices[idx_start:idx_end]
@@ -189,7 +200,11 @@ def eval_dirichlet_multinomial_loglikelihood_cumulative(sample_draws, alpha):
     return np.cumsum(loglk)
 
 
-def estimate_dirichlet_overdispersion(matrix, ambient_bcs, p):
+def estimate_dirichlet_overdispersion(
+    matrix: spmatrix,
+    ambient_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
+    p: np.ndarray[tuple[int], np.dtype[np.float64]],
+) -> float:
     """Estimates the best-fit overdispersion parameter for data.
 
     Uses a Dirichlet-multinomial to maximize the log-likelihood of the ambient
@@ -341,7 +356,12 @@ def simulate_dirichlet_multinomial_loglikelihoods(alpha, umis_per_bc, num_sims):
     return distinct_n, loglk
 
 
-def compute_ambient_pvalues(umis_per_bc, obs_loglk, sim_n, sim_loglk):
+def compute_ambient_pvalues(
+    umis_per_bc: np.ndarray[tuple[int], np.dtype[np.int_]],
+    obs_loglk: np.ndarray[tuple[int], np.dtype[np.float64]],
+    sim_n: np.ndarray[tuple[int], np.dtype[np.int_]],
+    sim_loglk: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Compute p-values for observed multinomial log-likelihoods.
 
     Args:

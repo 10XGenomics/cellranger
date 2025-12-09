@@ -1,113 +1,76 @@
+#![deny(missing_docs)]
 use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
+use crate::detect_chemistry::chemistry_filter::DetectChemistryCandidates;
 use anyhow::Result;
-use barcode::{BarcodeConstruct, BcSegSeq, Whitelist, WhitelistSource, WhitelistSpec};
+use barcode::{BarcodeConstruct, BcSegSeq, Whitelist, WhitelistSpec};
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
-use fastq_set::read_pair::{ReadPair, ReadPart, RpRange};
+use cr_types::rna_read::extract_barcode;
+use fastq_set::read_pair::ReadPair;
 use itertools::Itertools;
-use metric::{set, PercentMetric, TxHashMap, TxHashSet};
-use parameters_toml::min_fraction_whitelist_match;
+use metric::{PercentMetric, TxHashMap};
+use std::ops::Range;
 
-pub(crate) struct WhitelistMatchFilter<'a> {
-    allowed_chems: &'a TxHashSet<ChemistryName>,
-    chem_defs: Vec<ChemistryDef>,
-    index_of_chem: TxHashMap<ChemistryName, usize>,
-    // One for each unique whitelist
-    wl_matchers: Vec<WhitelistMatcher>,
+#[derive(Default)]
+pub(crate) struct WhitelistMatchFilter {
+    /// On-demand cache of in-memory whitelists.
+    cache: WhitelistCache,
 }
 
-impl<'a> WhitelistMatchFilter<'a> {
-    pub(crate) fn new(
-        allowed_chems: &'a TxHashSet<ChemistryName>,
-        chems: &TxHashSet<ChemistryName>,
-    ) -> Result<Self> {
-        let chem_defs: Vec<_> = chems
-            .iter()
-            .map(|&chem| ChemistryDef::named(chem))
-            .collect();
-
-        let mut index_map = TxHashMap::default();
-        let mut wl_matchers = Vec::new();
-        for wl in chem_defs
-            .iter()
-            .map(cr_types::chemistry::ChemistryDef::barcode_whitelist)
-            .unique()
-        {
-            index_map.insert(wl, wl_matchers.len());
-            wl_matchers.push(WhitelistMatcher::new(wl)?);
-        }
-        let index_of_chem = chem_defs
-            .iter()
-            .map(|def| (def.name, index_map[&def.barcode_whitelist()]))
-            .collect();
-
-        Ok(WhitelistMatchFilter {
-            allowed_chems,
-            chem_defs,
-            wl_matchers,
-            index_of_chem,
-        })
-    }
-}
-
-impl<'a> ChemistryFilter<'a> for WhitelistMatchFilter<'a> {
-    fn context() -> &'static str {
-        "Whitelist based filtering"
-    }
-    fn allowed_chemistries(&self) -> &'a TxHashSet<ChemistryName> {
-        self.allowed_chems
-    }
-    fn input_chemistries(&self) -> TxHashSet<ChemistryName> {
-        self.chem_defs.iter().map(|def| def.name).collect()
-    }
+impl ChemistryFilter for WhitelistMatchFilter {
+    const CONTEXT: &'static str = "Whitelist based filtering";
     fn process_unit(
         &mut self,
+        candidates: &DetectChemistryCandidates,
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
-    ) -> Result<TxHashSet<ChemistryName>, DetectChemistryErrors> {
+    ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
         // Special case for HD CELLRANGER-7761
-        if self.chem_defs.len() == 1 && self.chem_defs[0].name == ChemistryName::SpatialHdV1 {
-            return Ok(set![ChemistryName::SpatialHdV1]);
+        if let Ok((name, _def)) = candidates.iter().exactly_one()
+            && name.is_spatial()
+        {
+            return Ok(candidates.clone());
         }
 
-        let min_frac_whitelist_match = *min_fraction_whitelist_match()
-            .map_err(DetectChemistryErrors::MissingParametersToml)?;
+        let min_frac_whitelist_match = 0.1;
         let mut all_wl_matches = TxHashMap::default();
         let mut best_wl_match = 0.0f64;
-        for chem_def in &self.chem_defs {
-            let wl_matches = self.wl_matchers[self.index_of_chem[&chem_def.name]]
-                .count_matches(reads, chem_def.barcode_range())
-                .fraction();
+        for (&name, def) in candidates {
+            let wl_matches = self.count_matches(def, reads)?.fraction();
             // TODO: Handle reads_with_bc = 0
             if wl_matches > best_wl_match {
                 best_wl_match = wl_matches;
             }
-            all_wl_matches.insert(chem_def.name, wl_matches);
+            all_wl_matches.insert(name, (def, wl_matches));
+            println!("{name}: {wl_matches}");
         }
-        println!("{all_wl_matches:#?}");
+
         let sufficient_matches: TxHashMap<_, _> = all_wl_matches
             .iter()
-            .filter(|(_, &v)| v > min_frac_whitelist_match)
+            .filter(|&(_, &(_def, v))| v > min_frac_whitelist_match)
             .collect();
         if sufficient_matches.is_empty() {
             return Err(DetectChemistryErrors::NotEnoughWhitelistMatch {
-                frac_matches: all_wl_matches.clone(),
+                frac_matches: all_wl_matches
+                    .iter()
+                    .map(|(&name, &(_def, matches))| (name, matches))
+                    .collect(),
                 unit: Box::new(unit.clone()),
             });
         }
 
-        let mut compatible_chems: TxHashSet<ChemistryName> = sufficient_matches
+        let mut compatible_chems: DetectChemistryCandidates = sufficient_matches
             .iter()
-            .filter_map(|(&&chem, &&wl_matches)| {
-                (wl_matches > 0.75f64 * best_wl_match).then_some(chem)
+            .filter_map(|(&&chem, &&(def, wl_matches))| {
+                (wl_matches > 0.75f64 * best_wl_match).then_some((chem, def.clone()))
             })
             .collect();
 
         // Prefer the more specific chemistry when MFRP_47 and at least one other more specific
         // MFRP chemistry are compatible.
         if compatible_chems
-            .iter()
-            .any(|chem| matches!(chem, ChemistryName::MFRP_RNA | ChemistryName::MFRP_Ab))
+            .keys()
+            .any(|name| matches!(name, ChemistryName::MFRP_RNA | ChemistryName::MFRP_Ab))
         {
             compatible_chems.remove(&ChemistryName::MFRP_47);
         }
@@ -117,20 +80,79 @@ impl<'a> ChemistryFilter<'a> for WhitelistMatchFilter<'a> {
             (ChemistryName::MFRP_RNA, ChemistryName::MFRP_RNA_R1),
             (ChemistryName::MFRP_Ab, ChemistryName::MFRP_Ab_R1),
             (ChemistryName::MFRP_Ab_R2pos50, ChemistryName::MFRP_Ab_R1),
+            (ChemistryName::MFRP_96_RNA_R2, ChemistryName::MFRP_96_R1),
+            (ChemistryName::Flex_v2_RNA_R2, ChemistryName::Flex_v2_R1),
+            (ChemistryName::Flex_v2_Ab_R2_45, ChemistryName::Flex_v2_R1),
+            (ChemistryName::Flex_v2_Ab_R2_64, ChemistryName::Flex_v2_R1),
+            (
+                ChemistryName::Flex_v2_CRISPR_R2_1,
+                ChemistryName::Flex_v2_R1,
+            ),
         ];
         for (r2_chem, r1_chem) in select_superior_matches_of_pair {
-            if compatible_chems.is_superset(&set![r2_chem, r1_chem]) {
+            if compatible_chems.contains_key(&r2_chem) && compatible_chems.contains_key(&r1_chem) {
                 let inferior_chemistry =
-                    if sufficient_matches[&r2_chem] < sufficient_matches[&r1_chem] {
+                    if sufficient_matches[&r2_chem].1 < sufficient_matches[&r1_chem].1 {
                         r2_chem
                     } else {
                         r1_chem
                     };
-                assert!(compatible_chems.remove(&inferior_chemistry));
+                assert!(compatible_chems.remove(&inferior_chemistry).is_some());
             }
         }
 
         Ok(compatible_chems)
+    }
+}
+
+impl WhitelistMatchFilter {
+    fn count_matches(
+        &mut self,
+        chem_def: &ChemistryDef,
+        read_pairs: &[ReadPair],
+    ) -> Result<WhitelistMatchStats, DetectChemistryErrors> {
+        let (whitelist, barcode_lengths) = self
+            .cache
+            .fetch(chem_def.barcode_whitelist_spec())
+            .map_err(DetectChemistryErrors::WhitelistLoadError)?
+            .unzip();
+
+        let mut stats = WhitelistMatchStats::default();
+
+        let barcode_components = chem_def.barcode_construct();
+        let barcode_extraction = chem_def.barcode_extraction();
+
+        fn contains(
+            whitelist: BarcodeConstruct<&Whitelist>,
+            sseq: BarcodeConstruct<&[u8]>,
+        ) -> bool {
+            // NOTE: This is robust to a single N cycle
+            whitelist
+                .zip(sseq)
+                .map_option(|(wl, seq)| {
+                    wl.match_to_whitelist_allow_one_n(BcSegSeq::from_bytes(seq), false)
+                })
+                .is_some()
+        }
+
+        for read_pair in read_pairs {
+            stats.total_reads += 1;
+
+            if let Ok((_bc_ranges, bc)) = extract_barcode(
+                read_pair,
+                barcode_components,
+                barcode_extraction,
+                whitelist,
+                barcode_lengths,
+                0,
+            ) {
+                stats.reads_with_bc += 1;
+                if contains(whitelist, bc.sequence()) {
+                    stats.reads_with_bc_in_wl += 1;
+                }
+            }
+        }
+        Ok(stats)
     }
 }
 
@@ -149,48 +171,37 @@ impl WhitelistMatchStats {
     }
 }
 
-pub struct WhitelistMatcher {
-    whitelist: BarcodeConstruct<Whitelist>,
+/// Cache of whitelists to avoid repeatedly loading the same one.
+///
+/// Also caches the whitelist barcode length range.
+#[derive(Default)]
+struct WhitelistCache {
+    cache: TxHashMap<WhitelistSpec, (Whitelist, Range<usize>)>,
 }
 
-impl WhitelistMatcher {
-    pub fn new(barcode_whitelist: BarcodeConstruct<&WhitelistSpec>) -> Result<Self> {
-        Ok(WhitelistMatcher {
-            // Load this whitelist as a "plain" whitelist, regardless of type.
-            //
-            // This is sufficient for checking membership in the whitelist, but neglects
-            // all translation information. Using this method instead of as_whitelist
-            // reduces memory consumption since we are working in a context where
-            // we only care about matching to the whitelist, but not using translation.
-            whitelist: WhitelistSource::construct(barcode_whitelist)?
-                .map_result(|source| Ok(Whitelist::Plain(source.as_set()?)))?,
-        })
-    }
-
-    fn count_matches(
-        &self,
-        read_pairs: &[ReadPair],
-        bc_range: BarcodeConstruct<RpRange>,
-    ) -> WhitelistMatchStats {
-        let mut stats = WhitelistMatchStats::default();
-        for read_pair in read_pairs {
-            stats.total_reads += 1;
-            if let Some(seq) = bc_range.map_option(|r| read_pair.get_range(r, ReadPart::Seq)) {
-                stats.reads_with_bc += 1;
-                if self.contains(seq) {
-                    stats.reads_with_bc_in_wl += 1;
-                }
+impl WhitelistCache {
+    /// Fetch whitelists for specs, possibly loading if we don't have one already.
+    pub(crate) fn fetch(
+        &mut self,
+        specs: BarcodeConstruct<&WhitelistSpec>,
+    ) -> Result<BarcodeConstruct<(&Whitelist, &Range<usize>)>> {
+        // Ensure we have all the specs loaded.
+        for spec in specs.iter() {
+            if !self.cache.contains_key(spec) {
+                // Load this whitelist as a "plain" whitelist, regardless of type.
+                //
+                // This is sufficient for checking membership in the whitelist, but neglects
+                // all translation information. Using this method instead of as_whitelist
+                // reduces memory consumption since we are working in a context where
+                // we only care about matching to the whitelist, but not using translation.
+                let whitelist = Whitelist::Plain(spec.as_source()?.as_set()?);
+                let lengths = whitelist.sequence_lengths();
+                self.cache.insert(spec.clone(), (whitelist, lengths));
             }
         }
-        stats
-    }
-
-    fn contains(&self, sseq: BarcodeConstruct<&[u8]>) -> bool {
-        // NOTE: This is robust to a single N cycle
-        self.whitelist
-            .as_ref()
-            .zip(sseq)
-            .map_option(|(wl, seq)| wl.match_to_whitelist(BcSegSeq::from_bytes(seq), false))
-            .is_some()
+        Ok(specs.map(|spec| {
+            let (wl, lens) = &self.cache[spec];
+            (wl, lens)
+        }))
     }
 }

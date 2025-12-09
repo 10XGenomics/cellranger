@@ -1,8 +1,9 @@
 //! FilterExactClonotypes stage code
+#![expect(missing_docs)]
 
 use anyhow::Result;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use vdj_asm_utils::exact_clonotyping::ExactClonotype;
 use vdj_filter_barcodes::filter_clonotype_level::{
     build_wlcontaminfo_per_exact_clonotype, whitelist_contamination_filter,
 };
-use vdj_filter_barcodes::filter_log::{FilterLogEntry, FilterLogger, VdjFilterLogFormat};
+use vdj_filter_barcodes::filter_log::{VdjFilterLogFormat, extend_filter_log};
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct FilterExactClonotypesStageInputs {
@@ -77,13 +78,4 @@ impl MartianMain for FilterExactClonotypes {
             filter_diagnostics: filter_diagnostics_file,
         })
     }
-}
-
-fn extend_filter_log(in_fpath: VdjFilterLogFormat, out_fpath: &VdjFilterLogFormat) -> FilterLogger {
-    let in_filter_log: Vec<FilterLogEntry> = in_fpath.read_all().unwrap();
-    let mut filter_logger = FilterLogger::new(out_fpath).unwrap();
-    for entry in in_filter_log {
-        filter_logger.log(&entry);
-    }
-    filter_logger
 }

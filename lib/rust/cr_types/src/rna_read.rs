@@ -1,5 +1,6 @@
-//! ReadPair wrapper object for RNA reads from Single Cell 3' nad Single Cell 5' / VDJ ibraries.
+//! ReadPair wrapper object for RNA reads from Single Cell 3' and Single Cell 5' / VDJ ibraries.
 //! Provides access to the barcode and allows for dynamic trimming.
+#![expect(missing_docs)]
 use crate::chemistry::{
     BarcodeExtraction, BarcodeReadComponent, ChemistryDef, UmiReadComponent, UmiTranslation,
 };
@@ -13,25 +14,31 @@ use barcode::{
     Barcode, BarcodeConstruct, BarcodeSegment, BcQual, BcSegQual, BcSegSeq, BcSeq,
     SegmentedBarcode, Segments, Whitelist,
 };
-use fastq_set::adapter_trimmer::{intersect_ranges, AdapterTrimmer, ReadAdapterCatalog};
+use fastq_set::adapter_trimmer::{AdapterTrimmer, ReadAdapterCatalog, intersect_ranges};
+use fastq_set::adapters::X12_CAPTURE_SEQ;
 use fastq_set::metric_utils::ILLUMINA_QUAL_OFFSET;
 use fastq_set::read_pair::{ReadPair, ReadPart, RpRange, WhichRead};
 use fastq_set::read_pair_iter::InputFastqs;
 use fastq_set::{FastqProcessor, ProcessResult};
-use fxhash::FxHashMap;
-use itertools::{zip_eq, Itertools};
+use itertools::{Itertools, chain, zip_eq};
 use martian_derive::MartianType;
+use metric::TxHashMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::cmp::{max, min};
 use std::ops::Range;
-use umi::translation::SplintToUmiTranslator;
-use umi::{Umi, UmiQual, UmiSeq};
-
-/// The minimum MAPQ threshold for a confidently-mapped read.
-/// Ensure this value matches cr_constants.STAR_DEFAULT_HIGH_CONF_MAPQ.
-pub const HIGH_CONF_MAPQ: u8 = 255;
+use umi::{SplintToUmiTranslator, Umi, UmiQual, UmiSeq};
 
 const MAX_UMI_PARTS: usize = 4;
+
+/// Return the position of the first match of `query` in `target` permitting up to one mismatch.
+pub fn find_with_one_mismatch(target: &[u8], query: &[u8]) -> Option<usize> {
+    target.windows(query.len()).position(|window| {
+        zip_eq(window, query)
+            .filter(|(a, b)| a != b)
+            .at_most_one()
+            .is_ok()
+    })
+}
 
 /// `RnaChunk` represents a chunk of reads from any of our RNA products.
 /// This is typically created by the `SETUP_CHUNKS` stage in our pipelines.
@@ -64,7 +71,7 @@ pub struct RnaChunk {
     pub read_group: String,
     pub subsample_rate: Option<f64>,
     pub library_type: LibraryType,
-    pub read_lengths: FxHashMap<WhichRead, usize>,
+    pub read_lengths: TxHashMap<WhichRead, usize>,
     pub chunk_id: u16,
     pub library_id: u16,
     pub fastq_id: Option<String>,
@@ -74,7 +81,7 @@ pub struct RnaChunk {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianType)]
 pub struct UmiExtractor {
     /// A optional translator for each of the UMI parts
-    translators: ArrayVec<[Option<SplintToUmiTranslator>; MAX_UMI_PARTS]>,
+    translators: ArrayVec<Option<SplintToUmiTranslator>, MAX_UMI_PARTS>,
 }
 
 impl UmiExtractor {
@@ -104,7 +111,7 @@ impl UmiExtractor {
         &self,
         read: &ReadPair,
         umi_read_parts: &[UmiReadComponent],
-    ) -> Result<(ArrayVec<[UmiPart; MAX_UMI_PARTS]>, UmiSeq)> {
+    ) -> Result<(ArrayVec<UmiPart, MAX_UMI_PARTS>, UmiSeq)> {
         let mut umi_parts = ArrayVec::new();
         let mut umi_seq = UmiSeq::new();
         for (umi_part, translator) in zip_eq(umi_read_parts, &self.translators) {
@@ -148,13 +155,13 @@ impl RnaChunk {
         sample_id: &str,
         library_id: u16,
         chunk_id: u16,
-    ) -> RnaChunk {
+    ) -> Result<RnaChunk> {
         let gem_group = sample_def.gem_group.unwrap_or(1);
         let (flowcell, lane) = if fastqs.r1.is_empty() {
             // For testing.
             (String::default(), 0)
         } else {
-            let ilumina_header = fastqs.get_header_info().unwrap().unwrap_or_default();
+            let ilumina_header = fastqs.get_header_info()?.unwrap_or_default();
             (ilumina_header.flowcell, ilumina_header.lane)
         };
         let read_group = format!("{sample_id}:{library_id}:{gem_group}:{flowcell}:{lane}");
@@ -167,7 +174,7 @@ impl RnaChunk {
         .flatten()
         .collect();
 
-        RnaChunk {
+        Ok(RnaChunk {
             chemistry: chemistry.clone(),
             gem_group,
             fastqs,
@@ -179,7 +186,7 @@ impl RnaChunk {
             library_id,
             fastq_id: sample_def.fastq_id.clone(),
             umi_extractor: UmiExtractor::new(&chemistry.umi),
-        }
+        })
     }
 
     /// Set the subsample rate
@@ -282,17 +289,35 @@ impl RnaProcessor {
     }
 }
 
-fn extract_barcode(
+/// Given the components of an extraction strategy, extract the barcode.
+///
+/// Returns the ranges from which the barcode components were extracted,
+/// as well as the barcode segments.
+pub fn extract_barcode(
+    read: &ReadPair,
     barcode_components: BarcodeConstruct<&BarcodeReadComponent>,
     barcode_extraction: Option<&BarcodeExtraction>,
     whitelist: BarcodeConstruct<&Whitelist>,
     barcode_lengths: BarcodeConstruct<&Range<usize>>,
-    read: &ReadPair,
     gem_group: u16,
 ) -> Result<(BarcodeConstruct<RpRange>, SegmentedBarcode)> {
     let bc_range = match barcode_extraction {
-        Some(BarcodeExtraction::Independent) | None => {
-            barcode_components.map(BarcodeReadComponent::rprange)
+        None => barcode_components.map(BarcodeReadComponent::rprange),
+        Some(BarcodeExtraction::VariableMultiplexingBarcode {
+            min_offset,
+            max_offset,
+        }) => {
+            BarcodeConstruct::new_gel_bead_and_probe(
+                // Gel bead barcode position is fixed.
+                barcode_components.gel_bead().rprange(),
+                get_probe_barcode_range(
+                    read,
+                    barcode_components,
+                    whitelist.probe(),
+                    *min_offset,
+                    *max_offset,
+                ),
+            )
         }
         Some(BarcodeExtraction::JointBc1Bc2 {
             min_offset,
@@ -367,6 +392,73 @@ fn extract_barcode(
     Ok((bc_range, barcode))
 }
 
+/// Locate the probe barcode and return its position.
+/// When sequenced on R1, locate the capture sequence and return the position after it if found.
+/// Otherwise return the position of the first valid probe barcode between `min_offset` and `max_offset`.
+pub fn get_probe_barcode_range(
+    read: &ReadPair,
+    barcode_components: BarcodeConstruct<&BarcodeReadComponent>,
+    whitelist: &Whitelist,
+    min_offset: i64,
+    max_offset: i64,
+) -> RpRange {
+    // Check all possible positions for a valid probe barcode.
+    // Default to no offset if we don't find any.
+    let default_probe_range = barcode_components.probe().rprange();
+
+    if min_offset == 0 && max_offset == 0 {
+        return default_probe_range;
+    }
+
+    // Locate the probe barcode by locating the capture sequence.
+    let additional_barcode_pos = if default_probe_range.read() == WhichRead::R1 {
+        let gel_bead = barcode_components.gel_bead();
+        assert_eq!(gel_bead.read_type, WhichRead::R1);
+        assert_eq!(gel_bead.offset(), 0);
+        let r1_seq = read.get(WhichRead::R1, ReadPart::Seq).unwrap();
+        // Do not return a match to the capture sequence if it overlaps with the gel-bead barcode.
+        find_with_one_mismatch(r1_seq, X12_CAPTURE_SEQ)
+            .filter(|&x12_pos| x12_pos >= gel_bead.length())
+            .map(|x12_pos| x12_pos + X12_CAPTURE_SEQ.len())
+    } else {
+        None
+    };
+
+    // Return the position of the first valid probe barcode following the capture sequence
+    // or between `min_offset` and `max_offset`.
+    let candidate_barcode_positions = chain(
+        additional_barcode_pos,
+        (min_offset..=max_offset).map(|offset| {
+            let new_offset = default_probe_range.offset() as i64 + offset;
+            assert!(new_offset >= 0);
+            new_offset as usize
+        }),
+    );
+    match candidate_barcode_positions
+        .filter_map(|position| {
+            let range = RpRange::new(
+                default_probe_range.read(),
+                position,
+                default_probe_range.len(),
+            );
+            read.get_range(range, ReadPart::Seq).and_then(|seq| {
+                whitelist
+                    .contains(&BcSegSeq::from_bytes_unchecked(seq))
+                    .then_some(range)
+            })
+        })
+        .at_most_one()
+    {
+        // Found no perfect match. Return the default range.
+        Ok(None) => default_probe_range,
+        // Found a perfect match. Return it.
+        Ok(Some(range)) => range,
+        // Found more than one perfect match. Return the first match.
+        // TODO: Annotate the barcode as `InvalidAmbiguous`
+        Err(mut iter) => iter.next().unwrap(),
+    }
+}
+
 impl FastqProcessor for RnaProcessor {
     type ReadType = RnaRead;
     /// This function creates a processed `RnaRead` from a raw `ReadPair`
@@ -437,11 +529,11 @@ impl FastqProcessor for RnaProcessor {
         };
 
         let (bc_range, barcode) = match extract_barcode(
+            &read,
             chem.barcode_construct(),
             chem.barcode_extraction(),
             self.whitelist.as_ref(),
             self.barcode_lengths.as_ref(),
-            &read,
             self.gem_group(),
         ) {
             Ok(value) => value,
@@ -527,7 +619,7 @@ pub struct RnaRead {
     pub segmented_barcode: SegmentedBarcode,
     pub bc_range: BarcodeConstruct<RpRange>,
     pub umi: Umi,
-    pub umi_parts: ArrayVec<[UmiPart; MAX_UMI_PARTS]>,
+    pub umi_parts: ArrayVec<UmiPart, MAX_UMI_PARTS>,
     pub r1_range: RpRange,
     pub r2_range: Option<RpRange>,
     pub library_type: LibraryType,
@@ -594,14 +686,8 @@ impl RnaRead {
     pub fn r1_range(&self) -> RpRange {
         self.r1_range
     }
-    pub fn r1_read(&self) -> WhichRead {
-        self.r1_range.read()
-    }
     pub fn r2_range(&self) -> Option<RpRange> {
         self.r2_range
-    }
-    pub fn r2_read(&self) -> Option<WhichRead> {
-        self.r2_range.map(fastq_set::read_pair::RpRange::read)
     }
     pub fn readpair(&self) -> &ReadPair {
         &self.read
@@ -756,7 +842,7 @@ impl RnaRead {
         &mut self,
         read_range: RpRange,
         trimmers: &mut [AdapterTrimmer<'_>],
-    ) -> (Range<usize>, FxHashMap<String, RpRange>) {
+    ) -> (Range<usize>, TxHashMap<String, RpRange>) {
         let seq = self.read.get_range(read_range, ReadPart::Seq).unwrap();
         let trim_results: Vec<_> = trimmers
             .iter_mut()
@@ -771,7 +857,7 @@ impl RnaRead {
         let adapter_pos =
             trim_results
                 .into_iter()
-                .fold(FxHashMap::default(), |mut acc, (name, trim_result)| {
+                .fold(TxHashMap::default(), |mut acc, (name, trim_result)| {
                     let mut this_range = read_range;
                     this_range.shrink(&trim_result.adapter_range);
                     acc.insert(name, this_range);
@@ -787,7 +873,7 @@ impl RnaRead {
     /// * `adapter_catalog`: Packages all the adapter trimmers
     ///
     /// # Output
-    /// * `FxHashMap<String, RpRange>` - where the key is the name of the adapter
+    /// * `TxHashMap<String, RpRange>` - where the key is the name of the adapter
     ///   and values is the `RpRange` where the adapter is found. Clearly, the adapters
     ///   which are not present in the read will not be part of the output. The `ReadAdapterCatalog`
     ///   guarantees that no two adapters share the same name, so there is no confusion.
@@ -797,8 +883,8 @@ impl RnaRead {
     pub fn trim_adapters(
         &mut self,
         adapter_catalog: &mut ReadAdapterCatalog<'_>,
-    ) -> FxHashMap<String, RpRange> {
-        let mut result = FxHashMap::default();
+    ) -> TxHashMap<String, RpRange> {
+        let mut result = TxHashMap::default();
         // Trim r1
         {
             let ad_trimmers = adapter_catalog.get_mut_trimmers(self.r1_range.read());
@@ -827,19 +913,33 @@ impl RnaRead {
 mod tests {
     use super::*;
     use crate::chemistry::{BarcodeKind, ChemistryName, UmiWhitelistSpec};
-    use barcode::{BarcodeSegmentState, Segments, WhitelistSpec};
+    use BarcodeConstruct::GelBeadOnly;
+    use barcode::whitelist::ReqStrand;
+    use barcode::{BarcodeSegmentState, Segments, WhitelistSource, WhitelistSpec};
     use itertools::assert_equal;
-    use metric::{set, TxHashSet};
+    use metric::{Histogram, TxHashSet, set};
     use proptest::arbitrary::any;
     use proptest::proptest;
     use serde_json;
     use std::borrow::Cow;
     use std::fs::File;
     use std::path::Path;
-    use BarcodeConstruct::GelBeadOnly;
+
+    #[test]
+    fn test_find_seq() {
+        assert_eq!(find_with_one_mismatch(b"Hello, world!", b"world"), Some(7));
+        assert_eq!(find_with_one_mismatch(b"Hello, world!", b"wxrld"), Some(7));
+        assert_eq!(find_with_one_mismatch(b"Hello, world!", b"wxxld"), None);
+    }
 
     fn processor(chunk: RnaChunk) -> RnaProcessor {
-        let whitelist = Whitelist::construct(chunk.chemistry.barcode_whitelist()).unwrap();
+        let whitelist = chunk
+            .chemistry
+            .barcode_whitelist_source()
+            .unwrap()
+            .as_ref()
+            .map_result(WhitelistSource::as_whitelist)
+            .unwrap();
         RnaProcessor::new(chunk, whitelist)
     }
 
@@ -862,7 +962,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::Gex,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -902,7 +1002,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -930,7 +1030,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -964,7 +1064,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -1054,7 +1154,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -1139,7 +1239,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -1229,7 +1329,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: None,
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -1314,7 +1414,7 @@ mod tests {
             read_group: "Blah".into(),
             subsample_rate: Some(0.2),
             library_type: LibraryType::VdjAuto,
-            read_lengths: FxHashMap::default(),
+            read_lengths: TxHashMap::default(),
             chunk_id: 0,
             library_id: 0,
             fastq_id: None,
@@ -1364,7 +1464,7 @@ mod tests {
                     read_group: "Blah".into(),
                     subsample_rate: None,
                     library_type: LibraryType::VdjAuto,
-                    read_lengths: FxHashMap::default(),
+                    read_lengths: TxHashMap::default(),
                     chunk_id: 0,
                     library_id: 0, fastq_id: None,
                 };
@@ -1409,7 +1509,7 @@ mod tests {
                     read_group: "Blah".into(),
                     subsample_rate: None,
                     library_type: LibraryType::VdjAuto,
-                    read_lengths: FxHashMap::default(),
+                    read_lengths: TxHashMap::default(),
                     chunk_id: 0,
                     library_id: 0, fastq_id: None,
                 };
@@ -1443,7 +1543,7 @@ mod tests {
         use fastq_set::read_pair_iter::ReadPairIter;
         use metric::SimpleHistogram;
 
-        let vdj_adapters: FxHashMap<WhichRead, Vec<Adapter>> =
+        let vdj_adapters: TxHashMap<WhichRead, Vec<Adapter>> =
             serde_json::from_reader(File::open("test/rna_read/vdj_adapters.json").unwrap())
                 .unwrap();
         let mut ad_catalog = ReadAdapterCatalog::from(&vdj_adapters);
@@ -1478,7 +1578,7 @@ mod tests {
                 read_group: "Blah".into(),
                 subsample_rate: None,
                 library_type: LibraryType::VdjAuto,
-                read_lengths: FxHashMap::default(),
+                read_lengths: TxHashMap::default(),
                 chunk_id: 0,
                 library_id: 0,
                 fastq_id: None,
@@ -1541,7 +1641,7 @@ mod tests {
                 read_group: "Blah".into(),
                 subsample_rate: None,
                 library_type: LibraryType::VdjAuto,
-                read_lengths: FxHashMap::default(),
+                read_lengths: TxHashMap::default(),
                 chunk_id: 0,
                 library_id: 0,
                 fastq_id: None,
@@ -1791,6 +1891,96 @@ mod tests {
         dbg!(library_info);
     }
 
+    #[test]
+    fn test_barcode_extraction_variable_multiplexing_barcode() {
+        let gb_bc = "CGTAGCTGCTAGA";
+        let probe_bc = "ACTGCTGA";
+
+        let whitelist =
+            make_seqs_into_whitelists(BarcodeConstruct::new_gel_bead_and_probe(gb_bc, probe_bc));
+
+        let components = BarcodeConstruct::new_gel_bead_and_probe(
+            BarcodeReadComponent {
+                read_type: WhichRead::R1,
+                kind: BarcodeKind::GelBead,
+                offset: 0,
+                length: gb_bc.len(),
+                whitelist: dummy_whitelist_spec(),
+            },
+            BarcodeReadComponent {
+                read_type: WhichRead::R1,
+                kind: BarcodeKind::GelBead,
+                offset: gb_bc.len(),
+                length: probe_bc.len(),
+                whitelist: dummy_whitelist_spec(),
+            },
+        );
+
+        let extract = |read: &ReadPair, extraction: Option<&BarcodeExtraction>| {
+            let (ranges, bc) = extract_barcode(
+                read,
+                components.as_ref(),
+                extraction,
+                whitelist.as_ref(),
+                whitelist.as_ref().map(Whitelist::sequence_lengths).as_ref(),
+                0,
+            )
+            .unwrap();
+            (ranges, bc.segments())
+        };
+
+        // Create a single read with an extra base between the two barcodes.
+        let read = make_read(&format!("{gb_bc}T{probe_bc}"));
+
+        // Default extraction should fail.
+        let (ranges, segments) = extract(&read, None);
+        assert!(segments.gel_bead().is_valid());
+        assert_eq!(components.as_ref().gel_bead().rprange(), ranges.gel_bead());
+        // should have an invalid probe barcode with default range
+        assert!(!segments.probe().is_valid());
+        assert_eq!(components.as_ref().probe().rprange(), ranges.probe());
+
+        // Extraction allowing for a 1 base offset should succeed.
+        let (ranges, segments) = extract(
+            &read,
+            Some(&BarcodeExtraction::VariableMultiplexingBarcode {
+                min_offset: 0,
+                max_offset: 1,
+            }),
+        );
+        assert!(segments.gel_bead().is_valid());
+        assert_eq!(components.as_ref().gel_bead().rprange(), ranges.gel_bead());
+        assert!(segments.probe().is_valid());
+        assert_eq!(
+            components.as_ref().probe().rprange().offset() + 1,
+            ranges.probe().offset()
+        );
+    }
+
+    fn make_read(seq: &str) -> ReadPair {
+        let read1 = fastq::OwnedRecord {
+            head: b"some_name".to_vec(),
+            seq: seq.as_bytes().to_vec(),
+            qual: vec![b'I'; seq.len()],
+            sep: None,
+        };
+        let input = [Some(read1), None, None, None];
+        ReadPair::new(input)
+    }
+
+    fn dummy_whitelist_spec() -> WhitelistSpec {
+        WhitelistSpec::TxtFile {
+            name: "custom".into(),
+            translation: false,
+            strand: ReqStrand::Forward,
+        }
+    }
+
+    /// Create whitelists with a single item for each provided seq.
+    fn make_seqs_into_whitelists(seqs: BarcodeConstruct<&str>) -> BarcodeConstruct<Whitelist> {
+        seqs.map(|bc| Whitelist::Plain(set![BcSegSeq::from_bytes(bc.as_bytes())]))
+    }
+
     fn test_barcode_extraction_joint(
         prefix: String,
         bc1: String,
@@ -1808,22 +1998,11 @@ mod tests {
         } else {
             (0..bc2.len()).map(|_| 'N').collect()
         };
-        let seq = format!("{prefix}{bc1_fill}{bc2_fill}TTCAGGT",);
-        let read1 = fastq::OwnedRecord {
-            head: b"some_name".to_vec(),
-            seq: seq.as_bytes().to_vec(),
-            qual: vec![b'I'; seq.len()],
-            sep: None,
-        };
-        let input = [Some(read1), None, None, None];
-        let read = ReadPair::new(input);
+        let read = make_read(&format!("{prefix}{bc1_fill}{bc2_fill}TTCAGGT"));
 
-        let whitelist = BarcodeConstruct::Segmented(
-            [&bc1, &bc2]
-                .into_iter()
-                .map(|bc| Whitelist::Plain(set![BcSegSeq::from_bytes(bc.as_bytes())]))
-                .collect(),
-        );
+        let whitelist = make_seqs_into_whitelists(BarcodeConstruct::Segmented(
+            [bc1.as_str(), bc2.as_str()].into_iter().collect(),
+        ));
 
         let components = BarcodeConstruct::Segmented(Segments {
             segment1: BarcodeReadComponent {
@@ -1831,25 +2010,20 @@ mod tests {
                 kind: BarcodeKind::SpotSegment,
                 offset: 9,
                 length: 19,
-                whitelist: WhitelistSpec::TxtFile {
-                    name: "custom".into(),
-                    translation: false,
-                },
+                whitelist: dummy_whitelist_spec(),
             },
             segment2: BarcodeReadComponent {
                 read_type: WhichRead::R1,
                 kind: BarcodeKind::SpotSegment,
                 offset: 28,
                 length: 18,
-                whitelist: WhitelistSpec::TxtFile {
-                    name: "custom".into(),
-                    translation: false,
-                },
+                whitelist: dummy_whitelist_spec(),
             },
             segment3: None,
             segment4: None,
         });
         let (bc_range, barcode) = extract_barcode(
+            &read,
             components.as_ref(),
             Some(&BarcodeExtraction::JointBc1Bc2 {
                 min_offset: 8,
@@ -1857,7 +2031,6 @@ mod tests {
             }),
             whitelist.as_ref(),
             whitelist.as_ref().map(Whitelist::sequence_lengths).as_ref(),
-            &read,
             1,
         )
         .unwrap();
@@ -1877,7 +2050,7 @@ mod tests {
                             bc2.as_bytes(),
                             BarcodeSegmentState::ValidBeforeCorrection
                         )
-                    ],))
+                    ]))
                 );
 
                 assert_eq!(

@@ -7,7 +7,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+from six import ensure_binary
 
+import cellranger.bam_constants as bam_constants
 import cellranger.constants as cr_constants
 import cellranger.utils as cr_utils
 import tenkit.constants as tk_constants
@@ -21,27 +23,27 @@ def pos_sort_key(read: AlignedSegment) -> tuple:
 
 
 def get_read_barcode(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.PROCESSED_BARCODE_TAG)
+    return _get_read_tag(read, bam_constants.PROCESSED_BARCODE_TAG)
 
 
 def get_read_raw_barcode(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.RAW_BARCODE_TAG)
+    return _get_read_tag(read, bam_constants.RAW_BARCODE_TAG)
 
 
 def get_read_barcode_qual(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.RAW_BARCODE_QUAL_TAG)
+    return _get_read_tag(read, bam_constants.RAW_BARCODE_QUAL_TAG)
 
 
 def get_read_umi_qual(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.UMI_QUAL_TAG)
+    return _get_read_tag(read, bam_constants.UMI_QUAL_TAG)
 
 
 def get_read_umi(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.PROCESSED_UMI_TAG)
+    return _get_read_tag(read, bam_constants.PROCESSED_UMI_TAG)
 
 
 def get_read_raw_umi(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.RAW_UMI_TAG)
+    return _get_read_tag(read, bam_constants.RAW_UMI_TAG)
 
 
 def get_read_gene_ids(read: AlignedSegment):
@@ -53,7 +55,7 @@ def get_read_gene_ids(read: AlignedSegment):
     Returns:
         _type_: _description_
     """
-    id_str: str | None = _get_read_tag(read, cr_constants.FEATURE_IDS_TAG)
+    id_str: str | None = _get_read_tag(read, bam_constants.FEATURE_IDS_TAG)
     if id_str is None:
         return None
     assert isinstance(id_str, str)
@@ -77,7 +79,7 @@ def _get_read_tag(read: AlignedSegment, tag):
 
 
 def get_read_extra_flags(read: AlignedSegment):
-    return _get_read_tag(read, cr_constants.EXTRA_FLAGS_TAG) or 0
+    return _get_read_tag(read, bam_constants.EXTRA_FLAGS_TAG) or 0
 
 
 def get_genome_from_read(read: AlignedSegment, chroms, genomes):
@@ -107,15 +109,12 @@ EXTRA_FLAGS_LOW_SUPPORT_UMI = 2
 # EXTRA_FLAGS_GENE_DISCORDANT = 4
 EXTRA_FLAGS_UMI_COUNT = 8
 EXTRA_FLAGS_CONF_MAPPED_FEATURE = 16
-EXTRA_FLAGS_FILTERED_TARGET_UMI = 32
+## No longer used
+# EXTRA_FLAGS_FILTERED_TARGET_UMI = 32
 
 
 def is_read_low_support_umi(read: AlignedSegment) -> bool:
     return (get_read_extra_flags(read) & EXTRA_FLAGS_LOW_SUPPORT_UMI) > 0
-
-
-def is_read_filtered_target_umi(read: AlignedSegment) -> bool:
-    return (get_read_extra_flags(read) & EXTRA_FLAGS_FILTERED_TARGET_UMI) > 0
 
 
 def is_read_umi_count(read: AlignedSegment) -> bool:
@@ -150,7 +149,6 @@ def is_read_dupe_candidate(
         and (umi is not None or not use_umis)
         and (get_read_barcode(read) is not None)
         and not is_read_low_support_umi(read)
-        and not is_read_filtered_target_umi(read)
         and (
             is_read_conf_mapped_to_transcriptome(read, high_conf_mapq)
             or is_read_conf_mapped_to_feature(read)
@@ -270,7 +268,9 @@ def get_full_alignment_base_quality_scores(
         np.array: numpy array of quality scores
     """
     # pylint: disable=no-member
-    quality_scores = np.fromstring(read.qual, dtype=np.byte) - tk_constants.ILLUMINA_QUAL_OFFSET
+    quality_scores = (
+        np.frombuffer(ensure_binary(read.qual), dtype=np.byte) - tk_constants.ILLUMINA_QUAL_OFFSET
+    )
 
     start_pos = 0
 

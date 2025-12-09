@@ -64,7 +64,7 @@ def _get_bin_range(data: HistogramData, min_bin_width=0.05):
 
 def _round_to_1(x):
     """Returns the number rounded to one significant digit."""
-    return round(x, -int(floor(log10(abs(x)))))
+    return round(x, -floor(log10(abs(x))))
 
 
 def make_histogram_help(is_antibody, is_spatial):

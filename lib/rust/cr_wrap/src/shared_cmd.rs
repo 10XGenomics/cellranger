@@ -1,10 +1,11 @@
-use crate::deprecated_os::oscheck;
+#![expect(missing_docs)]
 use crate::env::PkgEnv;
 use crate::mkref::Mkref;
-use crate::telemetry::{TelemetryCollector, TELEMETRY_BIN_PATH};
-use crate::utils::{external_subcommand, AllArgs};
+use crate::telemetry::{TELEMETRY_BIN_PATH, TelemetryCollector};
+use crate::utils::{AllArgs, external_subcommand};
 use anyhow::Result;
 use clap::{self, Parser};
+use multi::oscheck;
 use std::process::ExitCode;
 
 // Shared between spaceranger/cellranger
@@ -107,7 +108,9 @@ pub fn run_hidden(args: HiddenCmd) -> Result<ExitCode> {
         HiddenCmd::Mrp(args) => external_subcommand("mrp", &args),
         HiddenCmd::Bamtofastq(args) => external_subcommand("bamtofastq", &args),
         HiddenCmd::Tarmri(args) => external_subcommand("tarmri", &args),
-        HiddenCmd::OsCheck(_) => oscheck().map(|()| ExitCode::SUCCESS),
+        HiddenCmd::OsCheck(_) => {
+            oscheck(|warning| eprintln!("{warning}")).map(|()| ExitCode::SUCCESS)
+        }
         // pass through into the general CR env
         HiddenCmd::Pass(args) => {
             if !args.input.is_empty() {

@@ -1,9 +1,10 @@
 //! Martian stage LOGIC_NOT
 //! Return the logical not of its input argument.
+#![deny(missing_docs)]
 
 use anyhow::Result;
 use martian::{MartianMain, MartianRover};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 
 /// The Martian stage inputs.

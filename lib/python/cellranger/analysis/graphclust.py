@@ -164,11 +164,11 @@ def pipe_unweighted_edgelist_to_convert(matrix, bin_filename):
             proc.stdin.close()
             proc.wait()
             raise ChildProcessError(
-                "'convert' command terminated early with exit code %d" % proc.returncode
+                f"'convert' command terminated early with exit code {proc.returncode}"
             )
 
         # Stream text triplets to 'convert'
-        print("Writing %d elements." % len(matrix.row))
+        print(f"Writing {len(matrix.row)} elements.")
 
         try:
             _write_to_proc(proc, zip(matrix.row, matrix.col))
@@ -176,13 +176,13 @@ def pipe_unweighted_edgelist_to_convert(matrix, bin_filename):
             if e.errno == errno.EPIPE:
                 raise ChildProcessError(
                     "'convert' binary closed the pipe before we finished "
-                    "writing to it. It terminated with exit code %d" % proc.returncode
+                    f"writing to it. It terminated with exit code {proc.returncode}"
                 ) from e
             else:
                 raise
 
         if proc.returncode != 0:
-            raise ChildProcessError("'convert' command failed with exit code %d" % proc.returncode)
+            raise ChildProcessError(f"'convert' command failed with exit code {proc.returncode}")
 
         if not os.path.exists(bin_filename):
             raise ChildProcessError(

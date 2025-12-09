@@ -1,8 +1,10 @@
 //! Martian stage CALL_TAGS_RTL
 //! Assign cells to samples using their probe barcode sequence.
+#![deny(missing_docs)]
+
 use crate::barcode_overlap::{
-    calculate_frp_gem_barcode_overlap, FRPGemBarcodeOverlapRow, GelBeadBarcodesPerProbeBarcode,
-    ProbeBarcodeGelBeadGrouper,
+    FRPGemBarcodeOverlapRow, GelBeadBarcodesPerProbeBarcode, ProbeBarcodeGelBeadGrouper,
+    calculate_frp_gem_barcode_overlap,
 };
 use crate::detect_chemistry::probe_bc_pairing::get_rtl_and_ab_barcode_from_row;
 use crate::read_level_multiplexing::{
@@ -10,23 +12,23 @@ use crate::read_level_multiplexing::{
 };
 use anyhow::Result;
 use barcode::whitelist::{
-    categorize_rtl_multiplexing_barcode_id, BarcodeId, RTLMultiplexingBarcodeType,
+    BarcodeId, RTLMultiplexingBarcodeType, categorize_rtl_multiplexing_barcode_id,
 };
 use barcode::{BarcodeConstruct, BcSegSeq, GelBeadAndProbeConstruct};
-use cr_h5::count_matrix::{CountMatrix, CountMatrixFile, LazyCountMatrix};
+use cr_h5::count_matrix::{CountMatrix, CountMatrixFile, CountMatrixStreaming};
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::reference::feature_reference::FeatureType;
 use cr_types::types::FeatureBarcodeType;
 use cr_types::utils::calculate_median_of_sorted;
 use cr_types::{CrMultiGraph, Fingerprint, MetricsFile};
-use itertools::Itertools;
+use itertools::{Itertools, process_results};
 use martian::prelude::{MartianRover, MartianStage};
 use martian::{MartianVoid, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
-use metric::{join_metric_name, TxHashMap, TxHashSet};
+use metric::{TxHashMap, TxHashSet, join_metric_name};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -122,13 +124,14 @@ impl MartianStage for CallTagsRTL {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        // The raw matrix is larger than the filtered matrix, and we ensure
-        // in the implementation of this stage that we never load both matrices
-        // into memory at the same time.
-        let raw_matrix_gib = args.raw_feature_bc_matrix.estimate_mem_gib()?;
+        let raw_matrix_gib = args
+            .raw_feature_bc_matrix
+            .estimate_mem_gib_without_counts()?;
         println!("raw_matrix_gib={raw_matrix_gib:.1}");
+        // We end up creating a data structure that holds all of the barcodes,
+        // so we need about twice as much memory to handle the raw matrix.
         Ok(StageDef::with_join_resource(Resource::with_mem_gb(
-            2 + raw_matrix_gib.ceil() as isize,
+            4 + 2 * raw_matrix_gib.ceil() as isize,
         )))
     }
 
@@ -189,7 +192,7 @@ impl MartianStage for CallTagsRTL {
             .flatten_ok()
             .try_collect()?;
 
-        let filtered_matrix = args.filtered_feature_bc_matrix.read()?;
+        let filtered_matrix = args.filtered_feature_bc_matrix.read_streaming()?;
 
         // Gather data for probe barcode overlap computations.
         let gel_bead_barcodes_per_probe_barcode = ProbeBarcodeGelBeadGrouper::group_all(
@@ -241,11 +244,11 @@ impl MartianStage for CallTagsRTL {
             })
             .collect();
 
-        let raw_matrix = LazyCountMatrix::new(args.raw_feature_bc_matrix.clone());
+        let raw_matrix = args.raw_feature_bc_matrix.read_streaming()?;
 
         let rtl_ab_gem_barcode_overlap = handle_rtl_ab_pairings(
             &raw_matrix,
-            filtered_matrix,
+            &filtered_matrix,
             gel_bead_barcode_range,
             probe_barcode_range.clone(),
             &probe_barcode_seq_to_id,
@@ -262,16 +265,16 @@ impl MartianStage for CallTagsRTL {
 
         let barcodes_per_tag_file: JsonFile<_> = rover.make_path("barcodes_per_tag");
         barcodes_per_tag_file.write(&get_barcodes_per_multiplexing_identifier(
-            raw_matrix.loaded()?,
+            &raw_matrix,
             &probe_barcode_seq_to_id,
             &probe_barcode_range,
-        )?)?;
+        ))?;
 
         let umi_per_probe_barcode = get_umi_per_multiplexing_identifier(
-            raw_matrix.loaded()?,
+            &raw_matrix,
             &probe_barcode_seq_to_id,
             &probe_barcode_range,
-        )
+        )?
         .into_iter()
         .map(|(feature_type, umi_per_probe_barcode)| {
             (
@@ -302,9 +305,8 @@ impl MartianStage for CallTagsRTL {
 
 /// Run RTL+AB pairing detection if needed.
 fn handle_rtl_ab_pairings(
-    raw_matrix: &LazyCountMatrix,
-    // We take ownership of this matrix so we can drop it before loading the raw matrix.
-    filtered_matrix: CountMatrix,
+    raw_matrix: &CountMatrixStreaming,
+    filtered_matrix: &CountMatrixStreaming,
     gel_bead_barcode_range: RangeTo<usize>,
     probe_barcode_range: Range<usize>,
     probe_barcode_seq_to_id: &TxHashMap<BcSegSeq, BarcodeId>,
@@ -316,20 +318,17 @@ fn handle_rtl_ab_pairings(
         return Ok(Default::default());
     }
     let median_umi_per_cell =
-        get_median_umi_per_cell(&filtered_matrix, probe_barcode_range.clone());
+        get_median_umi_per_cell(filtered_matrix, probe_barcode_range.clone())?;
 
-    // Drop the filtered matrix to free memory before loading the raw matrix.
-    std::mem::drop(filtered_matrix);
-
-    Ok(detect_suspicious_rtl_ab_pairings(
-        raw_matrix.loaded()?,
+    detect_suspicious_rtl_ab_pairings(
+        raw_matrix,
         gel_bead_barcode_range,
         probe_barcode_range,
         probe_barcode_seq_to_id,
         barcode_pairings,
         &median_umi_per_cell,
         gex_gel_bead_barcodes_per_probe_barcode,
-    ))
+    )
 }
 
 /// Compute overlap between RTL and AB probe barcodes.
@@ -345,7 +344,7 @@ fn handle_rtl_ab_pairings(
 /// Compute the gel bead barcode overlap between all probe barcode pairings.
 /// Filter out all pairings besides those between Gex+Ab.
 fn detect_suspicious_rtl_ab_pairings(
-    raw_matrix: &CountMatrix,
+    raw_matrix: &CountMatrixStreaming,
     gel_bead_barcode_range: RangeTo<usize>,
     probe_barcode_range: Range<usize>,
     probe_barcode_seq_to_id: &TxHashMap<BcSegSeq, BarcodeId>,
@@ -357,7 +356,7 @@ fn detect_suspicious_rtl_ab_pairings(
     median_umi_per_cell_per_probe_barcode: &TxHashMap<(FeatureType, BcSegSeq), usize>,
     // The RTL probe barcode grouping data.
     gex_gel_bead_barcodes_per_probe_barcode: &GelBeadBarcodesPerProbeBarcode,
-) -> Vec<FRPGemBarcodeOverlapRow> {
+) -> Result<Vec<FRPGemBarcodeOverlapRow>> {
     // Mapping to reverse-translate antibody probe barcode sequences into IDs.
     let reverse_translation: TxHashMap<_, _> = probe_barcode_seq_to_id
         .iter()
@@ -365,7 +364,8 @@ fn detect_suspicious_rtl_ab_pairings(
         .collect();
     let mut fb_barcode_groups = ProbeBarcodeGelBeadGrouper::new(&reverse_translation);
 
-    for count in raw_matrix.counts() {
+    for count in raw_matrix.counts()? {
+        let count = count?;
         if count.feature.feature_type != FeatureType::Barcode(FeatureBarcodeType::Antibody) {
             continue;
         }
@@ -390,6 +390,8 @@ fn detect_suspicious_rtl_ab_pairings(
                     // TODO(CELLRANGER-7915): Detect suspicious pairings for Flex CRISPR
                     FeatureType::Barcode(FeatureBarcodeType::Crispr) => return None,
                     FeatureType::Barcode(_) => unreachable!(),
+                    FeatureType::ProteinExpression => unimplemented!(),
+                    FeatureType::Peaks => unimplemented!(),
                 };
                 Some(((*feature_type, probe_bc_id), median_umi))
             })
@@ -448,51 +450,55 @@ fn detect_suspicious_rtl_ab_pairings(
 
     // Filter out all pairings besides Gex+Ab and remove explicitly paired barcodes,
     // and return an ordered collection of pairings.
-    calculate_frp_gem_barcode_overlap(&gel_bead_barcodes_per_probe_barcode)
-        .into_iter()
-        .filter(|row| {
-            // Remove pairings besides RTL+AB.
-            let Some(pairing) = get_rtl_and_ab_barcode_from_row(row) else {
-                return false;
-            };
-            !pairings_to_ignore.contains(&pairing)
-        })
-        .map(|mut row| {
-            // Canonicalize so pairings are always ordered as RTL+AB.
-            if categorize_rtl_multiplexing_barcode_id(&row.barcode1_id).unwrap()
-                != RTLMultiplexingBarcodeType::Gene
-            {
-                row.swap_order();
-            }
-            row
-        })
-        .sorted_by_key(|row| (row.barcode1_id, row.barcode2_id))
-        .collect()
+    Ok(
+        calculate_frp_gem_barcode_overlap(&gel_bead_barcodes_per_probe_barcode)
+            .into_iter()
+            .filter(|row| {
+                // Remove pairings besides RTL+AB.
+                let Some(pairing) = get_rtl_and_ab_barcode_from_row(row) else {
+                    return false;
+                };
+                !pairings_to_ignore.contains(&pairing)
+            })
+            .map(|mut row| {
+                // Canonicalize so pairings are always ordered as RTL+AB.
+                if categorize_rtl_multiplexing_barcode_id(&row.barcode1_id).unwrap()
+                    != RTLMultiplexingBarcodeType::Gene
+                {
+                    row.swap_order();
+                }
+                row
+            })
+            .sorted_by_key(|row| (row.barcode1_id, row.barcode2_id))
+            .collect(),
+    )
 }
 
 /// Get median UMI per cell for each probe barcode/feature type pair.
 /// Barcodes with 0 UMI for the feature type are not included in the median.
 fn get_median_umi_per_cell(
-    filtered_matrix: &CountMatrix,
+    filtered_matrix: &CountMatrixStreaming,
     probe_barcode_range: Range<usize>,
-) -> TxHashMap<(FeatureType, BcSegSeq), usize> {
-    filtered_matrix
-        .counts()
-        .map(|x| ((x.feature.feature_type, x.barcode), x.count))
-        .into_grouping_map()
-        .sum()
-        .into_iter()
-        .filter(|&(_, count)| count > 0)
-        .map(|((feature_type, barcode), count)| {
-            let probe_bc = BcSegSeq::from_bytes(&barcode.as_bytes()[probe_barcode_range.clone()]);
-            ((feature_type, probe_bc), count)
-        })
-        .into_group_map()
-        // Find medians.
-        .into_iter()
-        .map(|(id, mut counts)| {
-            counts.sort();
-            (id, calculate_median_of_sorted(&counts).unwrap() as usize)
-        })
-        .collect()
+) -> Result<TxHashMap<(FeatureType, BcSegSeq), usize>> {
+    process_results(filtered_matrix.counts()?, |counts| {
+        counts
+            .map(|x| ((x.feature.feature_type, x.barcode), x.count))
+            .into_grouping_map()
+            .sum()
+            .into_iter()
+            .filter(|&(_, count)| count > 0)
+            .map(|((feature_type, barcode), count)| {
+                let probe_bc =
+                    BcSegSeq::from_bytes(&barcode.as_bytes()[probe_barcode_range.clone()]);
+                ((feature_type, probe_bc), count)
+            })
+            .into_group_map()
+            // Find medians.
+            .into_iter()
+            .map(|(id, mut counts)| {
+                counts.sort();
+                (id, calculate_median_of_sorted(&counts).unwrap() as usize)
+            })
+            .collect()
+    })
 }

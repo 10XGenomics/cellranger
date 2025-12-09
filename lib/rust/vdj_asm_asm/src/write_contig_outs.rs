@@ -1,14 +1,16 @@
 //! Martian stage WRITE_CONTIG_OUTS
+#![expect(missing_docs)]
 
-use crate::assembly_types::{AsmReadsPerBcFormat, FastaFile, FastqFile};
+use crate::BarcodeDataBriefFile;
+use crate::assembly_types::{FastaFile, FastqFile};
 use anyhow::Result;
 use cr_types::MetricsFile;
 use json_report_derive::JsonReport;
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::{FileTypeRead, FileTypeWrite, LazyFileTypeIO};
-use metric::{JsonReport, MeanMetric, PercentMetric, SimpleHistogram};
+use metric::{Histogram, JsonReport, MeanMetric, PercentMetric, SimpleHistogram};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
@@ -72,7 +74,7 @@ pub struct WriteContigOutsStageInputs {
     pub contig_annotations: JsonFile<Vec<ContigAnnotation>>,
     pub total_read_pairs: Option<i64>,
     pub corrected_bc_counts: Option<JsonFile<SimpleHistogram<String>>>,
-    pub assemblable_reads_per_bc: AsmReadsPerBcFormat,
+    pub barcode_brief: BarcodeDataBriefFile,
 }
 
 #[derive(Serialize, Deserialize, MartianStruct)]
@@ -101,7 +103,7 @@ fn index_fasta(fasta_file: &Path) {
         .expect("samtools faidx failed");
 }
 
-pub fn extract_all_chain_types_from_contig(can: &ContigAnnotation) -> Vec<VdjChain> {
+fn extract_all_chain_types_from_contig(can: &ContigAnnotation) -> Vec<VdjChain> {
     let chain_v = can.get_region(VdjRegion::V).map(|c| c.feature.chain);
     let chain_d = can.get_region(VdjRegion::D).map(|c| c.feature.chain);
     let chain_j = can.get_region(VdjRegion::J).map(|c| c.feature.chain);
@@ -145,6 +147,15 @@ pub fn extract_chain_category_from_contig(can: &ContigAnnotation) -> Option<VdjC
     }
 }
 
+fn assemblable_reads_perbc(barcode_brief: BarcodeDataBriefFile) -> Result<SimpleHistogram<String>> {
+    let mut hist = SimpleHistogram::default();
+    let reader = barcode_brief.lazy_reader()?;
+    for brief in reader {
+        let brief = brief?;
+        hist.insert(brief.barcode, brief.xucounts.iter().sum::<i32>());
+    }
+    Ok(hist)
+}
 pub struct WriteContigOuts;
 
 #[make_mro]
@@ -246,16 +257,16 @@ impl MartianMain for WriteContigOuts {
                     }
                 }
 
-                if can.is_productive() {
-                    if let Some(chain_category) = chain_category {
-                        num_productive_contigs += 1;
-                        match chain_category {
-                            VdjChainCategory::Light => {
-                                barcodes_prod_light_chain.insert(can.barcode.clone());
-                            }
-                            VdjChainCategory::Heavy => {
-                                barcodes_prod_heavy_chain.insert(can.barcode.clone());
-                            }
+                if can.is_productive()
+                    && let Some(chain_category) = chain_category
+                {
+                    num_productive_contigs += 1;
+                    match chain_category {
+                        VdjChainCategory::Light => {
+                            barcodes_prod_light_chain.insert(can.barcode.clone());
+                        }
+                        VdjChainCategory::Heavy => {
+                            barcodes_prod_heavy_chain.insert(can.barcode.clone());
                         }
                     }
                 }
@@ -371,7 +382,7 @@ impl MartianMain for WriteContigOuts {
                 vdj_high_conf_prod_contig: (num_cell_productive_contigs, num_productive_contigs)
                     .into(),
                 vdj_assemblable_read_pairs_per_filtered_bc: if !cell_barcodes.is_empty() {
-                    let bc_read_counts = args.assemblable_reads_per_bc.read()?;
+                    let bc_read_counts = assemblable_reads_perbc(args.barcode_brief)?;
                     let assemblable_reads_in_cells: i64 =
                         cell_barcodes.iter().map(|bc| bc_read_counts.get(bc)).sum();
                     (assemblable_reads_in_cells as f64) / (cell_barcodes.len() as f64)

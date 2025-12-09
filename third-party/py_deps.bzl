@@ -1,10 +1,6 @@
 """Repository rule invocations for third-party python dependencies."""
 
 load(
-    "@tenx_bazel_rules//rules:conda_package_repository.bzl",
-    "conda_package_repository",
-)
-load(
     "@tenx_bazel_rules//rules:new_conda_package_repository.bzl",
     "new_conda_package_http_repository",
 )
@@ -12,9 +8,9 @@ load(
 def load_py_deps():
     """Loads third-party python dependencies for the pipeline."""
 
-    site_packages = "lib/python3.10/site-packages"
+    site_packages = "lib/python3.12/site-packages"
 
-    opencv_version = "4.5.4"
+    opencv_version = "4.10.0"
 
     new_conda_package_http_repository(
         name = "conda_package_py_opencv",
@@ -50,17 +46,26 @@ def load_py_deps():
             "rm -rf src/samples",
         ],
         patch_args = ["-p1"],
-        patches = ["@cellranger//third-party:open-cv-warnings.patch", "@cellranger//third-party:open-cv-grabcut.patch"],
-        sha256 = "c20bb83dd790fc69df9f105477e24267706715a9d3c705ca1e7f613c7b3bad3d",
+        patches = [
+            "@cellranger//third-party:open-cv-grabcut.patch",
+        ],
+        sha256 = "b2171af5be6b26f7a06b1229948bbb2bdaa74fcf5cd097e0af6378fce50a6eb9",
     )
 
     # This package over-constrains libtiff, which makes other updates impossible.
     # So, just pull it in separately without letting it take part in the solve.
-    conda_package_repository(
+    new_conda_package_http_repository(
         name = "conda_package_simpleitk",
-        base_urls = ["https://conda.anaconda.org/simpleitk/linux-64"],
-        dist_name = "simpleitk-2.2.1-py310h3fd9d12_0",
-        sha256 = "bbe4fce613459cf15d5c176b30ecc0d8b7c17d594822c36af9b3d735c7283aee",
+        urls = [
+            # Note: this a cp311-abi3 build.  Though forward-compatible with
+            # 3.12+, there might be performance benefits to switching to one
+            # built for 3.12, at such time as they release such a build.
+            "https://files.pythonhosted.org/packages/48/f8/3f00cc6d4f11b3cd934e3024c5be71ffc6d30d4620a16de7d194381f92f9/SimpleITK-2.4.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        ],
+        sha256 = "91a8eaec0383d39f5a39b4307d0310611dad08182e709dd0fe1e788f80f24b35",
+        add_prefix = site_packages,
+        build_file = "@cellranger//third-party:simpleITK.BUILD",
+        type = "zip",
     )
 
     tenxpy_commit = "c99de5e11ed7c564752c2c44c9bb8e4890dac1bf"
@@ -136,15 +141,15 @@ def load_py_deps():
         type = "zip",
     )
 
-    pyarrow_version = "15.0.2"
+    pyarrow_version = "16.0.0"
 
     new_conda_package_http_repository(
         name = "conda_package_pyarrow",
         build_file = "@cellranger//third-party:pyarrow.BUILD",
         urls = [
-            "https://files.pythonhosted.org/packages/01/e0/13aada7b0af1039554e675bd8c878acb3d86bab690e5a6b05fc8547a9cf2/pyarrow-{}-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl".format(pyarrow_version),
+            "https://files.pythonhosted.org/packages/1d/b2/508775722a370c92c52d11f0fdbf4167397841982ad03aa43ea9a1713cef/pyarrow-{}-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl".format(pyarrow_version),
         ],
-        sha256 = "f639c059035011db8c0497e541a8a45d98a58dbe34dc8fadd0ef128f2cee46e5",
+        sha256 = "1ab8b9050752b16a8b53fcd9853bf07d8daf19093533e990085168f40c64d978",
         add_prefix = site_packages,
         type = "zip",
     )
@@ -192,45 +197,31 @@ def load_py_deps():
         name = "conda_package_moods",
         build_file = "@cellranger//third-party:moods.BUILD",
         urls = [
-            "https://github.com/jhkorhonen/MOODS/releases/download/v1.9.3/MOODS-python-1.9.3.tar.gz",
+            "https://github.com/jhkorhonen/MOODS/releases/download/v1.9.4.1/MOODS-python-1.9.4.1.tar.gz",
         ],
-        sha256 = "79d9ffe8acb7d32182dd190bfd55ad9e3170d1f69ab53ee7e243d2c1449f50d4",
-        strip_prefix = "MOODS-python-1.9.3",
+        sha256 = "7fd4d634bc2258421859d720afb9e38b4015b92d1ffc7aaeeb5422ce8b26d65e",
+        strip_prefix = "MOODS-python-1.9.4.1",
         add_prefix = site_packages,
     )
 
-    csbdeep_version = "0.8.0"
-    new_conda_package_http_repository(
-        name = "conda_package_csbdeep",
-        build_file = "@cellranger//third-party:csbdeep.BUILD",
-        urls = [
-            "https://files.pythonhosted.org/packages/fa/ae/16c5541707c15bfb3ec438dd738846f274899312094b323677e9f47fa3f5/csbdeep-{}-py2.py3-none-any.whl".format(csbdeep_version),
-        ],
-        sha256 = "366cfd039cc440331095f68786563afb54ecb1f35c6e0b629d045507a213f265",
-        add_prefix = site_packages,
-        type = "zip",
-    )
-
-    stardist_version = "0.9.1"
-    new_conda_package_http_repository(
-        name = "conda_package_stardist",
-        build_file = "@cellranger//third-party:stardist.BUILD",
-        urls = [
-            "https://files.pythonhosted.org/packages/75/5e/4c0d2e48d064dec8f81be2b88404ce1f3440d0b86ee68dc43ab6924008da/stardist-{}-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl".format(stardist_version),
-        ],
-        sha256 = "f0f4542970e1c37472bb185bb36c3e4acb9e4efd65181cbbb89de917b7511e42",
-        add_prefix = site_packages,
-        type = "zip",
-    )
-
-    keras_version = "2.13.1-py3"
+    keras_version = "3.7.0-py3"
     new_conda_package_http_repository(
         name = "conda_package_keras",
         build_file = "@cellranger//third-party:keras.BUILD",
         urls = [
-            "https://files.pythonhosted.org/packages/2e/f3/19da7511b45e80216cbbd9467137b2d28919c58ba1ccb971435cb631e470/keras-{}-none-any.whl".format(keras_version),
+            "https://files.pythonhosted.org/packages/8a/bf/9e3f10e55df30b0fb4bf6c2ee7d50bda2e070599b86f62ea3f9954af172b/keras-{}-none-any.whl".format(keras_version),
         ],
-        sha256 = "5ce5f706f779fa7330e63632f327b75ce38144a120376b2ae1917c00fa6136af",
+        sha256 = "546a64f302e4779c129c06d9826fa586de752cdfd43d7dc4010c31b282587969",
         add_prefix = site_packages,
         type = "zip",
+    )
+
+    new_conda_package_http_repository(
+        name = "conda_package_fastcat",
+        build_file = "@cellranger//third-party:fastcat.BUILD",
+        urls = [
+            "https://github.com/epi2me-labs/fastcat/archive/refs/tags/v0.24.0.tar.gz",
+        ],
+        strip_prefix = "fastcat-0.24.0",
+        sha256 = "a297d3e464cf9841878c6457156167f221e1aef3ada6ccf4bb3396e87e59c96d",
     )

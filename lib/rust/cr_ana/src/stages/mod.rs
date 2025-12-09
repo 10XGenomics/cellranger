@@ -1,3 +1,6 @@
+//! cr_ana::stages
+#![deny(missing_docs)]
+
 pub mod diff_exp_stage;
 pub mod graph_clustering;
 pub mod hierarchical_clustering;

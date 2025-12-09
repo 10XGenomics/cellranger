@@ -1,8 +1,9 @@
-use anyhow::{anyhow, Result};
+#![expect(missing_docs)]
+use anyhow::{Result, anyhow};
 use barcode::Barcode;
 use itertools::Itertools;
-use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::LazyFileTypeIO;
+use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -102,7 +103,9 @@ pub fn generate_exact_clonotypes(
         exact_clonotypes_map.entry(contigs).or_default().push(bc);
     }
     // sort the barcodes associated with each exact clonotype
-    exact_clonotypes_map.values_mut().for_each(|bcs| bcs.sort());
+    for bcs in exact_clonotypes_map.values_mut() {
+        bcs.sort();
+    }
 
     let exact_clonotypes_vec = exact_clonotypes_map
         .into_iter()
@@ -136,9 +139,9 @@ pub fn generate_exact_contigs(
     }
 
     // sort the barcodes associated with each exact contig in descending order of umi counts
-    bcs_per_prodcontig
-        .values_mut()
-        .for_each(|bcs| bcs.sort_by_key(|a| Reverse(a.umi)));
+    for bcs in bcs_per_prodcontig.values_mut() {
+        bcs.sort_by_key(|a| Reverse(a.umi));
+    }
 
     Ok(bcs_per_prodcontig)
 }

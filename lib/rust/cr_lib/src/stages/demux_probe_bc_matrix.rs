@@ -1,41 +1,44 @@
 //! Martian stage DEMUX_PROBE_BC_MATRIX
+#![deny(missing_docs)]
 
 use crate::gdna_utils::get_filtered_per_probe_metrics;
-use crate::probe_barcode_matrix::{read_bc_json, write_probe_bc_matrix, ProbeCounts};
+use crate::probe_barcode_matrix::{ProbeCounts, write_probe_bc_matrix};
 use barcode::Barcode;
 use cr_types::reference::probe_set_reference::TargetSetFile;
-use cr_types::{BarcodeIndex, CountShardFile, H5File};
+use cr_types::reference::reference_info::ReferenceInfo;
+use cr_types::{
+    BarcodeIndex, CountShardFile, H5File, SampleAssignment, SampleBarcodes, SampleBarcodesFile,
+    SampleId,
+};
+use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
-use martian_filetypes::json_file::JsonFile;
+use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeWrite;
 use martian_filetypes::tabular_file::CsvFile;
-use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use metric::TxHashSet;
-use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::iter::zip;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct DemuxProbeBcMatrixStageInputs {
     pub probe_barcode_counts: Vec<CountShardFile>,
-    pub reference_path: Option<PathBuf>,
+    pub reference_info: Option<ReferenceInfo>,
     pub probe_set: TargetSetFile,
     pub probe_set_name: String,
-    pub sample_barcodes: JsonFile<HashMap<String, Vec<String>>>,
-    pub sample_cell_barcodes: JsonFile<HashMap<String, Vec<String>>>,
+    pub sample_barcodes: SampleBarcodesFile,
+    pub sample_cell_barcodes: SampleBarcodesFile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct DemuxProbeBcMatrixStageOutputs {
-    pub sample_raw_probe_bc_matrices: HashMap<String, H5File>,
-    pub samples_per_probe_metrics: HashMap<String, CsvFile<ProbeCounts>>,
+    pub sample_raw_probe_bc_matrices: HashMap<SampleId, H5File>,
+    pub samples_per_probe_metrics: HashMap<SampleId, CsvFile<ProbeCounts>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
 pub struct DemuxProbeBcMatrixChunkInputs {
-    pub sample_name: String,
+    pub sample_name: SampleId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, MartianStruct)]
@@ -44,7 +47,7 @@ pub struct DemuxProbeBcMatrixChunkOutputs {
     pub sample_raw_probe_bc_matrix: H5File,
 }
 
-// This is our stage struct
+/// Martian stage DEMUX_PROBE_BC_MATRIX
 pub struct DemuxProbeBcMatrix;
 
 #[make_mro(volatile = strict)]
@@ -59,19 +62,25 @@ impl MartianStage for DemuxProbeBcMatrix {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>, Error> {
-        // Reading the sample barcodes
-        let sample_cell_barcodes: HashMap<String, IgnoredAny> =
-            JsonFile::from_path(&args.sample_cell_barcodes).read()?;
+        let sample_barcodes_lines = crate::io::count_lines(&args.sample_barcodes)?;
+        let mem_gib = 1 + (120 * sample_barcodes_lines).div_ceil(1024 * 1024 * 1024);
+        println!("sample_barcodes_lines={sample_barcodes_lines},mem_gib={mem_gib}");
+
         // Split into one sample per chunk.
-        Ok(sample_cell_barcodes
-            .into_keys()
-            .map(|sample_name| {
-                (
-                    DemuxProbeBcMatrixChunkInputs { sample_name },
-                    Resource::with_mem_gb(5),
-                )
-            })
-            .collect())
+        Ok(
+            SampleBarcodes::read_samples(Some(&args.sample_cell_barcodes))?
+                .into_iter()
+                .map(|sample_name| {
+                    let SampleAssignment::Assigned(sample_name) = sample_name else {
+                        unreachable!("unexpected {sample_name}");
+                    };
+                    (
+                        DemuxProbeBcMatrixChunkInputs { sample_name },
+                        Resource::with_mem_gb(mem_gib as isize),
+                    )
+                })
+                .collect(),
+        )
     }
 
     fn main(
@@ -80,15 +89,17 @@ impl MartianStage for DemuxProbeBcMatrix {
         chunk_args: Self::ChunkInputs,
         rover: MartianRover,
     ) -> Result<Self::ChunkOutputs, Error> {
-        // re-reading the sample barcodes. Because can not use barcodes in split
-        let sample_bcs = read_bc_json(&args.sample_barcodes)?
-            .remove(&chunk_args.sample_name)
-            .unwrap();
-        let sample_cell_bcs: TxHashSet<Barcode> = read_bc_json(&args.sample_cell_barcodes)?
-            .remove(&chunk_args.sample_name)
-            .unwrap()
-            .into_iter()
-            .collect();
+        let sample_cell_bcs: TxHashSet<Barcode> =
+            SampleBarcodes::read_from_json(Some(&args.sample_cell_barcodes))?
+                .into_barcodes(&SampleAssignment::from(chunk_args.sample_name.clone()))
+                .unwrap()
+                .into_iter()
+                .collect();
+
+        let reference_path = args
+            .reference_info
+            .as_ref()
+            .and_then(ReferenceInfo::get_reference_path);
 
         // Decide if gDNA analysis should be run. If so run it and get if a probe is filtered. Everything
         // written out in the form of a vec<ProbeCounts>
@@ -96,7 +107,7 @@ impl MartianStage for DemuxProbeBcMatrix {
             &args.probe_barcode_counts,
             &sample_cell_bcs,
             &args.probe_set,
-            args.reference_path.as_deref(),
+            reference_path,
         )?;
 
         // Write out sample per probe metrics
@@ -112,11 +123,20 @@ impl MartianStage for DemuxProbeBcMatrix {
 
         // Write out raw-probe-raw-barcode matrix. Filtered probes are annotated. Filtered barcodes are not
         let sample_raw_probe_bc_matrix: H5File = rover.make_path("sample_raw_probe_bc_matrix");
-        let bc_index = BarcodeIndex::from_iter(sample_bcs);
+        // re-reading the sample barcodes. Because can not use barcodes in split
+        let bc_index = {
+            BarcodeIndex::from_sorted(
+                SampleBarcodes::read_from_json(Some(&args.sample_barcodes))?
+                    .into_barcodes(&SampleAssignment::from(chunk_args.sample_name))
+                    .unwrap()
+                    .into_iter()
+                    .sorted(),
+            )
+        };
         let cell_bc_indicator_vec = bc_index.into_indicator_vec(&sample_cell_bcs);
         write_probe_bc_matrix(
             &args.probe_set,
-            args.reference_path.as_deref(),
+            reference_path,
             &args.probe_barcode_counts,
             &sample_raw_probe_bc_matrix,
             &bc_index,

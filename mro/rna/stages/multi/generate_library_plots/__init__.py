@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) 2021 10X Genomics, Inc. All rights reserved.
+# Copyright (c) 2025 10X Genomics, Inc. All rights reserved.
 #
-"""For a single library, generate the barcode rank and jibes plots as plotly JSON,.
+"""Generate library plots for multi web summary.
 
-so that they can be passed forward to the WRITE_MULTI_WEB_SUMMARY_JSON stage
-and inserted into the sample web summary
+For a single library, generate the barcode rank, jibes plots as plotly JSON, and barnyard count
+biplots, so that they can be passed forward to the WRITE_MULTI_WEB_SUMMARY stage and inserted into
+the sample web summary
 """
+
 from __future__ import annotations
 
-import csv
 import json
 import pickle
 
@@ -18,13 +19,18 @@ import h5py
 import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
+from cellranger.analysis.multigenome import MultiGenomeAnalysis
 from cellranger.analysis.singlegenome import UMAP_NAME
 from cellranger.feature.feature_assignments import CellsPerFeature
 from cellranger.feature_ref import HASHTAG_TAG
+from cellranger.hdf5 import estimate_mem_gib_for_dataset
 from cellranger.multi.barcode_rank_plots import write_library_to_barcode_rank_json
-from cellranger.reference_paths import get_reference_genomes
+from cellranger.webshim.common import populate_biplot_chart
 from cellranger.webshim.jibes_web import make_jibes_biplot_histogram
-from cellranger.websummary.analysis_tab_aux import cmo_tags_on_umap_from_path
+from cellranger.websummary.analysis_tab_aux import (
+    cmo_tags_on_umap_from_path,
+    initialize_barnyard_biplot_chart,
+)
 from cellranger.websummary.analysis_tab_core import umi_on_projection_from_path
 from cellranger.websummary.react_components import ReactComponentEncoder
 
@@ -34,31 +40,42 @@ stage GENERATE_LIBRARY_PLOTS(
     # for barcode rank
     in  h5                 barcode_summary_h5,
     in  csv                filtered_barcodes,
-    in  path               reference_path,
+    in  ReferenceInfo      reference_info,
     # for jibes biplot
     in  pickle             tag_assigner_pickle,
-    # for cmo UMAP plot
+    # for barnyard biplot and cmo UMAP plot
     in  path               analysis,
+    # cmo UMAP plot
     in  json               cells_per_tag,
     in  json               non_singlet_barcodes,
     in  BarcodeAssignments force_sample_barcodes,
     in  string             multiplexing_method,
     out json               library_to_barcode_rank,
     out json               jibes_biplot_histogram,
+    out json               barnyard_biplot,
     out json               cmo_projection_plot,
     src py                 "stages/multi/generate_library_plots",
+) split (
 ) using (
-    mem_gb   = 8,
     volatile = strict,
 )
 """
 
 
-def main(args, outs):
+def split(args):
+    with h5py.File(args.barcode_summary_h5, "r") as f:
+        barcodes_gib = estimate_mem_gib_for_dataset(f["bc_sequence"])
+    # memory usage of the stage scales approximately with the number of barcodes
+    mem_gib = 6 + round(2.5 * barcodes_gib, 1)
+    print(f"{barcodes_gib=},{mem_gib=}")
+    return {"chunks": [], "join": {"__mem_gb": mem_gib}}
+
+
+def join(args, outs, _chunk_defs, _chunk_outs):
     if args.disable_count:
         outs.library_to_barcode_rank = None
-        outs.jibes_biplot = None
-        outs.targeted_plot = None
+        outs.jibes_biplot_histogram = None
+        outs.barnyard_biplot = None
         outs.cmo_projection_plot = None
         return
 
@@ -66,11 +83,7 @@ def main(args, outs):
 
     # read in data
     barcode_summary = h5py.File(args.barcode_summary_h5, "r")
-    if args.reference_path:
-        genomes = get_reference_genomes(args.reference_path)
-    else:
-        with open(args.filtered_barcodes) as f:
-            genomes = sorted(set(x[0] for x in csv.reader(f)))
+    genomes: list[str] = args.reference_info["genomes"]
     cell_barcodes = (
         cr_utils.get_cell_associated_barcode_set(args.filtered_barcodes)
         if args.filtered_barcodes
@@ -78,7 +91,11 @@ def main(args, outs):
     )
 
     write_library_to_barcode_rank_json(
-        cell_barcodes, barcode_summary, genomes, outs.library_to_barcode_rank
+        cell_barcodes,
+        barcode_summary,
+        genomes,
+        outs.library_to_barcode_rank,
+        restrict_barcodes=set(),
     )
 
     # JIBES PLOTS FOR MULTI WEBSUMMARY
@@ -94,6 +111,7 @@ def main(args, outs):
         and args.non_singlet_barcodes is not None
     ):
         multiplexing_method = rna_library.BarcodeMultiplexingType(args.multiplexing_method)
+
         if multiplexing_method.type == rna_library.CellLevel.Hashtag:
             cmo_umi_projection_plot = umi_on_projection_from_path(
                 args.analysis,
@@ -153,3 +171,20 @@ def main(args, outs):
 
     else:
         outs.jibes_biplot_histogram = None
+
+    if len(genomes) >= 2:
+        assert args.analysis is not None
+
+        barnyard_biplot = initialize_barnyard_biplot_chart()
+        multi_genome_analysis = MultiGenomeAnalysis.load_default_format(args.analysis)
+        populate_biplot_chart(barnyard_biplot, multi_genome_analysis)
+        with open(outs.barnyard_biplot, "w") as out:
+            json.dump(
+                tk_safe_json.json_sanitize(barnyard_biplot),
+                out,
+                sort_keys=True,
+                cls=ReactComponentEncoder,
+            )
+
+    else:
+        outs.barnyard_biplot = None

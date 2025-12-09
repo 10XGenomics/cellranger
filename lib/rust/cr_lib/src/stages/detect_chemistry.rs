@@ -1,8 +1,9 @@
 //! Martian stage DETECT_CHEMISTRY
+#![deny(missing_docs)]
 
 use crate::barcode_overlap::FRPGemBarcodeOverlapRow;
 use crate::detect_chemistry::chemistry_filter::{
-    detect_chemistry_units, ChemistryFilter, DetectChemistryUnit,
+    ChemistryFilter, DetectChemistryUnit, detect_chemistry_units, named_candidates,
 };
 use crate::detect_chemistry::errors::DetectChemistryErrors;
 use crate::detect_chemistry::identity_check::check_fastq_identity;
@@ -13,35 +14,35 @@ use crate::detect_chemistry::probe_bc_pairing::{
     detect_probe_barcode_pairing, should_detect_probe_barcode_pairing,
 };
 use crate::detect_chemistry::whitelist_filter::WhitelistMatchFilter;
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use barcode::whitelist::BarcodeId;
+use cr_types::LibraryType;
 use cr_types::chemistry::{
-    normalize_chemistry_def, AutoChemistryName, AutoOrRefinedChemistry, ChemistryDef,
-    ChemistryDefs, ChemistryName, ChemistrySpecs,
+    AutoChemistryName, AutoOrRefinedChemistry, ChemistryDef, ChemistryDefs, ChemistryName,
+    ChemistrySpecs, normalize_chemistry_def,
 };
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile};
 use cr_types::sample_def::SampleDef;
-use cr_types::LibraryType;
 use fastq_set::read_pair::ReadPair;
 use itertools::Itertools;
 use martian::prelude::*;
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeWrite;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
-use martian_filetypes::FileTypeWrite;
-use metric::{join_metric_name, set, TxHashMap, TxHashSet};
+use metric::{TxHashMap, TxHashSet, join_metric_name, set};
 use multi::config::{
-    multiconst, MultiConfigCsv, MultiConfigCsvFile, ProbeBarcodeIterationMode, SamplesCsv,
+    MultiConfigCsv, MultiConfigCsvFile, ProbeBarcodeIterationMode, SamplesCsv, multiconst,
 };
-use parameters_toml::{fiveprime_multiplexing, threeprime_lt_multiplexing};
 use serde::{Deserialize, Serialize};
 use slice_group_by::GroupBy;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-#[allow(clippy::enum_glob_use)]
-use ChemistryName::*;
 
 const MIN_READS_NEEDED: usize = 10_000;
+const DEFAULT_CHEMISTRY_SAMPLE_READS: usize = 100_000;
+const DEFAULT_CHEMISTRY_TOTAL_READS: usize = 2_000_000;
+const DEFAULT_MIN_MAJOR_PROBE_BC_FRAC: f64 = 0.7;
 
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 #[cfg_attr(test, derive(Default))]
@@ -55,7 +56,7 @@ pub struct DetectChemistryStageInputs {
     pub r2_length: Option<usize>,
     pub multi_config: Option<MultiConfigCsvFile>,
     pub is_pd: bool,
-    pub custom_chemistry_def: Option<ChemistryDef>,
+    pub custom_chemistry_defs: ChemistryDefs,
     pub feature_config: Option<FeatureConfig>,
 }
 
@@ -95,6 +96,7 @@ pub struct DetectChemistryStageOutputs {
     pub detected_probe_barcode_pairing: Option<DetectedProbeBarcodePairingFile>,
 }
 
+/// Martian stage DETECT_CHEMISTRY
 pub struct DetectChemistry;
 
 #[make_mro(mem_gb = 20, volatile = strict)]
@@ -115,7 +117,20 @@ impl MartianMain for DetectChemistry {
             .map(|csv| csv.read().with_context(|| csv.display().to_string()))
             .transpose()?;
 
-        let units = &load_reads(&args)?;
+        // Get chemistry detection parameters from multi config or use defaults
+        let sample_reads = multi_config_csv
+            .as_ref()
+            .and_then(|config| config.gene_expression.as_ref())
+            .and_then(|gex_params| gex_params.detect_chemistry_sample_reads)
+            .unwrap_or(DEFAULT_CHEMISTRY_SAMPLE_READS);
+
+        let total_reads = multi_config_csv
+            .as_ref()
+            .and_then(|config| config.gene_expression.as_ref())
+            .and_then(|gex_params| gex_params.detect_chemistry_total_reads)
+            .unwrap_or(DEFAULT_CHEMISTRY_TOTAL_READS);
+
+        let units = &load_reads(&args, sample_reads, total_reads)?;
         ensure!(!units.is_empty(), "no reads loaded");
 
         let chemistry_defs = select_chemistries(&args, multi_config_csv.as_ref(), units)?;
@@ -153,7 +168,7 @@ fn select_chemistries(
             &chems,
             &metadata,
             multi_config_csv,
-            args.custom_chemistry_def.as_ref(),
+            &args.custom_chemistry_defs,
             units,
         )?,
 
@@ -178,15 +193,15 @@ fn select_chemistries(
                     let is_rtl = per_unit_chems
                         .iter()
                         .flatten()
-                        .all(|chem| chem.is_rtl().unwrap_or(false));
+                        .all(|(name, _def)| name.is_rtl().unwrap_or(false));
                     let is_3p_v3 = per_unit_chems
                         .iter()
                         .flatten()
-                        .all(ChemistryName::is_sc_3p_v3);
+                        .all(|(name, _def)| name.is_sc_3p_v3());
                     let is_3p_v4 = per_unit_chems
                         .iter()
                         .flatten()
-                        .all(ChemistryName::is_sc_3p_v4);
+                        .all(|(name, _def)| name.is_sc_3p_v4());
                     ensure!(is_rtl || is_3p_v3 || is_3p_v4, err);
 
                     detect_chemistry_per_library_type(mode, &metadata, multi_config_csv, units)?
@@ -239,16 +254,16 @@ fn use_manual_chemistries(
     chems: &HashMap<LibraryType, ChemistryName>,
     metadata: &Metadata<'_>,
     multi_config_csv: Option<&MultiConfigCsv>,
-    custom_chemistry_def: Option<&ChemistryDef>,
+    custom_chemistry_defs: &ChemistryDefs,
     all_units: &[(DetectChemistryUnit, Vec<ReadPair>)],
 ) -> Result<ChemistryDefs> {
     divide_units_by_library_type(all_units)
         .map(|(library_type, units)| {
             let chem_name = chems[&library_type];
             if chem_name == ChemistryName::Custom {
-                use_custom_chemistry(custom_chemistry_def)
+                use_custom_chemistry(custom_chemistry_defs.get(&library_type))
             } else {
-                use_manual_chemistry(chem_name, metadata, multi_config_csv, units)
+                use_manual_chemistry(library_type, chem_name, metadata, multi_config_csv, units)
             }
             .map(|chem_def| (library_type, chem_def))
         })
@@ -278,34 +293,41 @@ fn use_custom_chemistry(custom_chemistry_def: Option<&ChemistryDef>) -> Result<C
 /// QA to run non-standard fuzzed FASTQs. No minimum number of reads is enforced
 /// here. Emit a warning if there are few valid barcodes.
 fn use_manual_chemistry(
-    chem: ChemistryName,
+    library_type: LibraryType,
+    name: ChemistryName,
     metadata: &Metadata<'_>,
     multi_config_csv: Option<&MultiConfigCsv>,
     units: &[(DetectChemistryUnit, Vec<ReadPair>)],
 ) -> Result<ChemistryDef> {
-    let chems = &set![chem];
+    let mut def = ChemistryDef::named(name);
+    if library_type == LibraryType::Crispr
+        && let Some(crispr_probe_barcode_location) = multi_config_csv
+            .and_then(|config| config.feature.as_ref())
+            .and_then(|feature| feature.crispr_probe_barcode_location)
+    {
+        // Config validation should have made sure of this.
+        assert!(name.is_mfrp());
+        def.override_probe_barcode_extraction(crispr_probe_barcode_location);
+    }
+    let chems: TxHashMap<_, _> = [(name, def.clone())].into_iter().collect();
 
-    if chem.is_rtl_multiplexed() {
+    if name.is_mfrp() {
         // Check the read length to ensure that the probe barcode is sequenced.
-        let _matching_chemistries = LengthFilter::new(
-            chems,
-            chems,
-            metadata.feature_reference,
-            metadata.feature_config,
-        )?
-        .filter_chemistries(units)?;
+        let _matching_chemistries =
+            LengthFilter::new(metadata.feature_reference, metadata.feature_config)?
+                .filter_chemistries(&chems, units)?;
     }
 
-    if let Err(err) = WhitelistMatchFilter::new(chems, chems)?.filter_chemistries(units) {
-        if chem.is_spatial() {
+    if let Err(err) = WhitelistMatchFilter::default().filter_chemistries(&chems, units) {
+        if name.is_spatial() || matches!(err, DetectChemistryErrors::WhitelistLoadError(_)) {
             bail!(err);
         }
         println!("WARNING: {err:#}");
     }
 
-    validate_multiplexing(chem, metadata.sample_defs)?;
-    validate_rtl(multi_config_csv, chem)?;
-    Ok(ChemistryDef::named(chem))
+    validate_multiplexing(name, metadata.sample_defs)?;
+    validate_rtl(multi_config_csv, name)?;
+    Ok(def)
 }
 
 /// Populate a ChemistryDefs map with a copy of the chemistry for each library type.
@@ -324,6 +346,8 @@ fn clone_chemistry_for_libraries(
 /// Load a subsample of reads from each input unit.
 fn load_reads(
     args: &DetectChemistryStageInputs,
+    sample_reads: usize,
+    total_reads: usize,
 ) -> Result<Vec<(DetectChemistryUnit, Vec<ReadPair>)>> {
     let units = detect_chemistry_units(&args.sample_def, args.r1_length, args.r2_length)?;
     println!("Number of fastq units = {}", units.len());
@@ -336,7 +360,7 @@ fn load_reads(
         .sorted_by_key(|unit| unit.library_type)
         .map(|unit| {
             println!("Sampling reads from: {unit}");
-            let reads = unit.sampled_read_pairs()?;
+            let reads = unit.sampled_read_pairs(sample_reads, total_reads)?;
             Ok((unit, reads))
         })
         .try_collect()
@@ -349,6 +373,9 @@ fn detect_chemistry(
     multi_config_csv: Option<&MultiConfigCsv>,
     units: &[(DetectChemistryUnit, Vec<ReadPair>)],
 ) -> Result<ChemistryDef> {
+    #[allow(clippy::enum_glob_use)]
+    use ChemistryName::*;
+
     // Check for overhang multiplexing
     let is_overhang_multiplexed =
         multi_config_csv.is_some_and(MultiConfigCsv::is_overhang_multiplexed);
@@ -374,21 +401,22 @@ fn detect_chemistry(
         );
     }
 
-    let possible_chemistries = mode.allowed_chemistries(
-        metadata.is_pd,
-        multi_config_csv.is_some_and(|x| x.samples.is_some()),
-        multi_config_csv.is_some_and(is_rtl_uncollapsed),
-    );
-
-    let allowed_chemistries = metadata.allowed_chems.map_or_else(
-        || possible_chemistries.clone(),
-        |chems| {
-            chems
+    let candidates = {
+        let mut selected_mode_chems = mode.allowed_chemistries(
+            metadata.is_pd,
+            multi_config_csv.is_some_and(|x| x.samples.is_some()),
+            multi_config_csv.is_some_and(is_rtl_uncollapsed),
+        );
+        if let Some(allowed_chems) = metadata.allowed_chems {
+            let allowed_chems: TxHashSet<_> = allowed_chems
                 .iter()
                 .filter_map(AutoOrRefinedChemistry::refined)
-                .collect()
-        },
-    );
+                .collect();
+            // Filter down the possible chemistries using the allowed list.
+            selected_mode_chems.retain(|chem| allowed_chems.contains(chem));
+        }
+        selected_mode_chems
+    };
 
     for (unit, read_pairs) in units {
         ensure!(
@@ -403,38 +431,67 @@ fn detect_chemistry(
 
     println!(
         "Potential chemistries: {}",
-        possible_chemistries.iter().sorted().format(", ")
+        candidates.iter().sorted().format(", ")
     );
 
-    // Read length based filtering
-    let length_matching_chemistries = LengthFilter::new(
-        &allowed_chemistries,
-        &possible_chemistries,
-        metadata.feature_reference,
-        metadata.feature_config,
-    )?
-    .filter_chemistries(units)?;
-
-    println!(
-        "After length filter: {}",
-        length_matching_chemistries.iter().sorted().format(", ")
-    );
+    // Read length based filtering on a per-unit basis.
+    // Note: this is a bit tedious due to the issues in CELLRANGER-9488
+    // TODO: flatten this method and the per-library chemistry detection back into
+    // a single method that always detects chemistry per-library and then enforces
+    // the constraint that we must have a single result only for certain analyses.
+    let candidates_per_unit = {
+        let mut candidates_per_unit =
+            LengthFilter::new(metadata.feature_reference, metadata.feature_config)?
+                .filter_chemistries_per_unit(&named_candidates(&candidates), units)?;
+        // Post-process results to handle paired-end case based on the possible consensus chems.
+        // Also evaluate the consensus and fail fast if we already have no
+        // mutually compatible chemistries.
+        let mut consensus =
+            LengthFilter::reduce_per_unit_chems(units, candidates_per_unit.clone())?;
+        for candidates in &mut candidates_per_unit {
+            LengthFilter::post_process_pe(&consensus, candidates);
+        }
+        // Filter the consensus for PE to maintain consistent interpretation of logging.
+        LengthFilter::post_process_pe(&consensus.clone(), &mut consensus);
+        println!(
+            "Consensus candidates after length filter: {}",
+            consensus.keys().sorted().format(", ")
+        );
+        candidates_per_unit
+    };
 
     // -----------------------------------------------------------------------------------------
     // For each unit of fastqs, ensure that a sufficient fraction of reads contain barcodes
     // which match the whitelist for at least one of the possible chemistries
-    let wl_matching_chemistries =
-        WhitelistMatchFilter::new(&allowed_chemistries, &length_matching_chemistries)?
-            .filter_chemistries(units)?;
+    let candidates: TxHashSet<_> = {
+        let mut wl_filter = WhitelistMatchFilter::default();
+        let candidates_per_unit: Vec<_> = candidates_per_unit
+            .into_iter()
+            .zip_eq(units)
+            .map(|(candidates, unit)| wl_filter.filter_chemistries_single_unit(&candidates, unit))
+            .try_collect()?;
 
-    let chosen_chemistry_def = if wl_matching_chemistries.len() == 1 {
-        let &chem = wl_matching_chemistries.iter().exactly_one().unwrap();
+        WhitelistMatchFilter::reduce_per_unit_chems(units, candidates_per_unit)?
+            .into_keys()
+            .collect()
+    };
+
+    let chosen_chemistry_def = if candidates.len() == 1 {
+        let &chem = candidates.iter().exactly_one().unwrap();
         if chem.is_sfrp() {
+            // Extract min_major_probe_bc_frac from multi config or use default
+            let min_major_probe_bc_frac = multi_config_csv
+                .and_then(|config| config.gene_expression.as_ref())
+                .and_then(|gex_params| gex_params.min_major_probe_bc_frac)
+                .unwrap_or(DEFAULT_MIN_MAJOR_PROBE_BC_FRAC);
+
             // Bail out if a mixture of probe barcodes is observed for singleplex FRP chemistry
             validate_no_probe_bc_mixture_in_sfrp(
+                chem,
                 units,
                 metadata.feature_reference,
                 metadata.feature_config,
+                min_major_probe_bc_frac,
             )?;
         }
         Some(validate_chemistry(
@@ -444,9 +501,8 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries
-        == set![ThreePrimeV3PolyA, ThreePrimeV3HTPolyA, ThreePrimeV3LT]
-        || wl_matching_chemistries == set![ThreePrimeV3CS1, ThreePrimeV3HTCS1, ThreePrimeV3LT]
+    } else if candidates == set![ThreePrimeV3PolyA, ThreePrimeV3HTPolyA, ThreePrimeV3LT]
+        || candidates == set![ThreePrimeV3CS1, ThreePrimeV3HTCS1, ThreePrimeV3LT]
     {
         Some(validate_chemistry(
             ThreePrimeV3LT,
@@ -455,7 +511,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![ThreePrimeV3PolyA, ThreePrimeV3HTPolyA] {
+    } else if candidates == set![ThreePrimeV3PolyA, ThreePrimeV3HTPolyA] {
         Some(validate_chemistry(
             ThreePrimeV3PolyA,
             metadata.allowed_chems,
@@ -463,7 +519,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![ThreePrimeV3CS1, ThreePrimeV3HTCS1] {
+    } else if candidates == set![ThreePrimeV3CS1, ThreePrimeV3HTCS1] {
         Some(validate_chemistry(
             ThreePrimeV3CS1,
             metadata.allowed_chems,
@@ -471,7 +527,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![ThreePrimeV4PolyA] {
+    } else if candidates == set![ThreePrimeV4PolyA] {
         Some(validate_chemistry(
             ThreePrimeV4PolyA,
             metadata.allowed_chems,
@@ -479,7 +535,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![ThreePrimeV4CS1] {
+    } else if candidates == set![ThreePrimeV4CS1] {
         Some(validate_chemistry(
             ThreePrimeV4CS1,
             metadata.allowed_chems,
@@ -487,7 +543,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![FivePrimeR2, FivePrimeHT] {
+    } else if candidates == set![FivePrimeR2, FivePrimeHT] {
         Some(validate_chemistry(
             FivePrimeR2,
             metadata.allowed_chems,
@@ -495,7 +551,7 @@ fn detect_chemistry(
             multi_config_csv,
             is_overhang_multiplexed,
         )?)
-    } else if wl_matching_chemistries == set![FivePrimeR2V3] {
+    } else if candidates == set![FivePrimeR2V3] {
         Some(validate_chemistry(
             FivePrimeR2V3,
             metadata.allowed_chems,
@@ -512,15 +568,15 @@ fn detect_chemistry(
 
     println!(
         "After whitelist filter: {}",
-        wl_matching_chemistries.iter().sorted().format(", ")
+        candidates.iter().sorted().format(", ")
     );
 
     let is_antibody_only = metadata
         .sample_defs
         .iter()
         .all(|sd| sd.library_type == Some(LibraryType::Antibody));
-    let expected_mapping_chemistries = if is_antibody_only {
-        let mut result = wl_matching_chemistries;
+    let candidates = if is_antibody_only {
+        let mut result = candidates;
         // we define a new chemistry named "SC-FB" because this could be 3' v2 polyA capture
         // antibody library or a 5' antibody library
         let redundant_ab_chems = [ThreePrimeV2, FivePrimeR2, FivePrimePE];
@@ -532,30 +588,23 @@ fn detect_chemistry(
         }
         result
     } else {
-        let mut mapper = ReadMappingFilter::new(
-            metadata.reference_path.unwrap(),
-            &allowed_chemistries,
-            wl_matching_chemistries,
-        )?;
-        mapper.filter_chemistries(units)?
+        ReadMappingFilter::new(metadata.reference_path.unwrap())?
+            .filter_named_chemistries(&candidates, units)?
     };
 
     println!(
         "After mapping filter: {}",
-        expected_mapping_chemistries.iter().sorted().format(", ")
+        candidates.iter().sorted().format(", ")
     );
 
     ensure!(
-        expected_mapping_chemistries.len() == 1,
+        candidates.len() == 1,
         "Could not distinguish between {}",
-        expected_mapping_chemistries.iter().sorted().format(", ")
+        candidates.iter().sorted().format(", ")
     );
 
     validate_chemistry(
-        expected_mapping_chemistries
-            .into_iter()
-            .exactly_one()
-            .unwrap(),
+        candidates.into_iter().exactly_one().unwrap(),
         metadata.allowed_chems,
         metadata.sample_defs,
         multi_config_csv,
@@ -627,7 +676,9 @@ fn validate_chemistry(
     overhang_multiplexing: bool,
 ) -> Result<ChemistryDef> {
     if chemistry == ChemistryName::ThreePrimeV3LT {
-        bail!("The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier.");
+        bail!(
+            "The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier."
+        );
     }
     if chemistry == ChemistryName::ArcV1 {
         bail!(
@@ -639,14 +690,15 @@ fn validate_chemistry(
         );
     }
 
-    if let Some(config) = multi_config_csv {
-        if config.libraries.has_gene_expression() && chemistry.is_rtl() == Some(false) {
-            let gex = config.gene_expression.as_ref();
-            ensure!(
-                gex.is_some_and(|gex| gex.reference_path.is_some()),
-                "A reference transcriptome is required to analyze a Gene Expression library."
-            );
-        }
+    if let Some(config) = multi_config_csv
+        && config.libraries.has_gene_expression()
+        && chemistry.is_rtl() == Some(false)
+    {
+        let gex = config.gene_expression.as_ref();
+        ensure!(
+            gex.is_some_and(|gex| gex.reference_path.is_some()),
+            "A reference transcriptome is required to analyze a Gene Expression library."
+        );
     }
 
     validate_multiplexing(chemistry, sample_defs)?;
@@ -668,6 +720,9 @@ fn validate_chemistry(
 
 /// Validate combinations of chemistry and types of multiplexing.
 fn validate_multiplexing(chemistry_type: ChemistryName, sample_defs: &[SampleDef]) -> Result<()> {
+    #[allow(clippy::enum_glob_use)]
+    use ChemistryName::*;
+
     if !sample_defs
         .iter()
         .any(|sdef| sdef.library_type == Some(LibraryType::Cellplex))
@@ -675,17 +730,10 @@ fn validate_multiplexing(chemistry_type: ChemistryName, sample_defs: &[SampleDef
         return Ok(());
     }
 
-    match chemistry_type {
-        ThreePrimeV3LT => ensure!(
-            *threeprime_lt_multiplexing()?,
-            "Multiplexing Capture libraries are not supported with Single Cell 3' v3 LT chemistry"
-        ),
-        FivePrimeR1 | FivePrimeR2 | FivePrimePE | FivePrimePEV3 => ensure!(
-            *fiveprime_multiplexing()?,
-            "Multiplexing Capture libraries are not supported with Single Cell 5' chemistries"
-        ),
-        _ => (),
-    }
+    ensure!(
+        chemistry_type != ThreePrimeV3LT,
+        "Multiplexing Capture libraries are not supported with Single Cell 3' v3 LT chemistry"
+    );
     Ok(())
 }
 
@@ -738,7 +786,7 @@ fn is_rtl_uncollapsed(multi_config_csv: &MultiConfigCsv) -> bool {
     multi_config_csv
         .sample_barcode_ids_used_in_experiment(ProbeBarcodeIterationMode::All)
         .into_iter()
-        .all(|x| x.ends_with(&['A', 'B', 'C', 'D']))
+        .all(|x| x.ends_with(['A', 'B', 'C', 'D']))
 }
 
 /// Identify probe barcode pairings if necessary.
@@ -792,9 +840,8 @@ fn handle_probe_barcode_translation(
     if let Some(pairing) = explicit_pairing.or(detected_pairing_id_translation) {
         // Use the GEX probe barcode whitelist as the target.
         let target_probe_bc_whitelist = outputs.chemistry_defs[&LibraryType::Gex]
-            .barcode_whitelist()
-            .probe()
-            .as_source()?;
+            .barcode_whitelist_source()?
+            .probe();
         for (&library_type, chemistry_def) in &mut outputs.chemistry_defs {
             chemistry_def.translate_probe_barcode_whitelist_with_id_map(
                 &pairing,
@@ -812,12 +859,12 @@ fn handle_probe_barcode_translation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cr_types::chemistry::{known_chemistry_defs, ChemistryDefsExt};
+    use cr_types::LibraryType;
+    use cr_types::chemistry::{ChemistryDefsExt, known_chemistry_defs};
     use cr_types::reference::probe_set_reference::TargetSetFile;
     use cr_types::sample_def::FastqMode;
-    use cr_types::LibraryType;
     use dui_tests::stage_test::StageFailTest;
-    use dui_tests::{stage_fail_dui_test, DuiTest};
+    use dui_tests::{DuiTest, stage_fail_dui_test};
     use multi::config::{GemWell, GeneExpressionParams, Lanes, LibrariesCsv, Library, SampleRow};
     use std::io::Write;
     use std::path::Path;
@@ -825,7 +872,7 @@ mod tests {
 
     #[test]
     fn test_validate_rtl() {
-        use ChemistryName::{MFRP_Ab, ThreePrimeV3PolyA, MFRP_RNA, SFRP};
+        use ChemistryName::{MFRP_Ab, MFRP_RNA, SFRP, ThreePrimeV3CS1, ThreePrimeV3PolyA};
 
         assert!(validate_rtl(None, ThreePrimeV3PolyA).is_ok());
 
@@ -1097,7 +1144,7 @@ mod tests {
         def.rna.offset = 13;
         let args = DetectChemistryStageInputs {
             chemistry_specs: specs_input_gex(ChemistryName::Custom),
-            custom_chemistry_def: Some(def.clone()),
+            custom_chemistry_defs: HashMap::from_iter([(LibraryType::Gex, def.clone())]),
             sample_def: vec![SampleDef {
                 fastq_mode: FastqMode::ILMN_BCL2FASTQ,
                 read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
@@ -1129,7 +1176,7 @@ mod tests {
             ]
             .into_iter()
             .collect(),
-            custom_chemistry_def: Some(def.clone()),
+            custom_chemistry_defs: HashMap::from_iter([(LibraryType::Antibody, def.clone())]),
             sample_def: vec![
                 SampleDef {
                     fastq_mode: FastqMode::ILMN_BCL2FASTQ,
@@ -1174,7 +1221,7 @@ mod tests {
 
             let args = DetectChemistryStageInputs {
                 chemistry_specs: specs_input_gex(ChemistryName::Custom),
-                custom_chemistry_def: Some(custom_def),
+                custom_chemistry_defs: HashMap::from_iter([(LibraryType::Gex, custom_def)]),
                 sample_def: vec![SampleDef {
                     fastq_mode: FastqMode::ILMN_BCL2FASTQ,
                     read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
@@ -1954,7 +2001,7 @@ mod tests {
         use super::*;
         use cr_types::sample_def::FastqMode;
         use dui_tests::stage_test::StageFailTest;
-        use dui_tests::{stage_fail_dui_test, DuiTest};
+        use dui_tests::{DuiTest, stage_fail_dui_test};
         use test_refdata::{refdata_path, sere_path, testdata_path};
 
         #[test]
@@ -2314,10 +2361,13 @@ mod tests {
             ..Default::default()
         };
             let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
-            assert_eq!(outs.chemistry_defs[&LibraryType::Gex].name, MFRP_RNA_R1);
+            assert_eq!(
+                outs.chemistry_defs[&LibraryType::Gex].name,
+                ChemistryName::MFRP_RNA_R1
+            );
             assert_eq!(
                 outs.chemistry_defs[&LibraryType::Antibody].name,
-                MFRP_Ab_R2pos50
+                ChemistryName::MFRP_Ab_R2pos50
             );
         }
 

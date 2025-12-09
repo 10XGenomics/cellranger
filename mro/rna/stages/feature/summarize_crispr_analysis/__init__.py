@@ -23,7 +23,7 @@ stage SUMMARIZE_CRISPR_ANALYSIS(
     out path crispr_analysis,
     src py   "stages/feature/summarize_crispr_analysis",
 ) using (
-    mem_gb = 4,
+    volatile = strict,
 )
 """
 
@@ -47,7 +47,7 @@ def main(args, outs):
             continue
         cr_io.hardlink_with_fallback(file_path, os.path.join(outs.crispr_analysis, file_name))
 
-    if os.path.isdir(args.perturbation_effects_by_feature):
+    if args.perturbation_effects_by_feature and os.path.isdir(args.perturbation_effects_by_feature):
         perturbation_effects_by_feature_dir = os.path.join(
             outs.crispr_analysis, "perturbation_effects_by_feature"
         )
@@ -57,7 +57,7 @@ def main(args, outs):
             perturbation_effects_by_feature_dir,
         )
 
-    if os.path.isdir(args.perturbation_effects_by_target):
+    if args.perturbation_effects_by_target and os.path.isdir(args.perturbation_effects_by_target):
         perturbation_effects_by_target_dir = os.path.join(
             outs.crispr_analysis, "perturbation_effects_by_target"
         )

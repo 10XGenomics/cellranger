@@ -1,6 +1,6 @@
 [dependencies]
-[dependencies.bio_edit]
-path = '../bio_edit'
+[dependencies.bio]
+workspace = true
 
 [dependencies.byteorder]
 workspace = true
@@ -21,9 +21,12 @@ path = '../vdj_ann'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'enclone_proto'
 publish = false
 version = '0.1.0'

@@ -23,7 +23,8 @@ import (
 	"github.com/10XDev/cellranger/lib/go/telemetry/value_context"
 )
 
-const usage = `Usage: telemetry [help] (collect|check|disable|enable|list|show)
+func getUsage() string {
+	return `Usage: telemetry [help] (collect|check|disable|enable|list|show)
 
 collect: Collect telemetry data, if enabled.
 check:   Show whether telemetry is currently enabled and
@@ -34,12 +35,13 @@ list:    List files containing saved telemetry data for this product.
 show:    Display contents of saved telemetry data for this product.
 
 For more information about what data is collected and how it's used, visit
-` + settings.PrivacyStatementUrl
+` + settings.PrivacyStatementUrl()
+}
 
 func main() {
 	f := flag.NewFlagSet("telemetry", flag.ExitOnError)
 	f.Usage = func() {
-		fmt.Fprintln(os.Stderr, usage)
+		fmt.Fprintln(os.Stderr, getUsage())
 	}
 	var cpuProfile, traceFile string
 	f.StringVar(&cpuProfile, "profile", "",
@@ -111,7 +113,7 @@ func main() {
 		case "show":
 			return doShow(f.Args()[1:])
 		default:
-			fmt.Fprintln(os.Stderr, usage)
+			fmt.Fprintln(os.Stderr, getUsage())
 			return 1
 		}
 	}(f))
@@ -119,7 +121,7 @@ func main() {
 
 func doHelp(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, usage)
+		fmt.Fprintln(os.Stderr, getUsage())
 		return 0
 	}
 	switch args[0] {
@@ -136,7 +138,7 @@ func doHelp(args []string) int {
 	case "show":
 		return doShow([]string{"-h"})
 	default:
-		fmt.Fprintln(os.Stderr, usage)
+		fmt.Fprintln(os.Stderr, getUsage())
 		return 1
 	}
 	return 0
@@ -196,7 +198,7 @@ Allowing 'upload' will permit collected telemetry data from being sent
 to 10X Genomics.
 
 For more information about what data is collected and how it's used, visit
-` + settings.PrivacyStatementUrl
+` + settings.PrivacyStatementUrl()
 }
 
 func doCollect(args []string) int {

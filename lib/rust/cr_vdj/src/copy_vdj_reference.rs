@@ -5,10 +5,11 @@
 //! │   └── regions.fa
 //! └── reference.json
 //! ```
+#![expect(missing_docs)]
 
 use anyhow::{Context, Result};
 use martian::prelude::*;
-use martian_derive::{make_mro, martian_filetype, MartianStruct};
+use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -85,18 +86,20 @@ impl MartianMain for CopyVdjReference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cr_lib::testing::tools::ensure_no_diff;
+    use cr_lib::testing::ensure_no_diff;
     use std::path::Path;
 
     #[test]
     fn test_no_vdj_reference() {
-        assert!(CopyVdjReference
-            .test_run_tmpdir(CopyVdjReferenceStageInputs {
-                vdj_reference_path: None,
-            })
-            .unwrap()
-            .vdj_reference
-            .is_none());
+        assert!(
+            CopyVdjReference
+                .test_run_tmpdir(CopyVdjReferenceStageInputs {
+                    vdj_reference_path: None,
+                })
+                .unwrap()
+                .vdj_reference
+                .is_none()
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+#![expect(missing_docs)]
 use anyhow::Result;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
 use std::vec;
@@ -78,8 +79,8 @@ where
     #[cfg(test)]
     fn buffer_len(&self) -> usize {
         match self.storage.as_ref().unwrap() {
-            SpillableStorage::MemOnly(ref buf) => buf.len(),
-            SpillableStorage::MemAndDisk(ref buf, _) => buf.len(),
+            SpillableStorage::MemOnly(buf) => buf.len(),
+            SpillableStorage::MemAndDisk(buf, _) => buf.len(),
         }
     }
 }
@@ -113,7 +114,7 @@ where
                 None => {
                     self.inner = Some(SpillableStorage::MemOnly(vec_iter));
                     match std::fs::remove_file(&self.spill_file) {
-                        Ok(_) => self.next(),
+                        Ok(()) => self.next(),
                         Err(e) => Some(Err(e.into())),
                     }
                 }

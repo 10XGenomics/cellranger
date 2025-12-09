@@ -94,21 +94,21 @@ def make_jibes_biplot_histogram(assigner):
     biplot_data = rc.BiplotsWithThresholding(
         vectors,
         vector_names,
-        True,
-        False,
-        phred_values,
-        slider_values,
-        "Assignment Phred Score Threshold",
-        "Singlets",
-        "Filtered Singlets",
-        "% Filtered",
-        [
+        show_transparency_slider=True,
+        show_thresholding_slider=False,
+        threshold_values=phred_values,
+        threshold_slider_values=slider_values,
+        threshold_slider_title="Assignment Phred Score Threshold",
+        unfiltered_name="Singlets",
+        filtered_name="Filtered Singlets",
+        percent_filtered_name="% Filtered",
+        excluded_categories=[
             ensure_str(jibes.BLANK_FACTOR_NAME),
             ensure_str(jibes.MULTIPLETS_FACTOR_NAME),
             ensure_str(jibes.UNASSIGNED_FACTOR_NAME),
         ],
-        [ensure_str(x) for x in assignments[jibes.ASSIGNMENT_COL_NAME].values.tolist()],
-        color_map,
+        assignments=[ensure_str(x) for x in assignments[jibes.ASSIGNMENT_COL_NAME].values.tolist()],
+        assignment_colors=color_map,
     )
 
     jibes_biplot_histogram = {

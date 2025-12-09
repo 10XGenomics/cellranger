@@ -7,7 +7,7 @@
 import csv
 import json
 
-from cellranger.cell_typing.cas_postprocessing import BARCODE_KEY, COARSE_CELL_TYPES_KEY
+from cellranger.cell_typing.common_cell_typing import BARCODE_KEY, COARSE_CELL_TYPES_KEY
 
 __MRO__ = """
 stage GET_CLOUPE_CELL_TYPES(

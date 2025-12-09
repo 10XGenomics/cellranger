@@ -107,6 +107,7 @@ class VdjReport:
         self.umi_summary = None
         self.barcode_brief = None
         self.report = None
+        self.clonotype_info_json = None
 
 
 # pylint: disable=invalid-name

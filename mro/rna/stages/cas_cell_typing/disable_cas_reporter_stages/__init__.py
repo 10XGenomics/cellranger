@@ -6,7 +6,7 @@
 
 import csv
 
-from cellranger.cell_typing.cas_postprocessing import (
+from cellranger.cell_typing.common_cell_typing import (
     BARCODE_KEY,
     COARSE_CELL_TYPES_KEY,
 )
@@ -32,7 +32,7 @@ def main(args, outs):
             read_csv_file,
         )
         hdrs = reader.fieldnames
-        if not hdrs or BARCODE_KEY not in hdrs and COARSE_CELL_TYPES_KEY not in hdrs:
+        if not hdrs or (BARCODE_KEY not in hdrs and COARSE_CELL_TYPES_KEY not in hdrs):
             raise ValueError("Invalid cell type CSV file.")
 
         set_of_cell_types = {row[COARSE_CELL_TYPES_KEY] for row in reader}

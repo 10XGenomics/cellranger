@@ -20,11 +20,12 @@ import cellranger.h5_constants as h5_constants
 import cellranger.hdf5 as cr_h5
 from cellranger.feature.antigen.specificity import MHC_ALLELE, TARGETING_ANTIGEN
 from cellranger.rna.library import ANTIGEN_LIBRARY_TYPE
-from cellranger.targeted.targeted_constants import EXCLUDED_PROBE_ID_PREFIXES
+from cellranger.targeted.targeted_constants import DEPRECATED_PROBE_ID_PREFIX
 
 FEATURE_TYPE = "feature_type"
 # Required HDF5 datasets
-REQUIRED_DATASETS = ["id", "name", FEATURE_TYPE]
+FR_ID = "id"
+REQUIRED_DATASETS = [FR_ID, "name", FEATURE_TYPE]
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,9 @@ class FeatureDef:
 GENOME_FEATURE_TAG = "genome"
 DEFAULT_FEATURE_TAGS = [GENOME_FEATURE_TAG]
 RESERVED_TAGS = DEFAULT_FEATURE_TAGS
+
+# Sentinel used in Xenium runs where genome is unknown
+UNKNOWN_GENOME_SENTINEL = "Unknown"
 
 # Defined here lib/rust/cr_types/src/reference/feature_reference.rs
 HASHTAG_TAG = "hashtag"
@@ -227,18 +231,18 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
 
     def get_feature_ids_excluding_deprecated_probes(self) -> list[bytes]:
         """Return the list of feature IDs excluding deprecated probes."""
-        return [f.id for f in self.feature_defs if not f.id.startswith(EXCLUDED_PROBE_ID_PREFIXES)]
+        return [f.id for f in self.feature_defs if not f.id.startswith(DEPRECATED_PROBE_ID_PREFIX)]
 
     def has_deprecated_probes(self) -> bool:
         """Return true if there are deprecated probes in features."""
-        return any(f.id.startswith(EXCLUDED_PROBE_ID_PREFIXES) for f in self.feature_defs)
+        return any(f.id.startswith(DEPRECATED_PROBE_ID_PREFIX) for f in self.feature_defs)
 
     def get_feature_types_excluding_deprecated_probes(self) -> list[str]:
         """Return the list of feature types excluding deprecated probes."""
         return [
             f.feature_type
             for f in self.feature_defs
-            if not f.id.startswith(EXCLUDED_PROBE_ID_PREFIXES)
+            if not f.id.startswith(DEPRECATED_PROBE_ID_PREFIX)
         ]
 
     def get_antigen_control(self) -> tuple | None:
@@ -275,7 +279,7 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
         return frozenset(lst)
 
     def equals_antigen_capture_content(
-        self, other: FeatureReference, is_pd: bool
+        self, other: FeatureReference, _is_pd: bool
     ) -> tuple[bool, str | None]:
         """Checks if two feature references have the same antigen capture features.
 
@@ -297,19 +301,10 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
                 if sorted_antigen_content_1[i][3] != sorted_antigen_content_2[i][3]:
                     return (
                         False,
-                        "The datasets you are trying to aggregate have incompatible "
+                        "TXRNGR10015: The datasets you are trying to aggregate have incompatible "
                         "MHC alleles for the same control feature id. Please re-run the original "
                         "multi pipelines with uniform [antigen-specificity] sections.",
                     )
-                # check matching control
-                if (sorted_antigen_content_1[i][4] != sorted_antigen_content_2[i][4]) and not is_pd:
-                    return (
-                        False,
-                        "The datasets you are trying to aggregate have incompatible "
-                        "control feature ids. Please re-run the original multi pipelines with "
-                        "uniform [antigen-specificity] sections.",
-                    )
-
         return True, None
 
     def equals_ignore_target_set(self, other: FeatureReference) -> bool:
@@ -487,19 +482,23 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
             feature.index for feature in self.feature_defs if feature.feature_type == feature_type
         ]
 
-    def get_genomes(self, feature_type: str | None = None) -> list[str]:
-        """Get sorted list of genomes.
+    def get_genomes(self) -> list[str]:
+        """Get a sorted list of genomes, excluding the empty-string genome of feature barcoding."""
+        return sorted(
+            {genome for f in self.feature_defs if (genome := f.tags.get(GENOME_FEATURE_TAG))}
+        )
 
-        Empty string is for reverse compatibility.
+    def has_unknown_genomes(self) -> bool:
+        return "" in (genomes := self.get_genomes()) or UNKNOWN_GENOME_SENTINEL in genomes
 
-        A specific feature type can optionally be specified.
-        """
-        genomes = {
-            f.tags.get(GENOME_FEATURE_TAG, "")
-            for f in self.feature_defs
-            if (feature_type is None or f.feature_type == feature_type)
-        }
-        return sorted(genomes)
+    def set_genome(self, genome: str):
+        """Set genome of all feature defs."""
+        for ftr in self.feature_defs:
+            ftr.tags[GENOME_FEATURE_TAG] = genome
+
+    def get_genomes_with_empty_string(self) -> list[str]:
+        """Get a sorted list of genomes, including the empty-string genome of feature barcoding."""
+        return sorted({f.tags.get(GENOME_FEATURE_TAG, "") for f in self.feature_defs})
 
     def has_target_features(self) -> bool:
         return self.target_features is not None
@@ -727,7 +726,7 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
             tags = {ensure_str(k): ensure_str(data[k][i]) for k in all_tag_keys if data[k][i]}
             feature_defs.append(
                 FeatureDef(
-                    id=ensure_binary(data["id"][i]),
+                    id=ensure_binary(data[FR_ID][i]),
                     index=i,
                     name=data["name"][i],
                     feature_type=data[FEATURE_TYPE][i],

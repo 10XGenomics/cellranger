@@ -1,19 +1,20 @@
+#![expect(missing_docs)]
 use crate::{VdjHierarchy, VdjReference};
-use fxhash::{FxBuildHasher, FxHashMap};
-use std::collections::HashMap;
+use ahash::HashMapExt;
+use metric::TxHashMap;
 
 const DEFAULT_KMER_LENGTH: usize = 20;
 
 /// Control the strategy used to classify reads in `KmerClassify`
 /// There are two strategies:
 /// * `Lazy` (Default): In this mode, the `choice` corrsponding to the first kmer match in the read
-///     is returned. Because not all kmers are necessarily checked, this works out to be the
-///     fastest strategy, but with a higher false positive rate. This is recommended if you are
-///     using the classifier to pick between IG/TCR. There is barely any 20-mer common between
-///     IG and TCR receptor reference sequences in human/mouse, so the classificiation here
-///     is pretty accurate, unless there is some weird chimera that is formed.
+///   is returned. Because not all kmers are necessarily checked, this works out to be the
+///   fastest strategy, but with a higher false positive rate. This is recommended if you are
+///   using the classifier to pick between IG/TCR. There is barely any 20-mer common between
+///   IG and TCR receptor reference sequences in human/mouse, so the classificiation here
+///   is pretty accurate, unless there is some weird chimera that is formed.
 /// * `Strict`: In this mode, a read is classified as a `choice` only if at least
-///     one kmer in the read maps to `choice` and no kmers in the read maps to other choices.
+///   one kmer in the read maps to `choice` and no kmers in the read maps to other choices.
 #[derive(Debug, Copy, Clone)]
 pub enum KmerClassifyStrategy {
     Lazy,
@@ -34,7 +35,7 @@ pub enum KmerClassifyStrategy {
 #[derive(Debug)]
 pub struct KmerClassify<'a, T> {
     kmer_len: usize,
-    kmer_hash: FxHashMap<&'a [u8], T>,
+    kmer_hash: TxHashMap<&'a [u8], T>,
     strategy: KmerClassifyStrategy,
 }
 
@@ -68,7 +69,7 @@ where
         strategy: KmerClassifyStrategy,
     ) -> Self {
         // Hashmap from kmer to Option<T>. The value will be none if more than one value of `T` maps to that kmer.
-        let mut kmer_hash_build = FxHashMap::default();
+        let mut kmer_hash_build = TxHashMap::default();
         for ref_entry in reference {
             let seq = ref_entry.seq();
             let choice = Some(T::from_entry(ref_entry));
@@ -84,8 +85,7 @@ where
                     .or_insert(choice);
             }
         }
-        let mut kmer_hash =
-            HashMap::with_capacity_and_hasher(kmer_hash_build.len(), FxBuildHasher::default());
+        let mut kmer_hash = TxHashMap::with_capacity(kmer_hash_build.len());
         for (k, v) in kmer_hash_build {
             if let Some(val) = v {
                 kmer_hash.insert(k, val);

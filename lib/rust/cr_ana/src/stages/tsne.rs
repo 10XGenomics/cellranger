@@ -1,15 +1,16 @@
 //! Martian stage RUN_TSNE
+#![expect(missing_docs)]
 
-use crate::io::{csv, h5};
-use crate::types::{EmbeddingResult, EmbeddingType, H5File};
 use crate::EXCLUDED_FEATURE_TYPES;
+use crate::io::{csv, h5};
+use crate::types::{EmbeddingResult, EmbeddingType, H5File, ReductionType};
 use anyhow::Result;
 use bhtsne::BarnesHutTSNE;
-use cr_types::reference::feature_reference::FeatureType;
 use cr_types::FeatureBarcodeType;
+use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::{get_barcodes_between, read_adaptive_csr_matrix};
 use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
-use martian_derive::{make_mro, MartianStruct};
+use martian_derive::{MartianStruct, make_mro};
 use scan_types::matrix::AdaptiveFeatureBarcodeMatrix as FBM;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -26,15 +27,16 @@ const N_COMPONENTS: usize = 2;
 #[derive(Debug, Deserialize, MartianStruct)]
 pub struct TsneStageInputs {
     matrix_h5: H5File,
-    pca_h5: H5File,
+    reduction_h5: H5File,
     random_seed: Option<u32>,
     perplexity: Option<f64>,
-    input_pcs: Option<usize>,
+    input_dims: Option<usize>,
     max_dims: Option<usize>,
     max_iter: Option<usize>,
     stop_lying_iter: Option<usize>,
     mom_switch_iter: Option<usize>,
     theta: Option<f64>,
+    reduction_type: ReductionType,
 }
 
 #[derive(Debug, Serialize, MartianStruct)]
@@ -79,8 +81,8 @@ impl MartianStage for RunTsne {
         let stage_def = components.flat_map(|tsne_dims| {
             feature_types
                 .iter()
-                .filter(|(&feature_type, &count)| {
-                    count >= 2 && !EXCLUDED_FEATURE_TYPES.contains(&feature_type)
+                .filter(|&(feature_type, &count)| {
+                    count >= 2 && !EXCLUDED_FEATURE_TYPES.contains(feature_type)
                 })
                 .map(move |(&feature_type, _count)| {
                     let chunk_mem_gib = 4.max(
@@ -130,7 +132,7 @@ impl MartianStage for RunTsne {
                     barcodes, matrix, ..
                 } = read_adaptive_csr_matrix(
                     &args.matrix_h5,
-                    Some(chunk_args.feature_type.to_string().as_str()),
+                    Some(chunk_args.feature_type.as_str()),
                     None,
                 )?
                 .0;
@@ -148,10 +150,11 @@ impl MartianStage for RunTsne {
                 let barcodes = get_barcodes_between(0, None, &matrix)?;
 
                 (
-                    h5::load_transformed_pca_matrix(
-                        &args.pca_h5,
+                    h5::load_transformed_matrix(
+                        &args.reduction_h5,
                         chunk_args.feature_type,
-                        args.input_pcs,
+                        args.input_dims,
+                        args.reduction_type,
                     )?,
                     barcodes,
                 )

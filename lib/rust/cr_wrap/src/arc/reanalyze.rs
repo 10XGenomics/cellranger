@@ -1,10 +1,11 @@
 //! Args for the reanalyze sub-command
+#![expect(missing_docs)]
 
 use crate::arc::aggr::AggrDefs;
-use crate::arc::types::{validate_distance, ForceCellsArgs, MinCounts, MAX_CLUSTERS_RANGE};
+use crate::arc::types::{ForceCellsArgs, MAX_CLUSTERS_RANGE, MinCounts, validate_distance};
 use crate::mrp_args::MrpArgs;
-use crate::utils::{validate_id, CliPath};
-use anyhow::{bail, Context, Result};
+use crate::utils::{CliPath, validate_id};
+use anyhow::{Context, Result, bail};
 use clap::{self, Parser};
 use csv::StringRecord;
 use ordered_float::NotNan;
@@ -117,7 +118,7 @@ impl ReanalyzeArgs {
             );
         }
 
-        if let Some(ref csv_path) = &self.aggregation_csv {
+        if let Some(csv_path) = &self.aggregation_csv {
             AggrDefs::from_csv(csv_path).map(|_| ())?;
         }
 
@@ -164,10 +165,7 @@ impl NumPcs {
     pub fn validate(&self) -> Result<()> {
         let k = self.0;
         if !(2..=100).contains(&k) {
-            bail!(
-                "invalid value = {}: value must satisfy 2 <= value <= 100",
-                k
-            );
+            bail!("invalid value = {k}: value must satisfy 2 <= value <= 100");
         }
         Ok(())
     }
@@ -185,19 +183,19 @@ struct ReanalyzeParams {
 
 impl ReanalyzeParams {
     pub fn validate(&self) -> Result<()> {
-        if let Some(s) = self.random_seed {
-            if s > i64::MAX as u64 {
-                bail!("Invalid value for `random_seed`: too large to fit into int64");
-            }
+        if let Some(s) = self.random_seed
+            && s > i64::MAX as u64
+        {
+            bail!("Invalid value for `random_seed`: too large to fit into int64");
         }
         if let Some(x) = self.feature_linkage_max_dist_mb {
             validate_distance(&x.to_string())
                 .context("Invalid value for `feature_linkage_max_dist_mb`")?;
         }
-        if let Some(x) = self.k_means_max_clusters {
-            if !MAX_CLUSTERS_RANGE.contains(&x) {
-                bail!("Invalid value for `k_means_max_clusters`: {x}");
-            }
+        if let Some(x) = self.k_means_max_clusters
+            && !MAX_CLUSTERS_RANGE.contains(&x)
+        {
+            bail!("Invalid value for `k_means_max_clusters`: {x}");
         }
         if let Some(x) = &self.num_atac_pcs {
             x.validate().context("Invalid value for `num_atac_pcs`")?;

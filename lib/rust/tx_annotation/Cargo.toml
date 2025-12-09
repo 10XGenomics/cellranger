@@ -2,6 +2,9 @@
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.barcode]
+path = '../barcode'
+
 [dependencies.cr_bam]
 path = '../cr_bam'
 
@@ -9,7 +12,7 @@ path = '../cr_bam'
 path = '../cr_types'
 
 [dependencies.fastq_set]
-workspace = true
+path = '../fastq_set'
 
 [dependencies.itertools]
 workspace = true
@@ -29,16 +32,13 @@ path = '../metric'
 [dependencies.rand]
 workspace = true
 
-[dependencies.rand_chacha]
-workspace = true
-
 [dependencies.rust-htslib]
 workspace = true
 
 [dependencies.serde]
 workspace = true
 
-[dependencies.strum_macros]
+[dependencies.strum]
 workspace = true
 
 [dependencies.transcriptome]
@@ -50,9 +50,12 @@ path = '../umi'
 [lib]
 test = false
 
+[lints]
+workspace = true
+
 [package]
 authors = ['10x Genomics']
-edition = '2021'
+edition = '2024'
 name = 'tx_annotation'
 publish = false
 version = '0.1.0'
