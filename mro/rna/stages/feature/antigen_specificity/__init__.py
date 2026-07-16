@@ -4,8 +4,13 @@
 #
 """Calculate antigen specificity for Beam runs."""
 
+from __future__ import annotations
+
 import json
 import os
+from typing import TYPE_CHECKING
+
+import martian
 
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
@@ -24,6 +29,9 @@ from cellranger.feature.antigen.specificity import (
     get_functional_map,
 )
 
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage CALCULATE_ANTIGEN_SPECIFICITY(
     in  h5     filtered_feature_counts_matrix,
@@ -37,11 +45,43 @@ stage CALCULATE_ANTIGEN_SPECIFICITY(
     out csv    exact_subclonotype_concordance,
     out json   summary,
     src py     "stages/feature/antigen_specificity",
+) using (
+    mem_gb = 4,
 )
 """
 
 
-def get_control_antigens(fr_obj, beam_mode):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALCULATE_ANTIGEN_SPECIFICITY stage inputs."""
+
+    filtered_feature_counts_matrix: mro_filetypes.h5
+    beam_mode: None | str
+    filtered_contig_annotations: None | mro_filetypes.csv
+    clonotypes_csv: mro_filetypes.csv
+    count_gem_well_map: dict[str, str]
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALCULATE_ANTIGEN_SPECIFICITY stage outputs."""
+
+    antigen_specificity_scores: None | mro_filetypes.csv
+    antigen_assignment: None | mro_filetypes.csv
+    clonotype_concordance: None | mro_filetypes.csv
+    exact_subclonotype_concordance: None | mro_filetypes.csv
+    summary: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CALCULATE_ANTIGEN_SPECIFICITY chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """CALCULATE_ANTIGEN_SPECIFICITY chunk outputs."""
+
+
+def get_control_antigens(
+    fr_obj: cr_matrix.FeatureReference, beam_mode: None | str
+) -> tuple[dict[str, int], dict[int, str]]:
     """Build a map of the control feature id for each allele and a dict of feature id to allele."""
     control_by_allele = {}
     antigen_to_allele = {}
@@ -57,7 +97,7 @@ def get_control_antigens(fr_obj, beam_mode):
 
 
 # pylint: disable=too-many-locals
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     filt_ag_bc_mat = cr_matrix.CountMatrix.load_h5_file(
         args.filtered_feature_counts_matrix
     ).select_features_by_type(rna_library.ANTIGEN_LIBRARY_TYPE)

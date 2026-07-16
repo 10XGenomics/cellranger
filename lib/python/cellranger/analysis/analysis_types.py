@@ -13,10 +13,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Self
 
 import numpy as np
-from six import ensure_str
 
 if TYPE_CHECKING:
-    import cellranger.matrix as cr_matrix
+    from cellranger.feature_ref import FeatureReference
 
 # pylint: disable=invalid-name
 
@@ -118,12 +117,12 @@ class DifferentialExpressionWithFeatures:
     feature_ids: list[str]
 
     @classmethod
-    def from_cmatrix_and_diffexp(
-        cls, cmatrix: cr_matrix.CountMatrix, diffexp: DifferentialExpression
+    def from_feature_ref_and_diffexp(
+        cls, feature_ref: FeatureReference, diffexp: DifferentialExpression
     ) -> Self:
-        """Get differential expression with features from matrix and diffexp."""
-        feature_names = cmatrix.feature_ref.get_feature_names()
-        feature_ids = [ensure_str(x) for x in cmatrix.feature_ref.get_feature_ids()]
+        """Get differential expression with features from feature_ref and diffexp."""
+        feature_names = feature_ref.get_feature_names()
+        feature_ids = [x.decode() for x in feature_ref.get_feature_ids()]
         return cls(feature_names=feature_names, feature_ids=feature_ids, diffexp=diffexp)
 
     @classmethod
@@ -132,7 +131,7 @@ class DifferentialExpressionWithFeatures:
         diffexp = DifferentialExpression.read_diffexp_from_csv(csv_path=csv_path)
         with open(csv_path) as f:
             feature_ids, feature_names = itertools.tee(
-                (ensure_str(row[DIFFEXP_TABLE_FEATURE_ID_KEY]), row[DIFFEXP_TABLE_FEATURE_NAME_KEY])
+                (row[DIFFEXP_TABLE_FEATURE_ID_KEY], row[DIFFEXP_TABLE_FEATURE_NAME_KEY])
                 for row in csv.DictReader(f)
             )
             feature_ids, feature_names = [x[0] for x in feature_ids], [x[1] for x in feature_names]

@@ -7,7 +7,7 @@ use anyhow::Result;
 use barcode::Barcode;
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::rna_read::RnaRead;
-use cr_types::types::{GemWell, LibraryType};
+use cr_types::types::LibraryType;
 use cr_types::{MetricsFile, PerLibrarySortedBarcodeCounts};
 use itertools::Itertools;
 use martian::prelude::*;
@@ -37,7 +37,6 @@ pub type VdjBarcodeCountsFile = JsonFile<TxHashMap<String, usize>>;
 #[derive(Clone, Deserialize, MartianStruct)]
 pub struct RustBridgeStageInputs {
     pub chemistry_defs: ChemistryDefs,
-    pub gem_well: GemWell,
     pub valid_uncorrected: Vec<ReadShardFile>,
     pub valid_corrected: Vec<ReadShardFile>,
     pub corrected_barcode_counts: PerLibrarySortedBarcodeCounts,
@@ -62,7 +61,6 @@ pub struct RustBridgeChunkOutputs {
 #[derive(Serialize, MartianStruct)]
 pub struct RustBridgeStageOutputs {
     pub bc_sorted_rna_reads: Vec<Lz4<BincodeFile<Vec<RnaRead>>>>,
-    pub gem_groups: Vec<u16>,
     pub barcodes: Vec<JsonFile<()>>,
     pub corrected_barcode_counts_json: VdjBarcodeCountsFile,
     pub summary: MetricsFile,
@@ -170,7 +168,7 @@ impl MartianStage for RustBridge {
     fn join(
         &self,
         args: Self::StageInputs,
-        chunk_defs: Vec<Self::ChunkInputs>,
+        _chunk_defs: Vec<Self::ChunkInputs>,
         chunk_outs: Vec<Self::ChunkOutputs>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
@@ -214,7 +212,6 @@ impl MartianStage for RustBridge {
                 .iter()
                 .map(|x| x.chunk_bc_sorted_rna_reads.clone())
                 .collect(),
-            gem_groups: vec![args.gem_well.inner(); chunk_defs.len()],
             barcodes: chunk_outs
                 .iter()
                 .map(|x| x.barcodes_shard.clone())

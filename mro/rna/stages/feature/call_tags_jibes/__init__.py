@@ -4,7 +4,10 @@
 #
 """Assigns tags to cells."""
 
+from __future__ import annotations
+
 import pickle
+from typing import TYPE_CHECKING
 
 import martian
 import numpy as np
@@ -24,6 +27,9 @@ from cellranger.feature.feature_assignments import CMO_CATEGORY_NAMES, CellsPerF
 
 # pylint: disable=wrong-import-position, too-many-locals
 from cellranger.pandas_utils import sanitize_dataframe
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage CALL_TAGS_JIBES(
@@ -55,6 +61,46 @@ stage CALL_TAGS_JIBES(
 )
 """
 
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_JIBES stage inputs."""
+
+    marginal_tag_calls_per_cell: None | mro_filetypes.csv
+    marginal_tag_frequencies: None | mro_filetypes.csv
+    filtered_barcodes: mro_filetypes.csv
+    filtered_feature_counts_matrix: mro_filetypes.h5
+    molecule_info: mro_filetypes.h5
+    throughput: str
+    library_type: None | str
+    multiplexing_method: None | str
+    min_assignment_confidence: float
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_JIBES stage outputs."""
+
+    jibes_parameters: None | mro_filetypes.json
+    jibes_model_summary: None | mro_filetypes.csv
+    jibes_summary_data: None | mro_filetypes.json
+    assignment_confidence_table: None | mro_filetypes.csv
+    tag_calls_summary: None | mro_filetypes.csv
+    tag_calls_per_cell: None | mro_filetypes.csv
+    tag_call_metrics: None | mro_filetypes.json
+    cells_per_tag: None | mro_filetypes.json
+    tag_umi_thresholds_json: None | mro_filetypes.json
+    tag_umi_thresholds_csv: None | mro_filetypes.csv
+    tag_assigner_pickle: None | mro_filetypes.pickle
+    non_singlet_barcodes: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_JIBES chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_JIBES chunk outputs."""
+
+
 np.random.seed(0)
 MIN_MEM_GB = 6
 
@@ -73,7 +119,7 @@ def _add_empty_tag_assignments(cells_per_feature_object, all_tags_list):
     return cells_per_feature_object
 
 
-def set_empty(outs, all_tags):
+def set_empty(outs: StageOutputs, all_tags: list[bytes]):
     """Exit with empty functional outs."""
     outs.jibes_parameters = None
     outs.jibes_model_summary = None
@@ -95,11 +141,11 @@ def set_empty(outs, all_tags):
     outs.non_singlet_barcodes = None
 
 
-def split(args):
+def split(args: StageInputs):
     return {"chunks": [], "join": {"__mem_gb": 16, "__threads": 4}}
 
 
-def _get_input_files(args):
+def _get_input_files(args: StageInputs):
     return [
         args.marginal_tag_calls_per_cell,
         args.filtered_feature_counts_matrix,
@@ -108,7 +154,12 @@ def _get_input_files(args):
     ]
 
 
-def join(args, outs, chunk_defs, chunk_outs):  # pylint: disable=too-many-locals,too-many-statements
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):  # pylint: disable=too-many-locals,too-many-statements
     matrix_present = feature_utils.all_files_present([args.filtered_feature_counts_matrix])
     if not matrix_present:
         set_empty(outs=outs, all_tags=[])
@@ -195,8 +246,12 @@ def join(args, outs, chunk_defs, chunk_outs):  # pylint: disable=too-many-locals
         set_empty(outs=outs, all_tags=all_tags)
         return
     tag_assigner.assignment_metadata = tag_assigner.compute_assignment_metadata()
-    tag_assigner.feature_calls_summary = tag_assigner.get_feature_calls_summary()
-    tag_assigner.cells_per_feature = tag_assigner.get_cells_per_feature()
+    tag_assigner.feature_calls_summary = (  # FIXME: Member not in the class definition
+        tag_assigner.get_feature_calls_summary()
+    )
+    tag_assigner.cells_per_feature = (  # FIXME: Member not in the class definition
+        tag_assigner.get_cells_per_feature()
+    )
 
     tag_assignments_matrix = tag_assigner.create_tag_assignments_matrix()
     features_per_cell_table = tag_assignments_matrix.get_features_per_cell_table()

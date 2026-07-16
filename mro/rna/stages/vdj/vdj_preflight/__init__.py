@@ -3,28 +3,61 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import martian
 
 import cellranger.constants as cr_constants
 import cellranger.preflight as cr_preflight
 import cellranger.vdj.preflight as vdj_preflight
+from cellranger.sample_def import SampleDef
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage VDJ_PREFLIGHT(
-    in  map[]  sample_def,
-    in  path   vdj_reference_path,
-    in  bool   denovo,
-    in  bool   full_check,
-    in  path   inner_enrichment_primers,
-    in  string chain_type,
-    src py     "stages/vdj/vdj_preflight",
+    in  SampleDef[] sample_def,
+    in  path        vdj_reference_path,
+    in  bool        denovo,
+    in  bool        full_check,
+    in  path        inner_enrichment_primers,
+    in  string      chain_type,
+    src py          "stages/vdj/vdj_preflight",
 )
 """
 
 
-def run_preflight_checks(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """VDJ_PREFLIGHT stage inputs."""
+
+    sample_def: list[mro_structs.SampleDef]
+    vdj_reference_path: None | mro_filetypes.path
+    denovo: bool
+    full_check: bool
+    inner_enrichment_primers: None | mro_filetypes.path
+    chain_type: str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """VDJ_PREFLIGHT stage outputs."""
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """VDJ_PREFLIGHT chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """VDJ_PREFLIGHT chunk outputs."""
+
+
+def run_preflight_checks(args: StageInputs):
     print("Checking sample info...")
-    cr_preflight.check_sample_def(args.sample_def, pipeline=cr_constants.PIPELINE_VDJ)
+    sample_defs = [SampleDef.from_dict(s) for s in args.sample_def]
+    cr_preflight.check_sample_def(sample_defs, pipeline=cr_constants.PIPELINE_VDJ)
 
     print("Checking reference...")
     vdj_preflight.check_refdata(args.vdj_reference_path, args.denovo)
@@ -44,7 +77,7 @@ def run_preflight_checks(args):
         cr_preflight.check_environment()
 
 
-def main(args, outs):
+def main(args: ChunkInputs, _outs: ChunkOutputs):
     try:
         run_preflight_checks(args)
     except cr_preflight.PreflightException as e:

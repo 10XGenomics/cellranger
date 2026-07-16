@@ -62,7 +62,7 @@ where
     let n = xs.len();
     if n == 0 {
         None
-    } else if n % 2 == 0 {
+    } else if n.is_multiple_of(2) {
         let i = n / 2;
         Some((xs[i - 1] + xs[i]) / T::from(2))
     } else {

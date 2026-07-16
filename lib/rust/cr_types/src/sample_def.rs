@@ -1,19 +1,18 @@
 #![expect(missing_docs)]
-use crate::LibraryType;
-use crate::serde_helpers::NumberOrStr;
-use anyhow::{Result, bail, ensure};
+use crate::rna_read::AdapterTrimmingParameters;
+use crate::{AlignerParam, LibraryType};
+use anyhow::{Ok, Result, bail, ensure};
 use fastq_set::SSeq;
 use fastq_set::filenames::bcl_processor::SampleIndexSpec;
-use fastq_set::filenames::bcl2fastq::SampleNameSpec;
+use fastq_set::filenames::bcl2fastq::{self, SampleNameSpec};
 use fastq_set::filenames::fastq_dir::{BclProcessorDir, FastqChecker};
-use fastq_set::filenames::{FastqDef, FindFastqs, LaneSpec};
-use fastq_set::read_pair_iter::InputFastqs;
+use fastq_set::filenames::{LaneSpec, bcl_processor, sbx};
+use fastq_set::read_pair_iter::FastqSet;
 use fastq_set::sample_index_map::SAMPLE_INDEX_MAP;
 use itertools::Itertools;
-use martian_derive::MartianType;
-use serde::{Deserialize, Deserializer, Serialize};
+use martian_derive::{MartianStruct, MartianType};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::convert::TryFrom;
 use std::path::PathBuf;
 
 pub const COUNT_HELP: &str = r#"No input FASTQs were found for the requested parameters.
@@ -35,36 +34,41 @@ Refer to the "Specifying Input FASTQs" page at https://support.10xgenomics.com/ 
 pub enum FastqMode {
     BCL_PROCESSOR,
     ILMN_BCL2FASTQ,
+    ONT,
+    PACBIO,
+    SBX,
 }
 
-pub fn parse_lanes<'de, D>(deserializer: D) -> Result<Option<Vec<usize>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw: Option<Vec<NumberOrStr>> = Option::deserialize(deserializer)?;
-    match raw {
-        Some(values) => Ok(Some(
-            values
-                .into_iter()
-                .map(|v| usize::try_from(v).map_err(serde::de::Error::custom))
-                .try_collect()?,
-        )),
-        None => Ok(None),
+impl FastqMode {
+    /// Return the adapter trimming parameters required for this mode.
+    pub fn adapter_trimming_parameters(
+        self,
+        aligner: Option<AlignerParam>,
+    ) -> Option<AdapterTrimmingParameters> {
+        match self {
+            FastqMode::BCL_PROCESSOR | FastqMode::ILMN_BCL2FASTQ => None,
+            FastqMode::SBX => Some(AdapterTrimmingParameters {
+                is_directional: true,
+                aligner: aligner.unwrap_or(AlignerParam::Minimap2),
+            }),
+            FastqMode::ONT | FastqMode::PACBIO => Some(AdapterTrimmingParameters {
+                is_directional: false,
+                aligner: aligner.unwrap_or(AlignerParam::Minimap2),
+            }),
+        }
     }
 }
 
-/// Pointer to one logical set of FASTQ from a unique (library, gem_group) tuple
-#[derive(Serialize, Deserialize, Clone, PartialOrd, PartialEq, Debug, MartianType)]
+/// Pointer to one logical set of sequencing files from a unique (library, gem_group) tuple
+#[derive(Serialize, Deserialize, Clone, PartialOrd, PartialEq, Debug, MartianStruct)]
 pub struct SampleDef {
     pub fastq_mode: FastqMode,
     pub gem_group: Option<u16>,
-    #[serde(deserialize_with = "parse_lanes")]
     pub lanes: Option<Vec<usize>>,
     pub library_type: Option<LibraryType>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r1_length: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r2_length: Option<usize>,
+    // Path to raw sequencing files in any allowed format
     pub read_path: PathBuf,
     pub sample_indices: Option<Vec<String>>,
     pub sample_names: Option<Vec<String>>,
@@ -72,27 +76,9 @@ pub struct SampleDef {
     pub fastq_id: Option<String>,
 }
 
-impl Default for SampleDef {
-    fn default() -> Self {
-        SampleDef {
-            fastq_mode: FastqMode::BCL_PROCESSOR,
-            gem_group: None,
-            lanes: None,
-            library_type: None,
-            r1_length: None,
-            r2_length: None,
-            read_path: PathBuf::new(),
-            sample_indices: None,
-            sample_names: None,
-            subsample_rate: None,
-            fastq_id: None,
-        }
-    }
-}
-
 impl SampleDef {
-    // Check for missing FASTQ files.
-    pub fn check_fastqs(&self, help_text: &str) -> Result<()> {
+    /// Check for missing input sequencing data files.
+    pub fn check_input_reads(&self, help_text: &str) -> Result<()> {
         let read_path = self.read_path.display();
         match self.fastq_mode {
             FastqMode::BCL_PROCESSOR => {
@@ -180,6 +166,14 @@ impl SampleDef {
                     }
                 }
             }
+            FastqMode::SBX => {
+                if sbx::find_fastqs(&self.read_path)?.is_empty() {
+                    bail!("The directory {read_path} contains no FASTQs.");
+                }
+            }
+            FastqMode::ONT | FastqMode::PACBIO => {
+                todo!()
+            }
         }
 
         Ok(())
@@ -239,8 +233,10 @@ impl SampleDef {
         }
     }
 
-    pub fn per_group_fastq_def(&self) -> Result<Vec<(Option<String>, FastqDef)>> {
-        self.check_fastqs(COUNT_HELP)?;
+    // Validates input reads and constructs FASTQ definitions if FASTQ paths are present.
+    // Used in DETECT_CHEMISTRY
+    pub fn per_group_fastq_def(&self) -> Result<Vec<(Option<String>, Vec<FastqSet>)>> {
+        self.check_input_reads(COUNT_HELP)?;
         let mut result = Vec::new();
         match self.fastq_mode {
             FastqMode::BCL_PROCESSOR => {
@@ -250,38 +246,38 @@ impl SampleDef {
                         assert!(raw_indices.len() == 1);
                         result.push((
                             None,
-                            FastqDef::bcl_processor(
-                                self.read_path.to_str().unwrap().to_owned(),
-                                SampleIndexSpec::Any,
-                                self.lane_spec(),
-                            ),
+                            bcl_processor::find_fastqs(
+                                &self.read_path,
+                                &SampleIndexSpec::Any,
+                                &self.lane_spec(),
+                            )?,
                         ));
                     } else if let Some(seqs) = SAMPLE_INDEX_MAP.get(index.as_str()) {
                         result.push((
-                            Some(index.to_string()),
-                            FastqDef::bcl_processor(
-                                self.read_path.to_str().unwrap().to_owned(),
-                                SampleIndexSpec::Sequences {
+                            Some(index.clone()),
+                            bcl_processor::find_fastqs(
+                                &self.read_path,
+                                &SampleIndexSpec::Sequences {
                                     indices: seqs
                                         .iter()
                                         .map(|s| SSeq::from_bytes(s.as_bytes()))
                                         .collect(),
                                     max_n: 1,
                                 },
-                                self.lane_spec(),
-                            ),
+                                &self.lane_spec(),
+                            )?,
                         ));
                     } else if index.chars().all(|c| "ACGT".contains(c)) {
                         let mut indices = HashSet::new();
                         indices.insert(SSeq::from_bytes(index.as_bytes()));
 
                         result.push((
-                            Some(index.to_string()),
-                            FastqDef::bcl_processor(
-                                self.read_path.to_str().unwrap().to_owned(),
-                                SampleIndexSpec::Sequences { indices, max_n: 1 },
-                                self.lane_spec(),
-                            ),
+                            Some(index.clone()),
+                            bcl_processor::find_fastqs(
+                                &self.read_path,
+                                &SampleIndexSpec::Sequences { indices, max_n: 1 },
+                                &self.lane_spec(),
+                            )?,
                         ));
                     } else {
                         panic!(
@@ -297,33 +293,38 @@ impl SampleDef {
                 match name_spec {
                     SampleNameSpec::Any => result.push((
                         None,
-                        FastqDef::bcl2fastq(
-                            self.read_path.to_str().unwrap().to_owned(),
-                            SampleNameSpec::Any,
-                            self.lane_spec(),
-                        ),
+                        bcl2fastq::find_fastqs(
+                            &self.read_path,
+                            &SampleNameSpec::Any,
+                            &self.lane_spec(),
+                        )?,
                     )),
                     SampleNameSpec::Names(names) => {
                         for name in names {
                             result.push((
                                 Some(name.clone()),
-                                FastqDef::bcl2fastq(
-                                    self.read_path.to_str().unwrap().to_owned(),
-                                    name.as_str().into(),
-                                    self.lane_spec(),
-                                ),
+                                bcl2fastq::find_fastqs(
+                                    &self.read_path,
+                                    &name.as_str().into(),
+                                    &self.lane_spec(),
+                                )?,
                             ));
                         }
                     }
                 }
             }
+            FastqMode::SBX => {
+                // TODO: how should we break these up?
+                result.push((None, sbx::find_fastqs(&self.read_path)?));
+            }
+            FastqMode::ONT | FastqMode::PACBIO => todo!(),
         }
         Ok(result)
     }
 
-    /// Get a FastqDef corresponding to this SampleDef.
-    pub fn get_fastq_def(&self) -> Result<FastqDef> {
-        match self.fastq_mode {
+    /// Get sequencing units from this sample.
+    pub fn find_fastqs(&self) -> Result<Vec<FastqSet>> {
+        let fastqs = match self.fastq_mode {
             FastqMode::BCL_PROCESSOR => {
                 if self.sample_indices.is_none() {
                     bail!(
@@ -331,31 +332,124 @@ impl SampleDef {
                     );
                 }
 
-                Ok(FastqDef::bcl_processor(
-                    self.read_path.to_str().unwrap().to_owned(),
-                    self.sample_index_spec(),
-                    self.lane_spec(),
-                ))
+                bcl_processor::find_fastqs(
+                    &self.read_path,
+                    &self.sample_index_spec(),
+                    &self.lane_spec(),
+                )?
             }
-
-            FastqMode::ILMN_BCL2FASTQ => Ok(FastqDef::bcl2fastq(
-                self.read_path.to_str().unwrap().to_owned(),
-                self.sample_name_spec(),
-                self.lane_spec(),
-            )),
-        }
-    }
-
-    /// Return a Vec of InputFastqs.
-    /// Check if there's any data here and give a good error msg if not.
-    /// This error should have already been caught if detect chemistry ran.
-    pub fn find_fastqs(&self) -> Result<Vec<InputFastqs>> {
-        self.check_fastqs(COUNT_HELP)?;
-        let fastqs = self.get_fastq_def()?.find_fastqs()?;
+            FastqMode::ILMN_BCL2FASTQ => bcl2fastq::find_fastqs(
+                &self.read_path,
+                &self.sample_name_spec(),
+                &self.lane_spec(),
+            )?,
+            FastqMode::SBX => sbx::find_fastqs(&self.read_path)?,
+            FastqMode::ONT | FastqMode::PACBIO => {
+                todo!()
+            }
+        };
         if fastqs.is_empty() {
             bail!("No input FASTQs were found for the sample def: {self:#?}");
         }
         Ok(fastqs)
+    }
+}
+
+pub struct SampleDefBuilder {
+    pub fastq_mode: FastqMode,
+    pub gem_group: Option<u16>,
+    pub lanes: Option<Vec<usize>>,
+    pub library_type: Option<LibraryType>,
+    pub r1_length: Option<usize>,
+    pub r2_length: Option<usize>,
+    pub read_path: PathBuf,
+    pub sample_indices: Option<Vec<String>>,
+    pub sample_names: Option<Vec<String>>,
+    pub subsample_rate: Option<f64>,
+    pub fastq_id: Option<String>,
+}
+
+impl SampleDefBuilder {
+    pub fn new(fastq_mode: FastqMode, read_path: PathBuf) -> Self {
+        Self {
+            fastq_mode,
+            gem_group: None,
+            lanes: None,
+            library_type: None,
+            r1_length: None,
+            r2_length: None,
+            read_path,
+            sample_indices: None,
+            sample_names: None,
+            subsample_rate: None,
+            fastq_id: None,
+        }
+    }
+
+    pub fn lanes(mut self, lanes: Vec<usize>) -> Self {
+        self.lanes = Some(lanes);
+        self
+    }
+
+    pub fn library_type(mut self, library_type: LibraryType) -> Self {
+        self.library_type = Some(library_type);
+        self
+    }
+
+    pub fn r1_length(mut self, length: usize) -> Self {
+        self.r1_length = Some(length);
+        self
+    }
+
+    pub fn r2_length(mut self, length: usize) -> Self {
+        self.r2_length = Some(length);
+        self
+    }
+
+    pub fn sample_indices<T: AsRef<str>>(mut self, indices: Vec<T>) -> Self {
+        self.sample_indices = Some(
+            indices
+                .into_iter()
+                .map(|s| s.as_ref().to_string())
+                .collect(),
+        );
+        self
+    }
+
+    pub fn sample_names<T: AsRef<str>>(mut self, names: Vec<T>) -> Self {
+        self.sample_names = Some(names.into_iter().map(|s| s.as_ref().to_string()).collect());
+        self
+    }
+
+    pub fn build(self) -> SampleDef {
+        match self.fastq_mode {
+            FastqMode::BCL_PROCESSOR | FastqMode::ILMN_BCL2FASTQ => SampleDef {
+                fastq_mode: self.fastq_mode,
+                gem_group: self.gem_group,
+                lanes: self.lanes,
+                library_type: self.library_type,
+                r1_length: self.r1_length,
+                r2_length: self.r2_length,
+                read_path: self.read_path.clone(),
+                sample_indices: self.sample_indices,
+                sample_names: self.sample_names,
+                subsample_rate: self.subsample_rate,
+                fastq_id: self.fastq_id,
+            },
+            FastqMode::ONT | FastqMode::PACBIO | FastqMode::SBX => SampleDef {
+                fastq_mode: self.fastq_mode,
+                gem_group: self.gem_group,
+                lanes: self.lanes,
+                library_type: self.library_type,
+                r1_length: self.r1_length,
+                r2_length: self.r2_length,
+                read_path: self.read_path,
+                sample_indices: self.sample_indices,
+                sample_names: self.sample_names,
+                subsample_rate: self.subsample_rate,
+                fastq_id: self.fastq_id,
+            },
+        }
     }
 }
 
@@ -369,6 +463,7 @@ mod sample_def_tests {
         "lanes": [1, 2],
         "library_type": "Antibody Capture",
         "read_path": "demultiplexed_fastq_path",
+        "fastq_path": "demultiplexed_fastq_path",
         "sample_indices": ["SI-P01-D10"],
         "target_set": null,
         "target_set_name": null
@@ -380,6 +475,7 @@ mod sample_def_tests {
         "lanes": [1],
         "library_type": "Gene Expression",
         "read_path": "demultiplexed_fastq_path",
+        "fastq_path": "demultiplexed_fastq_path",
         "sample_indices": ["SI-P2-D12"],
         "target_set": null,
         "target_set_name": null
@@ -393,6 +489,7 @@ mod sample_def_tests {
         ],
         "library_type": "Gene Expression",
         "read_path": "350_gex_fastqs",
+        "fastq_path": "350_gex_fastqs",
         "sample_indices": [
             "any"
         ],
@@ -406,7 +503,7 @@ mod sample_def_tests {
     const GEX_CS_SD: &str = r#"{
         "gem_group": null,
         "lanes": [
-            "1"
+            1
         ],
         "sample_names": [
             "bamtofastq"
@@ -417,6 +514,7 @@ mod sample_def_tests {
         "target_set_name": "null",
         "fastq_mode": "ILMN_BCL2FASTQ",
         "read_path": "CR-300-01_chr21",
+        "fastq_path": "CR-300-01_chr21",
         "target_set": null
     }"#;
 
@@ -448,7 +546,7 @@ mod sample_def_tests {
 
 #[cfg(test)]
 mod invalid_bcl2fastq_sample_def {
-    use super::{COUNT_HELP, FastqMode, SampleDef};
+    use super::{COUNT_HELP, FastqMode, SampleDefBuilder};
     use std::path::Path;
 
     fn test_invalid_bcl2fastq_input(
@@ -456,14 +554,14 @@ mod invalid_bcl2fastq_sample_def {
         lanes: Option<Vec<usize>>,
         sample_names: Vec<&str>,
     ) {
-        let sdef = SampleDef {
-            fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-            lanes,
-            read_path: fastq_path.as_ref().to_path_buf(),
-            sample_names: Some(sample_names.into_iter().map(String::from).collect()),
-            ..SampleDef::default()
-        };
-        let check = sdef.check_fastqs(COUNT_HELP);
+        let mut builder =
+            SampleDefBuilder::new(FastqMode::ILMN_BCL2FASTQ, fastq_path.as_ref().to_path_buf())
+                .sample_names(sample_names);
+        if let Some(lanes) = lanes {
+            builder = builder.lanes(lanes);
+        }
+        let sdef = builder.build();
+        let check = sdef.check_input_reads(COUNT_HELP);
         println!("{check:#?}");
         assert!(check.is_err());
     }
@@ -521,7 +619,7 @@ mod invalid_bcl2fastq_sample_def {
 
 #[cfg(test)]
 mod invalid_bcl_proc_sample_def {
-    use super::{COUNT_HELP, FastqMode, SampleDef};
+    use super::{COUNT_HELP, FastqMode, SampleDefBuilder};
     use std::path::Path;
 
     fn test_invalid_bcl_proc_input(
@@ -529,14 +627,16 @@ mod invalid_bcl_proc_sample_def {
         lanes: Option<Vec<usize>>,
         sample_indices: Option<Vec<&str>>,
     ) {
-        let sdef = SampleDef {
-            fastq_mode: FastqMode::BCL_PROCESSOR,
-            lanes,
-            read_path: fastq_path.as_ref().to_path_buf(),
-            sample_indices: sample_indices.map(|xs| xs.into_iter().map(String::from).collect()),
-            ..SampleDef::default()
+        let mut builder =
+            SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, fastq_path.as_ref().to_path_buf());
+        if let Some(lanes) = lanes {
+            builder = builder.lanes(lanes);
         };
-        let check = sdef.check_fastqs(COUNT_HELP);
+        if let Some(sample_indices) = sample_indices {
+            builder = builder.sample_indices(sample_indices);
+        }
+        let sdef = builder.build();
+        let check = sdef.check_input_reads(COUNT_HELP);
         println!("{check:#?}");
         assert!(check.is_err());
     }

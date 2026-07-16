@@ -1,8 +1,8 @@
 //! Martian stage WRITE_MINIMAP_INDEX
 #![deny(missing_docs)]
 
-use anyhow::{Result, bail};
-use cr_types::AlignerParam;
+use anyhow::{Result, anyhow, bail};
+use cr_types::{AlignerParam, MinimapPreset};
 use martian::prelude::*;
 use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
@@ -21,6 +21,7 @@ pub struct WriteMinimapIndex;
 pub struct StageInputs {
     pub reference_path: PathBuf,
     pub aligner: AlignerParam,
+    pub minimap_preset: Option<MinimapPreset>,
 }
 
 /// The Martian stage outputs.
@@ -41,13 +42,20 @@ impl MartianMain for WriteMinimapIndex {
         if !fasta_path.exists() {
             bail!("FASTA file doesn't exist: {}", fasta_path.display());
         }
+        let preset = match args
+            .minimap_preset
+            .ok_or_else(|| anyhow!("minimap_preset is expected if using Minimap2 aligner"))?
+        {
+            MinimapPreset::Splice => Preset::Splice,
+            MinimapPreset::SpliceSr => Preset::SpliceSr,
+            MinimapPreset::SpliceHq => Preset::SpliceHq,
+        };
         let minimap_index: MinimapIndex = rover.make_path("genome");
         Aligner::builder()
-            .preset(Preset::Splice)
+            .preset(preset)
             .with_index_threads(rover.get_threads())
             .with_index(fasta_path, minimap_index.as_ref().to_str())
             .expect("Unable to build minimap2 index");
-
         // Generate BED12 file
         let bed_file: Bed12Format = rover.make_path("tx_bed");
         let mut bed_writer = bed_file.lazy_writer()?;

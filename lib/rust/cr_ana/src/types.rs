@@ -202,6 +202,14 @@ impl ClusteringResult {
             FeatureType::ProteinExpression => {
                 Cow::Owned(format!("Protein {}", self.clustering_type.desc()))
             }
+            FeatureType::DeprecatedCodeword
+            | FeatureType::Unknown
+            | FeatureType::NegativeControlProbe
+            | FeatureType::NegativeControlCodeword
+            | FeatureType::UnassignedCodeword
+            | FeatureType::GenomicControl => {
+                unimplemented!()
+            }
         }
     }
 }

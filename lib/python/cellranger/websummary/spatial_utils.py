@@ -3,11 +3,11 @@
 #
 """Utilities designed to help create the web summary used in Spatial."""
 
-
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
+import martian
 import pandas as pd
 
 import cellranger.rna.library as rna_library
@@ -15,11 +15,17 @@ import cellranger.websummary.analysis_tab_core as cr_atc
 import cellranger.websummary.plotly_tools as pltly
 from cellranger.analysis.singlegenome import SingleGenomeAnalysis
 from cellranger.spatial.data_utils import IMAGEX_LOWRES, IMAGEY_LOWRES
-from cellranger.spatial.image import WebImage
+
+# pylint: enable=no-name-in-module
+from cellranger.spatial.image import WebImage, base64_encode_image
+from cellranger.spatial.webp_image_utils import get_crop_bbox
 from cellranger.websummary.numeric_converters import round_floats_in_list
 from cellranger.websummary.react_components import (
     SharedCoordinatePlotCollection,
 )
+
+if TYPE_CHECKING:
+    import numpy as np
 
 SPATIAL_PIPELINE_NAME = "count"
 SPATIAL_COMMAND_NAME = "Space Ranger"
@@ -254,3 +260,48 @@ def tissue_plots_by_clustering_spatial_helper(
         if clustering_key in clusters_dict:
             tissue_plot_data.add_clustering(clustering_key, clustering)
     return tissue_plot_data
+
+
+def make_path_and_encode(
+    chart, filename: str, lossless=True, crop_box: np.ndarray | None = None, padding: int = 0
+):
+    """Make a path for the chart and encode it as a base64 image.
+
+    Args:
+        chart (PIL.Image.Image): An image object to be encoded.
+        filename (str): path to the image file.
+        lossless (bool): Whether to save the image using lossless compression.
+        crop_box (np.ndarray): 2D array of coordinates of crop box.
+        padding (int): Padding to use. Defaults to 0.
+
+    Returns:
+        str: base64 encoded image.
+    """
+    if crop_box is not None:
+        crop_bbox = get_crop_bbox(chart, crop_box=crop_box, padding=padding)
+        chart = chart.crop(crop_bbox)
+    chart_path = martian.make_path(f"{filename}.webp").decode()
+    chart.save(chart_path, format="WEBP", lossless=lossless)
+    return base64_encode_image(chart_path)
+
+
+def scale_geometry(geometry, scale_factor):
+    """Scales the coordinates of a given geometry by a specified scale factor.
+
+    Args:
+        geometry (dict): A dictionary representing the geometry to be scaled.
+                        It must have a "type" key with the value "Polygon" and a "coordinates" key
+                        containing a list of rings, where each ring is a list of [x, y] coordinate pairs.
+        scale_factor (float): The factor by which to scale the coordinates.
+
+    Returns:
+        dict: A new geometry dictionary with the scaled coordinates.
+    """
+    if geometry["type"] == "Polygon":
+        scaled_coordinates = [
+            [[x * scale_factor, y * scale_factor] for x, y in ring]
+            for ring in geometry["coordinates"]
+        ]
+        return {"type": geometry["type"], "coordinates": scaled_coordinates}
+    else:
+        raise ValueError("Unsupported geometry type")

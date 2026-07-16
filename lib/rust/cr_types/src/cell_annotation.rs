@@ -1,7 +1,9 @@
 #![expect(missing_docs)]
-use anyhow::{Error, Result};
+use anyhow::{Error, Result, bail};
 use serde::Serialize;
 use std::str::FromStr;
+
+const MODELS_NOT_ALLOWED: [&str; 2] = ["azimuth", "panhuman"];
 
 #[derive(Clone, Debug, Serialize)]
 pub enum CellAnnotationModel {
@@ -29,6 +31,15 @@ impl FromStr for CellAnnotationModel {
     fn from_str(s: &str) -> Result<Self> {
         if s.to_lowercase().trim() == "auto" {
             Ok(CellAnnotationModel::Auto)
+        } else if s.matches(',').count() > 0 {
+            bail!("Please provide only one model name in --cell-annotation-model.")
+        } else if MODELS_NOT_ALLOWED
+            .iter()
+            .any(|&model| s.to_lowercase().contains(model))
+        {
+            bail!(
+                "Local models Azimuth-panhuman is run by default. Only enter cloud models in --cell-annotation-model."
+            )
         } else {
             Ok(CellAnnotationModel::Custom(s.to_string()))
         }

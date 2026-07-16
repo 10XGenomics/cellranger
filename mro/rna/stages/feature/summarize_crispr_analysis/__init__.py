@@ -3,10 +3,18 @@
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved
 #
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING
+
+import martian
 
 import cellranger.cr_io as cr_io
 import cellranger.feature.crispr.protospacer_calling as protospacer_calling
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage SUMMARIZE_CRISPR_ANALYSIS(
@@ -28,7 +36,36 @@ stage SUMMARIZE_CRISPR_ANALYSIS(
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_CRISPR_ANALYSIS stage inputs."""
+
+    feature_reference: None | mro_filetypes.csv
+    protospacer_calls_summary: None | mro_filetypes.csv
+    protospacer_calls_per_cell: None | mro_filetypes.csv
+    cells_per_protospacer: None | mro_filetypes.json
+    protospacer_umi_thresholds_csv: None | mro_filetypes.csv
+    protospacer_umi_thresholds_json: None | mro_filetypes.json
+    perturbation_efficiencies_by_feature: None | mro_filetypes.csv
+    perturbations_efficiencies_by_target: None | mro_filetypes.csv
+    perturbation_effects_by_feature: None | mro_filetypes.path
+    perturbation_effects_by_target: None | mro_filetypes.path
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_CRISPR_ANALYSIS stage outputs."""
+
+    crispr_analysis: mro_filetypes.path
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_CRISPR_ANALYSIS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_CRISPR_ANALYSIS chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
     list_of_files = [
         args.feature_reference,
         args.protospacer_calls_summary,

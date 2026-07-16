@@ -1,8 +1,9 @@
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 """Code to make the web summary for AGGR runs of (Space|Cell) Ranger."""
 
-
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -30,12 +31,13 @@ from cellranger.websummary.metrics import (
     TemplateLigationAggrMetricAnnotations,
 )
 from cellranger.websummary.numeric_converters import round_floats_in_list
-from cellranger.websummary.react_components import (
-    PlotWithHeader,
-)
+from cellranger.websummary.react_components import PlotWithHeader
 from cellranger.websummary.react_summarize import write_html_file
 from cellranger.websummary.spatial_utils import SPATIAL_COMMAND_NAME
 from cellranger.websummary.web_summary_builder import build_web_summary_html_sc_and_aggr
+
+if TYPE_CHECKING:
+    from typing import Any
 
 
 def library_on_projection_plot(sample_data, gg_id_to_name, *, projection: Projection):
@@ -93,12 +95,13 @@ def library_on_projection_plot(sample_data, gg_id_to_name, *, projection: Projec
 
 
 def build_web_summary_html_aggr(
-    filename,
-    sample_properties,
-    gg_id_to_name_map,
-    sample_data_paths,
+    filename: str,
+    sample_properties: wsp.AggrCountSampleProperties,
+    gg_id_to_name_map: dict[int, Any],
+    sample_data_paths: wsp.SampleDataPaths,
     projection: Projection,
-    sample_defs=None,
+    sample_defs: list[dict] | None = None,
+    cell_type_websummary_bundle_value: list[dict] | None = None,
 ):
     """Build a web summary file for an AGGR Run.
 
@@ -109,23 +112,30 @@ def build_web_summary_html_aggr(
         sample_data_paths: Instance of SampleDataPaths
         projection: Projection used in websummary (TSNE_NAME or UMAP_NAME)
         sample_defs: Map of sample defs passed in from PARSE_CSV
+        cell_type_websummary_bundle_value: list of cell annotation bundle dicts
 
     Returns:
         None
     """
     web_sum_data = build_web_summary_data_aggr(
-        sample_properties, gg_id_to_name_map, sample_data_paths, projection, sample_defs
+        sample_properties,
+        gg_id_to_name_map,
+        sample_data_paths,
+        projection,
+        sample_defs,
+        cell_type_websummary_bundle_value,
     )
 
     write_html_file(filename, web_sum_data)
 
 
 def build_web_summary_data_aggr(
-    sample_properties,
-    gg_id_to_name_map,
-    sample_data_paths,
+    sample_properties: wsp.AggrCountSampleProperties,
+    gg_id_to_name_map: dict[int, Any],
+    sample_data_paths: wsp.SampleDataPaths,
     projection: Projection,
-    sample_defs=None,
+    sample_defs: list[dict] | None = None,
+    cell_type_websummary_bundle_value: list[dict] | None = None,
 ):
     """Build a web summary file for an AGGR Run.
 
@@ -135,6 +145,7 @@ def build_web_summary_data_aggr(
         sample_data_paths: Instance of SampleDataPaths
         projection: Tuple including all available projections
         sample_defs: Map of sample defs from PARSE_CSV
+        cell_type_websummary_bundle_value: list of cell annotation bundle dicts
 
     Returns:
         web_sum_data: Web summary data
@@ -145,7 +156,7 @@ def build_web_summary_data_aggr(
     sample_data = load_sample_data(
         sample_properties,
         sample_data_paths,
-        (projection,),
+        projections=(projection,),
     )
     if sample_properties.is_spatial:
         command = SPATIAL_COMMAND_NAME
@@ -174,6 +185,7 @@ def build_web_summary_data_aggr(
         command,
         projection=projection,
         sample_defs=sample_defs,
+        cell_type_websummary_bundle_value=cell_type_websummary_bundle_value,
     )
 
     clustering_plot = library_on_projection_plot(

@@ -1,6 +1,18 @@
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 """Generate aggr web summary from the individual json data."""
 
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+import martian
+
+from websummary import summarize
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage BUILD_COMBINED_WEB_SUMMARY(
     in  json vdj_t_data,
@@ -14,9 +26,26 @@ stage BUILD_COMBINED_WEB_SUMMARY(
 )
 """
 
-import json
 
-from websummary import summarize
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """BUILD_COMBINED_WEB_SUMMARY stage inputs."""
+
+    vdj_t_data: mro_filetypes.json | None
+    vdj_b_data: mro_filetypes.json | None
+    vdj_t_gd_data: mro_filetypes.json | None
+    count_data: mro_filetypes.json | None
+    antigen_data: mro_filetypes.json | None
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """BUILD_COMBINED_WEB_SUMMARY stage outputs."""
+
+    web_summary: mro_filetypes.html
+    web_summary_data: mro_filetypes.json
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
 
 ALARM_KEY = "alarms"
 SAMPLE_KEY = "sample"
@@ -29,7 +58,7 @@ VDJ_T_GD_TAB_KEY = "vdj_t_gd_tab"
 VDJ_B_TAB_KEY = "vdj_b_tab"
 
 
-def main(args, outs):
+def main(args: StageInputs, outs: StageOutputs):
     inner_data = {}
     if args.count_data is not None:
         with open(args.count_data) as f:

@@ -7,14 +7,14 @@ use barcode::{BarcodeConstruct, BcSegSeq, Whitelist, WhitelistSpec};
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use cr_types::rna_read::extract_barcode;
 use fastq_set::read_pair::ReadPair;
-use itertools::Itertools;
 use metric::{PercentMetric, TxHashMap};
 use std::ops::Range;
 
-#[derive(Default)]
 pub(crate) struct WhitelistMatchFilter {
     /// On-demand cache of in-memory whitelists.
     cache: WhitelistCache,
+    /// Whether the pipeline is running a spatial assay.
+    is_spatial: bool,
 }
 
 impl ChemistryFilter for WhitelistMatchFilter {
@@ -26,9 +26,7 @@ impl ChemistryFilter for WhitelistMatchFilter {
         reads: &[ReadPair],
     ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
         // Special case for HD CELLRANGER-7761
-        if let Ok((name, _def)) = candidates.iter().exactly_one()
-            && name.is_spatial()
-        {
+        if candidates.len() == 1 && self.is_spatial {
             return Ok(candidates.clone());
         }
 
@@ -56,6 +54,7 @@ impl ChemistryFilter for WhitelistMatchFilter {
                     .map(|(&name, &(_def, matches))| (name, matches))
                     .collect(),
                 unit: Box::new(unit.clone()),
+                is_spatial: self.is_spatial,
             });
         }
 
@@ -106,6 +105,13 @@ impl ChemistryFilter for WhitelistMatchFilter {
 }
 
 impl WhitelistMatchFilter {
+    pub(crate) fn new(is_spatial: bool) -> Self {
+        Self {
+            is_spatial,
+            cache: WhitelistCache::default(),
+        }
+    }
+
     fn count_matches(
         &mut self,
         chem_def: &ChemistryDef,

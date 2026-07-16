@@ -1,0 +1,29 @@
+filetype json;
+filetype csv;
+filetype html;
+filetype json.gz;
+filetype geojson;
+filetype png;
+
+struct CellTypes(
+    csv     cell_types,
+    json.gz cell_annotation_results,
+    csv     cell_annotation_differential_expression,
+)
+
+struct CellAnnotationLoupeInputs(
+    string model_name,
+    string cell_annotation_cloupe_name,
+    json   cloupe_cas_types,
+)
+
+struct CellTypesAllMethods(
+    map<CellTypes> cell_types,
+)
+
+struct ValidateSegmentationOutputs(
+    geojson cell_segmentations,
+    png     tissue_hires_image,
+    json    scale_factors_json,
+    float   tissue_image_scale,
+)

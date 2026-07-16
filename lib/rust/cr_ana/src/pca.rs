@@ -24,12 +24,13 @@ use std::iter::zip;
 use std::ops::Deref;
 
 const DISPERSION_BINS: usize = 20;
+pub(crate) const PCA_COMPONENTS: usize = 10;
 
 fn binned_median(
     binned: &Array1<f64>,
     values: &Array1<f64>,
     bin_edges: &[N64],
-) -> Result<(Array1<f64>, Vec<usize>)> {
+) -> (Array1<f64>, Vec<usize>) {
     let max_index = bin_edges.len() - 1;
     let mut bin_indices = Vec::with_capacity(values.len());
     let mut binned_values = vec![Vec::new(); max_index];
@@ -47,7 +48,7 @@ fn binned_median(
         let median = median_mut(&mut arr).map_or(f64::NAN, N64::raw);
         medians.push(median);
     }
-    Ok((Array1::from(medians), bin_indices))
+    (Array1::from(medians), bin_indices)
 }
 
 fn unselect(len: usize, vals: &Array1<f64>, idxs: &[usize]) -> Array1<f64> {
@@ -61,7 +62,7 @@ fn unselect(len: usize, vals: &Array1<f64>, idxs: &[usize]) -> Array1<f64> {
 fn compute_normalized_dispersion(
     matrix: &AdaptiveMat,
     pca_threshold: f64,
-) -> Result<(Array1<f64>, AdaptiveMat, Vec<usize>)> {
+) -> (Array1<f64>, AdaptiveMat, Vec<usize>) {
     let (submatrix, _, features, _) = matrix.view().partition_on_threshold(pca_threshold);
     let inv_scale_factors = {
         let counts_per_bc = submatrix.sum_axis::<f64>(Axis(0));
@@ -85,13 +86,13 @@ fn compute_normalized_dispersion(
         .unwrap_or_default();
     quantiles.dedup();
     if quantiles.len() <= 1 {
-        return Ok((
+        return (
             unselect(matrix.rows(), &dispersion, &features),
             submatrix,
             features,
-        ));
+        );
     }
-    let (medians, bin_indices) = binned_median(&mean, &dispersion, &quantiles)?;
+    let (medians, bin_indices) = binned_median(&mean, &dispersion, &quantiles);
     let medians = Array1::from(
         bin_indices
             .into_iter()
@@ -99,22 +100,22 @@ fn compute_normalized_dispersion(
             .collect::<Vec<_>>(),
     );
     let deviations = (&dispersion - &medians).mapv_into(f64::abs);
-    let (mads, bin_indices) = binned_median(&mean, &deviations, &quantiles)?;
+    let (mads, bin_indices) = binned_median(&mean, &deviations, &quantiles);
     let mads = Array1::from(bin_indices.into_iter().map(|i| mads[i]).collect::<Vec<_>>());
     let dispersion = (&dispersion - &medians) / &mads;
-    Ok((
+    (
         unselect(matrix.rows(), &dispersion, &features),
         submatrix,
         features,
-    ))
+    )
 }
 
 fn select_features(
     matrix: &AdaptiveMat,
     max_features: usize,
     pca_threshold: f64,
-) -> Result<(AdaptiveMat, Array1<f64>, Vec<usize>)> {
-    let (dispersion, submatrix, features) = compute_normalized_dispersion(matrix, pca_threshold)?;
+) -> (AdaptiveMat, Array1<f64>, Vec<usize>) {
+    let (dispersion, submatrix, features) = compute_normalized_dispersion(matrix, pca_threshold);
     // sort in reverse, such than NANs are at the end
     let mut feature_indices = features.into_iter().enumerate().collect::<Vec<_>>();
     feature_indices.sort_by(|&(_, a), &(_, b)| {
@@ -139,7 +140,7 @@ fn select_features(
         features.push(i);
     }
     let filtered_matrix = submatrix.select_rows(&submatrix_features);
-    Ok((filtered_matrix, dispersion, features))
+    (filtered_matrix, dispersion, features)
 }
 
 type BkSvdPcaResult = (Array2<f64>, Array1<f64>, Array2<f64>);
@@ -199,7 +200,7 @@ pub(crate) fn run_pca<'a>(
     fixed_point: Option<FixedPointFormat>,
 ) -> Result<PcaResult<'a>> {
     let (filtered_matrix, dispersion, selected_features) =
-        select_features(matrix, max_features, threshold)?;
+        select_features(matrix, max_features, threshold);
 
     let selected_feature_ids = selected_features
         .iter()
@@ -214,15 +215,13 @@ pub(crate) fn run_pca<'a>(
                 num_pcs,
             )?
         }
-        (FeatureType::ProteinExpression, false) | (FeatureType::ProteinExpression, true) => {
-            match fixed_point {
-                Some(fp) => run_pca_on_filtered_norm_matrix(
-                    log1p_normalize_fixed_point(filtered_matrix, LogBase::Two, fp),
-                    num_pcs,
-                )?,
-                None => panic!("missing fixed point details for protein expression"),
-            }
-        }
+        (FeatureType::ProteinExpression, false | true) => match fixed_point {
+            Some(fp) => run_pca_on_filtered_norm_matrix(
+                log1p_normalize_fixed_point(filtered_matrix, LogBase::Two, fp),
+                num_pcs,
+            )?,
+            None => panic!("missing fixed point details for protein expression"),
+        },
         _ => run_pca_on_filtered_norm_matrix(
             normalize_with_size_factor(filtered_matrix, Normalization::CellRanger, None),
             num_pcs,
@@ -238,17 +237,15 @@ pub(crate) fn run_pca<'a>(
                 &selected_features,
             )
         }
-        (FeatureType::ProteinExpression, false) | (FeatureType::ProteinExpression, true) => {
-            match fixed_point {
-                Some(fp) => get_components_and_transform_matrix(
-                    log1p_normalize_fixed_point(matrix.view(), LogBase::Two, fp),
-                    u,
-                    adjusted_num_pcs,
-                    &selected_features,
-                ),
-                None => panic!("missing fixed point details for protein expression"),
-            }
-        }
+        (FeatureType::ProteinExpression, false | true) => match fixed_point {
+            Some(fp) => get_components_and_transform_matrix(
+                log1p_normalize_fixed_point(matrix.view(), LogBase::Two, fp),
+                u,
+                adjusted_num_pcs,
+                &selected_features,
+            ),
+            None => panic!("missing fixed point details for protein expression"),
+        },
         _ => get_components_and_transform_matrix(
             normalize_with_size_factor(matrix.view(), Normalization::CellRanger, None),
             u,

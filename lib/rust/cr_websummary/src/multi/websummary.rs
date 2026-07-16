@@ -277,6 +277,7 @@ pub struct CountParametersTable {
     pub disable_ab_aggregate_detection: bool,
     pub disable_high_occupancy_gem_detection: bool,
     pub num_genes_on_target: Option<usize>,
+    pub gapfill_probes_count: Option<usize>,
     pub library_type: LibraryType,
     pub throughput: Option<String>,
     pub tenx_cmos: Option<bool>,
@@ -309,6 +310,7 @@ impl From<CountParametersTable> for GenericTable {
             disable_ab_aggregate_detection,
             disable_high_occupancy_gem_detection,
             num_genes_on_target,
+            gapfill_probes_count,
             library_type,
             throughput,
             aligner,
@@ -358,6 +360,12 @@ impl From<CountParametersTable> for GenericTable {
                 rows.push(TableRow::two_col(
                     "Number of Genes Targeted",
                     n_genes.make_pretty(),
+                ));
+            }
+            if let Some(n) = gapfill_probes_count.filter(|&n| n > 0) {
+                rows.push(TableRow::two_col(
+                    "Number of Gap-fill Probes",
+                    n.make_pretty(),
                 ));
             }
             if filter_probes == Some(false) {
@@ -862,7 +870,7 @@ pub struct SampleWebSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_feature_tab: Option<Tab<SampleCustomFeatureWebSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cell_annotation_tab: Option<Tab<SampleCellAnnotationWebSummary>>,
+    pub cell_annotation_tabs: Option<Vec<Option<Tab<SampleCellAnnotationWebSummary>>>>,
 }
 
 impl SampleWebSummary {
@@ -938,7 +946,7 @@ impl SampleWebSummary {
         tab_apply_mut(&mut self.antigen_tab, |t| t.remove_large_data());
         tab_apply_mut(&mut self.crispr_tab, |t| t.remove_large_data());
         tab_apply_mut(&mut self.custom_feature_tab, |t| t.remove_large_data());
-        tab_apply_mut(&mut self.cell_annotation_tab, |t| t.remove_large_data());
+        self.cell_annotation_tabs = None;
     }
 }
 
@@ -1035,13 +1043,15 @@ pub struct SampleGexWebSummary {
     pub median_genes_per_cell_plot: Option<ChartWithHelp>,
     pub clustering_and_diffexp_plots: Box<RawValue>,
     pub disclaimer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_barcodes: Option<Value>,
     #[serde(skip)]
     pub metrics: MetricsTraitWrapper,
 }
 
 impl SampleGexWebSummary {
     fn remove_large_data(&mut self) {
-        self.clustering_and_diffexp_plots = Default::default();
+        self.clustering_and_diffexp_plots = Box::default();
     }
 }
 
@@ -1141,6 +1151,7 @@ impl Alert for SampleCustomFeatureWebSummary {
 
 #[derive(Serialize, Clone)]
 pub struct SampleCellAnnotationWebSummary {
+    pub title: String,
     pub parameters_table: Option<TableMetric>,
     pub disclaimer: Option<String>,
     pub cas_success: Option<bool>,
@@ -1149,15 +1160,6 @@ pub struct SampleCellAnnotationWebSummary {
     pub cell_annotation_violin_plot_chart: Option<WithTitle<VegaLitePlot>>,
     pub cell_annotation_umap_plot_chart: Option<WithTitle<VegaLitePlot>>,
     pub cell_annotation_diffexp_table: Option<WithTitle<DifferentialExpressionTable>>,
-}
-
-impl SampleCellAnnotationWebSummary {
-    fn remove_large_data(&mut self) {
-        self.cell_annotation_cell_types_chart = None;
-        self.cell_annotation_violin_plot_chart = None;
-        self.cell_annotation_umap_plot_chart = None;
-        self.cell_annotation_diffexp_table = None;
-    }
 }
 
 impl Alert for SampleCellAnnotationWebSummary {

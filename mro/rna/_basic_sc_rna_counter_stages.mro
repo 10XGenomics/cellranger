@@ -49,16 +49,6 @@ stage FILTER_BARCODES(
     volatile = strict,
 )
 
-stage SUMMARIZE_H5_DIMS(
-    in  string prefix,
-    in  h5     matrix,
-    out json   summary,
-    src py     "stages/counter/summarize_h5_dims",
-) using (
-    mem_gb   = 2,
-    volatile = strict,
-)
-
 stage INFER_GEM_WELL_THROUGHPUT(
     in  map<ChemistryDef> chemistry_defs,
     in  string            throughput,
@@ -114,13 +104,10 @@ stage SUMMARIZE_BASIC_REPORTS(
 stage DISABLE_STAGES(
     in  bool  no_bam,
     in  bool  disable_multi,
-    in  bool  is_pd,
     in  bool  is_visium_hd,
-    in  h5    raw_feature_bc_matrix,
     in  csf[] probe_barcode_counts,
     out bool  disable_legacy_bam,
     out bool  disable_sample_bams,
-    out bool  disable_assign_tags,
     out bool  disable_subsampling,
     out bool  no_probe_barcode_counts,
     out bool  no_probe_barcode_matrix_demux,

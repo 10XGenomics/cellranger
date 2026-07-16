@@ -1,9 +1,8 @@
 //! Utilities for finding groups of FASTQ produced by `bcl2fastq` from Illumina.
 #![expect(missing_docs)]
 
-use super::FindFastqs;
 use crate::filenames::{LaneMode, LaneSpec};
-use crate::read_pair_iter::InputFastqs;
+use crate::read_pair_iter::FastqSet;
 use anyhow::{Context, Result};
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -46,44 +45,32 @@ impl SampleNameSpec {
     }
 }
 
-/// A pointer to a set of FASTQ files on disk,
+/// Gather a set of FASTQ files on disk,
 /// using the Illumina `bcl2fastq` naming conventions.
-/// The `find_fastqs` method will find FASTQ files
+/// Finds FASTQ files
 /// of the form `heart_1k_v3_S1_L002_R2_001.fastq.gz`
 /// with an optional `.gz` suffix.
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, Debug)]
-pub struct Bcl2FastqDef {
-    /// The path where to the demulitplexed FASTQ files
-    pub fastq_path: String,
+pub fn find_fastqs(
+    read_path: &Path,
+    sample_name_spec: &SampleNameSpec,
+    lane_spec: &LaneSpec,
+) -> Result<Vec<FastqSet>> {
+    let all_fastqs = find_flowcell_fastqs(read_path)?;
 
-    /// Sample name(s) used for this sample
-    pub sample_name_spec: SampleNameSpec,
-
-    /// Lanes to include
-    pub lane_spec: LaneSpec,
-}
-
-impl FindFastqs for Bcl2FastqDef {
-    fn find_fastqs(&self) -> Result<Vec<InputFastqs>> {
-        let all_fastqs = find_flowcell_fastqs(&self.fastq_path)?;
-
-        let mut res = Vec::new();
-        for (info, fastqs) in all_fastqs {
-            if self.sample_name_spec.contains(&info.sample)
-                && self.lane_spec.contains(info.lane_mode)
-            {
-                res.push(fastqs);
-            }
+    let mut res = Vec::new();
+    for (info, fastqs) in all_fastqs {
+        if sample_name_spec.contains(&info.sample) && lane_spec.contains(info.lane_mode) {
+            res.push(fastqs);
         }
-
-        res.sort();
-        Ok(res)
     }
+
+    res.sort();
+    Ok(res)
 }
 
 /// Metadata for a group of FASTQ files representing the different read components
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct IlmnFastqFileGroup {
+pub(crate) struct IlmnFastqFileGroup {
     pub sample: String,
     pub s: usize,
     pub lane_mode: LaneMode,
@@ -93,10 +80,10 @@ pub struct IlmnFastqFileGroup {
 /// A parsed representation of an FASTQ file produced by
 /// Illumina's bcl2fastq tool.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct IlmnFastqFile {
-    pub group: IlmnFastqFileGroup,
-    pub read: String,
-    pub path: PathBuf,
+struct IlmnFastqFile {
+    group: IlmnFastqFileGroup,
+    read: String,
+    path: PathBuf,
 }
 
 /// Parse the ILMN fastq filename to get the read name, lane, read group,
@@ -158,8 +145,7 @@ impl IlmnFastqFile {
 }
 
 /// Find all the bcl2fastq FASTQ files present in `path`.
-fn get_bcl2fastq_files(path: impl AsRef<Path>) -> Result<Vec<(IlmnFastqFile, PathBuf)>> {
-    let path = path.as_ref();
+fn get_bcl2fastq_files(path: &Path) -> Result<Vec<(IlmnFastqFile, PathBuf)>> {
     std::fs::read_dir(path)
         .with_context(|| path.display().to_string())?
         .map_ok(|f| f.path())
@@ -170,19 +156,17 @@ fn get_bcl2fastq_files(path: impl AsRef<Path>) -> Result<Vec<(IlmnFastqFile, Pat
 
 /// Find all the sets of bcl2fastq FASTQ files present in `path` as well as directories directly
 /// underneath `path`. Corresponding R1/R2/I1/I2 files are grouped together and reported in an
-/// `InputFastqs`, along with a representative `IlmnFastqFile` struct.
-pub fn find_flowcell_fastqs(
-    path: impl AsRef<Path>,
-) -> Result<Vec<(IlmnFastqFileGroup, InputFastqs)>> {
+/// `FastqSet`, along with a representative `IlmnFastqFile` struct.
+pub(crate) fn find_flowcell_fastqs(path: &Path) -> Result<Vec<(IlmnFastqFileGroup, FastqSet)>> {
     let mut res = Vec::new();
 
-    let mut files = get_bcl2fastq_files(&path)?;
+    let mut files = get_bcl2fastq_files(path)?;
     // Collect the files which are within the directories underneath `path`.
     // This typically means `path` corresponds to the project folder in the `mkfastq` outs
-    for entry in std::fs::read_dir(&path)? {
+    for entry in std::fs::read_dir(path)? {
         let entry = entry?.path();
         if entry.is_dir() {
-            files.extend(get_bcl2fastq_files(entry)?);
+            files.extend(get_bcl2fastq_files(&entry)?);
         }
     }
     files.sort();
@@ -198,7 +182,7 @@ pub fn find_flowcell_fastqs(
                 Some(r3) =>
                 // Account for the confusing R1/R2/R3 convention that is used in SC3pv1, ATAC etc
                 {
-                    InputFastqs {
+                    FastqSet {
                         r1,
                         r2: Some(r3),
                         i1: my_files.remove("R2"),
@@ -206,7 +190,7 @@ pub fn find_flowcell_fastqs(
                         r1_interleaved: false,
                     }
                 }
-                None => InputFastqs {
+                None => FastqSet {
                     r1,
                     r2: my_files.remove("R2"),
                     i1: my_files.remove("I1"),
@@ -327,13 +311,8 @@ mod test {
     fn query_bcl2fastq() -> Result<()> {
         let path = "tests/filenames/bcl2fastq";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "Infected".into(),
-            lane_spec: LaneSpec::Any,
-        };
+        let fqs = find_fastqs(Path::new(path), &"Infected".into(), &LaneSpec::Any)?;
 
-        let fqs = query.find_fastqs()?;
         assert_eq!(fqs.len(), 2);
         assert_eq!(
             fqs[0].r1,
@@ -350,13 +329,8 @@ mod test {
     fn query_bcl2fastq_lz4() -> Result<()> {
         let path = "tests/filenames/bcl2fastq_lz4";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "Infected".into(),
-            lane_spec: LaneSpec::Any,
-        };
+        let fqs = find_fastqs(Path::new(path), &"Infected".into(), &LaneSpec::Any)?;
 
-        let fqs = query.find_fastqs()?;
         assert_eq!(fqs.len(), 2);
         assert_eq!(
             fqs[0].r1,
@@ -373,13 +347,11 @@ mod test {
     fn query_bcl2fastq_lanes() -> Result<()> {
         let path = "tests/filenames/bcl2fastq";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "Infected".into(),
-            lane_spec: LaneSpec::Lanes(vec![2].into_iter().collect()),
-        };
-
-        let fqs = query.find_fastqs()?;
+        let fqs = find_fastqs(
+            Path::new(path),
+            &"Infected".into(),
+            &LaneSpec::Lanes(vec![2].into_iter().collect()),
+        )?;
         assert_eq!(fqs.len(), 1);
         assert_eq!(
             fqs[0].r1,
@@ -392,15 +364,9 @@ mod test {
     fn test_bcl2fastq_no_lane_split() -> Result<()> {
         let path = "tests/filenames/bcl2fastq_no_lane_split";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "test_sample".into(),
-            lane_spec: LaneSpec::Any,
-        };
-
-        let fqs = query.find_fastqs()?;
+        let fqs = find_fastqs(Path::new(path), &"test_sample".into(), &LaneSpec::Any)?;
         // NOTE: R3 is not used
-        let expected = vec![InputFastqs {
+        let expected = vec![FastqSet {
             r1: format!("{path}/test_sample_S1_R1_001.fastq.gz"),
             r2: Some(format!("{path}/test_sample_S1_R2_001.fastq.gz")),
             i1: Some(format!("{path}/test_sample_S1_I1_001.fastq.gz")),
@@ -422,14 +388,8 @@ mod tests_from_tenkit {
     fn test_find_input_fastq_files_bcl2fastq_demult() -> Result<()> {
         let path = "tests/filenames/bcl2fastq_2";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "test_sample".into(),
-            lane_spec: LaneSpec::Any,
-        };
-
-        let fqs = query.find_fastqs()?;
-        let expected = vec![InputFastqs {
+        let fqs = find_fastqs(Path::new(path), &"test_sample".into(), &LaneSpec::Any)?;
+        let expected = vec![FastqSet {
             r1: format!("{path}/test_sample_S1_L001_R1_001.fastq.gz"),
             r2: Some(format!("{path}/test_sample_S1_L001_R3_001.fastq.gz")),
             i1: Some(format!("{path}/test_sample_S1_L001_R2_001.fastq.gz")),
@@ -444,22 +404,16 @@ mod tests_from_tenkit {
     fn test_find_input_fastq_files_bc2fastq_demult_project_1() -> Result<()> {
         let path = "tests/filenames/project_dir";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "test_sample".into(),
-            lane_spec: LaneSpec::Any,
-        };
-
-        let fqs = query.find_fastqs()?;
+        let fqs = find_fastqs(Path::new(path), &"test_sample".into(), &LaneSpec::Any)?;
         let expected = vec![
-            InputFastqs {
+            FastqSet {
                 r1: format!("{path}/s1/test_sample_S1_L001_R1_001.fastq.gz"),
                 r2: Some(format!("{path}/s1/test_sample_S1_L001_R3_001.fastq.gz")),
                 i1: Some(format!("{path}/s1/test_sample_S1_L001_R2_001.fastq.gz")),
                 i2: Some(format!("{path}/s1/test_sample_S1_L001_I1_001.fastq.gz")),
                 r1_interleaved: false,
             },
-            InputFastqs {
+            FastqSet {
                 r1: format!("{path}/s2/test_sample_S2_L001_R1_001.fastq.gz"),
                 r2: Some(format!("{path}/s2/test_sample_S2_L001_R3_001.fastq.gz")),
                 i1: Some(format!("{path}/s2/test_sample_S2_L001_R2_001.fastq.gz")),
@@ -475,14 +429,8 @@ mod tests_from_tenkit {
     fn test_find_input_fastq_files_bc2fastq_demult_project_2() -> Result<()> {
         let path = "tests/filenames/project_dir";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "test_sample2".into(),
-            lane_spec: LaneSpec::Any,
-        };
-
-        let fqs = query.find_fastqs()?;
-        let expected = vec![InputFastqs {
+        let fqs = find_fastqs(Path::new(path), &"test_sample2".into(), &LaneSpec::Any)?;
+        let expected = vec![FastqSet {
             r1: format!("{path}/s1/test_sample2_S1_L001_R1_001.fastq.gz"),
             r2: Some(format!("{path}/s1/test_sample2_S1_L001_R3_001.fastq.gz")),
             i1: Some(format!("{path}/s1/test_sample2_S1_L001_R2_001.fastq.gz")),
@@ -497,13 +445,8 @@ mod tests_from_tenkit {
     fn test_sample_name_verification() -> Result<()> {
         let path = "tests/filenames/tenkit91";
         for &s in &["test_sample", "test_sample_suffix"] {
-            let query = Bcl2FastqDef {
-                fastq_path: path.to_string(),
-                sample_name_spec: s.into(),
-                lane_spec: LaneSpec::Any,
-            };
-            let fqs = query.find_fastqs()?;
-            let expected = vec![InputFastqs {
+            let fqs = find_fastqs(Path::new(path), &s.into(), &LaneSpec::Any)?;
+            let expected = vec![FastqSet {
                 r1: format!("{path}/{s}_S1_L001_R1_001.fastq.gz"),
                 r2: Some(format!("{path}/{s}_S1_L001_R3_001.fastq.gz")),
                 i1: Some(format!("{path}/{s}_S1_L001_R2_001.fastq.gz")),
@@ -519,21 +462,16 @@ mod tests_from_tenkit {
     fn test_sample_name_any() -> Result<()> {
         let path = "tests/filenames/tenkit91";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: SampleNameSpec::Any,
-            lane_spec: LaneSpec::Any,
-        };
-        let fqs = query.find_fastqs()?;
+        let fqs = find_fastqs(Path::new(path), &SampleNameSpec::Any, &LaneSpec::Any)?;
         let expected = vec![
-            InputFastqs {
+            FastqSet {
                 r1: format!("{path}/test_sample_S1_L001_R1_001.fastq.gz"),
                 r2: Some(format!("{path}/test_sample_S1_L001_R3_001.fastq.gz")),
                 i1: Some(format!("{path}/test_sample_S1_L001_R2_001.fastq.gz")),
                 i2: Some(format!("{path}/test_sample_S1_L001_I1_001.fastq.gz")),
                 r1_interleaved: false,
             },
-            InputFastqs {
+            FastqSet {
                 r1: format!("{path}/test_sample_suffix_S1_L001_R1_001.fastq.gz"),
                 r2: Some(format!("{path}/test_sample_suffix_S1_L001_R3_001.fastq.gz")),
                 i1: Some(format!("{path}/test_sample_suffix_S1_L001_R2_001.fastq.gz")),

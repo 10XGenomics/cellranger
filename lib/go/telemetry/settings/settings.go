@@ -274,7 +274,7 @@ func printWarningMessage() {
 		product = "cellranger"
 	}
 	PrivacyStatementUrl := PrivacyStatementUrl()
-	fmt.Fprintf(os.Stderr,
+	fmt.Fprintf(os.Stdout,
 		`Thank you for using %s. To help us improve our product,
 anonymized telemetry data has been collected and sent to 10X Genomics.
 This data helps us understand usage patterns, diagnose issues,
@@ -451,6 +451,10 @@ func Disable(all, upload, update bool) error {
 			return fmt.Errorf(
 				"could not write telemetry disable sentinel file: %w", err)
 		}
+		fmt.Printf(
+			"Telemetry collection has been disabled; wrote disable sentinel file: %s\n",
+			path.Join(c, disableFile),
+		)
 		return nil
 	}
 	var errs []error
@@ -458,12 +462,21 @@ func Disable(all, upload, update bool) error {
 		if err := os.WriteFile(path.Join(c, disableUploadFile), nil, 0644); err != nil {
 			errs = append(errs, fmt.Errorf(
 				"could not write telemetry disable sentinel file: %w", err))
+		} else {
+			fmt.Printf("Telemetry upload has been disabled; wrote disable sentinel file: %s\n",
+				path.Join(c, disableUploadFile))
 		}
 	}
 	if update {
 		if err := os.WriteFile(path.Join(c, disableUpdateFile), nil, 0644); err != nil {
 			errs = append(errs, fmt.Errorf(
 				"could not write telemetry disable sentinel file: %w", err))
+		} else {
+			fmt.Printf(
+				"Telemetry config update checks have been disabled; wrote disable sentinel file: "+
+					"%s\n",
+				path.Join(c, disableUpdateFile),
+			)
 		}
 	}
 	return errors.Join(errs...)
@@ -479,22 +492,54 @@ func Enable(all, upload, update bool) error {
 	}
 	var errs []error
 	if all {
-		if err := os.Remove(path.Join(c, disableFile)); err != nil &&
-			!errors.Is(err, fs.ErrNotExist) {
+		filePath := path.Join(c, disableFile)
+		err := os.Remove(filePath)
+		if err == nil {
+			fmt.Printf(
+				"Telemetry collection has been enabled; removed disable sentinel file: %s\n",
+				filePath,
+			)
+		} else if errors.Is(err, fs.ErrNotExist) {
+			fmt.Printf(
+				"Telemetry collection is already enabled; no disable sentinel file found at: %s\n",
+				filePath)
+		} else {
 			errs = append(errs, fmt.Errorf(
 				"could not remove telemetry disable sentinel file: %w", err))
 		}
 	}
 	if upload || all {
-		if err := os.Remove(path.Join(c, disableUploadFile)); err != nil &&
-			!errors.Is(err, fs.ErrNotExist) {
+		filePath := path.Join(c, disableUploadFile)
+		err := os.Remove(filePath)
+		if err == nil {
+			fmt.Printf(
+				"Telemetry upload has been enabled; removed disable sentinel file: %s\n",
+				filePath,
+			)
+		} else if errors.Is(err, fs.ErrNotExist) {
+			fmt.Printf(
+				"Telemetry upload is already enabled; no disable sentinel file found at: %s\n",
+				filePath)
+		} else {
 			errs = append(errs, fmt.Errorf(
 				"could not remove telemetry disable sentinel file: %w", err))
 		}
 	}
 	if update || all {
-		if err := os.Remove(path.Join(c, disableUpdateFile)); err != nil &&
-			!errors.Is(err, fs.ErrNotExist) {
+		filePath := path.Join(c, disableUpdateFile)
+		err := os.Remove(filePath)
+		if err == nil {
+			fmt.Printf(
+				"Telemetry config update checks have been enabled; removed disable sentinel file: "+
+					"%s\n",
+				filePath,
+			)
+		} else if errors.Is(err, fs.ErrNotExist) {
+			fmt.Printf(
+				"Telemetry config update checks are already enabled; no disable sentinel file"+
+					" found at: %s\n",
+				filePath)
+		} else {
 			errs = append(errs, fmt.Errorf(
 				"could not remove telemetry disable sentinel file: %w", err))
 		}

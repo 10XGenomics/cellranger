@@ -157,6 +157,12 @@ impl MartianMain for SetupVdjAnalysis {
             ) => {
                 unreachable!()
             }
+            (
+                VdjAnalysisType::SampleLevelMulti,
+                Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::CMX)),
+            ) => {
+                unreachable!()
+            }
         };
 
         let receptor = match (args.receptor, args.vdj_config.denovo) {

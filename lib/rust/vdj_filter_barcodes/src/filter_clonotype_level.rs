@@ -52,7 +52,7 @@ pub fn build_wlcontaminfo_per_exact_clonotype(
             c.barcodes
                 .iter()
                 .map(|bc| WhitelistContamInfo {
-                    barcode: bc.to_string(),
+                    barcode: bc.clone(),
                     umis: *contig_umis_per_bc.get(bc).unwrap_or(&0),
                 })
                 .collect()

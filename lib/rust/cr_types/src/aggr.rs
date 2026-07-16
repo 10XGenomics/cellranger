@@ -5,9 +5,8 @@ use martian_derive::MartianType;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Pointer to one logical set of FASTQ from a unique (library, gem_group) tuple
 #[derive(Serialize, Deserialize, Clone, PartialOrd, PartialEq, Eq, Debug, MartianType)]
-pub struct SampleDef {
+pub struct CountAggrSampleDef {
     pub library_id: String,
     pub molecule_h5: PathBuf,
 }

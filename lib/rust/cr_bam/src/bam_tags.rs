@@ -3,6 +3,7 @@ use bitflags::bitflags;
 
 pub const READ_GROUP_TAG: &[u8] = b"RG";
 pub const PROC_BC_SEQ_TAG: &[u8] = b"CB";
+pub const SPATIAL_BC_TAG: &[u8] = b"sb";
 pub const PROC_UMI_SEQ_TAG: &[u8] = b"UB";
 pub const FEATURE_RAW_TAG: &[u8] = b"fr";
 pub const FEATURE_QUAL_TAG: &[u8] = b"fq";

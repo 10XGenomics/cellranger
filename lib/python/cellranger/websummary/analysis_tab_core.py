@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+import cellranger.analysis.io as analysis_io
+import cellranger.fast_utils as fast_utils
 import cellranger.rna.library as rna_library
 import cellranger.webshim.constants.gex as ws_gex_constants
 import cellranger.websummary.plotly_tools as pltly
@@ -153,8 +155,8 @@ def diffexp_table_from_analysis(
 
     n_clusters: int = clustering.clusters.max()
     cluster_names = [f"Cluster {i + 1}" for i in range(n_clusters)]
-    diffexp_with_features = DifferentialExpressionWithFeatures.from_cmatrix_and_diffexp(
-        cmatrix=analysis.matrix, diffexp=diffexp
+    diffexp_with_features = DifferentialExpressionWithFeatures.from_feature_ref_and_diffexp(
+        feature_ref=analysis.feature_ref, diffexp=diffexp
     )
     return diffexp_table(
         diffexp_with_features=diffexp_with_features, cluster_names=cluster_names, is_hd=is_hd
@@ -394,6 +396,7 @@ def analysis_by_clustering(
 
 
 def _umi_on_projection_helper(
+    analysis_h5: str,
     analysis: SingleGenomeAnalysis,
     spatial: bool,
     tag_type: str | None = None,
@@ -412,14 +415,16 @@ def _umi_on_projection_helper(
         if key not in analysis.umap:
             return None
         proj_coords = analysis.get_umap(key=key).transformed_umap_matrix
-    if tag_type is None:
-        matrix = analysis.matrix.select_features_by_type(library_type)
-        reads_per_bc = matrix.get_counts_per_bc()
-    else:
-        matrix = analysis.matrix.select_features_by_type_and_tag(library_type, tag_type)
-        reads_per_bc = matrix.get_counts_per_bc()
+    # Barcodes with no UMIs will be missing from umis_per_barcode_map.
+    umis_per_barcode_map = fast_utils.per_barcode_umis_in_library(
+        analysis_h5, library_type, tag_type
+    )
+    umis_per_barcode = np.fromiter(
+        (umis_per_barcode_map.get(barcode.decode(), 0) for barcode in analysis.barcodes),
+        dtype=np.int32,
+    )
 
-    color = get_umi_color(reads_per_bc)
+    color = get_umi_color(umis_per_barcode)
     unit, plt_type = _get_unit_and_plt_type(spatial)
     data = [
         {
@@ -430,13 +435,13 @@ def _umi_on_projection_helper(
             "mode": "markers",
             "marker": {
                 "opacity": 0.9,
-                "size": 3 if analysis.matrix.bcs_dim > ws_gex_constants.MAX_WEBSHIM_BCS_DIM else 4,
+                "size": 3 if len(analysis.barcodes) > ws_gex_constants.MAX_WEBSHIM_BCS_DIM else 4,
                 "color": color,
                 "colorscale": "Jet",
                 "colorbar": {"title": "UMI counts"},
             },
             "hovertemplate": "(%{x:.3f}, %{y:.3f}) <br> " + "UMI counts: %{text}<extra></extra>",
-            "text": [f"{reads:,d}" for reads in reads_per_bc],
+            "text": [f"{umis:,d}" for umis in umis_per_barcode],
         }
     ]
     # Note: the help text has been included in tsne_cluster plot
@@ -452,7 +457,7 @@ def _umi_on_projection_helper(
 
 def get_umi_color(umi_per_bc):
     """Color barcodes by their UMI counts."""
-    vmin, vmax = np.percentile(umi_per_bc, ws_gex_constants.TSNE_TOTALCOUNTS_PRCT_CLIP)
+    vmin, vmax = np.percentile(umi_per_bc, ws_gex_constants.UMAP_TOTALCOUNTS_PRCT_CLIP)
     vmin = int(vmin)
     vmax = int(vmax)
     color = [min(vmax, max(vmin, int(v))) for v in umi_per_bc]
@@ -460,6 +465,7 @@ def get_umi_color(umi_per_bc):
 
 
 def umi_on_projection_plot(
+    analysis_path: str,
     sample_data: SampleData,
     *,
     spatial: bool,
@@ -474,7 +480,8 @@ def umi_on_projection_plot(
         return None
 
     return _umi_on_projection_helper(
-        analysis,
+        analysis_h5=analysis_io.h5_path(analysis_path),
+        analysis=analysis,
         spatial=spatial,
         library_type=library_type,
         tag_type=tag_type,
@@ -491,15 +498,10 @@ def projection_diffexp_plots_from_path(analysis_dir, *, projection: Projection, 
 
     Subsample the analyses down to 10K barcodes to avoid producing unreadable plots.
     """
-    if analysis_dir is None:
-        return None
-
-    analysis = SingleGenomeAnalysis.load_default_format(
-        analysis_dir, method="pca", projections=(projection,)
+    analysis_h5 = analysis_io.h5_path(analysis_dir)
+    analysis = SingleGenomeAnalysis.load_h5_without_matrix(
+        analysis_h5, method="pca", projections=(projection,)
     )
-
-    if analysis is None:
-        return None
 
     # Possibly downsample the barcodes.
     analysis.subsample_bcs(ws_gex_constants.MAX_WEBSHIM_BCS_DIM)
@@ -512,7 +514,7 @@ def projection_diffexp_plots_from_path(analysis_dir, *, projection: Projection, 
     # left (colored by umi count) tsne plot
     if plots:
         left_plots = _umi_on_projection_helper(
-            analysis, spatial=False, library_type=library_type, projection=projection
+            analysis_h5, analysis, spatial=False, library_type=library_type, projection=projection
         )
         if left_plots:
             plots.left_plots = left_plots
@@ -527,12 +529,12 @@ def umi_on_projection_from_path(
 
     Get the t-SNE/UMAP colored by umi counts, optionally filtered for a specific library type
     """
-    # pylint: disable=missing-function-docstring
     if analysis_dir is None:
         return None
 
-    analysis = SingleGenomeAnalysis.load_default_format(
-        analysis_dir, method="pca", projections=(projection,)
+    analysis_h5 = analysis_io.h5_path(analysis_dir)
+    analysis = SingleGenomeAnalysis.load_h5_without_matrix(
+        analysis_h5, method="pca", projections=(projection,)
     )
 
     if analysis is None:
@@ -543,5 +545,10 @@ def umi_on_projection_from_path(
 
     # left (colored by umi count) tsne plot
     return _umi_on_projection_helper(
-        analysis, spatial=False, library_type=library_type, tag_type=tag_type, projection=projection
+        analysis_h5,
+        analysis,
+        spatial=False,
+        library_type=library_type,
+        tag_type=tag_type,
+        projection=projection,
     )

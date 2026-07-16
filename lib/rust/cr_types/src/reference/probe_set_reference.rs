@@ -35,6 +35,31 @@ pub const PROBE_SET_HEADER: [&str; 6] = [
     "gene_name",
 ];
 
+/// Valid probe seq characters (ACGT, hyphens for gaps).
+pub const VALID_PROBE_SEQ_CHARS: [char; 5] = ['A', 'C', 'G', 'T', '-'];
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+enum ProbeSetError {
+    #[error("Invalid character '{c}' in probe sequence of probe {probe_id}: {probe_seq}")]
+    InvalidSeqChar {
+        c: char,
+        probe_id: String,
+        probe_seq: String,
+    },
+    #[error("Too many hyphens in sequence of probe {probe_id}: {probe_seq}")]
+    TooManyHyphens { probe_id: String, probe_seq: String },
+    #[error("An unpaired probe must have exactly one hyphen for probe {probe_id}: {probe_seq}")]
+    UnpairedProbeWrongHyphens { probe_id: String, probe_seq: String },
+    #[error(
+        "Incorrect header in probe set CSV. Column {column} must be '{expected}' but saw '{actual}'"
+    )]
+    IncorrectHeaderColumn {
+        column: usize,
+        expected: String,
+        actual: String,
+    },
+}
+
 impl TargetSetFile {
     /// Read a probe set reference CSV.
     pub fn read(&self, transcriptome_reference_path: Option<&Path>) -> Result<Vec<Probe>> {
@@ -63,26 +88,89 @@ impl TargetSetFile {
 
         // Ensure that the headers are correct.
         let header: Vec<_> = reader.headers().unwrap().iter().collect();
-        assert_eq!(header[0], "gene_id");
-        assert_eq!(header[1], "probe_seq");
-        assert_eq!(header[2], "probe_id");
+        ensure!(
+            header[0] == "gene_id",
+            ProbeSetError::IncorrectHeaderColumn {
+                column: 0,
+                expected: "gene_id".to_string(),
+                actual: header[0].to_string(),
+            }
+        );
+        ensure!(
+            header[1] == "probe_seq",
+            ProbeSetError::IncorrectHeaderColumn {
+                column: 1,
+                expected: "probe_seq".to_string(),
+                actual: header[1].to_string(),
+            }
+        );
+        ensure!(
+            header[2] == "probe_id",
+            ProbeSetError::IncorrectHeaderColumn {
+                column: 2,
+                expected: "probe_id".to_string(),
+                actual: header[2].to_string(),
+            }
+        );
         if let Some(&included_header) = header.get(3) {
-            assert_eq!(included_header, "included");
+            ensure!(
+                included_header == "included",
+                ProbeSetError::IncorrectHeaderColumn {
+                    column: 3,
+                    expected: "included".to_string(),
+                    actual: included_header.to_string(),
+                }
+            );
         }
         if let Some(&region_header) = header.get(4) {
-            assert_eq!(region_header, "region");
+            ensure!(
+                region_header == "region",
+                ProbeSetError::IncorrectHeaderColumn {
+                    column: 4,
+                    expected: "region".to_string(),
+                    actual: region_header.to_string(),
+                }
+            );
         }
         if let Some(&gene_name_header) = header.get(5) {
-            assert_eq!(gene_name_header, "gene_name");
+            ensure!(
+                gene_name_header == "gene_name",
+                ProbeSetError::IncorrectHeaderColumn {
+                    column: 5,
+                    expected: "gene_name".to_string(),
+                    actual: gene_name_header.to_string(),
+                }
+            );
         }
         if let Some(&ref_name_header) = header.get(6) {
-            assert_eq!(ref_name_header, "ref_name");
+            ensure!(
+                ref_name_header == "ref_name",
+                ProbeSetError::IncorrectHeaderColumn {
+                    column: 6,
+                    expected: "ref_name".to_string(),
+                    actual: ref_name_header.to_string(),
+                }
+            );
         }
         if let Some(&ref_pos_header) = header.get(7) {
-            assert_eq!(ref_pos_header, "ref_pos");
+            ensure!(
+                ref_pos_header == "ref_pos",
+                ProbeSetError::IncorrectHeaderColumn {
+                    column: 7,
+                    expected: "ref_pos".to_string(),
+                    actual: ref_pos_header.to_string(),
+                }
+            );
         }
         if let Some(&cigar_header) = header.get(8) {
-            assert_eq!(cigar_header, "cigar");
+            ensure!(
+                cigar_header == "cigar",
+                ProbeSetError::IncorrectHeaderColumn {
+                    column: 8,
+                    expected: "cigar".to_string(),
+                    actual: cigar_header.to_string(),
+                }
+            );
         }
 
         reader
@@ -106,6 +194,17 @@ impl TargetSetFile {
                     }
                 });
 
+                // Validate the probe sequence characters.
+                for c in probe_seq.chars() {
+                    ensure!(
+                        VALID_PROBE_SEQ_CHARS.contains(&c),
+                        ProbeSetError::InvalidSeqChar {
+                            c,
+                            probe_id: probe_id.clone(),
+                            probe_seq: probe_seq.clone(),
+                        }
+                    );
+                }
                 // The transcriptome gene name, or the probe set gene name, or the gene ID.
                 let gene_name = gene_id_to_name
                     .get(&gene_id)
@@ -129,8 +228,10 @@ impl TargetSetFile {
                 let probe_type = if probe_seq.starts_with('-') || probe_seq.ends_with('-') {
                     ensure!(
                         num_hyphens == 1,
-                        "An unpaired probe must have exactly one hyphen \
-                         for probe {probe_id}: {probe_seq}"
+                        ProbeSetError::UnpairedProbeWrongHyphens {
+                            probe_id: probe_id.clone(),
+                            probe_seq: probe_seq.clone(),
+                        }
                     );
                     ProbeType::UnpairedGapAlign
                 } else {
@@ -138,7 +239,10 @@ impl TargetSetFile {
                         0 | 1 => ProbeType::RTL,
                         2 => ProbeType::PairedGapAlign,
                         3.. => {
-                            bail!("Too many hyphens in sequence of probe {probe_id}: {probe_seq}")
+                            bail!(ProbeSetError::TooManyHyphens {
+                                probe_id: probe_id.clone(),
+                                probe_seq: probe_seq.clone(),
+                            })
                         }
                     }
                 };
@@ -197,6 +301,13 @@ mod tests {
 
     const HUMAN_PANEL_A: &str = "test/probe_set_merge/GRCh38-fmt3-refv24_a.csv";
     const MOUSE_PANEL_A: &str = "test/probe_set_merge/mm10-fmt3-refv20_a.csv";
+    const HUMAN_PANEL_LOWERCASE: &str = "test/probe_set_merge/GRCh38-fmt3-refv24_lowercase.csv";
+    const HUMAN_PANEL_TOO_MANY_HYPHENS: &str =
+        "test/probe_set_merge/GRCh38-fmt3-refv24_too-many-hyphens.csv";
+    const HUMAN_PANEL_UNPAIRED_WRONG_HYPHENS: &str =
+        "test/probe_set_merge/GRCh38-fmt3-refv24_unpaired_wrong_hyphens.csv";
+    const HUMAN_PANEL_INCORRECT_HEADER_COLUMN: &str =
+        "test/probe_set_merge/GRCh38-fmt3-refv24_incorrect_header_col.csv";
     const HUMAN_MOUSE_REF: &str = "test/reference/GRCh38-and-mm10_ref_tiny";
     const HUMAN_REF: &str = "test/reference/GRCh38_ref_tiny";
     #[test]
@@ -276,5 +387,70 @@ mod tests {
         let human_mouse_ref = Path::new(HUMAN_MOUSE_REF);
 
         let _ = human_panel_a.read(Some(human_mouse_ref));
+    }
+
+    #[test]
+    fn test_read_lowercase() {
+        let human_panel_lowercase = TargetSetFile::from(HUMAN_PANEL_LOWERCASE);
+
+        let act_err = human_panel_lowercase
+            .read(None)
+            .unwrap_err()
+            .downcast::<ProbeSetError>()
+            .unwrap();
+        let exp_err = ProbeSetError::InvalidSeqChar {
+            c: 'c',
+            probe_id: "ENSG00000164465|DCBLD1|dd934e9".to_string(),
+            probe_seq: "CCCGTCAGGTTCAAAACTCAAGGATCTGCTGCAACCATTGGAGGTAAAca".to_string(),
+        };
+        assert_eq!(act_err, exp_err);
+    }
+
+    #[test]
+    fn test_read_too_many_hyphens() {
+        let human_panel_too_many_hyphens = TargetSetFile::from(HUMAN_PANEL_TOO_MANY_HYPHENS);
+        let act_err = human_panel_too_many_hyphens
+            .read(None)
+            .unwrap_err()
+            .downcast::<ProbeSetError>()
+            .unwrap();
+        let exp_err = ProbeSetError::TooManyHyphens {
+            probe_id: "ENSG00000141977|CIB3|add57d3".to_string(),
+            probe_seq: "CATCAGCCTCAT-CCAGCACCTTCT-CACATACCAGGCT-CACCTCCTCGGCA".to_string(),
+        };
+        assert_eq!(act_err, exp_err);
+    }
+
+    #[test]
+    fn test_read_unpaired_wrong_hyphens() {
+        let human_panel_unpaired_wrong_hyphens =
+            TargetSetFile::from(HUMAN_PANEL_UNPAIRED_WRONG_HYPHENS);
+        let act_err = human_panel_unpaired_wrong_hyphens
+            .read(None)
+            .unwrap_err()
+            .downcast::<ProbeSetError>()
+            .unwrap();
+        let exp_err = ProbeSetError::UnpairedProbeWrongHyphens {
+            probe_id: "ENSG00000141977|CIB3|add57d3".to_string(),
+            probe_seq: "CATCAGCCTCATCCAGCACCTTC-TCACATACCAGGCTCACCTCCTCGGCA-".to_string(),
+        };
+        assert_eq!(act_err, exp_err);
+    }
+
+    #[test]
+    fn test_read_incorrect_header_column() {
+        let human_panel_incorrect_header_column =
+            TargetSetFile::from(HUMAN_PANEL_INCORRECT_HEADER_COLUMN);
+        let act_err = human_panel_incorrect_header_column
+            .read(None)
+            .unwrap_err()
+            .downcast::<ProbeSetError>()
+            .unwrap();
+        let exp_err = ProbeSetError::IncorrectHeaderColumn {
+            column: 1,
+            expected: "probe_seq".to_string(),
+            actual: "probe_sequence".to_string(),
+        };
+        assert_eq!(act_err, exp_err);
     }
 }

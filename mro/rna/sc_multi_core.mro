@@ -51,15 +51,18 @@ pipeline SC_MULTI_CORE(
     out csv                      qc_sample_metrics,
     out html                     qc_report,
     out map<csv>                 multi_metrics_csvs,
-    out map<CellTypes>           cell_types,
-    out CellTypes                library_cell_types,
+    out map<CellTypesAllMethods> cell_types,
+    out map<CellTypes>           library_cell_types,
+    out json                     metrics_summary_json,
     out json                     multi_graph,
+    out json[]                   cell_type_websummary_bundle_value,
 )
 {
     # calls a helper pipeline to perform DETECT_CHEMISTRY on
     # the GEX and VDJ libraries
     call MULTI_CHEMISTRY_DETECTOR(
         count_inputs        = {
+            aligner:                     self.count_input.aligner,
             check_library_compatibility: self.count_input.check_library_compatibility,
             chemistry_specs:             self.count_input.chemistry_specs,
             custom_chemistry_defs:       self.count_input.custom_chemistry_defs,
@@ -68,6 +71,7 @@ pipeline SC_MULTI_CORE(
             r2_length:                   self.count_input.r2_length,
             reference_path:              self.count_input.reference_info.transcriptome_info.reference_path,
             sample_def:                  self.count_input.sample_def,
+            target_set:                  self.count_input.target_set,
         },
         vdj_inputs          = self.vdj_inputs,
         vdj_gen_inputs      = self.vdj_gen_inputs,
@@ -106,7 +110,6 @@ pipeline SC_MULTI_CORE(
     )
 
     call MULTI_GEM_WELL_PROCESSOR(
-        gem_group                 = 1,
         common_input              = self.common_input,
         count_inputs              = self.count_input,
         count_cell_calling_config = self.count_cell_calling_config,
@@ -124,6 +127,7 @@ pipeline SC_MULTI_CORE(
         is_pd                     = self.is_pd,
         config                    = MAKE_FULL_CONFIG.config,
         multi_graph               = CREATE_MULTI_GRAPH.multi_graph,
+        multi_config              = self.multi_config,
         feature_config            = self.feature_config,
     )
 
@@ -209,101 +213,113 @@ pipeline SC_MULTI_CORE(
         disabled = MAKE_FULL_CONFIG.config.disable_count,
     )
 
-    map call CELL_ANNOTATION_SERVICE as SAMPLE_CELL_ANNOTATION_SERVICE(
-        filtered_matrix       = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_matrix_h5,
-        analysis              = split SAMPLE_ANALYZER.common_analyzer.analysis,
-        sample_id             = self.common_input.sample_id,
-        sample_desc           = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.sample,
-        tissue_positions      = null,
-        tissue_lowres_image   = null,
-        scale_factors         = null,
-        cell_annotation_model = self.count_input.cell_annotation_model,
-        tenx_cloud_token_path = self.count_input.tenx_cloud_token_path,
-        pipestance_type       = "SC_MULTI_CORE_SAMPLE",
-        alert_string          = null,
-        is_pd                 = self.is_pd,
-        cloupe_projection     = null,
+    map call CELL_ANNOTATION_ALL_MODELS as SAMPLE_CELL_ANNOTATION_SERVICE(
+        filtered_matrix        = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_matrix_h5,
+        analysis               = split SAMPLE_ANALYZER.common_analyzer.analysis,
+        sample_id              = self.common_input.sample_id,
+        sample_desc            = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.sample,
+        model_families         = [
+            "Azimuth",
+            "10x_Cloud",
+        ],
+        tissue_positions       = null,
+        tissue_lowres_image    = null,
+        scale_factors          = null,
+        cell_annotation_model  = self.count_input.cell_annotation_model,
+        tenx_cloud_token_path  = self.count_input.tenx_cloud_token_path,
+        pipestance_type        = "SC_MULTI_CORE_SAMPLE",
+        alert_string           = null,
+        is_pd                  = self.is_pd,
+        cloupe_projection      = null,
+        aggregate_and_annotate = null,
     ) using (
         disabled = DISABLE_MULTI_CORE_STAGES.disable_sample_cas_celltyping,
     )
 
-    map call CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED as SAMPLE_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
-        filtered_matrix      = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_matrix_h5,
-        skip_cell_annotation = self.count_input.skip_cell_annotation,
+    map call CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED as SAMPLE_CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
+        filtered_matrix       = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_matrix_h5,
+        skip_cell_annotation  = self.count_input.skip_cell_annotation,
+        tenx_cloud_token_path = self.count_input.tenx_cloud_token_path,
     )
 
-    call CELL_ANNOTATION_SERVICE as LIBRARY_CELL_ANNOTATION_SERVICE(
-        filtered_matrix       = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
-        analysis              = COUNT_ANALYZER.common_analyzer.analysis,
-        sample_id             = self.common_input.sample_id,
-        sample_desc           = self.common_input.sample_desc,
-        tissue_positions      = null,
-        tissue_lowres_image   = null,
-        scale_factors         = null,
-        cell_annotation_model = self.count_input.cell_annotation_model,
-        tenx_cloud_token_path = self.count_input.tenx_cloud_token_path,
-        pipestance_type       = "SC_MULTI_CORE_LIBRARY",
-        alert_string          = null,
-        is_pd                 = self.is_pd,
-        cloupe_projection     = null,
+    call CELL_ANNOTATION_ALL_MODELS as LIBRARY_CELL_ANNOTATION_SERVICE(
+        filtered_matrix        = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
+        analysis               = COUNT_ANALYZER.common_analyzer.analysis,
+        sample_id              = self.common_input.sample_id,
+        sample_desc            = self.common_input.sample_desc,
+        model_families         = [
+            "Azimuth",
+            "10x_Cloud",
+        ],
+        tissue_positions       = null,
+        tissue_lowres_image    = null,
+        scale_factors          = null,
+        cell_annotation_model  = self.count_input.cell_annotation_model,
+        tenx_cloud_token_path  = self.count_input.tenx_cloud_token_path,
+        pipestance_type        = "SC_MULTI_CORE_LIBRARY",
+        alert_string           = null,
+        is_pd                  = self.is_pd,
+        cloupe_projection      = null,
+        aggregate_and_annotate = null,
     ) using (
         disabled = DISABLE_MULTI_CORE_STAGES.disable_library_cas_celltyping,
     )
 
-    call CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED as LIBRARY_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
-        filtered_matrix      = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
-        skip_cell_annotation = self.count_input.skip_cell_annotation,
+    call CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED as LIBRARY_CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
+        filtered_matrix       = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_gene_bc_matrices_h5,
+        skip_cell_annotation  = self.count_input.skip_cell_annotation,
+        tenx_cloud_token_path = self.count_input.tenx_cloud_token_path,
     )
 
     # per-sample map-called run of reporter, for multi runs
     map call SAMPLE_REPORTER(
-        sample_outs                 = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
-        count_analyzer              = split SAMPLE_ANALYZER.common_analyzer,
-        crispr_analyzer             = split SAMPLE_ANALYZER.crispr_analyzer,
-        targeted_analyzer           = split SAMPLE_ANALYZER.targeted_analyzer,
-        sample_assignment_metrics   = split MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.sample_assignment_metrics,
-        cloupe_cas_types            = split SAMPLE_CELL_ANNOTATION_SERVICE.cloupe_cas_types,
-        cell_annotation_cloupe_name = split SAMPLE_CELL_ANNOTATION_SERVICE.cell_annotation_cloupe_name,
-        cell_annotation_metrics     = split SAMPLE_CELL_ANNOTATION_SERVICE.cell_type_websummary_bundle.cell_annotation_metrics,
-        cas_metrics                 = split SAMPLE_CELL_ANNOTATION_SERVICE.cas_metrics,
-        target_panel_summary        = MULTI_GEM_WELL_PROCESSOR.count.target_outs.target_panel_summary,
-        sample_id                   = self.common_input.sample_id,
-        sample_desc                 = self.common_input.sample_desc,
-        config                      = MAKE_FULL_CONFIG.config,
-        count_pipestance_type       = self.count_pipestance_type,
-        cell_calling_config         = self.count_cell_calling_config,
-        barcode_summary             = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.barcode_summary,
-        cells_per_sample            = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.sample_cell_barcodes,
-        cells_per_tag               = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.cells_per_tag,
+        sample_outs                  = split STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
+        count_analyzer               = split SAMPLE_ANALYZER.common_analyzer,
+        crispr_analyzer              = split SAMPLE_ANALYZER.crispr_analyzer,
+        targeted_analyzer            = split SAMPLE_ANALYZER.targeted_analyzer,
+        sample_assignment_metrics    = split MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.sample_assignment_metrics,
+        cell_annotation_loupe_inputs = split SAMPLE_CELL_ANNOTATION_SERVICE.loupe_file_inputs,
+        cell_annotation_metrics      = split SAMPLE_CELL_ANNOTATION_SERVICE.cell_annotation_primary_metrics,
+        cell_annotation_analysis_metrics = split SAMPLE_CELL_ANNOTATION_SERVICE.cell_annotation_analysis_metrics,
+        target_panel_summary         = MULTI_GEM_WELL_PROCESSOR.count.target_outs.target_panel_summary,
+        sample_id                    = self.common_input.sample_id,
+        sample_desc                  = self.common_input.sample_desc,
+        config                       = MAKE_FULL_CONFIG.config,
+        count_pipestance_type        = self.count_pipestance_type,
+        cell_calling_config          = self.count_cell_calling_config,
+        barcode_summary              = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.barcode_summary,
+        cells_per_sample             = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.sample_cell_barcodes,
+        cells_per_tag                = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags.cells_per_tag,
     ) using (
         disabled = MAKE_FULL_CONFIG.config.disable_multi_count,
     )
 
     # reporter for library-level information
     call MULTI_REPORTER(
-        sample_id                   = self.common_input.sample_id,
-        sample_desc                 = self.common_input.sample_desc,
-        config                      = MAKE_FULL_CONFIG.config,
-        count_pipestance_type       = self.count_pipestance_type,
-        feature_reference           = self.count_input.feature_reference,
-        reference_info              = self.count_input.reference_info,
-        chemistry_defs              = MULTI_CHEMISTRY_DETECTOR.detect_count_chem.chemistry_defs,
-        count_gw                    = MULTI_GEM_WELL_PROCESSOR.count,
-        include_introns             = self.count_input.include_introns,
-        count_analyzer              = COUNT_ANALYZER.common_analyzer,
-        crispr_analyzer             = COUNT_ANALYZER.crispr_analyzer,
-        antibody_analyzer           = COUNT_ANALYZER.antibody_analyzer,
-        antigen_analyzer            = COUNT_ANALYZER.antigen_analyzer,
-        targeted_analyzer           = COUNT_ANALYZER.targeted_analyzer,
-        filtered_barcodes           = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_barcodes,
-        barcode_summary             = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.barcode_summary,
-        assign_tags_outs            = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags,
-        disable_library_cloupe      = DISABLE_FEATURE_STAGES.disable_library_cloupe,
-        sample_cloupe               = SAMPLE_REPORTER.cloupe,
-        cloupe_cas_types            = LIBRARY_CELL_ANNOTATION_SERVICE.cloupe_cas_types,
-        cas_metrics                 = LIBRARY_CELL_ANNOTATION_SERVICE.cas_metrics,
-        cell_annotation_cloupe_name = LIBRARY_CELL_ANNOTATION_SERVICE.cell_annotation_cloupe_name,
-        cell_annotation_viable_but_not_requested = LIBRARY_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED.cell_annotation_viable_but_not_requested,
+        sample_id                    = self.common_input.sample_id,
+        sample_desc                  = self.common_input.sample_desc,
+        config                       = MAKE_FULL_CONFIG.config,
+        count_pipestance_type        = self.count_pipestance_type,
+        feature_reference            = self.count_input.feature_reference,
+        reference_info               = self.count_input.reference_info,
+        chemistry_defs               = MULTI_CHEMISTRY_DETECTOR.chemistry_defs,
+        count_gw                     = MULTI_GEM_WELL_PROCESSOR.count,
+        include_introns              = self.count_input.include_introns,
+        count_analyzer               = COUNT_ANALYZER.common_analyzer,
+        crispr_analyzer              = COUNT_ANALYZER.crispr_analyzer,
+        antibody_analyzer            = COUNT_ANALYZER.antibody_analyzer,
+        antigen_analyzer             = COUNT_ANALYZER.antigen_analyzer,
+        targeted_analyzer            = COUNT_ANALYZER.targeted_analyzer,
+        filtered_barcodes            = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.filtered_barcodes,
+        barcode_summary              = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.barcode_summary,
+        assign_tags_outs             = MULTI_GEM_WELL_PROCESSOR.count.basic_counter_outs.assign_tags,
+        disable_library_cloupe       = DISABLE_FEATURE_STAGES.disable_library_cloupe,
+        sample_cloupe                = SAMPLE_REPORTER.cloupe,
+        cell_annotation_loupe_inputs = LIBRARY_CELL_ANNOTATION_SERVICE.loupe_file_inputs,
+        cell_annotation_analysis_metrics = LIBRARY_CELL_ANNOTATION_SERVICE.cell_annotation_analysis_metrics,
+        cell_type_websummary_bundle_value = LIBRARY_CELL_ANNOTATION_SERVICE.cell_type_websummary_bundle_value,
+        cloud_cell_annotation_viable_but_not_requested = LIBRARY_CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED.cloud_cell_annotation_viable_but_not_requested,
+        skip_cell_annotation         = self.count_input.skip_cell_annotation,
     )
 
     call PICK_BEAM_ANALYZER(
@@ -318,6 +334,21 @@ pipeline SC_MULTI_CORE(
         vdj_reference_path = self.vdj_gen_inputs.vdj_reference_path,
     ) using (
         disabled = self.basic_config.disable_vdj,
+    )
+
+    call MERGE_VDJ_CELL_BARCODES(
+        vdj_t_cell_barcodes    = MULTI_GEM_WELL_PROCESSOR.vdj_t.lib_level.report.cell_barcodes,
+        vdj_t_gd_cell_barcodes = MULTI_GEM_WELL_PROCESSOR.vdj_t_gd.lib_level.report.cell_barcodes,
+        vdj_b_cell_barcodes    = MULTI_GEM_WELL_PROCESSOR.vdj_b.lib_level.report.cell_barcodes,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.count_is_enabled,
+    )
+
+    call COMPUTE_SUBSEQ_METRICS as VDJ_COMPUTE_SUBSEQ_METRICS(
+        filtered_barcodes = MERGE_VDJ_CELL_BARCODES.vdj_cell_barcodes,
+        chemistry_defs    = MULTI_CHEMISTRY_DETECTOR.chemistry_defs,
+    ) using (
+        disabled = MAKE_FULL_CONFIG.config.count_is_enabled,
     )
 
     call SANITIZE_MAP_CALLS(
@@ -354,8 +385,8 @@ pipeline SC_MULTI_CORE(
         sample_treemap_plots         = SANITIZE_MAP_CALLS.sample_treemap_plots,
         barcode_rank_plots           = MULTI_REPORTER.barcode_rank_plots,
         antibody_histograms          = MULTI_REPORTER.antibody_histograms,
-        cell_type_websummary_bundles = SAMPLE_CELL_ANNOTATION_SERVICE.cell_type_websummary_bundle,
-        cell_annotation_viable_but_not_requested = SAMPLE_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED.cell_annotation_viable_but_not_requested,
+        cell_type_websummary_bundles = SAMPLE_CELL_ANNOTATION_SERVICE.websummary_inputs,
+        cloud_cell_annotation_viable_but_not_requested = SAMPLE_CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED.cloud_cell_annotation_viable_but_not_requested,
         sample_antibody_histograms   = SAMPLE_ANALYZER.antibody_analyzer.antibody_histograms_json,
         antigen_histograms           = MULTI_REPORTER.antigen_histograms,
         jibes_biplot_histogram       = MULTI_REPORTER.jibes_biplot_histogram,
@@ -366,35 +397,50 @@ pipeline SC_MULTI_CORE(
         feature_config               = self.feature_config,
         chemistry_defs               = MULTI_CHEMISTRY_DETECTOR.detect_count_chem.chemistry_defs,
         detected_probe_barcode_pairing = MULTI_CHEMISTRY_DETECTOR.detect_count_chem.detected_probe_barcode_pairing,
+        sample_filtered_barcodes     = STRUCTIFY_PER_SAMPLE_OUTS.sample_outs.filtered_barcodes,
         no_preflight                 = self.no_preflight,
     ) using (
         disabled = MAKE_FULL_CONFIG.config.disable_multi,
     )
 
+    call MERGE_METRICS(
+        summaries = [
+            MULTI_CHEMISTRY_DETECTOR.summary,
+            MULTI_REPORTER.count_summary.metrics_summary_json,
+            VDJ_COMPUTE_SUBSEQ_METRICS.summary,
+        ],
+    )
+
     return (
-        cell_types          = SAMPLE_CELL_ANNOTATION_SERVICE.cell_types,
-        count_analyzer      = COUNT_ANALYZER,
-        detect_count_chem   = MULTI_CHEMISTRY_DETECTOR.detect_count_chem,
-        disable_feat        = DISABLE_FEATURE_STAGES,
-        full_config         = MAKE_FULL_CONFIG.config,
-        library_cell_types  = LIBRARY_CELL_ANNOTATION_SERVICE.cell_types,
-        multi_graph         = CREATE_MULTI_GRAPH.multi_graph,
-        multi_gw            = MULTI_GEM_WELL_PROCESSOR,
-        multi_metrics_csvs  = WRITE_MULTI_WEB_SUMMARY.metrics_summary_csv,
-        multi_reporter      = MULTI_REPORTER,
-        multi_web_summaries = WRITE_MULTI_WEB_SUMMARY.web_summary,
-        qc_report           = WRITE_MULTI_WEB_SUMMARY.library_web_summary,
-        qc_library_metrics  = WRITE_MULTI_WEB_SUMMARY.qc_library_metrics,
-        qc_sample_metrics   = WRITE_MULTI_WEB_SUMMARY.qc_sample_metrics,
-        sample_analyzer     = SAMPLE_ANALYZER,
-        sample_outs         = STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
-        sample_reporter     = SAMPLE_REPORTER,
-        split_vdj           = SPLIT_VDJ_INPUTS,
-        unassigned_bai      = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments_bai_index,
-        unassigned_bam      = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments,
-        unassigned_csi      = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments_csi_index,
-        vdj_ref_out         = COPY_VDJ_REFERENCE.vdj_reference,
-        web_summary_json    = WRITE_MULTI_WEB_SUMMARY.web_summary_json,
+        cell_types           = SAMPLE_CELL_ANNOTATION_SERVICE.cell_types_all_methods,
+        cell_type_websummary_bundle_value = LIBRARY_CELL_ANNOTATION_SERVICE.cell_type_websummary_bundle_value,
+        count_analyzer       = COUNT_ANALYZER,
+        detect_count_chem    = MULTI_CHEMISTRY_DETECTOR.detect_count_chem,
+        disable_feat         = DISABLE_FEATURE_STAGES,
+        full_config          = MAKE_FULL_CONFIG.config,
+        library_cell_types   = LIBRARY_CELL_ANNOTATION_SERVICE.cell_types_all_methods.cell_types,
+        metrics_summary_json = MERGE_METRICS.summary,
+        multi_graph          = CREATE_MULTI_GRAPH.multi_graph,
+        multi_gw             = MULTI_GEM_WELL_PROCESSOR,
+        multi_metrics_csvs   = WRITE_MULTI_WEB_SUMMARY.metrics_summary_csv,
+        multi_reporter       = MULTI_REPORTER,
+        multi_web_summaries  = WRITE_MULTI_WEB_SUMMARY.web_summary,
+        qc_report            = WRITE_MULTI_WEB_SUMMARY.library_web_summary,
+        qc_library_metrics   = WRITE_MULTI_WEB_SUMMARY.qc_library_metrics,
+        qc_sample_metrics    = WRITE_MULTI_WEB_SUMMARY.qc_sample_metrics,
+        sample_analyzer      = SAMPLE_ANALYZER,
+        sample_outs          = STRUCTIFY_PER_SAMPLE_OUTS.sample_outs,
+        sample_reporter      = SAMPLE_REPORTER,
+        split_vdj            = SPLIT_VDJ_INPUTS,
+        unassigned_bai       = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments_bai_index,
+        unassigned_bam       = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments,
+        unassigned_csi       = STRUCTIFY_PER_SAMPLE_OUTS.unassigned_alignments_csi_index,
+        vdj_ref_out          = COPY_VDJ_REFERENCE.vdj_reference,
+        web_summary_json     = WRITE_MULTI_WEB_SUMMARY.web_summary_json,
+    )
+
+    retain (
+        MERGE_METRICS.summary,
     )
 }
 

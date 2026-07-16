@@ -41,11 +41,9 @@ pub fn run_enclone(cr_opt: ClonotypingConfig) -> anyhow::Result<()> {
 
     let (ctl, refdata) = setup(cr_opt)?;
     let annotations = load_input_data(&ctl, &refdata)?;
-    let (exacts, fate) =
-        main_enclone_start(&ctl, annotations, &refdata, false).map_err(|e| anyhow!(e))?;
+    let (exacts, fate) = main_enclone_start(&ctl, annotations, &refdata, false);
     write_fate(&ctl.cr_opt.fate_file, &fate).map_err(|e| anyhow!(e))?;
-    process_clonotypes(&ctl, &refdata, &exacts)?;
-    Ok(())
+    process_clonotypes(&ctl, &refdata, &exacts)
 }
 
 fn setup(cr_opt: ClonotypingConfig) -> anyhow::Result<(EncloneControl, RefData)> {

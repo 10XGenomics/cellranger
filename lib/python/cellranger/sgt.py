@@ -31,7 +31,10 @@ def _rstest(r, coef):
     return r * np.power(1 + 1.0 / r, 1 + coef)
 
 
-def simple_good_turing(xr: np.ndarray, xnr: np.ndarray):
+def simple_good_turing(
+    xr: np.ndarray[tuple[int], np.dtype[np.int_] | np.dtype[np.float64]],
+    xnr: np.ndarray[tuple[int], np.dtype[np.int_] | np.dtype[np.float64]],
+) -> tuple[np.ndarray[tuple[int], np.dtype[np.float64]], np.float64]:
     """Make a Simple Good-Turing estimate of the frequencies.
 
     Args:
@@ -96,7 +99,12 @@ def simple_good_turing(xr: np.ndarray, xnr: np.ndarray):
     return (xr * xrstcmbrel, p0)
 
 
-def sgt_proportions(frequencies: np.ndarray):
+def sgt_proportions(
+    frequencies: np.ndarray[tuple[int], np.dtype[np.int_]],
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.float64]],
+    np.float64,
+]:
     """Use Simple Good-Turing estimate to adjust for unobserved items.
 
     Args:

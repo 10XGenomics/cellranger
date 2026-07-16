@@ -253,7 +253,7 @@ mod tests {
     fn test_with_vdj_only_inputs() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let args = ClonotypeAssignerStageInputs {
-            filter_switch: Default::default(),
+            filter_switch: FilterSwitch::default(),
             vdj_reference_path: PathBuf::from(
                 "../dui_tests/test_resources/reference/vdj_GRCh38_alts_ensembl-7.1.0/",
             ),

@@ -124,7 +124,7 @@ def get_token_info(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message=f"Could not read token information from {args.tenx_cloud_token_path}: {token_exc}; skipping annotation",
+            message=f"Could not read token information from {args.tenx_cloud_token_path}: {token_exc}; skipping annotation via 10x Cloud",
             use_exit=run_info.is_cra,
         )
         outs.cas_success = False
@@ -146,7 +146,7 @@ def get_annotation_params(
 
     try:
         martian.log_info(
-            f"Trying to get annotation params for pipestance {args.pipestance_type}, genome {genome_name}, model {model_name}"
+            f"Trying to get annotation params via 10x Cloud for pipestance {args.pipestance_type}, genome {genome_name}, model {model_name}"
         )
         pipeline_requirements = [broad_tenx_common.CELL_ANNOTATION_REQUIRES_JSON_RESULTS]
         if args.is_pd:
@@ -161,7 +161,7 @@ def get_annotation_params(
             pipeline_requirements=pipeline_requirements,
             cell_annotation_model=model_name,
         )
-        martian.log_info(f"resolved annotation params: {annotation_params}")
+        martian.log_info(f"resolved annotation params via 10x Cloud: {annotation_params}")
 
         # no valid cloud pipeline available
         if annotation_params is None:
@@ -186,7 +186,7 @@ def get_annotation_params(
         outs.disable_summarize = True
 
         alarm_vs_exit(
-            message=f"cell annotation param lookup failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {model_name}. "
+            message=f"cell annotation via 10x Cloud param lookup failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {model_name}. "
             f"\nCell annotation lookup failed: {cloud_cas_exception}",
             use_exit=run_info.is_cra,
         )
@@ -233,7 +233,7 @@ def run_cell_annotation(
         outs.cell_type_results = error_cell_type_results
         outs.disable_summarize = True
         alarm_vs_exit(
-            message=f"cell annotation failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
+            message=f"cell annotation via 10x Cloud failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
             f"num features: {run_info.num_features}, num barcodes: {run_info.num_bcs}, num non zero entries: {run_info.num_entries}"
             f"\nCell annotation failed: {cloud_cas_exception}",
             use_exit=run_info.is_cra,
@@ -243,7 +243,7 @@ def run_cell_annotation(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message=f"cell annotation failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
+            message=f"cell annotation via 10x Cloud failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
             f"num features: {run_info.num_features}, num barcodes: {run_info.num_bcs}, num non zero entries: {run_info.num_entries}"
             f"\nInvalid parameters passed to cloud API client: {api_exc}",
             use_exit=run_info.is_cra,
@@ -255,7 +255,7 @@ def run_cell_annotation(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message=f"cell annotation failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
+            message=f"cell annotation via 10x Cloud failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
             f"num features: {run_info.num_features}, num barcodes: {run_info.num_bcs}, num non zero entries: {run_info.num_entries}"
             f"\nUncaught message in cloud annotation: {fail_message}",
             use_exit=run_info.is_cra,
@@ -272,7 +272,7 @@ def run_cell_annotation(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message=f"cell annotation failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
+            message=f"cell annotation via 10x Cloud failed on barcodes in sample ID: {args.sample_id}, sample description: {args.sample_desc}, cell annotation model: {pipeline_params.model}. "
             f"num features: {run_info.num_features}, num barcodes: {run_info.num_bcs}, num non zero entries: {run_info.num_entries}"
             "\ncell annotation returned empty results.",
             use_exit=run_info.is_cra,
@@ -355,7 +355,7 @@ def join(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message="Gene Expression matrix supplied contains all zeros; skipping annotation",
+            message="Gene Expression matrix supplied contains all zeros; skipping annotation via 10x Cloud",
             use_exit=run_info.is_cra,
         )
         outs.cas_success = False
@@ -367,7 +367,7 @@ def join(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message=f"Under minimum barcode count required to compute cell annotation: {run_info.num_bcs}",
+            message=f"Under minimum barcode count required to compute cell annotation via 10x Cloud: {run_info.num_bcs}",
             use_exit=run_info.is_cra,
         )
         outs.cas_success = False
@@ -378,7 +378,7 @@ def join(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message=f"Over the maximum barcode count to compute cell annotation: {run_info.num_bcs}",
+            message=f"Over the maximum barcode count to compute cell annotation via 10x Cloud: {run_info.num_bcs}",
             use_exit=run_info.is_cra,
         )
         outs.cas_success = False
@@ -389,7 +389,8 @@ def join(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message="No filtered matrix supplied; skipping annotation", use_exit=run_info.is_cra
+            message="No filtered matrix supplied; skipping annotation via 10x Cloud",
+            use_exit=run_info.is_cra,
         )
         outs.cas_success = False
         outs.disable_cas_ws = True
@@ -400,7 +401,7 @@ def join(
     ref = cr_matrix.CountMatrix.get_genomes_from_h5(args.filtered_matrix)
     if len(ref) > 1:
         martian.log_warn(
-            f"Multi-genome references, {ref}, are not supported by cell annotation at this time."
+            f"Multi-genome references, {ref}, are not supported by cell annotation via 10x Cloud at this time."
         )
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
@@ -417,7 +418,7 @@ def join(
         martian.clear(outs)
         outs.cell_type_results = error_cell_type_results
         alarm_vs_exit(
-            message="Cell annotation was skipped because the reference used is not yet supported",
+            message="Cell annotation via 10x Cloud was skipped because the reference used is not yet supported",
             use_exit=run_info.is_cra,
         )
         outs.cas_success = False
@@ -450,7 +451,7 @@ def join(
     # only run cell annotation if valid params returned
     if params is not None:
         martian.log_info(
-            f"Trying to run cell annotation on barcodes. Sample ID: {args.sample_id}, Sample description: {args.sample_desc}, cell annotation model: {params.model}, "
+            f"Trying to run cell annotation via 10x Cloud on barcodes. Sample ID: {args.sample_id}, Sample description: {args.sample_desc}, cell annotation model: {params.model}, "
             f"num features: {run_info.num_features}, num barcodes: {run_info.num_bcs}, num non zero entries: {run_info.num_entries}"
         )
         run_cell_annotation(

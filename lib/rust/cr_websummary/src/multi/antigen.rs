@@ -98,9 +98,10 @@ struct ClonotypeSpecificity {
 
 impl ClonotypeSpecificity {
     fn new(antigen_specificity: CsvFile<AntigenSpecificityRow>) -> Result<Self> {
-        Self::from_csv_rows(antigen_specificity.read()?)
+        Ok(Self::from_csv_rows(antigen_specificity.read()?))
     }
-    fn from_csv_rows(mut rows: Vec<AntigenSpecificityRow>) -> Result<Self> {
+
+    fn from_csv_rows(mut rows: Vec<AntigenSpecificityRow>) -> Self {
         rows.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
 
         let (clonotypes, clonotype_index) =
@@ -124,12 +125,12 @@ impl ClonotypeSpecificity {
             }
         }
 
-        Ok(ClonotypeSpecificity {
+        ClonotypeSpecificity {
             clonotypes,
             antigens,
             median_specificity: specificity_mat,
             clonotype_sizes,
-        })
+        }
     }
 
     // Only retain upto top 10 clonotypes for each antigen. The order is defined by
@@ -310,7 +311,6 @@ mod tests {
                 raw_clonotype_id: None,
                 exact_subclonotype_id: None,
             }])
-            .unwrap()
             .clustermap()
             .is_none()
         );
@@ -336,7 +336,6 @@ mod tests {
                 ),
                 exact_subclonotype_id: Some("1".into()),
             }])
-            .unwrap()
             .clustermap()
             .is_some()
         );

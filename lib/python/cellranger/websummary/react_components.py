@@ -492,6 +492,7 @@ class WebSummaryData(React10X):
     _ANTIBODY_TAB = "antibody_tab"
     _ANTIGEN_TAB = "antigen_tab"
     _CELL_TYPES_TAB = "cell_types_tab"
+    _CELL_ANNOTATION_TABS = "cell_annotation_tabs"
     # Only used by space ranger
     _ALIGNMENT_TAB = "alignment_tab"
     _ALARMS = "alarms"
@@ -500,6 +501,7 @@ class WebSummaryData(React10X):
     _ANTIBODY_CLUSTERING_SELECTOR = "antibody_clustering_selector"
     _VDJ_TAB = "vdj_analysis_tab"
     _DIAGNOSTICS = "diagnostics"
+    _CELL_BARCODES = "cell_barcodes"
 
     def __init__(self, sample_properties, command, pipeline):
         super().__init__()
@@ -520,6 +522,7 @@ class WebSummaryData(React10X):
             WebSummaryData._SPATIAL_TAB: {},
             WebSummaryData._VDJ_TAB: {},
             WebSummaryData._DIAGNOSTICS: {},
+            WebSummaryData._CELL_BARCODES: {},
             ResourceCollection.RESOURCE_PREFIX: ResourceCollection(),
         }
         self._clustering_selector = None
@@ -599,6 +602,7 @@ class WebSummaryData(React10X):
             WebSummaryData._SPATIAL_TAB,
             WebSummaryData._VDJ_TAB,
             WebSummaryData._DIAGNOSTICS,
+            WebSummaryData._CELL_BARCODES,
             ResourceCollection.RESOURCE_PREFIX,
         ]
         for k in to_filter:
@@ -675,6 +679,13 @@ class WebSummaryData(React10X):
     def cell_types_tab(self):
         return self._get_safe(WebSummaryData._CELL_TYPES_TAB)
 
+    def add_cell_annotation_tab(self, tab_data: dict) -> None:
+        """Append a cell annotation tab dict to the cell_annotation_tabs list."""
+        self._check_valid()
+        if WebSummaryData._CELL_ANNOTATION_TABS not in self._data:
+            self._data[WebSummaryData._CELL_ANNOTATION_TABS] = []
+        self._data[WebSummaryData._CELL_ANNOTATION_TABS].append(tab_data)
+
     @property
     def diagnostics(self):
         return self._get_safe(WebSummaryData._DIAGNOSTICS)
@@ -683,6 +694,15 @@ class WebSummaryData(React10X):
     def diagnostics(self, value):
         if value is not None:
             self._set_tab(WebSummaryData._DIAGNOSTICS, value)
+
+    @property
+    def cell_barcodes(self):
+        return self._get_safe(WebSummaryData._CELL_BARCODES)
+
+    @cell_barcodes.setter
+    def cell_barcodes(self, value):
+        if value is not None:
+            self._set_tab(WebSummaryData._CELL_BARCODES, value)
 
     @property
     def shared_resources(self):

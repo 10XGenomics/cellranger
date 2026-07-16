@@ -14,7 +14,7 @@ import codecs
 import csv
 import os
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import martian
 
@@ -23,6 +23,9 @@ import cellranger.hdf5 as cr_h5
 import cellranger.matrix as cr_matrix
 import cellranger.molecule_counter as cr_mc
 import cellranger.spatial.spatial_aggr_files as sa_files
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage PARSE_CSV(
@@ -34,8 +37,31 @@ stage PARSE_CSV(
     out csv    aggregation_csv,
     out map[]  sample_defs,
     src py     "stages/aggregator/parse_csv",
+) using (
+    volatile = strict,
 )
 """
+
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """PARSE_CSV stage inputs."""
+
+    pipestance_root: mro_filetypes.path
+    aggregation_csv: mro_filetypes.csv
+    reanalyze: bool
+    matrix_h5: mro_filetypes.h5
+    product_type: str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """PARSE_CSV stage outputs."""
+
+    aggregation_csv: mro_filetypes.csv
+    sample_defs: list[dict]  # TODO: be more specific with the type here
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
 
 
 class agg_fields(NamedTuple):
@@ -87,7 +113,7 @@ META_PARSE_CSV_FILES = {
 }
 
 
-def main(args, outs):
+def main(args: StageInputs, outs: StageOutputs):
     """PARSE_CSV checks the header of the csv file, existance of provided paths/files for aggregation."""
     if args.reanalyze and not args.aggregation_csv:
         return  # CSV not required for reanalyze

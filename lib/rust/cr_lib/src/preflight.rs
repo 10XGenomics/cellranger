@@ -3,12 +3,12 @@
 use anyhow::{Context, Result, bail, ensure};
 use bio::alphabets::dna::revcomp;
 use cr_h5::probe_reference_io::PROBE_DATA_LEN;
-use cr_types::TargetingMethod;
 use cr_types::probe_set::ProbeSetReferenceMetadata;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
 use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::reference::reference_info::{MULTI_GENOME_SEPARATOR, ReferenceInfo};
 use cr_types::types::FeatureBarcodeType;
+use cr_types::{ERROR_CODE_INFO, TargetingMethod};
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use martian::MartianRover;
@@ -33,6 +33,7 @@ pub fn hostname() -> String {
 
 /// Check the global open file handle limit on Linux. Do nothing on macOS.
 #[cfg(not(target_os = "linux"))]
+#[expect(clippy::unnecessary_wraps)]
 fn check_global_file_handle_limit() -> Result<()> {
     Ok(())
 }
@@ -43,7 +44,7 @@ fn check_global_file_handle_limit() -> Result<()> {
 
     ensure!(
         Path::new(GLOBAL_NOFILE_PATH).is_file(),
-        "On machine: {}, {GLOBAL_NOFILE_PATH} does not exist.",
+        "TXRNGR10026: On machine: {}, {GLOBAL_NOFILE_PATH} does not exist. {ERROR_CODE_INFO}",
         hostname()
     );
 
@@ -55,15 +56,16 @@ fn check_global_file_handle_limit() -> Result<()> {
         .parse()
         .map_err(|_| {
             anyhow::anyhow!(
-                "On machine: {}, {GLOBAL_NOFILE_PATH} contains a non-integer global \
-                 open file handle limit: {files_str}",
+                "TXRNGR10027: On machine: {}, {GLOBAL_NOFILE_PATH} contains a non-integer global \
+                 open file handle limit: {files_str}. {ERROR_CODE_INFO}",
                 hostname(),
             )
         })?;
     ensure!(
         files >= MIN_GLOBAL_NOFILE,
-        "On machine: {}, global open file handle limit ({files}) is less than {MIN_GLOBAL_NOFILE}. \
-         Please set the global file handle limit to {MIN_GLOBAL_NOFILE} before restarting the pipeline.",
+        "TXRNGR10028: On machine: {}, global open file handle limit ({files}) is less than \
+         {MIN_GLOBAL_NOFILE}. Please set the global file handle limit to {MIN_GLOBAL_NOFILE} \
+         before restarting the pipeline. {ERROR_CODE_INFO}",
         hostname(),
     );
     Ok(())
@@ -73,8 +75,9 @@ pub fn check_resource_limits() -> Result<()> {
     if let Some(nofile) = rustix::process::getrlimit(rustix::process::Resource::Nofile).maximum {
         ensure!(
             nofile >= MIN_NOFILE,
-            "On machine: {}, process open file handle hard limit ({nofile}) is less than \
-             {MIN_NOFILE}. Please run `ulimit -n {MIN_NOFILE}` before restarting the pipeline.",
+            "TXRNGR10029: On machine: {}, process open file handle hard limit ({nofile}) is less \
+             than {MIN_NOFILE}. Please run `ulimit -n {MIN_NOFILE}` before restarting the \
+             pipeline. {ERROR_CODE_INFO}",
             hostname(),
         );
     }
@@ -127,11 +130,13 @@ fn make_required_headers(method: TargetingMethod) -> TxHashSet<&'static str> {
 fn validate_probe_field(field_name: &str, field_value: &str) -> Result<()> {
     ensure!(
         field_value.len() <= PROBE_DATA_LEN,
-        "{field_name} must not be longer than {PROBE_DATA_LEN} characters: \"{field_value}\""
+        "TXRNGR10030: {field_name} must not be longer than {PROBE_DATA_LEN} characters: \
+         \"{field_value}\". {ERROR_CODE_INFO}"
     );
     ensure!(
         field_value.chars().all(|c| c.is_ascii_graphic()),
-        "{field_name} must contain only ASCII characters: \"{field_value}\""
+        "TXRNGR10031: {field_name} must contain only ASCII characters: \"{field_value}\". \
+         {ERROR_CODE_INFO}"
     );
     Ok(())
 }
@@ -154,7 +159,8 @@ pub fn validate_target_panel(
 
     ensure!(
         check_file("The probe set CSV file", probe_set).is_ok(),
-        "The probe set CSV file is either missing or not readable from {}: {}",
+        "TXRNGR10032: The probe set CSV file is either missing or not readable from {}: {}. \
+         {ERROR_CODE_INFO}",
         hostname(),
         probe_set.display(),
     );
@@ -181,15 +187,17 @@ pub fn validate_target_panel(
         .collect();
     ensure!(
         missing_metadata_fields.is_empty(),
-        "The following metadata fields are required in the probe set CSV header: \"{}\", but were \
-         not found. Please include these fields in #field=value format at the top of the file.",
+        "TXRNGR10033: The following metadata fields are required in the probe set CSV header: \
+         \"{}\", but were not found. Please include these fields in #field=value format at the \
+         top of the file. {ERROR_CODE_INFO}",
         missing_metadata_fields.into_iter().join("\", \""),
     );
 
     let panel_name = metadata.panel_name();
     ensure!(
         !panel_name.contains('/'),
-        "The character \"/\" cannot appear in the probe set CSV panel name: {panel_name}"
+        "TXRNGR10034: The character \"/\" cannot appear in the probe set CSV panel name: \
+         {panel_name}. {ERROR_CODE_INFO}"
     );
 
     let (file_format, file_format_version) = match (
@@ -197,23 +205,27 @@ pub fn validate_target_panel(
         metadata.get("probe_set_file_format"),
     ) {
         (None, None) => bail!(
-            "The probe_set_file_format metadata field is required in the probe set CSV file header."
+            "TXRNGR10035: The probe_set_file_format metadata field is required in the probe set \
+             CSV file header. {ERROR_CODE_INFO}"
         ),
         (Some(version), None) => ("target_panel_file_format", version),
         (None, Some(version)) => ("probe_set_file_format", version),
         (Some(_), Some(_)) => bail!(
-            "The probe set CSV file specifes both target_panel_file_format and probe_set_file_format."
+            "TXRNGR10036: The probe set CSV file specifes both target_panel_file_format and \
+             probe_set_file_format. {ERROR_CODE_INFO}"
         ),
     };
 
     match (file_format, targeting_method) {
         ("target_panel_file_format", TemplatedLigation) => bail!(
-            "The probe set CSV requires the metadata field `probe_set_file_format` in the header. \
-             Please include this field in #field=value format at the top of the probe set file."
+            "TXRNGR10037: The probe set CSV requires the metadata field `probe_set_file_format` \
+             in the header. Please include this field in #field=value format at the top of the \
+             probe set file. {ERROR_CODE_INFO}"
         ),
         ("probe_set_file_format", HybridCapture) => bail!(
-            "The target panel CSV requires the metadata field `target_panel_file_format` in the header. \
-             Please include this field in #field=value format at the top of the target set file."
+            "TXRNGR10038: The target panel CSV requires the metadata field \
+             `target_panel_file_format` in the header. Please include this field in #field=value \
+             format at the top of the target set file. {ERROR_CODE_INFO}"
         ),
         _ => (),
     }
@@ -222,11 +234,13 @@ pub fn validate_target_panel(
         file_format_version.contains('.'),
     ) {
         (Ok(v), true) if v > 3.0 => bail!(
-            "The probe set CSV file contains unknown #{file_format}={file_format_version}. Must be 3.0 or less."
+            "TXRNGR10039: The probe set CSV file contains unknown \
+             #{file_format}={file_format_version}. Must be 3.0 or less. {ERROR_CODE_INFO}"
         ),
         (Err(_), true) | (Ok(_), false) => bail!(
-            "The probe set CSV file contains an invalid value for the #{file_format}={file_format_version}. \
-             It must conform to the format X.Y, such as 1.0."
+            "TXRNGR10040: The probe set CSV file contains an invalid value for the \
+             #{file_format}={file_format_version}. It must conform to the format X.Y, such as \
+             1.0. {ERROR_CODE_INFO}"
         ),
         _ => (),
     }
@@ -238,8 +252,9 @@ pub fn validate_target_panel(
                     .genomes
                     .iter()
                     .any(|g| g.as_str() == probe_set_genome),
-                "Probe set CSV reference genome \"{probe_set_genome}\" (split from \
-                 \"{}\") does not match reference genome(s) in the reference: {:?}",
+                "TXRNGR10041: Probe set CSV reference genome \"{probe_set_genome}\" (split from \
+                 \"{}\") does not match reference genome(s) in the reference: {:?}. \
+                 {ERROR_CODE_INFO}",
                 metadata.reference_genome(),
                 ref_info.genomes,
             );
@@ -255,7 +270,7 @@ pub fn validate_target_panel(
                 if ref_info.genomes.len() >= 2 {
                     rover.alarm(&msg).unwrap();
                 } else {
-                    bail!("{msg}");
+                    bail!("TXRNGR10042: {msg}. {ERROR_CODE_INFO}");
                 }
             }
         }
@@ -272,8 +287,8 @@ pub fn validate_target_panel(
         let duplicates: Vec<_> = headers.iter().duplicates().collect();
         ensure!(
             duplicates.is_empty(),
-            "The probe set CSV file header contains a duplicate field: \"{}\". \
-             Please ensure that the file has no duplicated fields.",
+            "TXRNGR10043: The probe set CSV file header contains a duplicate field: \"{}\". \
+             Please ensure that the file has no duplicated fields. {ERROR_CODE_INFO}",
             duplicates.join(", ")
         );
         headers.iter().collect()
@@ -284,9 +299,10 @@ pub fn validate_target_panel(
     let missing_headers: Vec<_> = required_headers.difference(&headers_set).sorted().collect();
     ensure!(
         missing_headers.is_empty(),
-        "The probe set CSV file header does not contain one or more required comma-separated \
-         fields: \"{}\". The following required fields were found: \"{}\". \
-         Please check that the file is in CSV format and has the required field names.",
+        "TXRNGR10044: The probe set CSV file header does not contain one or more required \
+         comma-separated fields: \"{}\". The following required fields were found: \"{}\". \
+         Please check that the file is in CSV format and has the required field names. \
+         {ERROR_CODE_INFO}",
         missing_headers.into_iter().join("\", \""),
         required_headers
             .intersection(&headers_set)
@@ -297,8 +313,9 @@ pub fn validate_target_panel(
     let extra_headers: Vec<_> = headers_set.difference(&ALLOWED_HEADERS).sorted().collect();
     ensure!(
         extra_headers.is_empty(),
-        "The probe set CSV file header contains invalid columns: \"{}\". \
-         Only the following comma-delimited fields may be used in the file header: \"{}\"",
+        "TXRNGR10045: The probe set CSV file header contains invalid columns: \"{}\". Only the \
+         following comma-delimited fields may be used in the file header: \"{}\". \
+         {ERROR_CODE_INFO}",
         extra_headers.into_iter().join("\", \""),
         HEADERS.join("\", \""),
     );
@@ -310,9 +327,9 @@ pub fn validate_target_panel(
             ["gene_id", "bait_seq", "bait_id"] => (),
             _ => {
                 bail!(
-                    "The probe set CSV file headers are incorrectly specified: \
-                    \"{}\". Expected order of required first three headers is: \
-                    \"gene_id, probe_seq, probe_id\".",
+                    "TXRNGR10046: The probe set CSV file headers are incorrectly specified: \
+                     \"{}\". Expected order of required first three headers is: \
+                     \"gene_id, probe_seq, probe_id\". {ERROR_CODE_INFO}",
                     header_row.join(", ")
                 )
             }
@@ -341,22 +358,26 @@ pub fn validate_target_panel(
                 } => {
                     if len as usize > hdr_to_idx.len() {
                         bail!(
-                            "The probe set CSV file contains more columns than the header on row \
-                             {row}. Please use a CSV file with a header for each column and a \
-                             value for each column in each row. You may have a comma character in \
-                             a field. Commas are permitted in some fields, but fields containing \
-                             commas must be enclosed in quotes.",
+                            "TXRNGR10047: The probe set CSV file contains more columns than the \
+                             header on row {row}. Please use a CSV file with a header for each \
+                             column and a value for each column in each row. You may have a \
+                             comma character in a field. Commas are permitted in some fields, \
+                             but fields containing commas must be enclosed in quotes. \
+                             {ERROR_CODE_INFO}",
                         );
                     }
                     bail!(
-                        "The probe set CSV file contains an empty column or fewer columns than \
-                         the header on row {row}. You might have a missing comma. \
+                        "TXRNGR10048: The probe set CSV file contains an empty column or fewer \
+                         columns than the header on row {row}. You might have a missing comma. \
                          Please use a CSV file with a header for each column and a value for \
-                         each column in each row.",
+                         each column in each row. {ERROR_CODE_INFO}",
                     );
                 }
                 _ => {
-                    bail!("The probe set CSV file failed to parse on row {row}.")
+                    bail!(
+                        "TXRNGR10049: The probe set CSV file failed to parse on row {row}. \
+                         {ERROR_CODE_INFO}"
+                    )
                 }
             }
         }
@@ -377,8 +398,8 @@ pub fn validate_target_panel(
                         gene_id
                     } else {
                         bail!(
-                            "The target panel CSV file contains a record to a gene not seen \
-                             in the reference: \"{gene}\""
+                            "TXRNGR10050: The target panel CSV file contains a record to a gene \
+                             not seen in the reference: \"{gene}\". {ERROR_CODE_INFO}"
                         );
                     }
                 }
@@ -392,13 +413,17 @@ pub fn validate_target_panel(
                 if let Some(probe_seq) = record.get(idx) {
                     ensure!(
                         BAIT_SEQ.is_match(probe_seq.as_bytes()),
-                        "The probe set CSV file contains an invalid probe sequence on row {row}: \
-                         \"{probe_seq}\". May only contain \"ACGTN-\"",
+                        "TXRNGR10051: The probe set CSV file contains an invalid probe sequence \
+                         on row {row}: \"{probe_seq}\". May only contain \"ACGTN-\". \
+                         {ERROR_CODE_INFO}",
                     );
                 }
             }
             (Some(_), Some(_)) => {
-                bail!("The probe set CSV file contains both bait_seq and probe_seq.")
+                bail!(
+                    "TXRNGR10052: The probe set CSV file contains both bait_seq and probe_seq. \
+                     {ERROR_CODE_INFO}"
+                )
             }
         }
 
@@ -409,13 +434,17 @@ pub fn validate_target_panel(
                     validate_probe_field("probe_id", probe_id)?;
                     ensure!(
                         probe_ids.insert(probe_id.to_string()),
-                        "The probe set CSV file contains a duplicate probe ID on row {row}: \
-                         \"{probe_id}\". All entries in the probe_id column must be unique.",
+                        "TXRNGR10053: The probe set CSV file contains a duplicate probe ID on \
+                         row {row}: \"{probe_id}\". All entries in the probe_id column must be \
+                         unique. {ERROR_CODE_INFO}",
                     );
                 }
             }
             (Some(_), Some(_)) => {
-                bail!("The probe set CSV file contains both bait_id and probe_id.")
+                bail!(
+                    "TXRNGR10054: The probe set CSV file contains both bait_id and probe_id. \
+                     {ERROR_CODE_INFO}"
+                )
             }
         }
 
@@ -425,7 +454,8 @@ pub fn validate_target_panel(
                 if let Some(included) = record.get(idx) {
                     if !["true", "false"].contains(&included.to_lowercase().as_str()) {
                         bail!(
-                            r#"The column "included" must be "true" or "false" but saw "{included}""#
+                            "TXRNGR10055: The column \"included\" must be \"true\" or \"false\" \
+                             but saw \"{included}\". {ERROR_CODE_INFO}"
                         );
                     }
                     if included.to_lowercase().as_str() == "false" {
@@ -438,11 +468,15 @@ pub fn validate_target_panel(
         if let Some(&gene_name_index) = hdr_to_idx.get("gene_name") {
             let gene_id = &record[gene_id_idx];
             let Some(gene_name) = record.get(gene_name_index) else {
-                bail!("gene_name must not be empty for {gene_id} on row {row}");
+                bail!(
+                    "TXRNGR10056: gene_name must not be empty for {gene_id} on row {row}. \
+                     {ERROR_CODE_INFO}"
+                );
             };
             ensure!(
                 !gene_name.is_empty(),
-                "gene_name must not be empty for {gene_id} on row {row}",
+                "TXRNGR10057: gene_name must not be empty for {gene_id} on row {row}. \
+                 {ERROR_CODE_INFO}",
             );
             validate_probe_field("gene_name", gene_name)?;
             if let Some(transcriptome) = transcriptome
@@ -452,8 +486,9 @@ pub fn validate_target_panel(
                     transcriptome.genes[gene_index.0 as usize].name.as_str();
                 ensure!(
                     gene_name == transcriptome_gene_name,
-                    "The gene_name {gene_name} of gene_id {gene_id} on row {row} does not \
-                         match the gene name {transcriptome_gene_name} in the transcriptome",
+                    "TXRNGR10058: The gene_name {gene_name} of gene_id {gene_id} on row {row} \
+                     does not match the gene name {transcriptome_gene_name} in the \
+                     transcriptome. {ERROR_CODE_INFO}",
                 );
             }
         }
@@ -464,15 +499,17 @@ pub fn validate_target_panel(
     if enforce_min_panel_size {
         ensure!(
             total_records >= MIN_TARGET_PANEL_LENGTH,
-            "{MIN_TARGET_PANEL_LENGTH} or more records must be specified in the probe set CSV file \
-            for compatibility with downstream analysis. Number of records found: {total_records}."
+            "TXRNGR10059: {MIN_TARGET_PANEL_LENGTH} or more records must be specified in the \
+             probe set CSV file for compatibility with downstream analysis. Number of records \
+             found: {total_records}. {ERROR_CODE_INFO}"
         );
 
         ensure!(
             (total_records - excluded_records) >= MIN_TARGET_PANEL_LENGTH,
-            "{MIN_TARGET_PANEL_LENGTH} or more records must be specified in the probe set CSV file \
-            for compatibility with downstream analysis. Number of records found: {total_records}. \
-            Number of records set to false for the `included` field: {excluded_records}",
+            "TXRNGR10060: {MIN_TARGET_PANEL_LENGTH} or more records must be specified in the \
+             probe set CSV file for compatibility with downstream analysis. Number of records \
+             found: {total_records}. Number of records set to false for the `included` field: \
+             {excluded_records}. {ERROR_CODE_INFO}",
         );
     }
 
@@ -499,6 +536,7 @@ pub fn check_crispr_target_genes(
         .iter()
         .map(|x| (x.id.as_str(), x.name.as_str()))
         .collect();
+    let mut error_msgs: Vec<String> = Vec::new();
     for feat in &feature_ref.feature_defs {
         if feat.feature_type != FeatureType::Barcode(FeatureBarcodeType::Crispr) {
             continue;
@@ -508,42 +546,64 @@ pub fn check_crispr_target_genes(
                 continue;
             }
             if let Some(gene_name) = gene_id_to_name.get(target_id) {
-                target_gene_ids
-                    .map(|ids| {
-                        ensure!(
-                            ids.contains(target_id),
-                            "CRISPR: You specified target_gene_id = \"{target_id}\" as a guide RNA \
-                             in the feature reference, but this gene is not specified in the \
-                             gene_id column of the probe set CSV file.",
-                        );
-                        Ok(())
-                    })
-                    .transpose()?;
+                if let Some(ids) = target_gene_ids
+                    && !ids.contains(target_id)
+                {
+                    error_msgs.push(format!(
+                        "TXRNGR10061: CRISPR: Feature id \"{feat_id}\": You specified \
+                         target_gene_id = \"{target_id}\" as a guide RNA in the feature \
+                         reference, but this gene is not specified in the gene_id column of \
+                         the probe set CSV file. {ERROR_CODE_INFO}",
+                        feat_id = feat.id
+                    ));
+                    continue;
+                }
                 match feat.tags.get("target_gene_name") {
                     Some(target_name) if !target_name.is_empty() => {
                         if target_name != gene_name {
-                            bail!(
-                                "CRISPR: You specified target_gene_id = \"{target_id}\" and \
-                                 target_gene_name = \"{target_name}\" in the feature reference, but the \
-                                 transcriptome has gene_id = \"{target_id}\" with name = \"{gene_name}\". Please \
-                                 ensure the target_gene_name field has the correct gene name that \
-                                 matches the transcriptome."
-                            );
+                            error_msgs.push(format!(
+                                "TXRNGR10062: CRISPR: Feature id \"{feat_id}\": You specified \
+                                 target_gene_id = \"{target_id}\" and target_gene_name = \
+                                 \"{target_name}\" in the feature reference, but the \
+                                 transcriptome has gene_id = \"{target_id}\" with name = \
+                                 \"{gene_name}\". Please ensure the target_gene_name field has \
+                                 the correct gene name that matches the transcriptome. \
+                                 {ERROR_CODE_INFO}",
+                                feat_id = feat.id
+                            ));
                         }
                     }
-                    _ => bail!(
-                        "CRISPR: No target_gene_name specified for target_gene_id = \"{target_id}\" in the feature reference."
-                    ),
+                    _ => error_msgs.push(format!(
+                        "TXRNGR10063: CRISPR: Feature id \"{feat_id}\": No target_gene_name \
+                         specified for target_gene_id = \"{target_id}\" in the feature \
+                         reference. {ERROR_CODE_INFO}",
+                        feat_id = feat.id
+                    )),
                 }
             } else {
-                bail!(
-                    "CRISPR: A target_gene_id (\"{target_id}\") declared for one or more guide RNAs in the \
-                     feature reference does not exist in the transcriptome. Please specify a \
+                error_msgs.push(format!(
+                    "TXRNGR10064: CRISPR: Feature id \"{feat_id}\": A target_gene_id \
+                     (\"{target_id}\") does not exist in the transcriptome. Please specify a \
                      target_gene_id that exists in the reference, or use the string \
-                     \"Non-Targeting\" to indicate a control guide."
-                );
+                     \"Non-Targeting\" to indicate a control guide. {ERROR_CODE_INFO}",
+                    feat_id = feat.id
+                ));
             }
         }
+    }
+    if !error_msgs.is_empty() {
+        let n = error_msgs.len();
+        let shown = &error_msgs[..n.min(20)];
+        let joint = shown.join("\n\n");
+        let trailing = if n > 20 {
+            format!("\n\n(showing first 20 of {n} errors)")
+        } else {
+            String::new()
+        };
+        bail!(
+            "{n} CRISPR guide feature definition errors were found in the feature reference \
+             file. Please fix the following issues and try again:\n\n{joint}{trailing}"
+        );
     }
     Ok(())
 }
@@ -559,7 +619,8 @@ pub fn check_vdj_inner_enrichment_primers(
 ) -> Result<Vec<String>> {
     if !inner_enrichment_primers.is_file() {
         bail!(
-            "The file specifying inner enrichment primers ({}) does not exist or is not readable. Please check the path on machine {}.",
+            "TXRNGR10065: The file specifying inner enrichment primers ({}) does not exist or is \
+             not readable. Please check the path on machine {}. {ERROR_CODE_INFO}",
             inner_enrichment_primers.display(),
             hostname(),
         );
@@ -573,8 +634,8 @@ pub fn check_vdj_inner_enrichment_primers(
         let primer = buf.trim_end().to_string();
         if primer.is_empty() {
             bail!(
-                "Line number {} in the inner enrichment primers file ({}) is empty. \
-                 Please specify a newline separated list of primers.",
+                "TXRNGR10066: Line number {} in the inner enrichment primers file ({}) is empty. \
+                 Please specify a newline separated list of primers. {ERROR_CODE_INFO}",
                 lineno,
                 inner_enrichment_primers.display(),
             );
@@ -582,9 +643,9 @@ pub fn check_vdj_inner_enrichment_primers(
         for (col, base) in primer.chars().enumerate() {
             if "ACGT".chars().all(|x| x != base) {
                 bail!(
-                    "Inner enrichment primers file ({}) contains non-ACGT characters, which are \
-                     not supported (Found {} on line {}, character {}). Please specify a newline \
-                     separated list of primers.",
+                    "TXRNGR10067: Inner enrichment primers file ({}) contains non-ACGT \
+                     characters, which are not supported (Found {} on line {}, character {}). \
+                     Please specify a newline separated list of primers. {ERROR_CODE_INFO}",
                     inner_enrichment_primers.display(),
                     base,
                     lineno,
@@ -620,7 +681,8 @@ pub fn check_vdj_inner_enrichment_primers(
         }
         if !invalid_primers.is_empty() {
             bail!(
-                "None of the C-REGIONs in the reference ({}) is targeted by the following inner enrichment primer(s): {}",
+                "TXRNGR10068: None of the C-REGIONs in the reference ({}) is targeted by the \
+                 following inner enrichment primer(s): {}. {ERROR_CODE_INFO}",
                 vdj_ref_path.unwrap().display(),
                 invalid_primers.into_iter().join(", "),
             );
@@ -678,9 +740,9 @@ pub fn check_vdj_known_enrichment_primers(
         }
     }
     bail!(
-        "Inner enrichment primers are required for species other than human or mouse for which \
-         primers are not provided by 10x Genomics. None of the constant regions in the reference \
-         ({}) is targeted by the known primers.",
+        "TXRNGR10069: Inner enrichment primers are required for species other than human or \
+         mouse for which primers are not provided by 10x Genomics. None of the constant regions \
+         in the reference ({}) is targeted by the known primers. {ERROR_CODE_INFO}",
         vdj_ref_path.display(),
     )
 }

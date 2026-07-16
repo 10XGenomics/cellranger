@@ -1,7 +1,14 @@
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 """Decide which is T vs B vs T(Gamma/Delta) inputs."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import martian
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage SPLIT_VDJ_INPUTS(
@@ -26,7 +33,37 @@ TCRGD_RECEPTOR = "TR_GD"
 BCR_RECEPTOR = "IG"
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SPLIT_VDJ_INPUTS stage inputs."""
+
+    vdj_inputs: list[mro_structs.VdjInputs]
+    vdj_chemistry_defs: list[mro_structs.ChemistryDef]
+    vdj_receptors: list[str | None]
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SPLIT_VDJ_INPUTS stage outputs."""
+
+    vdj_t_input: None | mro_structs.VdjInputs
+    vdj_t_chemistry_def: None | mro_structs.ChemistryDef
+    vdj_t_receptor: None | str
+    vdj_t_gd_input: None | mro_structs.VdjInputs
+    vdj_t_gd_chemistry_def: None | mro_structs.ChemistryDef
+    vdj_t_gd_receptor: None | str
+    vdj_b_input: None | mro_structs.VdjInputs
+    vdj_b_chemistry_def: None | mro_structs.ChemistryDef
+    vdj_b_receptor: None | str
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """SPLIT_VDJ_INPUTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """SPLIT_VDJ_INPUTS chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
     assert len(args.vdj_inputs) > 0
     assert len(args.vdj_inputs) == len(args.vdj_chemistry_defs)
     assert len(args.vdj_inputs) == len(args.vdj_receptors)

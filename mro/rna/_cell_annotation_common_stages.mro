@@ -1,8 +1,14 @@
+@include "_cell_annotation_structs.mro"
+@include "_cr_lib_stages.mro"
+
 filetype csv;
 filetype h5;
 filetype json.gz;
 filetype json;
 filetype cloupe;
+filetype geojson;
+filetype png;
+filetype jpg;
 
 struct CellTypeResults(
     csv     cell_types,
@@ -46,4 +52,142 @@ stage CALL_CLOUD_CELL_TYPES(
     src py              "stages/cas_cell_typing/call_cloud_cell_types",
 ) split (
 ) using (
+)
+
+stage CALL_AZIMUTH_CELL_TYPES(
+    in  string          sample_id,
+    in  string          sample_desc,
+    in  h5              filtered_matrix,
+    in  string          cell_annotation_model,
+    in  file            tenx_cloud_token_path,
+    in  string          pipestance_type,
+    in  bool            override_num_bc_limit,
+    in  bool            is_pd,
+    out CellTypeResults cell_type_results,
+    out bool            cas_success,
+    out bool            disable_cas_ws,
+    out bool            disable_summarize,
+    out json            summary,
+    src py              "stages/cas_cell_typing/call_azimuth_cell_types",
+) split (
+    in  int             chunk_ind_start,
+    in  int             chunk_ind_end,
+    out csv             cell_types_csv,
+) using (
+    volatile = strict,
+)
+
+stage CELL_TYPING_DEMULTIPLEXER(
+    in  string model_family,
+    out bool   disable_cloud_cell_types,
+    out bool   disable_azimuth_cell_types,
+    src py     "stages/cas_cell_typing/cell_typing_demultiplexer",
+)
+
+stage CREATE_META_CELLS(
+    in  h5   filtered_matrix,
+    in  json metacell_json,
+    out h5   filtered_metacell_matrix,
+    src py   "stages/cas_cell_typing/create_meta_cells",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage REMOVE_META_CELLS_FROM_CELL_TYPES(
+    in  csv  cell_types_in,
+    in  json metacell_json,
+    out csv  cell_types,
+    src py   "stages/cas_cell_typing/remove_meta_cells_from_cell_types",
+) split (
+) using (
+    volatile = strict,
+)
+
+stage CELL_TYPING_MULTIPLEXER(
+    in  bool            disable_cloud_cell_types,
+    in  bool            disable_azimuth_cell_types,
+    in  CellTypeResults cloud_cell_type_results,
+    in  bool            cloud_cas_success,
+    in  bool            cloud_disable_cas_ws,
+    in  bool            cloud_disable_summarize,
+    in  json            cloud_summary,
+    in  CellTypeResults azimuth_cell_type_results,
+    in  bool            azimuth_cas_success,
+    in  bool            azimuth_disable_cas_ws,
+    in  bool            azimuth_disable_summarize,
+    in  json            azimuth_summary,
+    out CellTypeResults cell_type_results,
+    out bool            cas_success,
+    out bool            disable_cas_ws,
+    out bool            disable_summarize,
+    out json            summary,
+    src py              "stages/cas_cell_typing/cell_typing_multiplexer",
+)
+
+pipeline CALL_CELL_TYPES(
+    in  string          sample_id,
+    in  string          sample_desc,
+    in  string          model_family,
+    in  h5              filtered_matrix,
+    in  string          cell_annotation_model,
+    in  file            tenx_cloud_token_path,
+    in  string          pipestance_type,
+    in  bool            override_num_bc_limit,
+    in  bool            is_pd,
+    out CellTypeResults cell_type_results,
+    out bool            cas_success,
+    out bool            disable_cas_ws,
+    out bool            disable_summarize,
+    out json            summary,
+)
+{
+    call CELL_TYPING_DEMULTIPLEXER(
+        model_family = self.model_family,
+    )
+
+    call CALL_CLOUD_CELL_TYPES(
+        * = self,
+    ) using (
+        disabled = CELL_TYPING_DEMULTIPLEXER.disable_cloud_cell_types,
+    )
+
+    call CALL_AZIMUTH_CELL_TYPES(
+        * = self,
+    ) using (
+        disabled = CELL_TYPING_DEMULTIPLEXER.disable_azimuth_cell_types,
+    )
+
+    call CELL_TYPING_MULTIPLEXER(
+        disable_cloud_cell_types   = CELL_TYPING_DEMULTIPLEXER.disable_cloud_cell_types,
+        disable_azimuth_cell_types = CELL_TYPING_DEMULTIPLEXER.disable_azimuth_cell_types,
+        cloud_cell_type_results    = CALL_CLOUD_CELL_TYPES.cell_type_results,
+        cloud_cas_success          = CALL_CLOUD_CELL_TYPES.cas_success,
+        cloud_disable_cas_ws       = CALL_CLOUD_CELL_TYPES.disable_cas_ws,
+        cloud_disable_summarize    = CALL_CLOUD_CELL_TYPES.disable_summarize,
+        cloud_summary              = CALL_CLOUD_CELL_TYPES.summary,
+        azimuth_cell_type_results  = CALL_AZIMUTH_CELL_TYPES.cell_type_results,
+        azimuth_cas_success        = CALL_AZIMUTH_CELL_TYPES.cas_success,
+        azimuth_disable_cas_ws     = CALL_AZIMUTH_CELL_TYPES.disable_cas_ws,
+        azimuth_disable_summarize  = CALL_AZIMUTH_CELL_TYPES.disable_summarize,
+        azimuth_summary            = CALL_AZIMUTH_CELL_TYPES.summary,
+    )
+
+    return (
+        * = CELL_TYPING_MULTIPLEXER,
+    )
+}
+
+stage VALIDATE_SEGMENTATION_DIRECTORY(
+    in  path                        segmented_outputs,
+    out ValidateSegmentationOutputs validate_segmentation_outputs,
+    out bool                        disable_segmentation_spatial_plot,
+    src py                          "stages/cas_cell_typing/validate_segmentation_directory",
+)
+
+stage STRUCTIFY_WEBSUMMARY_INPUTS(
+    in  WebSummaryCellTypeInputs websummary_inputs,
+    in  map<json>                cell_type_spatial_plot,
+    out WebSummaryCellTypeInputs websummary_inputs_with_spatial_charts,
+    src py                       "stages/cas_cell_typing/structify_websummary_inputs",
 )

@@ -9,7 +9,7 @@ use bhtsne::BarnesHutTSNE;
 use cr_types::FeatureBarcodeType;
 use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::{get_barcodes_between, read_adaptive_csr_matrix};
-use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use scan_types::matrix::AdaptiveFeatureBarcodeMatrix as FBM;
 use serde::{Deserialize, Serialize};

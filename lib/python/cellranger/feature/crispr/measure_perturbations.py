@@ -6,32 +6,31 @@ from __future__ import annotations
 
 import csv
 import sys
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
+import h5py as h5
 import numpy as np
 import pandas as pd
 
 from cellranger.analysis.analysis_types import DifferentialExpression
-from cellranger.analysis.diffexp import (
-    get_local_sseq_params_from_presubset_matrix,
-    sseq_differential_expression,
-)
+from cellranger.analysis.diffexp import SSEQ_ZETA_QUANTILE
 from cellranger.constants import FILTER_LIST
+from cellranger.fast_utils import nb_de_from_stats_o3
 from cellranger.feature.feature_assignments import CELL_BARCODE, FEATURE_CALL, NUM_FEATURES
 from cellranger.rna.feature_ref import TARGET_GENE_ID, TARGET_GENE_NAME
 from tenkit.stats import robust_divide
 
 if TYPE_CHECKING:
-    from typing import Any
-
     from cellranger.feature_ref import FeatureReference
 
     fc_t = tuple[float, float, int, int]
     ci_t = tuple[np.float64, np.float64]
     np_1d_array_int64 = np.ndarray[tuple[int], np.dtype[np.int64]]
     np_1d_array_intp = np.ndarray[tuple[int], np.dtype[np.intp]]
+    np_1d_array_f64 = np.ndarray[tuple[int], np.dtype[np.float64]]
+    np_1d_array_u64 = np.ndarray[tuple[int], np.dtype[np.uint64]]
     from cellranger.matrix import CountMatrix
 
 pd.set_option("compute.use_numexpr", False)
@@ -64,6 +63,85 @@ class PerturbationResult:
     mean_umi_count_perb: float
     num_cells_with_control: int
     mean_umi_count_control: float
+
+
+class _PerturbationDEArrays(NamedTuple):
+    """Per-gene sSeq DE result arrays for one perturbation (from nb_de_from_stats_o3).
+
+    Bundled because the four arrays are all gene-indexed outputs of the same DE call and travel
+    together into the fold-change assembly.
+    """
+
+    log2_fold_change: np_1d_array_f64
+    p_values: np_1d_array_f64
+    # sums_in/sums_out are the per-gene group count sums from the Rust DE kernel
+    # (`DiffExpResult.sums_{in,out}: Array1<u64>`), so they arrive as uint64, not float.
+    sums_in: np_1d_array_u64
+    sums_out: np_1d_array_u64
+
+
+@dataclass
+class PerturbationStats:
+    """Per-(gene x group) sSeq sufficient statistics emitted by SPLIT_PERTURBATION_MATRIX.
+
+    Each row of the 2-D arrays is one group (the shared control in ``control_stats``; the chunk's
+    perturbations in a ``chunk_stats`` file). These feed ``nb_de_from_stats_o3`` in place of the
+    full per-chunk matrix; the streaming reducer that produced them is bit-identical to the in-memory
+    reduction, so end-to-end the feature_sums/log2FC/bootstrap-CIs match the matrix path bit-for-bit
+    and only the DE p-values drift (~1e-11, within the rtol=1e-6 gate).
+    """
+
+    n_genes: int
+    names: list[str]
+    feature_sums: np.ndarray  # [n_groups, n_genes] uint64
+    sum_w: np.ndarray  # [n_groups, n_genes] float64
+    sum_wsq: np.ndarray  # [n_groups, n_genes] float64
+    sum_ct: np.ndarray  # [n_groups] float64
+    sum_inv: np.ndarray  # [n_groups] float64
+    n: np.ndarray  # [n_groups] int64
+    count_totals: list[np.ndarray]  # per group, per-cell count_total (float64)
+    name_to_idx: dict[str, int]
+
+
+def read_perturbation_stats(path: str) -> PerturbationStats:
+    """Load a sufficient-statistics H5 (``control_stats`` or a ``chunk_stats`` file)."""
+    with h5.File(path, "r") as f:
+        g = f["stats"]
+        feature_sums = g["feature_sums"][:]
+        sum_w = g["sum_w"][:]
+        sum_wsq = g["sum_wsq"][:]
+        sum_ct = g["sum_ct"][:]
+        sum_inv = g["sum_inv"][:]
+        n = g["n"][:]
+        offsets = g["count_totals_offsets"][:]
+        flat_count_totals = g["count_totals"][:]
+        raw_names = g["perturbation_names"][:]
+        n_genes = int(g.attrs["n_genes"])
+    names = [name.decode() if isinstance(name, bytes) else str(name) for name in raw_names]
+    count_totals = [flat_count_totals[offsets[i] : offsets[i + 1]] for i in range(len(names))]
+    return PerturbationStats(
+        n_genes=n_genes,
+        names=names,
+        feature_sums=feature_sums,
+        sum_w=sum_w,
+        sum_wsq=sum_wsq,
+        sum_ct=sum_ct,
+        sum_inv=sum_inv,
+        n=n,
+        count_totals=count_totals,
+        name_to_idx={name: i for i, name in enumerate(names)},
+    )
+
+
+def read_bootstrap_count_total(path: str) -> np.ndarray:
+    """Per-cell count_total (sum over all GEX genes) stored alongside a SPLIT bootstrap matrix.
+
+    Written in the matrix's cell (column) storage order, so concatenating the control matrix's and a
+    chunk matrix's arrays gives the combined per-cell size-factor numerators in the same order as the
+    hstacked bootstrap matrix.
+    """
+    with h5.File(path, "r") as f:
+        return f["matrix"]["count_total"][:]
 
 
 PERT_EFFI_SUMM_COLS_BY_FEAT = (
@@ -207,10 +285,19 @@ def sanitize_perturbation_results(
 def _get_bc_targets_dict(
     target_info: dict[str, TargetInfo],
     protospacers_per_cell_path: str,
+    keep_barcodes: set[str],
 ) -> dict[str, ProtospacerCall]:
     """Get the dict of barcode pairs.
 
     The values are dicts with information about the targets of the features assigned to the barcode.
+
+    Args:
+        target_info: dict of target_id to TargetInfo.
+        protospacers_per_cell_path: path to the protospacer calls per cell CSV.
+        keep_barcodes: only parse rows whose barcode is in this set (the barcodes the caller
+            actually needs). On the pre-split MEASURE chunk this is the chunk's ~15k cells, not
+            all ~790k, so the parse is byte-identical but far cheaper — every downstream consumer
+            only ever reads ``bc_targets_dict[bc]`` for barcodes the caller passes in.
 
     Returns:
         a dict of bc:{} pairs. All barcodes which have been assigned at least 1 protospacer are keys in this dict.
@@ -229,9 +316,11 @@ def _get_bc_targets_dict(
         num_features_idx = col_name_to_idx[NUM_FEATURES]
         cell_barcode_idx = col_name_to_idx[CELL_BARCODE]
         for row in csv_reader:
+            cell_barcode = row[cell_barcode_idx]
+            if cell_barcode not in keep_barcodes:
+                continue
             feature_call = row[feature_call_idx]
             num_features = int(row[num_features_idx])
-            cell_barcode = row[cell_barcode_idx]
 
             if feature_call in target_info:
                 # single feature
@@ -279,11 +368,57 @@ def _get_target_id_from_name(
     return (p_names, [target_id_name_map[p_name] for p_name in p_names])
 
 
+def get_target(perturbation: str, target_info: dict[str, TargetInfo]) -> str:
+    """Return the target gene names of the specified pipe-separated perturbation.
+
+    Deduplicate by gene ID and return the gene names.
+    Match the behaviour of `_get_ps_clusters_by_target`.
+    """
+    gene_id_names = sorted(
+        set((target_info[x].gene_id, target_info[x].gene_name) for x in perturbation.split("|"))
+    )
+    if all(gene_id == NON_TARGETING for gene_id, _ in gene_id_names):
+        return NON_TARGETING
+
+    target = "|".join(
+        gene_name for gene_id, gene_name in gene_id_names if gene_id not in FILTER_LIST
+    )
+    return target if target else "Ignore"
+
+
+def get_perturbations(
+    protospacer_calls_per_cell: str,
+    target_info: dict[str, TargetInfo],
+    by_feature: bool,
+) -> list[str]:
+    """Return a sorted list of perturbations from the protospacer calls per cell file.
+
+    Translate protospacer IDs to target gene names when by_feature is false.
+    """
+    with open(protospacer_calls_per_cell) as f:
+        feature_calls = (x["feature_call"] for x in csv.DictReader(f))
+        perturbation_counts = (
+            Counter(feature_calls)
+            if by_feature
+            else Counter(get_target(x, target_info) for x in feature_calls)
+        )
+        return sorted(
+            perturbation
+            for perturbation, cells in perturbation_counts.items()
+            if cells >= MIN_NUMBER_CELLS_PER_PERTURBATION
+        )
+
+
 def get_perturbation_efficiency(
     which_perturbations: set[str],
     target_info: dict[str, TargetInfo],
     protospacers_per_cell_path: str,
-    gex_matrix: CountMatrix,
+    combined_bcs: list[bytes],
+    gex_feature_ref: FeatureReference,
+    control_stats: PerturbationStats,
+    chunk_stats: PerturbationStats,
+    bootstrap_matrix: CountMatrix,
+    combined_col_sums: np_1d_array_f64,
     by_feature: bool,
 ) -> (
     tuple[
@@ -295,12 +430,26 @@ def get_perturbation_efficiency(
 ):
     """Calculates log2 fold change and empirical confidence intervals for log2 fold change for target genes.
 
+    The full per-chunk matrix is gone: the sSeq DE is computed from per-(gene x group) sufficient
+    statistics (``control_stats`` shared, ``chunk_stats`` this chunk's perturbations) via
+    ``nb_de_from_stats_o3``, and the empirical-CI bootstrap resamples a single target gene out of the
+    small ``bootstrap_matrix`` (target-gene rows x ``[control ++ perturbed]`` cells, in storage order
+    — the same cell order the old ``hstack([control, slice])`` produced). ``combined_col_sums`` is the
+    per-cell count_total over all GEX genes in that same cell order (the bootstrap size-factor
+    numerator). Because the streaming reducer is bit-identical to the matrix reduction and the
+    bootstrap cell order is preserved, both the DE and the CIs match the matrix path.
+
     Args:
-        targets (list[TargetInfo]): list of TargetInfo dataclass objects
-        protospacers_per_cell (str): path to the protospacer calls per cell CSV file
-        gex_matrix (CountMatrix): Feature Barcode Matrix w/ only GEX data
-        by_feature (bool): if True, cells are grouped by the combination of protospacers
-                           present in them, rather than the gene targets of those protospacers.
+        which_perturbations: perturbation names this chunk handles.
+        target_info: dict of target_id to TargetInfo.
+        protospacers_per_cell_path: path to the protospacer calls per cell CSV file.
+        combined_bcs: barcodes of the bootstrap matrix cells (control then perturbed, storage order).
+        gex_feature_ref: GEX feature reference (for gene_id->row and the result-array gene axis).
+        control_stats: shared non-targeting control sufficient statistics.
+        chunk_stats: this chunk's perturbations' sufficient statistics (keyed by name).
+        bootstrap_matrix: target-gene rows x combined cells, for the empirical-CI bootstrap.
+        combined_col_sums: per-cell count_total over all GEX genes, in combined-cell order.
+        by_feature: if True, group by protospacer combination rather than gene target.
 
     Returns:
         perturbation_names (list[str]): List of perturbation_names
@@ -310,7 +459,7 @@ def get_perturbation_efficiency(
     (target_calls, perturbation_keys) = _get_ps_clusters(
         target_info,
         protospacers_per_cell_path,
-        [bc.decode() for bc in gex_matrix.bcs],
+        [bc.decode() for bc in combined_bcs],
         by_feature,
     )
 
@@ -320,9 +469,10 @@ def get_perturbation_efficiency(
     }
     perturbation_names: list[str] = []
 
+    n_genes = len(gex_feature_ref.feature_defs)
     # Create a numpy array with 3*k columns, where k is the number of perturbations
     # each group of 3 columns is mean, log2, pvalue for cluster i
-    all_de_results = np.zeros((gex_matrix.features_dim, 3 * len(which_perturbations)))
+    all_de_results = np.zeros((n_genes, 3 * len(which_perturbations)))
 
     nt_indices = [x for x in perturbation_keys if perturbation_keys[x] == NON_TARGETING]
 
@@ -330,79 +480,110 @@ def get_perturbation_efficiency(
         return None
     nt_index = nt_indices[0]
     in_control_cluster = target_calls == nt_index
-    control_num_cells = sum(in_control_cluster)
+    # Vectorized count instead of Python builtin sum() iterating an n_cells-long bool array.
+    control_num_cells = int(in_control_cluster.sum())
 
     # Early exit if insufficient control cells
     if control_num_cells < MIN_NUMBER_CELLS_PER_PERTURBATION:
         return None
 
-    feature_defs = gex_matrix.feature_ref.feature_defs
-    gene_ids = [feature_def.id.decode() for feature_def in feature_defs]
-    gene_names = [feature_def.name for feature_def in feature_defs]
+    # gene_id -> matrix row. Keep the FIRST occurrence to match the previous
+    # results.loc[results["Gene ID"] == target].values[0] (first-match) semantics, even if a
+    # feature reference ever carried a duplicate gene id.
+    gene_id_to_row: dict[str, int] = {}
+    for row_idx, feature_def in enumerate(gex_feature_ref.feature_defs):
+        gene_id_to_row.setdefault(feature_def.id.decode(), row_idx)
 
     fold_change_per_perturbation: dict[tuple[str, int], dict[str, PerturbationResult]] = {}
-    cluster_counter = 1
-    column_counter = 0
 
-    # Pre-compute control group for reuse
+    # Control group (Non-Targeting cells) is shared by every perturbation.
     group_b = np.flatnonzero(in_control_cluster)
-    lgb = len(group_b)
+
+    # Collect the perturbations that pass the which/filter/min-cell gates, in cluster order so the
+    # DE result columns match the matrix path. The control group is shared, so its statistics are
+    # reduced once upstream (in SPLIT) instead of once per perturbation.
+    valid_perturbations: list[tuple[int, str, np_1d_array_intp]] = []
     for cluster, perturbation_name in perturbation_keys.items():
         if perturbation_name not in which_perturbations or _should_filter(
             perturbation_name, target_to_gene_id
         ):
             continue
-
-        in_cluster = target_calls == cluster
-        group_a = np.flatnonzero(in_cluster)
-
+        group_a = np.flatnonzero(target_calls == cluster)
         if len(group_a) < MIN_NUMBER_CELLS_PER_PERTURBATION:
             continue
+        valid_perturbations.append((cluster, perturbation_name, group_a))
 
-        sys.stdout.flush()
-
-        both_conditions = np.concatenate([group_a, group_b])
-        lga = len(group_a)
-        del group_a
-        local_matrix = gex_matrix.select_barcodes(both_conditions)
-
-        (
-            local_sseq_params,
-            new_group_a,
-            new_group_b,
-            matrix_groups,
-        ) = get_local_sseq_params_from_presubset_matrix(local_matrix.m, lga, lgb)
-
-        de_result = sseq_differential_expression(
-            matrix_groups, new_group_a, new_group_b, local_sseq_params, threads=NUM_THREADS
+    if not valid_perturbations:
+        return (
+            perturbation_names,
+            DifferentialExpression(all_de_results[:, 0:0]),
+            fold_change_per_perturbation,
         )
-        assert de_result is not None
-        de_result["Gene ID"] = gene_ids
-        de_result["Gene Name"] = gene_names
 
-        all_de_results[:, 0 + 3 * (cluster_counter - 1)] = de_result["sum_a"] / lga
-        all_de_results[:, 1 + 3 * (cluster_counter - 1)] = de_result["log2_fold_change"]
-        all_de_results[:, 2 + 3 * (cluster_counter - 1)] = de_result["adjusted_p_value"]
-        column_counter += 3
+    sys.stdout.flush()
 
-        num_cells = sum(target_calls == cluster)
+    # One batched sSeq DE call for all valid perturbations from the sufficient statistics, sharing
+    # the (once-reduced) control group. Perturbation stats are gathered by name in valid order.
+    ctrl = control_stats.name_to_idx[NON_TARGETING]
+    pidx = [chunk_stats.name_to_idx[name] for (_, name, _) in valid_perturbations]
+    batched_results = nb_de_from_stats_o3(
+        n_genes,
+        control_stats.feature_sums[ctrl],
+        control_stats.sum_w[ctrl],
+        control_stats.sum_wsq[ctrl],
+        float(control_stats.sum_ct[ctrl]),
+        float(control_stats.sum_inv[ctrl]),
+        int(control_stats.n[ctrl]),
+        control_stats.count_totals[ctrl],
+        chunk_stats.feature_sums[pidx],
+        chunk_stats.sum_w[pidx],
+        chunk_stats.sum_wsq[pidx],
+        chunk_stats.sum_ct[pidx].tolist(),
+        chunk_stats.sum_inv[pidx].tolist(),
+        chunk_stats.n[pidx].tolist(),
+        [chunk_stats.count_totals[i] for i in pidx],
+        SSEQ_ZETA_QUANTILE,
+        big_count=900,
+        threads=NUM_THREADS,
+    )
 
+    for cluster_counter, ((cluster, perturbation_name, group_a), de_dict) in enumerate(
+        zip(valid_perturbations, batched_results), start=1
+    ):
+        lga = len(group_a)
+        de_arrays = _PerturbationDEArrays(
+            log2_fold_change=np.asarray(de_dict["log2_fold_change"]),
+            p_values=np.asarray(de_dict["p_values"]),
+            sums_in=np.asarray(de_dict["sums_in"]),
+            sums_out=np.asarray(de_dict["sums_out"]),
+        )
+        adjusted_p_values = np.asarray(de_dict["adjusted_p_values"])
+
+        col = 3 * (cluster_counter - 1)
+        all_de_results[:, col] = de_arrays.sums_in / lga
+        all_de_results[:, col + 1] = de_arrays.log2_fold_change
+        all_de_results[:, col + 2] = adjusted_p_values
+
+        # The bootstrap CIs slice a single target gene out of bootstrap_matrix and index
+        # group_a/group_b directly. group_a/group_b index combined (control ++ perturbed) cells in
+        # storage order, and combined_col_sums[group_x] is each cell's all-GEX count_total in the
+        # same order as the matrix path, so the bootstrap draws are byte-identical.
+        size_factors = combined_col_sums / de_dict["median_ab"]
         fold_change_per_perturbation[perturbation_name, cluster] = _get_log2_fold_change(
             perturbation_name,
-            num_cells,
+            lga,
             control_num_cells,
-            de_result,
             target_to_gene_id,
-            local_matrix,
-            new_group_a,
-            new_group_b,
-            local_sseq_params,
+            bootstrap_matrix,
+            group_a,
+            group_b,
+            size_factors,
+            gene_id_to_row,
+            de_arrays,
         )
-        del de_result
         perturbation_names.append(perturbation_name)
-        cluster_counter += 1
 
-    all_de_results = all_de_results[:, 0:column_counter]
+    all_de_results = all_de_results[:, 0 : 3 * len(perturbation_names)]
     results_all_perturbations = DifferentialExpression(all_de_results)
 
     return (
@@ -416,12 +597,13 @@ def _get_log2_fold_change(
     perturbation_name: str,
     num_cells: int,
     control_num_cells: int,
-    results: pd.DataFrame,
     target_to_gene_id: dict[str, str],
-    matrix: CountMatrix,
+    bootstrap_matrix: CountMatrix,
     group_a: np_1d_array_intp,
     group_b: np_1d_array_intp,
-    local_params: dict[str, Any],
+    size_factors: np_1d_array_f64,
+    gene_id_to_row: dict[str, int],
+    de_arrays: _PerturbationDEArrays,
 ) -> dict[str, PerturbationResult]:
     (this_names, this_ids) = _get_target_id_from_name(
         perturbation_name,
@@ -433,63 +615,81 @@ def _get_log2_fold_change(
     for name, target in zip(this_names, this_ids):
         if target in FILTER_LIST:
             continue
-        deg_result = results.loc[results["Gene ID"] == target]
-        if deg_result.empty:
+        # Direct gene_id -> row lookup into the Rust DE result arrays replaces the previous
+        # per-perturbation pandas DataFrame + .loc filter; gene_id_to_row keeps the first match,
+        # so a missing target (row is None) is exactly the old empty-DataFrame skip.
+        row = gene_id_to_row.get(target)
+        if row is None:
             continue
 
         lower_bound, upper_bound = _get_fold_change_cis(
-            matrix,
+            bootstrap_matrix,
             target,
             group_a,
             group_b,
-            local_params,
+            size_factors,
         )
-        log2_fold_change = deg_result["log2_fold_change"].values[0]
-        p_value = deg_result["p_value"].values[0]
-        sum_a = deg_result["sum_a"].values[0]
-        sum_b = deg_result["sum_b"].values[0]
         perturbation_results[name] = PerturbationResult(
             perturbation_name=perturbation_name,
             target_or_gene_name=name,
-            log2_fc=log2_fold_change,
-            p_val=p_value,
+            log2_fc=de_arrays.log2_fold_change[row],
+            p_val=de_arrays.p_values[row],
             lower_bound=lower_bound,
             upper_bound=upper_bound,
             num_cells_with_perb=num_cells,
-            mean_umi_count_perb=robust_divide(sum_a, num_cells),
+            mean_umi_count_perb=robust_divide(de_arrays.sums_in[row], num_cells),
             num_cells_with_control=control_num_cells,
-            mean_umi_count_control=robust_divide(sum_b, control_num_cells),
+            mean_umi_count_control=robust_divide(de_arrays.sums_out[row], control_num_cells),
         )
 
     return perturbation_results
 
 
 def _get_fold_change_cis(
-    matrix: CountMatrix,
+    bootstrap_matrix: CountMatrix,
     target: str,
     cond_a: np_1d_array_intp,
     cond_b: np_1d_array_intp,
-    computed_params: dict[str, Any],
+    size_factors: np_1d_array_f64,
 ) -> tuple[np.float64, np.float64]:
     np.random.seed(0)
 
     # filter the matrix to select only the target gene
-    this_matrix = matrix.select_features_by_ids([target.encode()])
+    this_matrix = bootstrap_matrix.select_features_by_ids([target.encode()])
 
-    x = this_matrix.m
+    # Densify the single target gene's count vector once and pre-gather the per-group
+    # count + size-factor arrays. The previous code re-sliced a sparse matrix
+    # (`x[:, this_cond_a]`) every bootstrap iteration, which dominates runtime on the
+    # 1M-cell case where the control group spans hundreds of thousands of cells.
+    # `cond_a`/`cond_b` index the full GEX matrix's cells; `size_factors` is the per-cell
+    # size-factor array over all cells (count_total / median_ab). Counts are non-negative
+    # integers, so a gathered subset sum is exact regardless of order, and the size-factor
+    # sums are over the same float values in the same order as the original per-perturbation
+    # path, so the bootstrap CIs are unchanged.
+    counts = this_matrix.m.toarray().ravel()
+    counts_a = counts[cond_a]
+    counts_b = counts[cond_b]
+    size_factors_a = size_factors[cond_a]
+    size_factors_b = size_factors[cond_b]
+    len_a = len(cond_a)
+    len_b = len(cond_b)
 
     # Use numpy array instead of list for better performance
     log2_fold_change_vals = np.zeros(NUM_BOOTSTRAPS)
 
     # Early convergence detection
     for i in range(NUM_BOOTSTRAPS):
-        this_cond_a = np.random.choice(cond_a, size=len(cond_a), replace=True)
-        this_cond_b = np.random.choice(cond_b, size=len(cond_b), replace=True)
+        # `np.random.choice(cond_x, size=len_x, replace=True)` is exactly
+        # `cond_x.take(np.random.randint(0, len_x, len_x))`, so drawing the index arrays
+        # directly keeps the RNG stream (seeded above) bit-for-bit identical while letting
+        # us index the small pre-gathered group arrays instead of the full matrix.
+        idx_a = np.random.randint(0, len_a, size=len_a)
+        idx_b = np.random.randint(0, len_b, size=len_b)
 
-        gene_sums_a = np.sum(x[:, this_cond_a], axis=1)
-        gene_sums_b = np.sum(x[:, this_cond_b], axis=1)
-        size_factor_a = np.sum(computed_params["size_factors"][this_cond_a])
-        size_factor_b = np.sum(computed_params["size_factors"][this_cond_b])
+        gene_sums_a = counts_a[idx_a].sum().item()
+        gene_sums_b = counts_b[idx_b].sum().item()
+        size_factor_a = size_factors_a[idx_a].sum()
+        size_factor_b = size_factors_b[idx_b].sum()
 
         log2_fold_change_vals[i] = np.log2((1 + gene_sums_a) / (1 + size_factor_a)) - np.log2(
             (1 + gene_sums_b) / (1 + size_factor_b)
@@ -540,10 +740,11 @@ def _get_ps_clusters(
         target_calls (np_1d_array_int64): integer perturbation target labels starting from 1
         perturbation_keys (dict): dict[cluster_number, perturbation_name]
     """
-    bc_targets_dict = _get_bc_targets_dict(target_info, protospacers_per_cell_path)
+    keep_barcodes = set(barcodes)
+    bc_targets_dict = _get_bc_targets_dict(target_info, protospacers_per_cell_path, keep_barcodes)
 
     # Optimize: Use set operations for faster lookups
-    missing_barcodes = set(barcodes) - set(bc_targets_dict.keys())
+    missing_barcodes = keep_barcodes - set(bc_targets_dict.keys())
     default_call = ProtospacerCall(feature_call="None", gene_id="None")
     for bc in missing_barcodes:
         bc_targets_dict[bc] = default_call

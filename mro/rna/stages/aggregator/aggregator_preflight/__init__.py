@@ -5,6 +5,8 @@
 
 """Martian stage AGGREGATOR_PREFLIGHT."""
 
+from __future__ import annotations
+
 from typing import NamedTuple
 
 import martian
@@ -12,7 +14,7 @@ import martian
 import cellranger.constants as cr_constants
 import cellranger.hdf5 as cr_h5
 import cellranger.molecule_counter as cr_mol_counter
-from cellranger.chemistry import CHEMISTRY_SC3P_LT, SC3P_CHEMISTRIES, SC5P_CHEMISTRIES
+from cellranger.chemistry import SC3P_CHEMISTRIES, SC5P_CHEMISTRIES
 from cellranger.molecule_counter import TARGETING_METHOD_METRIC
 from cellranger.molecule_counter_converter import convert_v2_to_v4
 from cellranger.rna.library import FEATURE_LIBRARY_TYPES
@@ -32,10 +34,20 @@ stage AGGREGATOR_PREFLIGHT(
 """
 
 
-class AggregatorPreflightStageInputs:
-    sample_defs: list[dict[str, str]]
-    normalization_mode: str
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """AGGREGATOR_PREFLIGHT stage inputs."""
+
+    sample_defs: list[dict]
+    normalization_mode: None | str
     is_pd: bool
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """AGGREGATOR_PREFLIGHT stage outputs."""
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
 
 
 def incompat_msg(reason) -> str:
@@ -97,7 +109,7 @@ def convert_v2_to_v4_if_needed(filename: str, is_pd: bool) -> str:
 
 
 # pylint: disable=too-many-branches,too-many-statements
-def main(args: AggregatorPreflightStageInputs, _outs: None):
+def main(args: StageInputs, _outs: StageOutputs):
     if args.normalization_mode is not None and args.normalization_mode not in NORM_MODES:
         martian.exit("Normalization mode must be one of: {}".format(", ".join(NORM_MODES)))
 
@@ -214,11 +226,6 @@ def main(args: AggregatorPreflightStageInputs, _outs: None):
                 )
 
             chemistry_name = counter.get_metric("chemistry_name")
-
-            if chemistry_name == CHEMISTRY_SC3P_LT["name"]:
-                martian.exit(
-                    f"Library {library_id} was created with the {CHEMISTRY_SC3P_LT['name']} chemistry, which is no longer supported."
-                )
 
             chemistry_endedness = counter.get_metric("chemistry_endedness")
             if chemistry_endedness is not None:

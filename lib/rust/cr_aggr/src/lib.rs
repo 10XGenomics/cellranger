@@ -17,7 +17,7 @@ pub mod write_contig_proto;
 pub mod write_ws_json;
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // this ensures insta knows where to find its snap tests
     let cwd = std::env::current_dir().unwrap();

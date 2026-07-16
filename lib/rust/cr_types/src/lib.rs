@@ -1,10 +1,12 @@
 //! cr_types
-#![expect(missing_docs)]
+#![deny(missing_docs)]
 
 use anyhow::{Context, Result, ensure};
 use csv_parser::CsvParser;
+use std::fs::{copy, hard_link};
 use std::path::{Path, PathBuf};
 
+pub mod action_timer;
 pub mod aggr;
 pub mod barcode_index;
 pub mod cell_annotation;
@@ -13,6 +15,7 @@ pub mod clonotype;
 pub mod constants;
 pub mod csv_parser;
 pub mod filtered_barcodes;
+pub mod in_flight;
 pub mod mempool;
 mod metrics_file;
 pub mod probe_set;
@@ -31,14 +34,39 @@ pub use fastq_set::ERROR_CODE_INFO;
 pub use metrics_file::*;
 pub use types::*;
 
+/// Hardlink a path to a new path, falling back to copy if the hardlink fails.
+///
+/// Augment the error message with the source and destination paths.
+pub fn hardlink_with_fallback<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> Result<()> {
+    if from.as_ref() == to.as_ref() {
+        return Ok(());
+    }
+    if hard_link(&from, &to).is_ok() {
+        return Ok(());
+    }
+    copy(&from, &to).map(|_| ()).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            from.as_ref().to_string_lossy(),
+            to.as_ref().to_string_lossy()
+        )
+    })
+}
+
+/// An entry in a libraries CSV file.
 #[derive(Debug)]
 pub struct LegacyLibrariesEntry {
+    /// Path to the FASTQ files
     pub fastqs: PathBuf,
+    /// Library type
     pub library_type: LibraryType,
+    /// Sample name
     pub sample: String,
+    /// Project name
     pub project: Option<String>,
 }
 
+/// Parse a libraries CSV file.
 pub fn parse_legacy_libraries_csv(file: &Path) -> Result<Vec<LegacyLibrariesEntry>> {
     let required_fields = ["fastqs", "library_type", "sample"];
 
@@ -78,7 +106,7 @@ pub fn parse_legacy_libraries_csv(file: &Path) -> Result<Vec<LegacyLibrariesEntr
 
 // initialize insta test harness
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // this ensures insta knows where to find its snap tests
     let cwd = std::env::current_dir().unwrap();

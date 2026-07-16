@@ -7,15 +7,17 @@
 
 # The subset of CountInputs which are not overridden in the CS pipeline.
 struct CountInputsMinimal(
-    map[]              sample_def,
+    SampleDef[]        sample_def,
     csv                target_set,
     string             target_set_name,
     map<string>        chemistry_specs,
     ReferenceInfo      reference_info,
     int                r1_length,
     int                r2_length,
+    bool               is_not_multiplexed,
     bool               no_bam,
     bool               filter_probes,
+    bool               enable_tsne,
     bool               no_secondary_analysis,
     csv                feature_reference,
     bool               include_introns,
@@ -31,12 +33,13 @@ struct CountInputsMinimal(
     string             star_parameters,
     int                umi_min_read_length,
     string             aligner,
+    string             minimap_preset,
     bool               no_minimap,
 )
 
 pipeline FULL_VDJ_INPUTS(
     in  VdjInputsCS  cs_inputs,
-    out map[]        sample_def,
+    out SampleDef[]  sample_def,
     out string       chemistry_spec,
     out ChemistryDef custom_chemistry_def,
     out map[]        primers,
@@ -99,7 +102,7 @@ pipeline FULL_COUNT_INPUTS(
     in  string[]           allowed_chems,
     out csv                target_set,
     out string             target_set_name,
-    out map[]              sample_def,
+    out SampleDef[]        sample_def,
     out map<string>        chemistry_specs,
     out map<ChemistryDef>  custom_chemistry_defs,
     out ReferenceInfo      reference_info,
@@ -113,6 +116,7 @@ pipeline FULL_COUNT_INPUTS(
     out int                r2_length,
     out int                trim_polya_min_score,
     out int                trim_tso_min_score,
+    out bool               is_not_multiplexed,
     out bool               no_bam,
     out bool               no_secondary_analysis,
     out bool               filter_probes,
@@ -122,6 +126,7 @@ pipeline FULL_COUNT_INPUTS(
     out bool               skip_cell_annotation,
     out string             targeting_method,
     out string             aligner,
+    out string             minimap_preset,
     out GeneticDemuxParams genetic_demux_params,
     out bool               check_library_compatibility,
     out string[]           count_allowed_chems,
@@ -183,46 +188,46 @@ pipeline FULL_COUNT_INPUTS(
         trim_tso_min_score      = 20,
         count_allowed_chems     = self.allowed_chems,
         include_exons           = true,
-        enable_tsne             = true,
         *                       = self.cs_inputs,
     )
 }
 
 pipeline SC_MULTI_CS(
-    in  bool                   no_preflight,
-    in  FileOrBytes            config,
-    in  string                 sample_desc,
-    in  string                 sample_id,
-    out bam                    unassigned_alignments            "Alignments from unassigned barcodes",
-    out bam.bai                unassigned_alignments_bai_index  "BAI Index for alignments from unassigned barcodes"  "unassigned_alignments.bam.bai",
-    out bam.csi                unassigned_alignments_csi_index  "CSI Index for alignments from unassigned barcodes"  "unassigned_alignments.bam.csi",
-    out cloupe                 raw_cloupe                       "Raw Loupe Browser file containing all molecules in the experiment",
-    out csv                    aggregate_barcodes               "Antibody and Antigen aggregate barcodes",
-    out csv                    barcode_sample_assignments       "Barcode sample assignment passed in the Multi configuration",
-    out csv                    config                           "Multi config CSV",
-    out csv                    feature_reference_csv            "Feature reference file"   "feature_reference.csv",
-    out csv                    probe_set                        "Probe set reference CSV",
-    out csv                    qc_library_metrics               "Library metrics CSV",
-    out csv                    qc_sample_metrics                "Sample metrics CSV",
-    out h5                     filtered_feature_bc_matrix_h5    "Filtered feature-barcode matrix for all samples in the experiment"  "filtered_feature_bc_matrix.h5",
-    out h5                     raw_feature_bc_matrix_h5         "Contains counts for all features and all barcodes in the experiment"  "raw_feature_bc_matrix.h5",
-    out h5                     raw_molecule_info_h5             "Molecule info file containing all molecules in the experiment"  "raw_molecule_info.h5",
-    out h5                     raw_probe_bc_matrix              "Contains counts for all probes and all barcodes in a FRP experiment",
-    out html                   qc_report                        "QC report for all samples in the experiment",
-    out path                   filtered_feature_bc_matrix_mex   "Filtered feature-barcode matrix for all samples in the experiment"  "filtered_feature_bc_matrix",
-    out path                   raw_feature_bc_matrix_mex        "Contains counts for all features and all barcodes in the experiment"  "raw_feature_bc_matrix",
-    out MultiplexingAnalysisCS multiplexing_analysis,
-    out MultiVdjOutputsCS      vdj_b,
-    out MultiVdjOutputsCS      vdj_t_gd,
-    out MultiVdjOutputsCS      vdj_t,
-    out VdjRefFolder           vdj_reference                    "V(D)J reference",
-    out map<SampleOutputsCS>   per_sample_outs,
-    out AggregatedCellTypes    cell_types                       "Aggregated Cell Types",
+    in  bool                     no_preflight,
+    in  FileOrBytes              config,
+    in  string                   sample_desc,
+    in  string                   sample_id,
+    out bam                      unassigned_alignments            "Alignments from unassigned barcodes",
+    out bam.bai                  unassigned_alignments_bai_index  "BAI Index for alignments from unassigned barcodes"  "unassigned_alignments.bam.bai",
+    out bam.csi                  unassigned_alignments_csi_index  "CSI Index for alignments from unassigned barcodes"  "unassigned_alignments.bam.csi",
+    out cloupe                   raw_cloupe                       "Raw Loupe Browser file containing all molecules in the experiment",
+    out csv                      aggregate_barcodes               "Antibody and Antigen aggregate barcodes",
+    out csv                      barcode_sample_assignments       "Barcode sample assignment passed in the Multi configuration",
+    out csv                      config                           "Multi config CSV",
+    out csv                      feature_reference_csv            "Feature reference file"   "feature_reference.csv",
+    out csv                      probe_set                        "Probe set reference CSV",
+    out csv                      qc_library_metrics               "Library metrics CSV",
+    out csv                      qc_sample_metrics                "Sample metrics CSV",
+    out h5                       filtered_feature_bc_matrix_h5    "Filtered feature-barcode matrix for all samples in the experiment"  "filtered_feature_bc_matrix.h5",
+    out h5                       raw_feature_bc_matrix_h5         "Contains counts for all features and all barcodes in the experiment"  "raw_feature_bc_matrix.h5",
+    out h5                       raw_molecule_info_h5             "Molecule info file containing all molecules in the experiment"  "raw_molecule_info.h5",
+    out h5                       raw_probe_bc_matrix              "Contains counts for all probes and all barcodes in a FRP experiment",
+    out html                     qc_report                        "QC report for all samples in the experiment",
+    out path                     filtered_feature_bc_matrix_mex   "Filtered feature-barcode matrix for all samples in the experiment"  "filtered_feature_bc_matrix",
+    out path                     raw_feature_bc_matrix_mex        "Contains counts for all features and all barcodes in the experiment"  "raw_feature_bc_matrix",
+    out MultiplexingAnalysisCS   multiplexing_analysis,
+    out MultiVdjOutputsCS        vdj_b,
+    out MultiVdjOutputsCS        vdj_t_gd,
+    out MultiVdjOutputsCS        vdj_t,
+    out VdjRefFolder             vdj_reference                    "V(D)J reference",
+    out map<SampleOutputsCS>     per_sample_outs,
+    out map<AggregatedCellTypes> cell_types                       "Aggregated Cell Types",
 )
 {
     call MULTI_PREFLIGHT(
         config = self.config,
         is_pd  = false,
+        params = null,
     ) using (
         preflight = true,
     )
@@ -248,8 +253,6 @@ pipeline SC_MULTI_CS(
             "SC3Pv3-CS1",
             "SFRP-no-trim-R2",
             "MFRP-R1-no-trim-R2",
-            # no longer supported, but included to allow DETECT_CHEMISTRY to produce a nice error message
-            "SC3Pv3LT",
             "SC3Pv3HT-polyA",
             "SC3Pv3HT-CS1",
             "SC3Pv4-polyA",
@@ -328,7 +331,7 @@ pipeline SC_MULTI_CS(
     )
 
     call AGGREGATE_CELL_ANNOTATIONS(
-        cell_types = SC_MULTI_CORE.cell_types,
+        cell_types_all_methods = SC_MULTI_CORE.cell_types,
     )
 
     call SANITIZE_MAP_CALLS(

@@ -143,7 +143,7 @@ def split(args):
     barcodes_gib = round(80 * num_barcodes / 1024**3, 1)
     nnz_gib = round(80 * nnz / 1024**3, 1)
     image_gib = 2 if args.tissue_image_paths else 0
-    mem_gib = 10 + barcodes_gib + nnz_gib + image_gib
+    mem_gib = 30 + barcodes_gib + nnz_gib + image_gib
     print(
         f"{num_features=},{num_barcodes=},{nnz=},{barcodes_gib=},{nnz_gib=},{image_gib=},{mem_gib=}"
     )

@@ -206,20 +206,14 @@ mod tests {
 
         let tempdir = tempfile::tempdir()?;
         let write_outs = SetupVdjAggr.test_run(&tempdir, write_args)?;
-        let mut expected_csv_rows = vec![String::from("bcr,origin,donor")];
         for (i, ann_json) in write_outs
             .origin_info
             .into_iter()
             .map(|ds| ds.file)
             .enumerate()
         {
-            let anns: Vec<ContigAnnotation> = ann_json.read()?;
-            expected_csv_rows.push(format!(
-                "{},Origin,Donor",
-                ann_json.as_ref().parent().unwrap().display()
-            ));
             let gem_well_suffix = format!("-{}", i + 1);
-            for ann in anns {
+            for ann in ann_json.read()? {
                 assert!(
                     ann.barcode.ends_with(&gem_well_suffix),
                     "Barcode {} does not end in {}",
@@ -240,7 +234,7 @@ mod tests {
             library_id: id.to_string(),
             donor: donor.clone(),
             origin: "Origin".into(),
-            additional_data: Default::default(),
+            additional_data: HashMap::default(),
         };
 
         let expected_metadata = enclone_proto::types::Metadata {
@@ -277,16 +271,8 @@ mod tests {
             .collect(),
             receptor: VdjReceptor::TR,
         };
-
         let tempdir = tempfile::tempdir()?;
-        let write_outs = SetupVdjAggr.test_run(&tempdir, write_args)?;
-        let mut expected_csv_rows = vec![String::from("tcr,origin,donor")];
-        for ds in write_outs.origin_info {
-            expected_csv_rows.push(format!(
-                "{},Origin,Donor",
-                ds.file.as_ref().parent().unwrap().display()
-            ));
-        }
+        let _outputs = SetupVdjAggr.test_run(&tempdir, write_args)?;
         Ok(())
     }
 

@@ -1341,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_multi() -> Result<()> {
+    fn test_invalid_multi() {
         // Path is not a multi outs
         err_snapshot!("test_resources/parse_aggr_csv/pipes/csvs/invalid_multi_1.csv");
 
@@ -1355,18 +1355,16 @@ mod tests {
 
         // Origin is shared across two donors
         err_snapshot!("test_resources/parse_aggr_csv/pipes/csvs/invalid_multi_4.csv");
-        Ok(())
     }
 
     #[test]
-    fn test_invalid_multi_5() -> Result<()> {
+    fn test_invalid_multi_5() {
         // Libraries are not consistent between different output folders
         err_snapshot!("test_resources/parse_aggr_csv/pipes/csvs/invalid_multi_5.csv");
-        Ok(())
     }
 
     #[test]
-    fn test_check_headers_count() -> Result<()> {
+    fn test_check_headers_count() {
         assert!(CountParser::check([SAMPLE_ID_HEADER, MOLECULE_H5_HEADER]));
         assert!(CountParser::check([
             SAMPLE_ID_HEADER,
@@ -1384,8 +1382,6 @@ mod tests {
             MOLECULE_H5_HEADER,
             VDJ_CONTIG_INFO_HEADER
         ]));
-
-        Ok(())
     }
 
     #[test]

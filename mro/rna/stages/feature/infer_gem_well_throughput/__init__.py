@@ -4,28 +4,31 @@
 #
 """Infer Gem well throughput if there's no top level argument."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import h5py
+import martian
 
 import cellranger.constants as cr_constants
 import cellranger.feature.multiplexing.infer_throughput as it
 import cellranger.feature.utils as feature_utils
 import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
-from cellranger.chemistry import (
-    CHEMISTRY_DESCRIPTION_FIELD,
-    CHEMISTRY_SC3P_LT,
-    SC_GEMX_CHEMISTRIES,
-)
+from cellranger.chemistry import CHEMISTRY_DESCRIPTION_FIELD, SC_GEMX_CHEMISTRIES
 from cellranger.feature.throughputs import (
     GEMX_THROUGHPUT,
     HT_THROUGHPUT,
-    LT_THROUGHPUT,
     MT_THROUGHPUT,
     THROUGHPUT_INFERRED_METRIC,
 )
 from cellranger.feature_ref import HASHTAG_TAG
 from cellranger.matrix import CountMatrix
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage INFER_GEM_WELL_THROUGHPUT(
@@ -44,7 +47,32 @@ stage INFER_GEM_WELL_THROUGHPUT(
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """INFER_GEM_WELL_THROUGHPUT stage inputs."""
+
+    chemistry_defs: dict[str, mro_structs.ChemistryDef]
+    throughput: str
+    filtered_feature_counts_matrix: mro_filetypes.h5
+    reference_info: mro_structs.ReferenceInfo
+    barcode_summary_h5: mro_filetypes.h5
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """INFER_GEM_WELL_THROUGHPUT stage outputs."""
+
+    inferred_throughput: None | str
+    inferred_throughputs: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """INFER_GEM_WELL_THROUGHPUT chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """INFER_GEM_WELL_THROUGHPUT chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
     feature_ref = CountMatrix.load_feature_ref_from_h5_file(args.filtered_feature_counts_matrix)
     no_cmos = (
         feature_ref.get_count_of_feature_type(rna_library.MULTIPLEXING_LIBRARY_TYPE) == 0
@@ -106,9 +134,7 @@ def main(args, outs):
     }
 
     # We now take throughput directly from --chemistry input
-    if gex_chemistry_def == CHEMISTRY_SC3P_LT:
-        outs.inferred_throughput = LT_THROUGHPUT
-    elif gex_chemistry_description.endswith("HT"):
+    if gex_chemistry_description.endswith("HT"):
         outs.inferred_throughput = HT_THROUGHPUT
     else:
         outs.inferred_throughput = throughput_final

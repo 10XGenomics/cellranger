@@ -18,7 +18,7 @@ use anyhow::Result;
 use itertools::izip;
 use metric::{TxHashMap, TxHashSet};
 use rand::rngs::SmallRng;
-use rand::Rng;
+use rand::RngExt;
 use rust_htslib::bcf::{Read, Reader as VCFReader};
 use std::f32;
 use std::fs::File;
@@ -99,7 +99,6 @@ pub(super) fn expectation_maximization(
     }
 }
 
-#[allow(unused_variables)]
 fn binomial_loss(
     cell_data: &CellData,
     cluster_centers: &[Vec<f32>],
@@ -107,7 +106,6 @@ fn binomial_loss(
     _cellnum: usize,
 ) -> Vec<f32> {
     let mut log_probabilities: Vec<f32> = Vec::new();
-    let mut sum = 0.0;
     for (cluster, center) in cluster_centers.iter().enumerate() {
         log_probabilities.push(log_prior);
         for (locus_index, locus) in cell_data.loci.iter().enumerate() {
@@ -115,7 +113,6 @@ fn binomial_loss(
                 + (cell_data.alt_counts[locus_index] as f32) * center[*locus].ln()
                 + (cell_data.ref_counts[locus_index] as f32) * (1.0 - center[*locus]).ln();
         }
-        sum += log_probabilities[cluster];
     }
 
     log_probabilities
@@ -195,12 +192,12 @@ pub(super) fn init_cluster_centers(
     if params.known_genotypes.is_some() {
         return init_cluster_centers_known_genotypes(loci_used, params, rng, locus_to_index);
     }
-    match params.initialization_strategy {
+    Ok(match params.initialization_strategy {
         ClusterInit::RandomUniform => init_cluster_centers_uniform(loci_used, params, rng),
         ClusterInit::RandomAssignment => {
             init_cluster_centers_random_assignment(loci_used, cell_data, params, rng)
         }
-    }
+    })
 }
 
 fn init_cluster_centers_known_genotypes(
@@ -257,11 +254,7 @@ fn init_cluster_centers_known_genotypes(
     Ok(centers)
 }
 
-fn init_cluster_centers_uniform(
-    loci: usize,
-    params: &Params,
-    rng: &mut SmallRng,
-) -> Result<ProbMatrix> {
+fn init_cluster_centers_uniform(loci: usize, params: &Params, rng: &mut SmallRng) -> ProbMatrix {
     let mut centers: ProbMatrix = Vec::new();
     for cluster in 0..params.num_clusters {
         centers.push(Vec::new());
@@ -269,7 +262,7 @@ fn init_cluster_centers_uniform(
             centers[cluster].push(rng.random::<f32>().clamp(0.0001, 0.9999));
         }
     }
-    Ok(centers)
+    centers
 }
 
 fn init_cluster_centers_random_assignment(
@@ -277,7 +270,7 @@ fn init_cluster_centers_random_assignment(
     cell_data: &[CellData],
     params: &Params,
     rng: &mut SmallRng,
-) -> Result<ProbMatrix> {
+) -> ProbMatrix {
     let mut sums: ProbMatrix = Vec::new();
     let mut denoms: ProbMatrix = Vec::new();
     for cluster in 0..params.num_clusters {
@@ -305,8 +298,7 @@ fn init_cluster_centers_random_assignment(
             sums[cluster][locus] = sums[cluster][locus].clamp(0.0001, 0.9999);
         }
     }
-
-    Ok(sums)
+    sums
 }
 
 pub(super) fn load_cell_data(

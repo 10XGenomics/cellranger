@@ -40,12 +40,12 @@ HIRES_MAX_DIM_DICT = {
     PipelineMode(Product.VISIUM, SlideType.XL): 4000,
     PipelineMode(Product.CYT, SlideType.XL): 4000,
     PipelineMode(Product.CYT, SlideType.VISIUM_HD): HIRES_VISIUM_HD_MAX_DIM_DEFAULT,
-
+    PipelineMode(Product.CYT, SlideType.VISIUM_HD_XL): HIRES_VISIUM_HD_MAX_DIM_DEFAULT,
 }
 LORES_MAX_DIM = 600
 
 # Size for websummary image. Should be smaller than HIRES_MAX_DIM_DICT
-HD_WS_MAX_DIM = 2000
+HD_WS_MAX_DIM = 4000
 
 # constants for dark_images mro parameter
 DARK_IMAGES_NONE = 0
@@ -57,7 +57,10 @@ DISALLOWED_DARK_IMAGES_EXTENSION = [".png"]
 VISIUM_PRODUCTION_SLIDE_PREFIXES = ["V1", "V2", "V3", "V4", "V5"]
 
 # prefixes for * any * hd slide. Not just production
-VISIUM_HD_SLIDE_PREFIXES = ["H1", "SJ", "14072023", "14082023", "26062023", "RD", "UN"]
+VISIUM_HD_SLIDE_PREFIXES = ["H1", "H2", "SJ", "14072023", "14082023", "26062023", "RD", "UN"]
+
+# prefixes for visium HD XL slides
+VISIUM_HD_XL_SLIDE_PREFIXES = ["H2"]
 
 # Slide IDs which are used generically in cytassist runs. Thus disable checking
 # slide ID if we see this.
@@ -77,6 +80,7 @@ SLIDE_ID_EXCEPTIONS = [
     "H1-RRRDDDD",
     "H1-6C48CQT",
     "H1-MVDT69H",
+    "H2-MMMGGGG",
 ]
 
 # Run info prefixes and suffixes
@@ -147,6 +151,18 @@ def is_hd_slide(slide_sample_area_id: str) -> bool:
         bool: True if hd slide
     """
     return any(slide_sample_area_id.upper().startswith(x) for x in VISIUM_HD_SLIDE_PREFIXES)
+
+
+def is_hd_xl_slide(slide_sample_area_id: str) -> bool:
+    """Determine if the slide is an hd xl slide.
+
+    Args:
+        slide_sample_area_id (str): slide sample area ID
+
+    Returns:
+        bool: True if hd slide
+    """
+    return any(slide_sample_area_id.upper().startswith(x) for x in VISIUM_HD_XL_SLIDE_PREFIXES)
 
 
 def get_cytassist_capture_area(slide_sample_area_id: str) -> str:

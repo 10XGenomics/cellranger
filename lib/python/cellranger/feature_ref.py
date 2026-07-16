@@ -388,7 +388,7 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
     def update_tag(
         self,
         tag_to_update: str,
-        feature_id_to_label_dict: dict[str, str] | dict[bytes, str],
+        feature_id_to_label_dict: dict[bytes, str],
     ):
         """Updates a tag in the feature reference.
 
@@ -418,8 +418,8 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
     def add_tag(
         self,
         tag_to_add: str,
-        feature_id_to_label_dict: dict[str, str] | dict[bytes, str],
-        default_tag_value: str | None = "",
+        feature_id_to_label_dict: dict[bytes, str],
+        default_tag_value: str = "",
     ):
         """Adds a tag to a Feature Reference.
 
@@ -588,7 +588,7 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
         """
         return [x.name for x in self.feature_defs]
 
-    def get_feature_ids(self) -> list[str] | list[bytes]:
+    def get_feature_ids(self) -> list[bytes]:
         """Get a list of feature IDs.
 
         Returns:
@@ -647,8 +647,8 @@ class FeatureReference:  # pylint: disable=too-many-public-methods
         if self.target_features is not None:
             target_set_group = group.create_group(h5_constants.H5_TARGET_SET_ATTR)
             for key, val in self.target_features.items():
-                cr_h5.create_hdf5_string_dataset(
-                    target_set_group, key, [str(x) for x in sorted(val)], compression=True
+                target_set_group.create_dataset(
+                    key, data=sorted(val), dtype="uint32", compression=True
                 )
 
         # Record names of all tag columns

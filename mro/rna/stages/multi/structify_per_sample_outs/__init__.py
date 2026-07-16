@@ -4,13 +4,19 @@
 #
 """A helper stage to put all of the per sample outputs together into a struct."""
 
+from __future__ import annotations
+
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import martian
 
 import cellranger.cr_io as cr_io
 from cellranger.fast_utils import MultiGraph
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 struct SampleBamFile(
@@ -79,6 +85,33 @@ stage STRUCTIFY_PER_SAMPLE_OUTS(
 """
 
 
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """STRUCTIFY_PER_SAMPLE_OUTS stage inputs."""
+
+    sample_bams: None | list[mro_structs.SampleBamFile]
+    sample_metrics: None | list[mro_structs.SampleMetrics]
+    sample_molecule_infos: None | list[mro_structs.SampleMoleculeInfo]
+    sample_matrices: None | list[mro_structs.SampleMatrices]
+    multi_graph: None | mro_filetypes.json
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """STRUCTIFY_PER_SAMPLE_OUTS stage outputs."""
+
+    sample_outs: dict[str, None | mro_structs.SampleSlfeOuts]
+    unassigned_alignments: None | mro_filetypes.bam
+    unassigned_alignments_bai_index: None | mro_filetypes.bam_bai
+    unassigned_alignments_csi_index: None | mro_filetypes.bam_csi
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """STRUCTIFY_PER_SAMPLE_OUTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """STRUCTIFY_PER_SAMPLE_OUTS chunk outputs."""
+
+
 def mappify(sample_structs):
     """Convert list of structs to map of structs keyed by sample name."""
     structs = {}
@@ -99,7 +132,7 @@ def hard_link(f, relative_path=None):
     return new_path
 
 
-def hard_link_index_files(sample_bam):
+def hard_link_index_files(sample_bam: mro_structs.SampleBamFile):
     """Either a CSI or BAI index file will be present, we check for which one exists, and link it.
 
     Args:
@@ -116,7 +149,7 @@ def hard_link_index_files(sample_bam):
     return (bai_file, csi_file)
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     if args.multi_graph is None:
         return
 
@@ -146,7 +179,6 @@ def main(args, outs):
     if args.sample_bams is None:
         sample_bams = None
         outs.unassigned_alignments = None
-        outs.unassigned_alignments_index = None
         outs.unassigned_alignments_bai_index = None
         outs.unassigned_alignments_csi_index = None
     else:

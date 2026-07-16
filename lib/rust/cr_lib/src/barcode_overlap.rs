@@ -1,28 +1,36 @@
 //! Compute overlap coefficient matrix for a collection of barcodes.
 #![deny(missing_docs)]
+use crate::read_level_multiplexing::BarcodeFromBytes;
+use barcode::GelBeadAndProbeConstruct;
 use barcode::whitelist::BarcodeId;
-use barcode::{BcSegSeq, GelBeadAndProbeConstruct};
 use itertools::Itertools;
 use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
+use std::collections::HashMap;
 
 /// Associate a probe barcode ID to the set of all gel bead barcodes it was observed in.
 /// Tracks the number of observations of the probe barcode in the gel bead barcode.
-pub type GelBeadBarcodesPerProbeBarcode = TxHashMap<BarcodeId, TxHashMap<BcSegSeq, usize>>;
+pub type GelBeadBarcodesPerProbeBarcode<T> = TxHashMap<BarcodeId, TxHashMap<T, usize>>;
 
-pub struct ProbeBarcodeGelBeadGrouper<'a> {
-    probe_barcode_seq_to_id: &'a TxHashMap<BcSegSeq, BarcodeId>,
-    barcodes: GelBeadBarcodesPerProbeBarcode,
+pub struct ProbeBarcodeGelBeadGrouper<'a, T>
+where
+    T: BarcodeFromBytes,
+{
+    probe_barcode_seq_to_id: &'a TxHashMap<T, BarcodeId>,
+    barcodes: GelBeadBarcodesPerProbeBarcode<T>,
 }
 
-impl<'a> ProbeBarcodeGelBeadGrouper<'a> {
+impl<'a, T> ProbeBarcodeGelBeadGrouper<'a, T>
+where
+    T: BarcodeFromBytes,
+{
     /// Group all gel bead barcodes by the probe barcodes they are associated with.
     /// Each construct is treated as a single observation.
     pub fn group_all(
-        constructs: impl Iterator<Item = GelBeadAndProbeConstruct<BcSegSeq>>,
-        probe_barcode_seq_to_id: &'a TxHashMap<BcSegSeq, BarcodeId>,
-    ) -> GelBeadBarcodesPerProbeBarcode {
+        constructs: impl Iterator<Item = GelBeadAndProbeConstruct<T>>,
+        probe_barcode_seq_to_id: &'a TxHashMap<T, BarcodeId>,
+    ) -> GelBeadBarcodesPerProbeBarcode<T> {
         let mut grouper = Self::new(probe_barcode_seq_to_id);
         for construct in constructs {
             grouper.group(construct, 1);
@@ -31,15 +39,15 @@ impl<'a> ProbeBarcodeGelBeadGrouper<'a> {
     }
 
     /// Initialize a new grouper.
-    pub fn new(probe_barcode_seq_to_id: &'a TxHashMap<BcSegSeq, BarcodeId>) -> Self {
+    pub fn new(probe_barcode_seq_to_id: &'a TxHashMap<T, BarcodeId>) -> Self {
         Self {
             probe_barcode_seq_to_id,
-            barcodes: GelBeadBarcodesPerProbeBarcode::default(),
+            barcodes: HashMap::default(),
         }
     }
 
     /// Group a single construct with the provided observation count.
-    pub fn group(&mut self, construct: GelBeadAndProbeConstruct<BcSegSeq>, count: usize) {
+    pub fn group(&mut self, construct: GelBeadAndProbeConstruct<T>, count: usize) {
         let probe_barcode_id = self
             .probe_barcode_seq_to_id
             .get(&construct.probe)
@@ -53,15 +61,18 @@ impl<'a> ProbeBarcodeGelBeadGrouper<'a> {
     }
 
     /// Consume this grouper and return the barcode grouping.
-    pub fn finish(self) -> GelBeadBarcodesPerProbeBarcode {
+    pub fn finish(self) -> GelBeadBarcodesPerProbeBarcode<T> {
         self.barcodes
     }
 }
 
 /// Calculate the number of gel-bead barcodes in common for each pair of probe barcodes.
-pub fn calculate_barcode_overlap_counts(
-    gel_bead_barcodes_per_probe_barcode: &GelBeadBarcodesPerProbeBarcode,
-) -> TxHashMap<(BarcodeId, BarcodeId), i64> {
+pub fn calculate_barcode_overlap_counts<T>(
+    gel_bead_barcodes_per_probe_barcode: &GelBeadBarcodesPerProbeBarcode<T>,
+) -> TxHashMap<(BarcodeId, BarcodeId), i64>
+where
+    T: Eq + std::hash::Hash,
+{
     gel_bead_barcodes_per_probe_barcode
         .iter()
         .sorted_by_key(|&(probe_barcode_id, _)| probe_barcode_id)
@@ -110,9 +121,12 @@ impl FRPGemBarcodeOverlapRow {
 
 /// Calculate overlap coefficients of all probe barcodes.
 /// The results are sorted by barcode IDs.
-pub fn calculate_frp_gem_barcode_overlap(
-    gel_bead_barcodes_per_probe_barcode: &GelBeadBarcodesPerProbeBarcode,
-) -> Vec<FRPGemBarcodeOverlapRow> {
+pub fn calculate_frp_gem_barcode_overlap<T>(
+    gel_bead_barcodes_per_probe_barcode: &GelBeadBarcodesPerProbeBarcode<T>,
+) -> Vec<FRPGemBarcodeOverlapRow>
+where
+    T: Eq + std::hash::Hash,
+{
     calculate_barcode_overlap_counts(gel_bead_barcodes_per_probe_barcode)
         .into_iter()
         .sorted_by_key(|&(barcode1_barcode2, _)| barcode1_barcode2)

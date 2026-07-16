@@ -45,13 +45,13 @@ pub(super) fn get_vdj_adapters() -> TxHashMap<WhichRead, Vec<Adapter>> {
     adapters
 }
 
-pub(super) struct VdjTrimmer<'a> {
-    adapter_catalog: ReadAdapterCatalog<'a>,
+pub(super) struct VdjTrimmer {
+    adapter_catalog: ReadAdapterCatalog,
     metrics: TxHashMap<WhichRead, TxHashMap<String, PercentMetric>>,
 }
 
-impl<'a> VdjTrimmer<'a> {
-    pub(super) fn new(adapter_map: &'a TxHashMap<WhichRead, Vec<Adapter>>) -> Self {
+impl VdjTrimmer {
+    pub(super) fn new(adapter_map: &TxHashMap<WhichRead, Vec<Adapter>>) -> Self {
         let mut metrics = TxHashMap::default();
         for (&which_read, adapters) in adapter_map {
             let mut adapter_frac = TxHashMap::default();
@@ -62,13 +62,13 @@ impl<'a> VdjTrimmer<'a> {
         }
 
         VdjTrimmer {
-            adapter_catalog: ReadAdapterCatalog::from(adapter_map),
+            adapter_catalog: ReadAdapterCatalog::new(adapter_map),
             metrics,
         }
     }
 
     pub(super) fn trim(&mut self, rna_read: &mut RnaRead) {
-        let adapter_positions = rna_read.trim_adapters(&mut self.adapter_catalog);
+        let adapter_positions = rna_read.trim_adapters(&self.adapter_catalog);
         for metrics in self.metrics.values_mut() {
             for (name, metric) in metrics {
                 metric.increment(adapter_positions.contains_key(name));

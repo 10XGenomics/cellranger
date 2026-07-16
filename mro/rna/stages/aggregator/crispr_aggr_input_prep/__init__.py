@@ -4,8 +4,17 @@
 #
 """Prepare input for _CRISPR_ANALYZER stage in aggr."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import martian
+
 import cellranger.molecule_counter as cr_mc
 import cellranger.rna.library as rna_library
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage CRISPR_AGGR_INPUT_PREP(
@@ -19,7 +28,23 @@ stage CRISPR_AGGR_INPUT_PREP(
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CRISPR_AGGR_INPUT_PREP stage inputs."""
+
+    merged_molecules: mro_filetypes.h5
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CRISPR_AGGR_INPUT_PREP stage outputs."""
+
+    feature_reference: mro_filetypes.csv
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
+
+
+def main(args: StageInputs, outs: StageOutputs):
     with cr_mc.MoleculeCounter.open(args.merged_molecules, "r") as mc:
         # Create feature_reference csv file
         feature_ref = mc.get_feature_ref()

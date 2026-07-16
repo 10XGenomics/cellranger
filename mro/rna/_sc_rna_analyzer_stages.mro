@@ -92,6 +92,7 @@ stage PREPROCESS_MATRIX(
     in  bool disable_correct_chemistry_batch,
     in  bool skip_multigenome_analysis,
     in  bool enable_tsne,
+    in  bool is_standalone_pca_ppln,
     out bool skip_antibody_analysis,
     out bool skip_antigen_analysis,
     out h5   cloupe_matrix_h5,

@@ -1,6 +1,7 @@
 //! cr_wrap
 #![deny(missing_docs)]
 
+pub mod annotate;
 pub mod arc;
 pub mod chemistry_arg;
 pub mod cloud;
@@ -261,7 +262,10 @@ pub fn check_deprecated_os() -> Result<()> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    ensure!(output.status.success(), "{}", msg.trim_end_matches('\n'));
-    eprint!("{msg}");
+    let msg = msg.trim_matches('\n');
+    ensure!(output.status.success(), "{msg}");
+    if !msg.is_empty() {
+        eprintln!("{msg}");
+    }
     Ok(())
 }

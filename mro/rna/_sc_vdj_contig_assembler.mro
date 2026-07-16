@@ -4,8 +4,7 @@
 pipeline SC_VDJ_CONTIG_ASSEMBLER(
     in  string            sample_id,
     in  map<ChemistryDef> chemistry_defs,
-    in  int               gem_well,
-    in  map[]             chunks,
+    in  json              chunks,
     in  int               r1_length,
     in  int               r2_length,
     in  int               initial_reads,
@@ -20,7 +19,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
     in  int               umi_min_read_length,
     out json              summary,
     out ReadShards        read_shards,
-    out int[]             gem_groups,
     out json              corrected_barcode_counts,
     out int               n50_n50_rpu,
     out int               processed_read_pairs,
@@ -38,7 +36,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
 )
 {
     call MAKE_SHARD(
-        gem_well            = self.gem_well,
         chemistry_defs      = self.chemistry_defs,
         read_chunks         = self.chunks,
         r1_length           = self.r1_length,
@@ -52,6 +49,8 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
         feature_reference   = null,
         feature_config      = self.feature_config,
         umi_min_read_length = self.umi_min_read_length,
+        skip_read_id        = false,
+        receptor            = self.receptor,
     )
 
     call BARCODE_CORRECTION(
@@ -65,7 +64,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
 
     call RUST_BRIDGE(
         chemistry_defs           = self.chemistry_defs,
-        gem_well                 = self.gem_well,
         valid_uncorrected        = MAKE_SHARD.valid,
         valid_corrected          = BARCODE_CORRECTION.valid_corrected,
         corrected_barcode_counts = BARCODE_CORRECTION.corrected_barcode_counts,
@@ -103,7 +101,6 @@ pipeline SC_VDJ_CONTIG_ASSEMBLER(
             invalid_reads:   BARCODE_CORRECTION.invalid,
             valid_reads:     MAKE_SHARD.valid,
         },
-        gem_groups               = RUST_BRIDGE.gem_groups,
         corrected_barcode_counts = RUST_BRIDGE.corrected_barcode_counts_json,
         n50_n50_rpu              = RUST_BRIDGE.n50_n50_rpu,
         processed_read_pairs     = RUST_BRIDGE.processed_read_pairs,

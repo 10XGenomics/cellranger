@@ -3,10 +3,10 @@ name = 'cellranger'
 test = false
 
 [dependencies]
-dirs = '5'
+dirs = '6'
 shell-escape = '0.1.5'
 terminal_size = '0.4'
-url = '2.5.7'
+url = '2.5.8'
 
 [dependencies.anyhow]
 workspace = true

@@ -5,8 +5,20 @@ use anyhow::Result;
 use std::env;
 use std::path::Path;
 
-/// An error message
-pub const CELL_ANNOTATION_HOMEDIR_MSG: &str = "Could not find a 10x cloud token in the default user directory.  In order to enable cell annotation, run cellranger cloud auth setup, or please supply a --tenx-cloud-token-path argument.";
+/// Return the product id from the TENX_PRODUCT env var, defaulting to "ranger".
+fn product_id() -> String {
+    env::var("TENX_PRODUCT").unwrap_or_else(|_| "ranger".to_string())
+}
+
+/// Return a product-specific error message for a missing cloud token.
+pub fn cell_annotation_homedir_msg() -> String {
+    let product = product_id();
+    format!(
+        "Could not find a 10x cloud token in the default user directory.  \
+         In order to enable cell annotation, run {product} cloud auth setup, \
+         or please supply a --tenx-cloud-token-path argument."
+    )
+}
 
 /// Return the path to the default cloud token
 pub fn default_token_path() -> Result<String> {

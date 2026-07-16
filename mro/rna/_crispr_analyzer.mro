@@ -18,20 +18,42 @@ pipeline _CRISPR_ANALYZER(
     out path crispr_analysis,
 )
 {
-    call CALL_PROTOSPACERS(
+    call WRITE_CRISPR_ONLY_MATRIX(
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+    )
+
+    call CALL_PROTOSPACERS(
+        filtered_feature_counts_matrix = WRITE_CRISPR_ONLY_MATRIX.crispr_only_matrix,
         min_crispr_umi_threshold = self.min_crispr_umi_threshold,
+    )
+
+    call COMPUTE_PRESPLIT_ASSIGNMENT(
+        protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+    )
+
+    call SPLIT_PERTURBATION_MATRIX(
+        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        reduce_plan = COMPUTE_PRESPLIT_ASSIGNMENT.reduce_plan,
     )
 
     call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_FEATURE(
         protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
-        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        control_stats              = SPLIT_PERTURBATION_MATRIX.control_stats,
+        control_bootstrap          = SPLIT_PERTURBATION_MATRIX.control_bootstrap,
+        chunk_stats                = SPLIT_PERTURBATION_MATRIX.by_feature_chunk_stats,
+        chunk_bootstrap            = SPLIT_PERTURBATION_MATRIX.by_feature_bootstrap,
+        chunk_perturbations        = COMPUTE_PRESPLIT_ASSIGNMENT.by_feature_chunks,
         by_feature                 = true,
     )
 
     call MEASURE_PERTURBATIONS as _PERTURBATIONS_BY_TARGET(
         protospacer_calls_per_cell = CALL_PROTOSPACERS.protospacer_calls_per_cell,
-        filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
+        control_stats              = SPLIT_PERTURBATION_MATRIX.control_stats,
+        control_bootstrap          = SPLIT_PERTURBATION_MATRIX.control_bootstrap,
+        chunk_stats                = SPLIT_PERTURBATION_MATRIX.by_target_chunk_stats,
+        chunk_bootstrap            = SPLIT_PERTURBATION_MATRIX.by_target_bootstrap,
+        chunk_perturbations        = COMPUTE_PRESPLIT_ASSIGNMENT.by_target_chunks,
         by_feature                 = false,
     )
 

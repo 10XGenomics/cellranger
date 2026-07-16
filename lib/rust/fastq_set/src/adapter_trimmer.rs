@@ -22,6 +22,7 @@ use bio::alignment::pairwise::{self, MatchParams, Scoring};
 use bio::alignment::sparse;
 use bio::alignment::sparse::HashMapFx;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::cmp::{Ordering, max, min};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -178,6 +179,8 @@ impl Adapter {
     }
 }
 
+type Kmer = [u8; KMER_LEN];
+
 /// This `struct` is used for searching and trimming adapters in read sequences.
 ///
 /// Internally it stores a reference to the `Adapter`, a hashmap containing the
@@ -195,7 +198,7 @@ impl Adapter {
 ///     AdapterLoc::Anywhere,
 ///     "TGCTTAAACTGACTACGTGTCGAAG");
 /// // Create a trimmer
-/// let mut trimmer = AdapterTrimmer::new(&adapter);
+/// let trimmer = AdapterTrimmer::new(adapter.clone());
 /// // The read has adapter at position 25 with a single base mismatch.
 /// // Since the allowed error rate is 10%, upto 2 edits are okay
 /// //                                    <--------Adapter-------->
@@ -213,21 +216,20 @@ impl Adapter {
 /// // We need to retain the first 25 bases in the read
 /// assert_eq!(result.retain_range, 0..25);
 /// ```
-///
-/// # Algorithm
-/// [TODO]
-pub struct AdapterTrimmer<'a> {
-    pub adapter: &'a Adapter,
-    seq: &'a [u8],
-    kmer_hash: HashMapFx<&'a [u8], Vec<u32>>,
-    aligner: Aligner,
+#[derive(Clone)]
+pub struct AdapterTrimmer {
+    adapter: Adapter,
+    kmer_hash: HashMapFx<Kmer, Vec<u32>>,
+    // The state of the aligner is mutated during each alignment; since there
+    // are no re-entrant uses of it, though, we can safely hide that mutability.
+    aligner: RefCell<Aligner>,
     cut_scores: CutScores,
     homopolymer: bool,
 }
 
-impl<'a> AdapterTrimmer<'a> {
+impl AdapterTrimmer {
     /// Create a new `AdapterTrimmer` from an `Adapter`.
-    pub fn new(adapter: &'a Adapter) -> Self {
+    pub fn new(adapter: Adapter) -> Self {
         assert!(
             adapter.seq.len() >= KMER_LEN,
             "Adapter sequence cannot be shorter than {KMER_LEN}"
@@ -250,13 +252,17 @@ impl<'a> AdapterTrimmer<'a> {
         let seq = adapter.seq.as_bytes();
         let homopolymer = seq.iter().all(|&x| x == seq[0]);
         AdapterTrimmer {
+            kmer_hash: kmer_hash::hash_kmers(adapter.seq.as_bytes()),
             adapter,
-            seq,
-            kmer_hash: sparse::hash_kmers(adapter.seq.as_bytes(), KMER_LEN),
-            aligner,
+            aligner: aligner.into(),
             cut_scores,
             homopolymer,
         }
+    }
+
+    /// Return the name of the adapter we're trimming.
+    pub fn adapter_name(&self) -> &str {
+        &self.adapter.name
     }
 
     /// Search for the adapter in the read.
@@ -267,113 +273,101 @@ impl<'a> AdapterTrimmer<'a> {
     /// Ouput:
     /// * `Option<TrimResult>`: `None` if the adapter is not found,
     ///   otherwise `Some(TrimResult)` (See [`TrimResult`](struct.TrimResult.html))
-    pub fn find(&mut self, read: &[u8]) -> Option<TrimResult> {
+    pub fn find(&self, read: &[u8]) -> Option<TrimResult> {
         use bio::alignment::AlignmentOperation::{Del, Ins, Match, Subst};
 
         if self.homopolymer {
             return self.find_homopolymer(read);
         }
 
-        let matches = sparse::find_kmer_matches_seq2_hashed(read, &self.kmer_hash, KMER_LEN);
-        let matches = sparse::expand_kmer_matches(read, self.seq, KMER_LEN, &matches, 1);
-        let band_path = compute_path(
-            &matches,
-            read.len(),
-            self.seq.len(),
-            KMER_LEN,
-            &self.cut_scores,
-        );
-        match band_path {
-            Some(p) => {
-                let score = p.total_score();
-                if score > MIN_PATH_SCORE {
-                    // Set the clipping score correctly if the
-                    // adapter location is `Anywhere`
-                    if self.adapter.location == AdapterLoc::Anywhere {
-                        let scoring = self.aligner.get_mut_scoring();
-                        match self.adapter.end {
-                            WhichEnd::ThreePrime => {
-                                let dx = read.len() - p.last_match.0 as usize;
-                                let dy = self.adapter.seq.len() - p.last_match.1 as usize;
-                                // if (max(dx, dy) - min(dx, dy)) < 3 {
-                                match dx.cmp(&dy) {
-                                    Ordering::Equal => {
-                                        scoring.xclip_suffix = pairwise::MIN_SCORE;
-                                        scoring.yclip_suffix = pairwise::MIN_SCORE;
-                                    }
-                                    Ordering::Greater => {
-                                        scoring.xclip_suffix = 0;
-                                        scoring.yclip_suffix = pairwise::MIN_SCORE;
-                                    }
-                                    Ordering::Less => {
-                                        scoring.xclip_suffix = pairwise::MIN_SCORE;
-                                        scoring.yclip_suffix = 0;
-                                    }
-                                }
-                            }
-                            WhichEnd::FivePrime => {
-                                let dx = p.first_match.0;
-                                let dy = p.first_match.1;
-                                match dx.cmp(&dy) {
-                                    Ordering::Equal => {
-                                        scoring.xclip_prefix = pairwise::MIN_SCORE;
-                                        scoring.yclip_prefix = pairwise::MIN_SCORE;
-                                    }
-                                    Ordering::Greater => {
-                                        scoring.xclip_prefix = 0;
-                                        scoring.yclip_prefix = pairwise::MIN_SCORE;
-                                    }
-                                    Ordering::Less => {
-                                        scoring.xclip_prefix = pairwise::MIN_SCORE;
-                                        scoring.yclip_prefix = 0;
-                                    }
-                                }
-                            }
+        let seq = self.adapter.seq.as_bytes();
+
+        let matches = kmer_hash::find_kmer_matches_seq2_hashed(read, &self.kmer_hash);
+        let matches = sparse::expand_kmer_matches(read, seq, KMER_LEN, &matches, 1);
+        let p = compute_path(&matches, read.len(), seq.len(), KMER_LEN, &self.cut_scores)?;
+
+        if p.total_score() <= MIN_PATH_SCORE {
+            return None;
+        }
+
+        let mut aligner = self.aligner.borrow_mut();
+
+        // Set the clipping score correctly if the
+        // adapter location is `Anywhere`
+        if self.adapter.location == AdapterLoc::Anywhere {
+            let scoring = aligner.get_mut_scoring();
+            match self.adapter.end {
+                WhichEnd::ThreePrime => {
+                    let dx = read.len() - p.last_match.0 as usize;
+                    let dy = self.adapter.seq.len() - p.last_match.1 as usize;
+                    // if (max(dx, dy) - min(dx, dy)) < 3 {
+                    match dx.cmp(&dy) {
+                        Ordering::Equal => {
+                            scoring.xclip_suffix = pairwise::MIN_SCORE;
+                            scoring.yclip_suffix = pairwise::MIN_SCORE;
+                        }
+                        Ordering::Greater => {
+                            scoring.xclip_suffix = 0;
+                            scoring.yclip_suffix = pairwise::MIN_SCORE;
+                        }
+                        Ordering::Less => {
+                            scoring.xclip_suffix = pairwise::MIN_SCORE;
+                            scoring.yclip_suffix = 0;
                         }
                     }
-                    let alignment = self
-                        .aligner
-                        .custom_with_match_path(read, self.seq, &matches, &p.path);
-
-                    let num_ops = alignment
-                        .operations
-                        .iter()
-                        .filter(|&op| *op == Match || *op == Subst || *op == Ins || *op == Del)
-                        .count();
-                    let max_score = min(alignment.ylen, num_ops);
-                    let num_errs = alignment
-                        .operations
-                        .iter()
-                        .filter(|&op| *op == Subst || *op == Ins || *op == Del)
-                        .count();
-                    let err_rate = (num_errs as f64) / (max_score as f64);
-                    if err_rate <= ALLOWED_ERROR_RATE {
-                        Some(TrimResult {
-                            adapter_range: alignment.xstart..alignment.xend,
-                            trim_range: match self.adapter.end {
-                                WhichEnd::ThreePrime => alignment.xstart..alignment.xlen,
-                                WhichEnd::FivePrime => 0..alignment.xend,
-                            },
-                            retain_range: match self.adapter.end {
-                                WhichEnd::ThreePrime => 0..alignment.xstart,
-                                WhichEnd::FivePrime => alignment.xend..alignment.xlen,
-                            },
-                            score: alignment.score,
-                        })
-                    } else {
-                        None
+                }
+                WhichEnd::FivePrime => {
+                    let dx = p.first_match.0;
+                    let dy = p.first_match.1;
+                    match dx.cmp(&dy) {
+                        Ordering::Equal => {
+                            scoring.xclip_prefix = pairwise::MIN_SCORE;
+                            scoring.yclip_prefix = pairwise::MIN_SCORE;
+                        }
+                        Ordering::Greater => {
+                            scoring.xclip_prefix = 0;
+                            scoring.yclip_prefix = pairwise::MIN_SCORE;
+                        }
+                        Ordering::Less => {
+                            scoring.xclip_prefix = pairwise::MIN_SCORE;
+                            scoring.yclip_prefix = 0;
+                        }
                     }
-                } else {
-                    None
                 }
             }
-            None => None,
         }
+        let alignment = aligner.custom_with_match_path(read, seq, &matches, &p.path);
+
+        let num_ops = alignment
+            .operations
+            .iter()
+            .filter(|&op| *op == Match || *op == Subst || *op == Ins || *op == Del)
+            .count();
+        let max_score = min(alignment.ylen, num_ops);
+        let num_errs = alignment
+            .operations
+            .iter()
+            .filter(|&op| *op == Subst || *op == Ins || *op == Del)
+            .count();
+        let err_rate = (num_errs as f64) / (max_score as f64);
+        (err_rate <= ALLOWED_ERROR_RATE).then_some(TrimResult {
+            adapter_range: alignment.xstart..alignment.xend,
+            trim_range: match self.adapter.end {
+                WhichEnd::ThreePrime => alignment.xstart..alignment.xlen,
+                WhichEnd::FivePrime => 0..alignment.xend,
+            },
+            retain_range: match self.adapter.end {
+                WhichEnd::ThreePrime => 0..alignment.xstart,
+                WhichEnd::FivePrime => alignment.xend..alignment.xlen,
+            },
+            score: alignment.score,
+        })
     }
 
-    fn find_homopolymer(&mut self, read: &[u8]) -> Option<TrimResult> {
+    fn find_homopolymer(&self, read: &[u8]) -> Option<TrimResult> {
+        let seq = self.adapter.seq.as_bytes();
         assert!(self.homopolymer);
-        let base = self.seq[0];
+        let base = seq[0];
         let cumulative_matches: Vec<_> = vec![0]
             .into_iter()
             .chain(read.iter().map(|&x| (x == base) as usize))
@@ -398,22 +392,20 @@ impl<'a> AdapterTrimmer<'a> {
             }
         };
         let mut best_num_matches = 0;
-        let mut best_err = self.seq.len();
+        let mut best_err = seq.len();
         let mut best_pos = None;
         match self.adapter.end {
             WhichEnd::ThreePrime => {
                 let i_range = match self.adapter.location {
                     AdapterLoc::Anywhere => 0..read.len(),
-                    AdapterLoc::NonInternal => {
-                        read.len().saturating_sub(self.seq.len())..read.len()
-                    }
+                    AdapterLoc::NonInternal => read.len().saturating_sub(seq.len())..read.len(),
                     AdapterLoc::Anchored => {
-                        read.len().saturating_sub(self.seq.len())
-                            ..read.len().saturating_sub(self.seq.len() - 1)
+                        read.len().saturating_sub(seq.len())
+                            ..read.len().saturating_sub(seq.len() - 1)
                     }
                 };
                 for i in i_range {
-                    let j = min(read.len(), i + self.seq.len());
+                    let j = min(read.len(), i + seq.len());
                     if let Some((num_matches, num_errs)) = get_counts_if_valid(i, j)
                         && ((num_matches > best_num_matches)
                             || (num_matches == best_num_matches && num_errs < best_err))
@@ -423,24 +415,21 @@ impl<'a> AdapterTrimmer<'a> {
                         best_pos = Some(i);
                     }
                 }
-                match best_pos {
-                    Some(p) => Some(TrimResult {
-                        adapter_range: p..min(p + self.seq.len(), read.len()),
-                        trim_range: p..read.len(),
-                        retain_range: 0..p,
-                        score: MATCH_SCORE * best_num_matches as i32 + EDIT_SCORE * best_err as i32,
-                    }),
-                    None => None,
-                }
+                best_pos.map(|p| TrimResult {
+                    adapter_range: p..min(p + seq.len(), read.len()),
+                    trim_range: p..read.len(),
+                    retain_range: 0..p,
+                    score: MATCH_SCORE * best_num_matches as i32 + EDIT_SCORE * best_err as i32,
+                })
             }
             WhichEnd::FivePrime => {
                 let j_range = match self.adapter.location {
                     AdapterLoc::Anywhere => 0..read.len(),
-                    AdapterLoc::NonInternal => 0..self.seq.len() + 1,
-                    AdapterLoc::Anchored => self.seq.len()..self.seq.len() + 1,
+                    AdapterLoc::NonInternal => 0..seq.len() + 1,
+                    AdapterLoc::Anchored => seq.len()..seq.len() + 1,
                 };
                 for j in j_range {
-                    let i = j.saturating_sub(self.seq.len());
+                    let i = j.saturating_sub(seq.len());
                     if let Some((num_matches, num_errs)) = get_counts_if_valid(i, j)
                         && ((num_matches > best_num_matches)
                             || (num_matches == best_num_matches && num_errs < best_err))
@@ -450,15 +439,12 @@ impl<'a> AdapterTrimmer<'a> {
                         best_pos = Some(j);
                     }
                 }
-                match best_pos {
-                    Some(p) => Some(TrimResult {
-                        adapter_range: p.saturating_sub(self.seq.len())..p,
-                        trim_range: 0..p,
-                        retain_range: p..read.len(),
-                        score: MATCH_SCORE * best_num_matches as i32 + EDIT_SCORE * best_err as i32,
-                    }),
-                    None => None,
-                }
+                best_pos.map(|p| TrimResult {
+                    adapter_range: p.saturating_sub(seq.len())..p,
+                    trim_range: 0..p,
+                    retain_range: p..read.len(),
+                    score: MATCH_SCORE * best_num_matches as i32 + EDIT_SCORE * best_err as i32,
+                })
             }
         }
     }
@@ -714,20 +700,26 @@ fn compute_path(
 }
 
 #[derive(Default)]
-pub struct ReadAdapterCatalog<'a> {
-    adapter_names: HashSet<&'a str>,
-    read1_trimmers: Vec<AdapterTrimmer<'a>>,
-    read2_trimmers: Vec<AdapterTrimmer<'a>>,
+pub struct ReadAdapterCatalog {
+    adapter_names: HashSet<String>,
+    read1_trimmers: Vec<AdapterTrimmer>,
+    read2_trimmers: Vec<AdapterTrimmer>,
 }
 
-impl<'a> ReadAdapterCatalog<'a> {
-    pub fn new() -> Self {
-        ReadAdapterCatalog::default()
+impl ReadAdapterCatalog {
+    pub fn new<S: BuildHasher>(adapter_map: &HashMap<WhichRead, Vec<Adapter>, S>) -> Self {
+        let mut catalog = Self::default();
+        for (read, adapters) in adapter_map {
+            for adapter in adapters {
+                catalog.add_adapter(*read, adapter.clone());
+            }
+        }
+        catalog
     }
 
-    pub fn push_trimmer(&mut self, read: WhichRead, trimmer: AdapterTrimmer<'a>) {
+    pub fn push_trimmer(&mut self, read: WhichRead, trimmer: AdapterTrimmer) {
         assert!(
-            self.adapter_names.insert(&trimmer.adapter.name),
+            self.adapter_names.insert(trimmer.adapter.name.clone()),
             "Adapter names need to be unique in ReadAdapterCatalog. '{}' already exists",
             trimmer.adapter.name
         );
@@ -739,33 +731,59 @@ impl<'a> ReadAdapterCatalog<'a> {
         }
     }
 
-    pub fn add_adapter(&mut self, read: WhichRead, adapter: &'a Adapter) {
+    pub fn add_adapter(&mut self, read: WhichRead, adapter: Adapter) {
         self.push_trimmer(read, AdapterTrimmer::new(adapter));
     }
 
-    pub fn get_mut_trimmers(&mut self, read: WhichRead) -> &mut Vec<AdapterTrimmer<'a>> {
+    pub fn get_trimmers(&self, read: WhichRead) -> &[AdapterTrimmer] {
         match read {
-            WhichRead::R1 => &mut self.read1_trimmers,
-            WhichRead::R2 => &mut self.read2_trimmers,
+            WhichRead::R1 => &self.read1_trimmers,
+            WhichRead::R2 => &self.read2_trimmers,
             _ => {
-                panic!("ReadAdapterCatalog get_mut_trimmer() can only accept R1/R2. Found {read:?}")
+                panic!("this method can only accept R1/R2, found {read:?}")
             }
         }
     }
 }
 
-impl<'a, S> From<&'a HashMap<WhichRead, Vec<Adapter>, S>> for ReadAdapterCatalog<'a>
-where
-    S: BuildHasher,
-{
-    fn from(adapter_map: &'a HashMap<WhichRead, Vec<Adapter>, S>) -> Self {
-        let mut catalog = ReadAdapterCatalog::new();
-        for (read, adapters) in adapter_map {
-            for adapter in adapters {
-                catalog.add_adapter(*read, adapter);
+/// Ported in from bio::alignment::sparse to use stack-allocated owned kmers.
+mod kmer_hash {
+    use super::{KMER_LEN, Kmer};
+    use bio::alignment::sparse::HashMapFx;
+
+    /// Creates a HashMap containing all the k-mers in the sequence. FxHasher is used
+    /// as the hash function instead of the inbuilt one. A good rolling hash function
+    /// should speed up the code.
+    pub fn hash_kmers(seq: &[u8]) -> HashMapFx<Kmer, Vec<u32>> {
+        let mut set: HashMapFx<Kmer, Vec<u32>> = HashMapFx::default();
+        for i in 0..(seq.len() + 1).saturating_sub(KMER_LEN) {
+            set.entry(seq[i..i + KMER_LEN].try_into().unwrap())
+                .or_default()
+                .push(i as u32);
+        }
+        set
+    }
+
+    /// Find all matches of length k between two strings where the second string is
+    /// already hashed by using the function sparse::hash_kmers
+    pub fn find_kmer_matches_seq2_hashed(
+        seq1: &[u8],
+        seq2_set: &HashMapFx<Kmer, Vec<u32>>,
+    ) -> Vec<(u32, u32)> {
+        let mut matches = Vec::new();
+
+        for i in 0..(seq1.len() + 1).saturating_sub(KMER_LEN) {
+            let slc = &seq1[i..i + KMER_LEN];
+
+            if let Some(matches1) = seq2_set.get(slc) {
+                for pos1 in matches1 {
+                    matches.push((i as u32, *pos1));
+                }
             }
         }
-        catalog
+
+        matches.sort_unstable();
+        matches
     }
 }
 
@@ -916,7 +934,7 @@ mod tests {
         use bio::io::fasta::Reader;
 
         let adapter = Adapter::new("primer", end, loc, adapter_seq);
-        let mut trimmer = AdapterTrimmer::new(&adapter);
+        let trimmer = AdapterTrimmer::new(adapter.clone());
 
         let input = Reader::from_file(input_path).unwrap();
         let cutadapt_output = Reader::from_file(cutadapt_output_path).unwrap();
@@ -991,7 +1009,7 @@ mod tests {
         );
         // (25 bases)(adapter)(25 bases)(adapter)(10 bases)
         let read = b"ACAAATAGGTCAGTCCAGTAGATTCAGATCGGAAGAGCACACGTGGTGGACTGTAGCGGACAAGAAGAGATCGGAAGAGCACACATTTTCCCCA";
-        let mut trimmer = AdapterTrimmer::new(&adapter);
+        let trimmer = AdapterTrimmer::new(adapter);
         let result = trimmer.find(read).unwrap();
         assert_eq!(result.retain_range, 0..25);
         assert_eq!(result.adapter_range, 25..42);
@@ -1008,7 +1026,7 @@ mod tests {
         );
         // (25 bases)(adapter)(25 bases)(adapter)(10 bases)
         let read = b"ACAAATAGGTCAGTCCAGTAGATTCAGATCGGAAGAGCACACGTGGTGGACTGTAGCGGACAAGAAGAGATCGGAAGAGCACACATTTTCCCCA";
-        let mut trimmer = AdapterTrimmer::new(&adapter);
+        let trimmer = AdapterTrimmer::new(adapter);
         let result = trimmer.find(read).unwrap();
         assert_eq!(result.retain_range, 42..94);
         assert_eq!(result.adapter_range, 25..42);
@@ -1026,7 +1044,7 @@ mod tests {
         // (25 bases)(adapter)(25 bases)(partial adapter)
         let read =
             b"ACAAATAGGTCAGTCCAGTAGATTCAGATCGGAAGAGCACACGTGGTGGACTGTAGCGGACAAGAAGAGATCGGAAGA";
-        let mut trimmer = AdapterTrimmer::new(&adapter);
+        let trimmer = AdapterTrimmer::new(adapter);
         let result = trimmer.find(read).unwrap();
         assert_eq!(result.retain_range, 0..67);
         assert_eq!(result.adapter_range, 67..78);
@@ -1037,14 +1055,14 @@ mod tests {
     #[should_panic]
     fn test_empty_adapter_seq() {
         let adapter = Adapter::new("p", WhichEnd::ThreePrime, AdapterLoc::NonInternal, "");
-        let _ = AdapterTrimmer::new(&adapter);
+        let _ = AdapterTrimmer::new(adapter);
     }
 
     #[test]
     #[should_panic]
     fn test_too_short_adapter_seq() {
         let adapter = Adapter::new("p", WhichEnd::ThreePrime, AdapterLoc::NonInternal, "ACG");
-        let _ = AdapterTrimmer::new(&adapter);
+        let _ = AdapterTrimmer::new(adapter);
     }
 
     #[test]
@@ -1055,7 +1073,7 @@ mod tests {
             AdapterLoc::NonInternal,
             "AAAAAAAA",
         );
-        let trimmer = AdapterTrimmer::new(&adapter);
+        let trimmer = AdapterTrimmer::new(adapter);
         assert!(trimmer.homopolymer);
 
         let adapter = Adapter::new(
@@ -1064,7 +1082,7 @@ mod tests {
             AdapterLoc::NonInternal,
             "GCATCCAATC",
         );
-        let trimmer = AdapterTrimmer::new(&adapter);
+        let trimmer = AdapterTrimmer::new(adapter);
         assert!(!trimmer.homopolymer);
     }
 
@@ -1083,9 +1101,9 @@ mod tests {
             AdapterLoc::Anywhere,
             "AAAAAAAAAA",
         );
-        let mut catalog = ReadAdapterCatalog::new();
-        catalog.push_trimmer(WhichRead::R1, AdapterTrimmer::new(&adapter_1));
-        catalog.push_trimmer(WhichRead::R2, AdapterTrimmer::new(&adapter_2));
+        let mut catalog = ReadAdapterCatalog::default();
+        catalog.push_trimmer(WhichRead::R1, AdapterTrimmer::new(adapter_1));
+        catalog.push_trimmer(WhichRead::R2, AdapterTrimmer::new(adapter_2));
     }
 
     #[test]

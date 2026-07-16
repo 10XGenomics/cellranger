@@ -406,10 +406,7 @@ impl MakePretty for Percent {
 
     fn as_f64(&self) -> f64 {
         match *self {
-            Percent::Metric(m) => match m.fraction() {
-                Some(f) => f,
-                None => f64::NAN,
-            },
+            Percent::Metric(m) => m.fraction().unwrap_or(f64::NAN),
             Percent::Float(f) => f,
         }
     }
@@ -562,7 +559,7 @@ macro_rules! card_with_table {
 }
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // this ensures insta knows where to find its snap tests
     let cwd = std::env::current_dir().unwrap();

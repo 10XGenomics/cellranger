@@ -145,7 +145,7 @@ impl AggrDefs {
                         rec.as_slice()
                     )
                 })?;
-                metadata.insert(name.to_string(), entry.to_string());
+                metadata.insert(name.clone(), entry.to_string());
             }
             let row = AggrDef {
                 aggr_def_base,

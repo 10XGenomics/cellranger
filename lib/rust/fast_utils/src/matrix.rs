@@ -1,6 +1,3 @@
-use std::path::Path;
-use std::str::FromStr;
-
 use cr_h5::count_matrix::{
     BarcodeCountOffset, Count, CountMatrixFile, CountMatrixStreaming, FeatureIdx, MatrixDimensions,
 };
@@ -8,6 +5,9 @@ use cr_types::reference::feature_reference::FeatureType;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
+use std::iter;
+use std::path::Path;
+use std::str::FromStr;
 
 /// A function that loads an H5 Matrix while filtering out certain feature types during loading.
 ///
@@ -38,15 +38,12 @@ pub(super) fn load_matrix_by_filtered_feature_type<'py>(
 
             let mut row_indices = Vec::with_capacity(mat_dims.num_non_zeros);
             let mut data = Vec::with_capacity(mat_dims.num_non_zeros);
-            let mut indptr = Vec::with_capacity(mat_dims.num_barcodes + 1);
-            indptr.push(0);
+            let mut indptr_increments = vec![0; mat_dims.num_barcodes];
             {
                 let matrix_streaming: CountMatrixStreaming = matrix_file
                     .read_streaming_async()
                     .expect("Could not open matrix file.");
 
-                let mut cur_cnt = 0;
-                let mut cur_bc: usize = 0;
                 let is_selected_feature: Vec<bool> = matrix_streaming
                     .bcs_and_features
                     .feature_reference
@@ -60,19 +57,20 @@ pub(super) fn load_matrix_by_filtered_feature_type<'py>(
                 {
                     let raw_cnt = raw_cnt_res.expect("Could not get raw count");
                     let bc = raw_cnt.barcode_idx;
-                    if bc != cur_bc {
-                        indptr.push(cur_cnt);
-                        cur_bc = bc;
-                    }
                     if is_selected_feature[raw_cnt.feature_idx] {
                         row_indices.push(raw_cnt.feature_idx as FeatureIdx);
                         data.push(raw_cnt.count);
-                        cur_cnt += 1;
+                        indptr_increments[bc] += 1;
                     }
                 }
-                indptr.push(cur_cnt);
             }
-            indptr.shrink_to_fit();
+            let indptr: Vec<_> = iter::once(0)
+                .chain(indptr_increments)
+                .scan(0, |partial_sum, item| {
+                    *partial_sum += item;
+                    Some(*partial_sum)
+                })
+                .collect();
             row_indices.shrink_to_fit();
             data.shrink_to_fit();
             Ok((

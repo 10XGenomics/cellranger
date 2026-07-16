@@ -231,15 +231,6 @@ where
     }
 }
 
-impl<T, const N: usize> From<ByteArray<T, N>> for String
-where
-    T: ArrayContent,
-{
-    fn from(v: ByteArray<T, N>) -> String {
-        String::from(v.as_str())
-    }
-}
-
 impl<T, const N: usize> Borrow<[u8]> for ByteArray<T, N>
 where
     T: ArrayContent,

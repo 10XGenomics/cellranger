@@ -117,16 +117,18 @@ const Sample = ({
             metrics={data.metrics}
           />,
         )}
-        {optionalTab(
-          TabTitle.Annotate,
-          data.data.cell_annotation_tab,
-
-          <Annotate
-            content={data.data.cell_annotation_tab?.content}
-            experimentalDesign={experimentalDesign}
-            metrics={data.metrics}
-          />,
-        )}
+        {data.data.cell_annotation_tabs &&
+          data.data.cell_annotation_tabs.map((cellAnnotationTab) => {
+            return optionalTab(
+              cellAnnotationTab.content.title,
+              cellAnnotationTab,
+              <Annotate
+                content={cellAnnotationTab.content}
+                experimentalDesign={experimentalDesign}
+                metrics={data.metrics}
+              />,
+            );
+          })}
       </Tabs>
     </article>
   );

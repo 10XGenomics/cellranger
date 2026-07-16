@@ -107,8 +107,12 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
         let mut vdj_bc_hist = SimpleHistogram::default();
 
         for sdef in &gex_sample_def {
-            let this_hist =
-                sample_valid_barcodes(sdef, gex_chemistry_def.barcode_range().gel_bead(), &wl)?;
+            let this_hist = sample_valid_barcodes(
+                sdef,
+                gex_chemistry_def.barcode_range().gel_bead(),
+                None,
+                &wl,
+            )?;
             gex_bc_hist.merge(this_hist);
         }
 
@@ -116,6 +120,7 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
             let this_hist = sample_valid_barcodes(
                 sdef,
                 args.vdj_chemistry_def.barcode_range().gel_bead(),
+                None,
                 &wl,
             )?;
             vdj_bc_hist.merge(this_hist);
@@ -152,8 +157,9 @@ impl MartianMain for CheckBarcodesCompatibilityVdj {
 #[cfg(test)]
 mod barcode_compatibility_tests {
     use super::*;
-    use cr_types::sample_def::FastqMode;
+    use cr_types::sample_def::{FastqMode, SampleDefBuilder};
     use insta::assert_debug_snapshot;
+    use std::path::PathBuf;
 
     fn gex_chem_map(name: ChemistryName) -> ChemistryDefs {
         [(LibraryType::Gex, ChemistryDef::named(name))]
@@ -165,16 +171,17 @@ mod barcode_compatibility_tests {
     fn test_invalid_gex_chemistry() {
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::VdjAuto),
-                ..Default::default()
-            }],
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::VdjAuto)
+                    .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::ThreePrimeV1),
-            gex_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::Gex),
-                ..Default::default()
-            }],
-
+            gex_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::Gex)
+                    .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -182,16 +189,17 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::VdjAuto),
-                ..Default::default()
-            }],
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::VdjAuto)
+                    .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::ThreePrimeV2),
-            gex_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::Gex),
-                ..Default::default()
-            }],
-
+            gex_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::Gex)
+                    .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -199,16 +207,17 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::VdjAuto),
-                ..Default::default()
-            }],
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::VdjAuto)
+                    .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::ThreePrimeV3PolyA),
-            gex_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::Gex),
-                ..Default::default()
-            }],
-
+            gex_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::Gex)
+                    .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -219,21 +228,22 @@ mod barcode_compatibility_tests {
     fn test_fb_only() {
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::VdjAuto),
-                ..Default::default()
-            }],
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::VdjAuto)
+                    .build(),
+            ],
             count_chemistry_defs: [(
                 LibraryType::Antibody,
                 ChemistryDef::named(ChemistryName::FeatureBarcodingOnly),
             )]
             .into_iter()
             .collect(),
-            gex_sample_def: vec![SampleDef {
-                library_type: Some(LibraryType::Antibody),
-                ..Default::default()
-            }],
-
+            gex_sample_def: vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::Antibody)
+                    .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args).unwrap();
@@ -244,30 +254,31 @@ mod barcode_compatibility_tests {
     fn test_valid_pair() {
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018272"
                         .into(),
-                sample_names: Some(vec!["1018272_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["AGAATGGTTT".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018272_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["AGAATGGTTT"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017703"
                         .into(),
-                sample_names: Some(vec!["1017703_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TATCAGCCTA".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017703_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TATCAGCCTA"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -275,30 +286,31 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018288"
                         .into(),
-                sample_names: Some(vec!["1018288_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["ATGGGTGAAA".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018288_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["ATGGGTGAAA"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017703"
                         .into(),
-                sample_names: Some(vec!["1017703_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TATCAGCCTA".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017703_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TATCAGCCTA"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -306,30 +318,31 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018274"
                         .into(),
-                sample_names: Some(vec!["1018274_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["CACAATCCCA".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018274_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["CACAATCCCA"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017705"
                         .into(),
-                sample_names: Some(vec!["1017705_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TGTCCCAACG".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017705_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TGTCCCAACG"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -337,30 +350,31 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018290"
                         .into(),
-                sample_names: Some(vec!["1018290_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["TCCGGGACAA".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018290_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["TCCGGGACAA"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017705"
                         .into(),
-                sample_names: Some(vec!["1017705_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TGTCCCAACG".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017705_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TGTCCCAACG"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -371,30 +385,31 @@ mod barcode_compatibility_tests {
     fn test_invalid_pair() {
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018290"
                         .into(),
-                sample_names: Some(vec!["1018290_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["TCCGGGACAA".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018290_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["TCCGGGACAA"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017703"
                         .into(),
-                sample_names: Some(vec!["1017703_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TATCAGCCTA".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017703_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TATCAGCCTA"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -402,30 +417,31 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018274"
                         .into(),
-                sample_names: Some(vec!["1018274_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["CACAATCCCA".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018274_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["CACAATCCCA"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017703"
                         .into(),
-                sample_names: Some(vec!["1017703_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TATCAGCCTA".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017703_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TATCAGCCTA"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -433,30 +449,31 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018272"
                         .into(),
-                sample_names: Some(vec!["1018272_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["AGAATGGTTT".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018272_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["AGAATGGTTT"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017705"
                         .into(),
-                sample_names: Some(vec!["1017705_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TGTCCCAACG".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017705_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TGTCCCAACG"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);
@@ -464,30 +481,31 @@ mod barcode_compatibility_tests {
 
         let args = CheckBarcodesCompatibilityVdjStageInputs {
             vdj_chemistry_def: ChemistryDef::named(ChemistryName::VdjPE),
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1018288"
                         .into(),
-                sample_names: Some(vec!["1018288_PBMC_1k_v2_UserB_tcr".into()]),
-                sample_indices: Some(vec!["ATGGGTGAAA".into()]),
-                library_type: Some(LibraryType::VdjAuto),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
+                )
+                .sample_names(vec!["1018288_PBMC_1k_v2_UserB_tcr"])
+                .sample_indices(vec!["ATGGGTGAAA"])
+                .library_type(LibraryType::VdjAuto)
+                .lanes(vec![2])
+                .build(),
+            ],
             count_chemistry_defs: gex_chem_map(ChemistryName::FivePrimeR2),
-            gex_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path:
+            gex_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
                     "../dui_tests/test_resources/cellranger-count/barcode_matching_vdj_gex/1017705"
                         .into(),
-                sample_names: Some(vec!["1017705_PBMC_1k_v2_UserB_gex".into()]),
-                sample_indices: Some(vec!["TGTCCCAACG".into()]),
-                library_type: Some(LibraryType::Gex),
-                lanes: Some(vec![2]),
-                ..Default::default()
-            }],
-
+                )
+                .sample_names(vec!["1017705_PBMC_1k_v2_UserB_gex"])
+                .sample_indices(vec!["TGTCCCAACG"])
+                .library_type(LibraryType::Gex)
+                .lanes(vec![2])
+                .build(),
+            ],
             check_library_compatibility: true,
         };
         let outs = CheckBarcodesCompatibilityVdj.test_run_tmpdir(args);

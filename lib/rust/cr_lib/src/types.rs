@@ -1,12 +1,14 @@
 #![expect(missing_docs)]
+use crate::barcode_sort::ReadTrimmingMetrics;
 use crate::probe_barcode_matrix::ProbeCounts;
 use crate::utils::hard_link_martianfile;
-use anyhow::Error;
+use anyhow::{Error, Result};
 use barcode::{Barcode, barcode_string};
 use cr_h5::count_matrix::CountMatrixFile;
-use cr_types::reference::feature_reference::FeatureReference;
+use cr_types::chemistry::{ChemistryDef, IndexScheme};
 use cr_types::rna_read::RnaRead;
-use cr_types::{LibraryType, SampleAssignment};
+use cr_types::{GeneticDemuxParams, LibraryType, SampleAssignment};
+use itertools::Itertools;
 use json_report_derive::JsonReport;
 use martian::MartianRover;
 use martian_derive::{MartianStruct, MartianType, martian_filetype};
@@ -15,7 +17,55 @@ use martian_filetypes::json_file::JsonFormat;
 use martian_filetypes::tabular_file::CsvFile;
 use metric::{PercentMetric, TxHashMap};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+#[derive(Clone, Default, Serialize, Deserialize, MartianType)]
+pub struct MultiParams {
+    #[serde(default)]
+    pub(crate) initial_reads: Option<usize>,
+    #[serde(default)]
+    pub(crate) subsample_rate: Option<f64>,
+    #[serde(default)]
+    pub(crate) primers: Vec<Value>,
+    #[serde(default)]
+    pub(crate) index_schemes: HashMap<LibraryType, IndexScheme>,
+    #[serde(default)]
+    pub(crate) barcode_whitelist: Option<String>,
+    #[serde(default)]
+    pub(crate) special_genomic_regions: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) genetic_demux_params: Option<GeneticDemuxParams>,
+}
+
+/// Build the map of custom chemistry definitions, keyed by library type,
+/// from the user-supplied index schemes and barcode whitelist.
+pub(crate) fn index_schemes_to_custom_chemistry_defs(
+    index_schemes: &HashMap<LibraryType, IndexScheme>,
+    barcode_whitelist: Option<&str>,
+) -> Result<HashMap<LibraryType, ChemistryDef>> {
+    index_schemes
+        .iter()
+        .map(|(&lib_type, index_scheme)| {
+            anyhow::Ok((
+                lib_type,
+                index_scheme.clone().into_chemistry_def(
+                    barcode_whitelist.expect("Barcode Set is required for custom chemistry"),
+                )?,
+            ))
+        })
+        .try_collect()
+}
+
+impl MultiParams {
+    pub(crate) fn to_custom_chemistry_defs(&self) -> Result<HashMap<LibraryType, ChemistryDef>> {
+        index_schemes_to_custom_chemistry_defs(
+            &self.index_schemes,
+            self.barcode_whitelist.as_deref(),
+        )
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, MartianType)]
 pub struct Primer {
@@ -100,6 +150,9 @@ pub struct SequencingMetrics {
     pub q30_umi: PercentMetric,
     pub q30_read1: PercentMetric,
     pub q30_read2: Option<PercentMetric>,
+    pub sequencing_platform: Option<String>,
+    #[json_report(inline)]
+    pub read_trimming_metrics: Option<ReadTrimmingMetrics>,
 }
 
 // Shardio file containing BcUmiInfo records, sorted by barcode
@@ -119,10 +172,6 @@ martian_filetype!(FastqFile, "fastq");
 // Traditional BAM file
 martian_filetype!(BamFile, "bam");
 martian_filetype!(BcListFile, "bcl");
-
-// Feature reference file, holding a bincode/serde serialized `FeatureReference`
-martian_filetype!(_FeatureReferenceFile, "frf");
-pub type FeatureReferenceFormat = BinaryFormat<_FeatureReferenceFile, FeatureReference>;
 
 pub(super) type PerLibrarySequencingMetrics = TxHashMap<LibraryType, Vec<SequencingMetrics>>;
 

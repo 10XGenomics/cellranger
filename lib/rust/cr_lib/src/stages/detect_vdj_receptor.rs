@@ -6,8 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use cr_types::reference::feature_reference::{BeamMode, FeatureConfig, FeatureReferenceFile};
 use cr_types::sample_def::SampleDef;
 use cr_types::{ERROR_CODE_INFO, LibraryType};
-use fastq_set::read_pair::{ReadPart, WhichRead};
-use fastq_set::read_pair_iter::ReadPairIter;
+use fastq_set::read_pair::{ReadHeader, ReadPart, WhichRead};
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{MartianStruct, make_mro};
@@ -188,7 +187,10 @@ impl MartianMain for DetectVdjReceptor {
         let vdj_ref = VdjReference::from_reference_folder(&args.vdj_reference_path.unwrap())?;
         let receptor_classifier = KmerClassify::<VdjReceptor>::new(&vdj_ref);
 
-        let units = detect_chemistry_units(&args.vdj_sample_def, None, None)?;
+        let units: Vec<_> = detect_chemistry_units(&args.vdj_sample_def, None, None)?
+            .into_values()
+            .flatten()
+            .collect();
         let resolution_text = match args.is_multi {
             true => {
                 "Please specify the feature_types more specifically as either VDJ-T or VDJ-B. \
@@ -202,8 +204,9 @@ impl MartianMain for DetectVdjReceptor {
         for unit in &units {
             let mut stats = ClassificationStats::default();
             for fastq in &unit.fastqs {
-                for read_pair in
-                    ReadPairIter::from_fastq_files(fastq)?.take(MAX_READS_RECEPTOR_CLASSIFICATION)
+                for read_pair in fastq
+                    .read_iter(ReadHeader::KeepId, None)?
+                    .take(MAX_READS_RECEPTOR_CLASSIFICATION)
                 {
                     stats.total_reads += 1;
                     match receptor_classifier
@@ -257,7 +260,7 @@ impl MartianMain for DetectVdjReceptor {
 mod tests {
     use super::*;
     use cr_types::reference::feature_reference::SpecificityControls;
-    use cr_types::sample_def::FastqMode;
+    use cr_types::sample_def::{FastqMode, SampleDefBuilder};
     use dui_tests::stage_test::StageFailTest;
     use dui_tests::{DuiTest, stage_fail_dui_test};
     use std::collections::HashMap;
@@ -306,13 +309,14 @@ mod tests {
             ),
             feature_reference: None,
             gex_sample_def: None,
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_mm_pbmc4_b_26x91"
-                    .into(),
-                sample_names: Some(vec!["vdj_v1_mm_pbmc4_b_26x91".into()]),
-                ..Default::default()
-            }],
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_mm_pbmc4_b_26x91".into(),
+                )
+                .sample_names(vec!["vdj_v1_mm_pbmc4_b_26x91"])
+                .build(),
+            ],
             is_multi: false,
             feature_config: None,
         };
@@ -329,12 +333,14 @@ mod tests {
             ),
             feature_reference: None,
             gex_sample_def: None,
-            vdj_sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into(),
-                sample_names: Some(vec!["vdj_v1_hs_pbmc3_t".into()]),
-                ..Default::default()
-            }],
+            vdj_sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into(),
+                )
+                .sample_names(vec!["vdj_v1_hs_pbmc3_t"])
+                .build(),
+            ],
             is_multi: false,
             feature_config: None,
         };
@@ -357,13 +363,13 @@ mod tests {
                 ),
                 feature_reference: None,
                 gex_sample_def: None,
-                vdj_sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-120-01".into()]),
-                    ..Default::default()
-                }],
+                vdj_sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k".into()
+                    )
+                    .sample_names(vec!["CR-120-01"])
+                    .build()],
                 is_multi: false,
                 feature_config: None,
             },
@@ -387,13 +393,10 @@ mod tests {
                 ),
                 feature_reference: None,
                 gex_sample_def: None,
-                vdj_sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-120-01".into()]),
-                    ..Default::default()
-                }],
+                vdj_sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k".into()
+                ).sample_names(vec!["CR-120-01"]).build()],
                 is_multi: true,
                 feature_config: None,
             },
@@ -415,21 +418,14 @@ mod tests {
                 ),
                 feature_reference: None,
                 gex_sample_def: None,
-                vdj_sample_def: vec![
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t"
-                            .into(),
-                        sample_names: Some(vec!["vdj_v1_hs_pbmc3_t".into()]),
-                        ..Default::default()
-                    },
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_b"
-                            .into(),
-                        sample_names: Some(vec!["vdj_v1_hs_pbmc3_b".into()]),
-                        ..Default::default()
-                    },
+                vdj_sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into()
+                ).sample_names(vec!["vdj_v1_hs_pbmc3_t"]).build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_b".into()
+                ).sample_names(vec!["vdj_v1_hs_pbmc3_b"]).build()
                 ],
                 is_multi: false,
                 feature_config: None,
@@ -450,16 +446,11 @@ mod tests {
                     "../dui_tests/test_resources/reference/vdj_GRCh38_alts_ensembl-4.0.0".into(),
                 ),
                 feature_reference: Some("test/multi/beam/feature_beam_t.csv".into()),
-                gex_sample_def: Some(vec![SampleDef {
-                    library_type: Some(LibraryType::Antigen),
-                    ..Default::default()
-                }]),
-                vdj_sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_b".into(),
-                    sample_names: Some(vec!["vdj_v1_hs_pbmc3_b".into()]),
-                    ..Default::default()
-                }],
+                gex_sample_def: Some(vec![SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new()).library_type(LibraryType::Antigen).build()]),
+                vdj_sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_b".into()
+                ).sample_names(vec!["vdj_v1_hs_pbmc3_b"]).build()],
                 is_multi: true,
                 feature_config: Some(FeatureConfig {
                     specificity_controls: Some(SpecificityControls{

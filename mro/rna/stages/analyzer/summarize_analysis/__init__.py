@@ -62,26 +62,32 @@ def main(args, outs):
 
         matrix.copy(matrix[name], out, name="matrix")
 
-    h5s_to_combine = [args.pca_h5, args.clustering_h5, args.diffexp_h5, args.umap_h5]
-    if args.tsne_h5:
-        h5s_to_combine.append(args.tsne_h5)
+    h5s_to_combine = [
+        x
+        for x in (args.pca_h5, args.clustering_h5, args.diffexp_h5, args.umap_h5, args.tsne_h5)
+        if x
+    ]
     cr_h5.combine_h5s_into_one(analysis_h5, h5s_to_combine)
 
-    pca_dir = os.path.join(outs.analysis_csv, "pca")
-    cr_io.hardlink_with_fallback(args.pca_csv, pca_dir)
+    if args.pca_csv:
+        pca_dir = os.path.join(outs.analysis_csv, "pca")
+        cr_io.hardlink_with_fallback(args.pca_csv, pca_dir)
 
-    clustering_dir = os.path.join(outs.analysis_csv, "clustering")
-    cr_io.hardlink_with_fallback(args.clustering_csv, clustering_dir)
+    if args.clustering_csv:
+        clustering_dir = os.path.join(outs.analysis_csv, "clustering")
+        cr_io.hardlink_with_fallback(args.clustering_csv, clustering_dir)
 
-    diffexp_dir = os.path.join(outs.analysis_csv, "diffexp")
-    cr_io.hardlink_with_fallback(args.diffexp_csv, diffexp_dir)
+    if args.diffexp_csv:
+        diffexp_dir = os.path.join(outs.analysis_csv, "diffexp")
+        cr_io.hardlink_with_fallback(args.diffexp_csv, diffexp_dir)
 
     if args.tsne_csv:
         tsne_dir = os.path.join(outs.analysis_csv, "tsne")
         cr_io.hardlink_with_fallback(args.tsne_csv, tsne_dir)
 
-    umap_dir = os.path.join(outs.analysis_csv, "umap")
-    cr_io.hardlink_with_fallback(args.umap_csv, umap_dir)
+    if args.umap_csv:
+        umap_dir = os.path.join(outs.analysis_csv, "umap")
+        cr_io.hardlink_with_fallback(args.umap_csv, umap_dir)
 
     summary = {}
 

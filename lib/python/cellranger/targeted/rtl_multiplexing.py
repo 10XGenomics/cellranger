@@ -4,15 +4,20 @@
 """Utils for dealing with RTL multiplexing."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def _get_barcode_length(barcode_def: list[dict[str, str | int]], barcode_kind: str) -> int | None:
+if TYPE_CHECKING:
+    from cellranger.mro_types.structs import BarcodeReadComponent, WhitelistSpec
+
+
+def _get_barcode_length(barcode_def: list[BarcodeReadComponent], barcode_kind: str) -> int | None:
     for barcode in barcode_def:
         if barcode["kind"] == barcode_kind:
             return barcode["length"]
     return None
 
 
-def get_barcode_locations(barcode_def: list[dict[str, str | int]]) -> tuple[
+def get_barcode_locations(barcode_def: list[BarcodeReadComponent]) -> tuple[
     tuple[int | None, int | None],
     tuple[int | None, int | None],
     tuple[int | None, int | None],
@@ -57,7 +62,7 @@ def get_barcode_locations(barcode_def: list[dict[str, str | int]]) -> tuple[
     return ((gb_start, gb_end), (lhs_start, lhs_end), (rhs_start, rhs_end))
 
 
-def get_probe_bc_defn(barcode_def: list[dict[str, str | int]]) -> tuple[int | None, int | None]:
+def get_probe_bc_defn(barcode_def: list[BarcodeReadComponent]) -> tuple[int | None, int | None]:
     """Returns the offset and length of probe bc if one exists within a cell barcode.
 
     Args:
@@ -79,8 +84,8 @@ def get_probe_bc_defn(barcode_def: list[dict[str, str | int]]) -> tuple[int | No
 
 
 def get_probe_bc_whitelist(
-    barcode_def: list[dict[str, dict[str, str]]],
-) -> dict[str, str]:
+    barcode_def: list[BarcodeReadComponent],
+) -> WhitelistSpec:
     """Returns the whitelist spec of the probe barcodes.
 
     Args:

@@ -46,7 +46,7 @@ impl MartianStage for RunPca2 {
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
         let (num_features, num_cells, nnz) = h5::matrix_shape(&args.matrix_h5)?;
-        let mem_gib = 15 + (125 * nnz as usize).div_ceil(1024 * 1024 * 1024);
+        let mem_gib = 24 + (140 * nnz as usize).div_ceil(1024 * 1024 * 1024);
         println!("num_features={num_features},num_cells={num_cells},nnz={nnz},mem_gib={mem_gib}");
         Ok(StageDef::with_join_resource(
             Resource::with_mem_gb(mem_gib as isize).threads(4),

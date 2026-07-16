@@ -2,11 +2,17 @@
 [dependencies.debruijn]
 workspace = true
 
+[dependencies.digest-io]
+workspace = true
+
 [dependencies.flate2]
 workspace = true
 
 [dependencies.io_utils]
 path = '../io_utils'
+
+[dependencies.itertools]
+workspace = true
 
 [dependencies.sha2]
 workspace = true

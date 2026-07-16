@@ -43,7 +43,7 @@ fn is_two_part_joint_extraction(chemistry_def: &ChemistryDef) -> bool {
     }
 
     match chemistry_def.barcode_construct() {
-        BarcodeConstruct::Segmented(segments) if segments.is_two_part() => {
+        BarcodeConstruct::SpatialSegmented(segments) if segments.is_two_part() => {
             let slide_names: Vec<_> = segments
                 .into_iter()
                 .filter_map(|s| s.whitelist().slide_name())

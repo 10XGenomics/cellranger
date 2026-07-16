@@ -13,7 +13,10 @@ mod multi_graph;
 
 use crate::barcode_counter::counts_per_barcode;
 use crate::compute_extra_multiplexing_metrics::tag_read_counts;
-use crate::diff_exp::{compute_sseq_params_o3, sseq_differential_expression_o3};
+use crate::diff_exp::{
+    batch_perturbation_de_o3, compute_sseq_params_o3, nb_de_from_stats_o3,
+    sseq_differential_expression_o3,
+};
 use crate::feature_collection_geojson_validator::FeatureCollectionGeoJson;
 use crate::gdna_analysis::count_umis_per_probe;
 use crate::matrix::load_matrix_by_filtered_feature_type;
@@ -56,7 +59,7 @@ fn reads_per_feature(
     _py: Python<'_>,
     path: String,
     separate_by_cell_call: bool,
-) -> PyResult<(Vec<u32>, Vec<String>, Vec<&'static str>, Option<Vec<u32>>)> {
+) -> (Vec<u32>, Vec<String>, Vec<&'static str>, Option<Vec<u32>>) {
     // Sum up all the read counts for a list of features, returning a tuple of
     // cnts, feature_id, feature_type
     // method is inefficient because it parses all data columns in mol_info but only uses 2,
@@ -81,7 +84,7 @@ fn reads_per_feature(
         .feature_ref
         .feature_defs
         .iter()
-        .map(|feat| feat.id.to_string())
+        .map(|feat| feat.id.clone())
         .collect();
     let feature_types = iterator
         .feature_ref
@@ -119,7 +122,7 @@ fn reads_per_feature(
         }
     });
     let cell_cnts = cell_bcs_cnts.map(|(_, y)| y.to_vec());
-    Ok((cnts.to_vec(), feature_names, feature_types, cell_cnts))
+    (cnts.to_vec(), feature_names, feature_types, cell_cnts)
 }
 
 #[pyfunction]
@@ -137,28 +140,66 @@ fn get_gex_barcode_cnts(py: Python<'_>, file_path: String) -> Vec<(Bound<'_, PyB
         .unwrap()
 }
 
-/// Given path to a Feature Barcode Matrix and a library type, gets the  UMIs in that
-/// library per barcode. Does not load the entire matrix into memory
+/// Get per bacode UMIs in a library without loading the matrix into memory.
+/// Given path to a Feature Barcode Matrix and a library type, gets the UMIs in that
+/// library per barcode. Does not load the entire matrix into memory.
+/// `tag_type` is an optional feature tag to further filter features within the library.
 #[pyfunction]
+#[pyo3(signature = (matrix_path, library, tag_type=None))]
 fn per_barcode_umis_in_library(
     _py: Python<'_>,
-    matrix_path: String,
-    library: String,
+    matrix_path: &str,
+    library: &str,
+    tag_type: Option<&str>,
 ) -> PyResult<HashMap<String, i64>> {
-    let fbm_path = Path::new(&matrix_path);
-    let library_type = FeatureType::from_str(&library).map_err(PyAnyhowError::from)?;
+    let fbm_path = Path::new(matrix_path);
+    let feature_type = FeatureType::from_str(library).map_err(PyAnyhowError::from)?;
     let fbm = CountMatrixFile::from_path(fbm_path)
         .read_streaming()
         .map_err(PyAnyhowError::from)?;
     let per_bc_counts: Result<HashMap<_, _>, _> = fbm
-        .barcode_counts_for_feature_type(library_type)
+        .filtered_barcode_counts(|count| {
+            count.feature.feature_type == feature_type
+                && tag_type.is_none_or(|tag_type| count.feature.tags.contains_key(tag_type))
+        })
         .map_err(PyAnyhowError::from)?
         .map(|x| {
-            let y = x.map_err(PyAnyhowError::from)?;
-            Ok((String::from(y.0.as_str()), y.1))
+            let (barcode, count) = x.map_err(PyAnyhowError::from)?;
+            Ok((barcode.to_string(), count))
         })
         .collect();
     per_bc_counts
+}
+
+/// Get tottal UMIs in a library without loading the matrix into memory.
+/// Given path to a Feature Barcode Matrix and a library type, gets the total UMIs in that
+/// library. Does not load the entire matrix into memory.
+/// `tag_type` is an optional feature tag to further filter features within the library.
+#[pyfunction]
+#[pyo3(signature = (matrix_path, library, tag_type=None))]
+fn total_umis_in_library(
+    _py: Python<'_>,
+    matrix_path: &str,
+    library: &str,
+    tag_type: Option<&str>,
+) -> PyResult<i64> {
+    let fbm_path = Path::new(matrix_path);
+    let feature_type = FeatureType::from_str(library).map_err(PyAnyhowError::from)?;
+    let fbm = CountMatrixFile::from_path(fbm_path)
+        .read_streaming()
+        .map_err(PyAnyhowError::from)?;
+    let total_umis_in_library: PyResult<i64> = fbm
+        .filtered_barcode_counts(|count| {
+            count.feature.feature_type == feature_type
+                && tag_type.is_none_or(|tag_type| count.feature.tags.contains_key(tag_type))
+        })
+        .map_err(PyAnyhowError::from)?
+        .map(|x| {
+            let y = x.map_err(PyAnyhowError::from)?;
+            Ok(y.1)
+        })
+        .sum();
+    total_umis_in_library
 }
 
 #[pyfunction]
@@ -213,11 +254,14 @@ fn fast_utils(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_gex_barcode_cnts, m)?)?;
     m.add_function(wrap_pyfunction!(count_umis_per_probe, m)?)?;
     m.add_function(wrap_pyfunction!(per_barcode_umis_in_library, m)?)?;
+    m.add_function(wrap_pyfunction!(total_umis_in_library, m)?)?;
     m.add_function(wrap_pyfunction!(get_streaming_fbc_mem_gb_estimate, m)?)?;
     m.add_function(wrap_pyfunction!(count_reads_and_reads_in_cells, m)?)?;
     m.add_function(wrap_pyfunction!(count_usable_reads, m)?)?;
     m.add_function(wrap_pyfunction!(sseq_differential_expression_o3, m)?)?;
     m.add_function(wrap_pyfunction!(compute_sseq_params_o3, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_perturbation_de_o3, m)?)?;
+    m.add_function(wrap_pyfunction!(nb_de_from_stats_o3, m)?)?;
     m.add_function(wrap_pyfunction!(validate_feature_collection_geojson, m)?)?;
     m.add_function(wrap_pyfunction!(validate_reference, m)?)?;
     m.add_function(wrap_pyfunction!(merge_probe_sets, m)?)?;

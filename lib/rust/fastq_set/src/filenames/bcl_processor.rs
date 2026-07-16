@@ -1,9 +1,8 @@
 //! Utilities for finding groups of FASTQ produced by the legacy `demux` pipeline from 10x Genomics.
 #![expect(missing_docs)]
 
-use super::FindFastqs;
 use crate::filenames::{LaneMode, LaneSpec};
-use crate::read_pair_iter::InputFastqs;
+use crate::read_pair_iter::FastqSet;
 use crate::sseq::SSeq;
 use anyhow::{Context, Result};
 use itertools::Itertools;
@@ -55,33 +54,23 @@ impl SampleIndexSpec {
 /// (now deprecated) `demux` customer command. `find_fastqs` will
 /// select the set of FASTQs in `fastq_path` with the matching
 /// sample index and lane values.
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, Debug)]
-pub struct BclProcessorFastqDef {
-    /// Path to demux / bcl_proccesor FASTQ files
-    pub fastq_path: String,
-    /// Sample index sequences to include
-    pub sample_index_spec: SampleIndexSpec,
-    /// Lanes to include
-    pub lane_spec: LaneSpec,
-}
+pub fn find_fastqs(
+    read_path: &Path,
+    sample_index_spec: &SampleIndexSpec,
+    lane_spec: &LaneSpec,
+) -> Result<Vec<FastqSet>> {
+    // get all the files in the directory
+    let all_fastq_sets = find_flowcell_fastqs(read_path)?;
+    let mut res = Vec::new();
 
-impl FindFastqs for BclProcessorFastqDef {
-    fn find_fastqs(&self) -> Result<Vec<InputFastqs>> {
-        // get all the files in the directory
-        let all_fastq_sets = find_flowcell_fastqs(&self.fastq_path)?;
-        let mut res = Vec::new();
-
-        for (bcl_proc, fastqs) in all_fastq_sets {
-            if self.sample_index_spec.matches(&bcl_proc.si)
-                && self.lane_spec.contains(bcl_proc.lane_mode())
-            {
-                res.push(fastqs);
-            }
+    for (bcl_proc, fastqs) in all_fastq_sets {
+        if sample_index_spec.matches(&bcl_proc.si) && lane_spec.contains(bcl_proc.lane_mode()) {
+            res.push(fastqs);
         }
-
-        res.sort();
-        Ok(res)
     }
+
+    res.sort();
+    Ok(res)
 }
 
 fn match_seqs_with_n(target: &[u8], observed: &[u8], ns_allowed: usize) -> bool {
@@ -149,10 +138,8 @@ impl BclProcessorFile {
     }
 }
 
-pub fn find_flowcell_fastqs(
-    path: impl AsRef<Path>,
-) -> Result<Vec<(BclProcessorFileGroup, InputFastqs)>> {
-    let mut files = get_demux_files(path.as_ref())?;
+pub(crate) fn find_flowcell_fastqs(path: &Path) -> Result<Vec<(BclProcessorFileGroup, FastqSet)>> {
+    let mut files = get_demux_files(path)?;
     files.sort();
     Ok(files
         .chunk_by(|x, y| x.group == y.group)
@@ -165,7 +152,7 @@ pub fn find_flowcell_fastqs(
                     let i1 = group_files.iter().find(|info| info.read == "I1");
                     let i2 = group_files.iter().find(|info| info.read == "I2");
 
-                    let fastqs = InputFastqs {
+                    let fastqs = FastqSet {
                         r1: ra.path_string(),
                         r2: None,
                         i1: i1.map(BclProcessorFile::path_string),
@@ -211,7 +198,7 @@ mod tests {
 
     #[test]
     fn load_dir() -> Result<()> {
-        let path = "tests/filenames/bcl_processor";
+        let path = Path::new("tests/filenames/bcl_processor");
         let fastqs = find_flowcell_fastqs(path)?;
         assert_eq!(fastqs.len(), 44);
         Ok(())
@@ -219,15 +206,10 @@ mod tests {
 
     #[test]
     fn query_all_lanes() -> Result<()> {
-        let path = "tests/filenames/bcl_processor";
+        let path = Path::new("tests/filenames/bcl_processor");
 
-        let query = BclProcessorFastqDef {
-            fastq_path: path.to_string(),
-            sample_index_spec: "TCGAATGATC".into(),
-            lane_spec: LaneSpec::Any,
-        };
+        let fqs = find_fastqs(path, &"TCGAATGATC".into(), &LaneSpec::Any)?;
 
-        let fqs = query.find_fastqs()?;
         assert_eq!(fqs.len(), 2);
         Ok(())
     }
@@ -236,13 +218,11 @@ mod tests {
     fn query_one_lane() -> Result<()> {
         let path = "tests/filenames/bcl_processor";
 
-        let query = BclProcessorFastqDef {
-            fastq_path: path.to_string(),
-            sample_index_spec: "TCGAATGATC".into(),
-            lane_spec: LaneSpec::Lanes(vec![2].into_iter().collect()),
-        };
-
-        let fqs = query.find_fastqs()?;
+        let fqs = find_fastqs(
+            Path::new(path),
+            &"TCGAATGATC".into(),
+            &LaneSpec::Lanes(vec![2].into_iter().collect()),
+        )?;
         assert_eq!(fqs.len(), 1);
         assert_eq!(
             fqs[0].r1,
@@ -253,12 +233,13 @@ mod tests {
 
     #[test]
     fn test_si_any() {
-        let bcl_proc = BclProcessorFastqDef {
-            fastq_path: "tests/filenames/bcl_processor/".to_string(),
-            sample_index_spec: SampleIndexSpec::Any,
-            lane_spec: LaneSpec::Any,
-        };
-        assert_eq!(bcl_proc.find_fastqs().unwrap().len(), 44);
+        let fqs = find_fastqs(
+            Path::new("tests/filenames/bcl_processor/"),
+            &SampleIndexSpec::Any,
+            &LaneSpec::Any,
+        )
+        .unwrap();
+        assert_eq!(fqs.len(), 44);
     }
 }
 
@@ -272,15 +253,14 @@ mod tests_from_tenkit {
     fn test_find_input_fastq_files_10x_preprocess() -> Result<()> {
         let path = "tests/filenames/bcl_processor_2";
 
-        let query = BclProcessorFastqDef {
-            fastq_path: path.to_string(),
-            sample_index_spec: "ACAGCAAC".into(),
-            lane_spec: LaneSpec::Lanes(vec![1, 2].into_iter().collect()),
-        };
+        let fqs = find_fastqs(
+            Path::new(path),
+            &"ACAGCAAC".into(),
+            &LaneSpec::Lanes(vec![1, 2].into_iter().collect()),
+        )?;
 
-        let fqs = query.find_fastqs()?;
         let expected = vec![
-            InputFastqs {
+            FastqSet {
                 r1: format!("{path}/read-RA_si-ACAGCAAC_lane-001-chunk-001.fastq.gz"),
                 r2: None,
                 i1: Some(format!(
@@ -291,7 +271,7 @@ mod tests_from_tenkit {
                 )),
                 r1_interleaved: true,
             },
-            InputFastqs {
+            FastqSet {
                 r1: format!("{path}/read-RA_si-ACAGCAAC_lane-002-chunk-000.fastq.gz"),
                 r2: None,
                 i1: Some(format!(
@@ -312,13 +292,12 @@ mod tests_from_tenkit {
     #[test]
     fn test_ra_missing() -> Result<()> {
         let path = "tests/filenames/bcl_processor_3";
-        let query = BclProcessorFastqDef {
-            fastq_path: path.to_string(),
-            sample_index_spec: "ACAGCAAC".into(),
-            lane_spec: LaneSpec::Lanes(vec![1, 2].into_iter().collect()),
-        };
-        let fastqs = query.find_fastqs()?;
-        let expected = vec![InputFastqs {
+        let fastqs = find_fastqs(
+            Path::new(path),
+            &"ACAGCAAC".into(),
+            &LaneSpec::Lanes(vec![1, 2].into_iter().collect()),
+        )?;
+        let expected = vec![FastqSet {
             r1: format!("{path}/read-RA_si-ACAGCAAC_lane-001-chunk-001.fastq.gz"),
             r2: None,
             i1: Some(format!(

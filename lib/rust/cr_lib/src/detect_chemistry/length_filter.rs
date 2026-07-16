@@ -3,6 +3,7 @@ use super::chemistry_filter::{ChemistryFilter, DetectChemistryUnit};
 use super::errors::DetectChemistryErrors;
 use crate::detect_chemistry::chemistry_filter::DetectChemistryCandidates;
 use anyhow::Result;
+use cr_types::LibraryType;
 use cr_types::chemistry::{ChemistryDef, ChemistryName};
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile, FeatureType};
 use fastq_set::WhichRead;
@@ -13,6 +14,7 @@ use std::fmt;
 pub(crate) const WHICH_LEN_READS: [WhichRead; 3] = [WhichRead::R1, WhichRead::R2, WhichRead::I1];
 
 pub(crate) struct LengthFilter {
+    library_type: LibraryType,
     min_feature_read_lengths: TxHashMap<FeatureType, TxHashMap<WhichRead, usize>>,
 }
 
@@ -70,33 +72,31 @@ impl ChemistryFilter for LengthFilter {
             Ok(compatible_chems)
         }
     }
-}
 
-impl LengthFilter {
-    /// If the consensus set of chemistries contains a PE option, remove the
+    /// If the set of chemistries contains a PE option, remove the
     /// single-ended option from the input collection.
-    pub(crate) fn post_process_pe(
-        consensus: &DetectChemistryCandidates,
-        result: &mut DetectChemistryCandidates,
-    ) {
+    fn post_process(&self, result: &mut DetectChemistryCandidates) {
         use ChemistryName::{
             FivePrimePE, FivePrimePEV3, FivePrimeR2, FivePrimeR2V3, VdjPE, VdjPEV3, VdjR2, VdjR2V3,
         };
-        if consensus.contains_key(&FivePrimePE) {
+        if result.contains_key(&FivePrimePE) {
             result.remove(&FivePrimeR2);
         }
-        if consensus.contains_key(&FivePrimePEV3) {
+        if result.contains_key(&FivePrimePEV3) {
             result.remove(&FivePrimeR2V3);
         }
-        if consensus.contains_key(&VdjPE) {
+        if result.contains_key(&VdjPE) {
             result.remove(&VdjR2);
         }
-        if consensus.contains_key(&VdjPEV3) {
+        if result.contains_key(&VdjPEV3) {
             result.remove(&VdjR2V3);
         }
     }
+}
 
+impl LengthFilter {
     pub(crate) fn new(
+        library_type: LibraryType,
         feature_ref: Option<&FeatureReferenceFile>,
         feature_config: Option<&FeatureConfig>,
     ) -> Result<Self> {
@@ -106,6 +106,7 @@ impl LengthFilter {
             TxHashMap::default()
         };
         Ok(LengthFilter {
+            library_type,
             min_feature_read_lengths,
         })
     }
@@ -149,7 +150,7 @@ impl LengthFilter {
                 .collect(),
         };
 
-        let min_lengths = if let Some(feature_type) = unit.library_type.feature_barcode_type() {
+        let min_lengths = if let Some(feature_type) = self.library_type.feature_barcode_type() {
             // non-gene feature types get evaluated against the feature reference
             let Some(min_lengths) = self
                 .min_feature_read_lengths

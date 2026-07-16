@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import martian
 import numpy as np
@@ -20,6 +21,9 @@ import tenkit.safe_json as tk_safe_json
 import tenkit.stats as tk_stats
 from cellranger.matrix import CountMatrix
 from cellranger.molecule_counter import MoleculeCounter
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage WRITE_MATRICES(
@@ -45,7 +49,35 @@ stage WRITE_MATRICES(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """WRITE_MATRICES stage inputs."""
+
+    sample_defs: list[dict]  # TODO: be more specific with the type here
+    gem_group_index: dict  # TODO: be more specific with the type here
+    molecules: mro_filetypes.h5
+    raw_matrices_h5: list[mro_filetypes.h5]
+    raw_nnz: int
+    filtered_matrices_h5: list[mro_filetypes.h5]
+    filtered_nnz: int
+    summary: mro_filetypes.json
+    is_pd: bool
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """WRITE_MATRICES stage outputs."""
+
+    raw_matrix_h5: mro_filetypes.h5
+    filtered_matrix_h5: mro_filetypes.h5
+    filtered_matrix_mex: None | mro_filetypes.path
+    barcode_summary_h5: mro_filetypes.h5  # TODO: Is this ever used?
+    summary: mro_filetypes.json
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
+
+
+def split(args: StageInputs):
     with MoleculeCounter.open(args.molecules, "r") as mc:
         num_barcodes = mc.get_barcode_list_size()
 
@@ -62,7 +94,12 @@ def split(args):
     }
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     version = martian.get_pipelines_version()
     with open(args.summary) as f:
         summary = json.load(f)

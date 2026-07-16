@@ -66,11 +66,12 @@ pub fn to_h5(probes: &[Probe], filtered_probes: &[bool], group: &mut Group) -> R
     Ok(())
 }
 
-pub fn from_h5(group: &Group, genomes: Vec<GenomeName>) -> Result<Vec<Probe>> {
+pub type ProbeMaybeWithFiltering = (Vec<Probe>, Option<Vec<bool>>);
+pub fn from_h5(group: &Group, genomes: Vec<GenomeName>) -> Result<ProbeMaybeWithFiltering> {
     //region is only optionally present
     let ds = group.dataset(PROBE_REGION);
-    let mut regions: Box<dyn Iterator<Item = Option<ProbeRegion>>> = if ds.is_ok() {
-        let regions_arr = ds.unwrap().read_1d::<FixedAscii<PROBE_DATA_LEN>>()?;
+    let mut regions: Box<dyn Iterator<Item = Option<ProbeRegion>>> = if let Ok(dataset) = ds {
+        let regions_arr = dataset.read_1d::<FixedAscii<PROBE_DATA_LEN>>()?;
         Box::new(regions_arr.into_iter().map(|x| Some(ProbeRegion::new(&x))))
     } else {
         Box::new(std::iter::repeat(None))
@@ -93,6 +94,7 @@ pub fn from_h5(group: &Group, genomes: Vec<GenomeName>) -> Result<Vec<Probe>> {
     let mut ref_sequence_names = read_str_col(group, PROBE_REF_NAME)?;
     let mut ref_sequence_positions = read_str_col(group, PROBE_REF_POS)?;
     let mut cigar_strings = read_str_col(group, PROBE_CIGAR)?;
+    let filtered_probes = read_bool_col(group, FILTERED_PROBES_NAME)?;
 
     let gene_id = gene_ids
         .next()
@@ -124,7 +126,7 @@ pub fn from_h5(group: &Group, genomes: Vec<GenomeName>) -> Result<Vec<Probe>> {
         output.push(probe);
     }
 
-    Ok(output)
+    Ok((output, filtered_probes))
 }
 
 /// Writes a bool column into the h5
@@ -182,5 +184,15 @@ fn read_str_col(group: &Group, name: &str) -> Result<Box<dyn Iterator<Item = Str
         ))
     } else {
         Ok(Box::new(std::iter::repeat(String::new())))
+    }
+}
+
+// Read a column of bools from the h5 if it exists
+fn read_bool_col(group: &Group, name: &str) -> Result<Option<Vec<bool>>> {
+    if let Ok(ds) = group.dataset(name) {
+        let data = ds.read_1d::<bool>()?;
+        Ok(Some(data.to_vec()))
+    } else {
+        Ok(None)
     }
 }

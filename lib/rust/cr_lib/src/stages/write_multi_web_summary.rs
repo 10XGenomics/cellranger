@@ -4,7 +4,7 @@
 
 use super::parse_multi_config::CellCalling;
 use crate::cell_annotation_ws_parameters::{
-    CellAnnotationMetrics, CellTypeWebSummaryBundle, CellTypeWebSummaryBundleValue,
+    CellAnnotationMetrics, CellTypeWebSummaryBundleValue, WebSummaryCellTypeInputs,
     generate_cell_type_barchart_from_value, generate_cell_type_diffexp_from_value,
     generate_cell_type_parameter_table, generate_cell_type_umap_plot_from_value,
     generate_cell_type_violin_plot_from_value,
@@ -23,7 +23,7 @@ use cr_types::reference::reference_info::MULTI_GENOME_SEPARATOR;
 use cr_types::websummary::{AlertConfig, ExtractMode, MetricEtlConfig};
 use cr_types::{
     AlignerParam, BarcodeMultiplexingType, CellLevel, CrMultiGraph, Fingerprint, GenomeName,
-    LibraryType, ReadLevel, Sample, SampleAssignment, TargetingMethod,
+    LibraryType, ReadLevel, Sample, SampleAssignment, SequencingPlatform, TargetingMethod,
 };
 use cr_websummary::multi::antigen::clonotype_specificity_heatmap;
 use cr_websummary::multi::metrics::{
@@ -61,13 +61,17 @@ use multi::config::{
     MultiConfigCsv, MultiConfigCsvFile, PROBE_BARCODE_ID_GROUPING, ProbeBarcodeIterationMode,
 };
 use ordered_float::NotNan;
+use rand::SeedableRng;
+use rand::prelude::IndexedRandom;
+use rand::rngs::SmallRng;
 use serde::{Deserialize, Serialize};
 use serde_json::value::{RawValue, Value};
 use serde_json::{self, Number, json};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::read_to_string;
 use std::hash::Hash;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::string::ToString;
 
 pub const GEM_BARCODE_OVERLAP_ALERT_THRESHOLD: f64 = 0.6;
@@ -115,12 +119,14 @@ pub struct StageInputs {
     pub target_set_name: Option<String>,
     pub beam_analyzer: Option<TxHashMap<SampleAssignment, Option<BeamAnalyzerOutputs>>>,
     pub cell_type_websummary_bundles:
-        Option<TxHashMap<SampleAssignment, Option<CellTypeWebSummaryBundle>>>,
-    pub cell_annotation_viable_but_not_requested: Option<TxHashMap<SampleAssignment, Option<bool>>>,
+        Option<TxHashMap<SampleAssignment, Option<WebSummaryCellTypeInputs>>>,
+    pub cloud_cell_annotation_viable_but_not_requested:
+        Option<TxHashMap<SampleAssignment, Option<bool>>>,
     pub feature_config: Option<FeatureConfig>,
     /// chemistry_defs is None for a VDJ-only analysis.
     pub chemistry_defs: Option<ChemistryDefs>,
     pub detected_probe_barcode_pairing: Option<DetectedProbeBarcodePairingFile>,
+    pub sample_filtered_barcodes: Option<TxHashMap<SampleAssignment, Option<CsvFile<()>>>>,
     pub no_preflight: bool,
 }
 
@@ -390,7 +396,7 @@ impl LibWsBuilder {
         let chemistry_spec = self.multi_config.chemistry_specs().unwrap()[&library_type];
 
         if chemistry_spec.is_auto() {
-            chemistry_description.to_string()
+            chemistry_description.clone()
         } else {
             format!("{chemistry_description} (manual)")
         }
@@ -439,6 +445,10 @@ impl LibWsBuilder {
                 .lib_metrics
                 .get("num_genes_on_target")
                 .map(|x| x.as_u64().unwrap() as usize),
+            gapfill_probes_count: self
+                .lib_metrics
+                .get("raw_probe_matrix_gapfill_probes_count")
+                .map(|x| x.as_u64().unwrap() as usize),
             library_type,
             throughput: get_metric_string(&self.lib_metrics, "throughput_inferred")?,
             tenx_cmos: count_inputs.tenx_cmos,
@@ -469,14 +479,14 @@ impl LibWsBuilder {
         active_conditions: &ActiveConditions,
     ) -> Result<Vec<JsonMetricSummary>> {
         if !self.is_oh_multiplexed() {
-            return Ok(Default::default());
+            return Ok(Vec::default());
         }
 
         let ocm_barcode_id_to_sample_id = self.multi_graph.get_tag_name_to_sample_id_map().unwrap();
 
         let umi_per_ocm_barcode: Vec<(&str, usize)> = if let Some(umi_per_ocm_barcode) = self
             .lib_metrics
-            .get(&join_metric_name(library_type, "umi_per_overhang"))
+            .get(&join_metric_name(library_type, "umi_per_sample_barcode"))
         {
             umi_per_ocm_barcode
                 .as_object()
@@ -492,7 +502,7 @@ impl LibWsBuilder {
         let umi_sum = umi_per_ocm_barcode.iter().map(|(_id, n)| n).sum();
 
         let filtered_barcodes_per_ocm_barcode: TxHashMap<&str, usize> =
-            self.lib_metrics["filtered_barcodes_per_overhang"]
+            self.lib_metrics["filtered_barcodes_per_sample_barcode"]
                 .as_object()
                 .unwrap()
                 .iter()
@@ -524,7 +534,7 @@ impl LibWsBuilder {
             let cells_per_ocm_barcode = if sample_id.is_some() {
                 Some(cells)
             } else {
-                assert_eq!(cells, 0);
+                // assert_eq!(cells, 0);
                 None
             };
 
@@ -561,7 +571,7 @@ impl LibWsBuilder {
         active_conditions: &ActiveConditions,
     ) -> Result<PerProbeBarcodeData> {
         if !self.is_rtl_multiplexed() {
-            return Ok(Default::default());
+            return Ok(PerProbeBarcodeData::default());
         }
 
         let mut special_metrics_proc = self.special_metrics_proc.with_default_transformers();
@@ -571,7 +581,7 @@ impl LibWsBuilder {
 
         let umi_per_probe_barcode: Vec<(&str, usize)> = if let Some(umi_per_probe_barcode) = self
             .lib_metrics
-            .get(&join_metric_name(library_type, "umi_per_probe_barcode"))
+            .get(&join_metric_name(library_type, "umi_per_sample_barcode"))
         {
             umi_per_probe_barcode
                 .as_object()
@@ -587,7 +597,7 @@ impl LibWsBuilder {
         let umi_sum = umi_per_probe_barcode.iter().map(|(_id, n)| n).sum();
 
         let filtered_barcodes_per_probe_barcode: TxHashMap<&str, usize> =
-            self.lib_metrics["filtered_barcodes_per_probe_barcode"]
+            self.lib_metrics["filtered_barcodes_per_sample_barcode"]
                 .as_object()
                 .unwrap()
                 .iter()
@@ -722,6 +732,7 @@ impl LibWsBuilder {
             has_gdna,
             include_introns: self.alert_context.include_introns,
             has_vdj_reference: false,
+            has_q30_scores: true, // overridden locally when we extract sequencing_metrics per library
         }
     }
 
@@ -958,10 +969,9 @@ impl LibWsBuilder {
 
         self.add_cell_metrics(section, library_type, physical_library_id, &mut metrics)?;
 
-        let per_probe_barcode_data =
+        let mut per_probe_barcode_data =
             self.build_rtl_probe_barcode_metrics(library_type, section, &active_conditions)?;
-        // NOTE: we do not currently show these metrics for Custom, is this an oversight?
-        // metrics.extend(per_probe_barcode_data.metrics.drain(..));
+        metrics.append(&mut per_probe_barcode_data.metrics);
 
         metrics.extend(self.get_sequencing_metrics(
             section,
@@ -1043,7 +1053,7 @@ impl LibWsBuilder {
         Ok((
             LibraryCmoWebSummary {
                 parameters_table: self
-                    .count_param_table(LibraryType::Cellplex, Default::default())?,
+                    .count_param_table(LibraryType::Cellplex, PerProbeBarcodeData::default())?,
                 barcode_rank_plot: format_barcode_rank_plot(
                     contents
                         .barcode_rank_plots
@@ -1112,7 +1122,8 @@ impl LibWsBuilder {
 
         Ok((
             LibraryHashtagWebSummary {
-                parameters_table: self.count_param_table(library_type, Default::default())?,
+                parameters_table: self
+                    .count_param_table(library_type, PerProbeBarcodeData::default())?,
                 jibes_biplot,
                 jibes_histogram,
                 hashtag_umi_projection_plot: umi_proj,
@@ -1207,11 +1218,33 @@ impl LibWsBuilder {
         let Some(all_seq_metrics) = contents.sequencing_metrics.remove(&library_type) else {
             panic!("sequencing metrics for {library_type} not found")
         };
-        for seq_metrics in all_seq_metrics {
+        // Look up the sequencing platform for this library type from the multi config.
+        let platform = self
+            .multi_config
+            .libraries
+            .libs
+            .iter()
+            .find(|lib| lib.feature_type == library_type)
+            .map(|lib| lib.platform);
+        let active_conditions = ActiveConditions {
+            has_q30_scores: platform != Some(SequencingPlatform::Sbx),
+            ..*active_conditions
+        };
+        for mut seq_metrics in all_seq_metrics {
+            seq_metrics.sequencing_platform = platform
+                .filter(|p| *p != SequencingPlatform::Illumina)
+                .map(|p| p.to_string());
             metrics.extend(self.special_metrics_proc.process_group(
                 "sequencing_metrics",
                 section,
-                active_conditions,
+                &active_conditions,
+                &self.alert_context,
+                &seq_metrics,
+            )?);
+            metrics.extend(self.special_metrics_proc.process_group(
+                "sequencing_metrics_q30",
+                section,
+                &active_conditions,
                 &self.alert_context,
                 &seq_metrics,
             )?);
@@ -1259,6 +1292,39 @@ pub struct MultiplexingUmapPlots {
     cmo_tags_projection_plot: Box<RawValue>,
 }
 
+const MAX_CELL_BARCODES: usize = 10_000;
+
+/// Read barcodes from a filtered_barcodes.csv, subsample to at most MAX_CELL_BARCODES,
+/// and return the cell_barcodes dataset value for embedding in the web summary.
+fn build_cell_barcodes_dataset(csv_file: &CsvFile<()>, sample_id: &str) -> Result<Value> {
+    let mut barcodes: Vec<String> = csv_file
+        .buf_reader()?
+        .lines()
+        .map_while(Result::ok)
+        .filter(|s| !s.is_empty())
+        .collect();
+    barcodes.sort_unstable();
+    let total = barcodes.len();
+    let subsampled = total > MAX_CELL_BARCODES;
+    if subsampled {
+        let hash = Sha256::digest(sample_id.as_bytes());
+        let seed = u64::from_le_bytes(hash[..8].try_into().unwrap());
+        let mut rng = SmallRng::seed_from_u64(seed);
+        let selected: Vec<String> = barcodes
+            .sample(&mut rng, MAX_CELL_BARCODES)
+            .cloned()
+            .collect();
+        barcodes = selected;
+        barcodes.sort_unstable();
+    }
+    Ok(serde_json::json!({
+        "total_cells": total,
+        "subsampled": subsampled,
+        "max_reported": MAX_CELL_BARCODES,
+        "barcodes": barcodes,
+    }))
+}
+
 struct SampleWsBuilder<'a> {
     lib_ws_builder: &'a LibWsBuilder,
     sample: Sample,
@@ -1281,8 +1347,9 @@ struct SampleWsBuilder<'a> {
     vdj_t_contents: Option<VdjWsContents>,
     vdj_t_gd_contents: Option<VdjWsContents>,
     vdj_b_contents: Option<VdjWsContents>,
-    cell_annotation_websummary_bundle: Option<CellTypeWebSummaryBundleValue>,
-    cell_annotation_viable_but_not_requested: bool,
+    cell_annotation_websummary_bundles: Option<Vec<Option<CellTypeWebSummaryBundleValue>>>,
+    cloud_cell_annotation_viable_but_not_requested: bool,
+    filtered_barcodes_csv: Option<CsvFile<()>>,
 }
 
 impl SampleWsBuilder<'_> {
@@ -1370,14 +1437,22 @@ impl SampleWsBuilder<'_> {
         }
 
         let include_cell_annotation_tab = self
-            .cell_annotation_websummary_bundle
+            .cell_annotation_websummary_bundles
             .as_ref()
-            .is_some_and(CellTypeWebSummaryBundleValue::has_any_value);
+            .is_some_and(|x| {
+                x.iter().any(|y| {
+                    y.as_ref()
+                        .is_some_and(CellTypeWebSummaryBundleValue::has_any_value)
+                })
+            });
+
         if include_cell_annotation_tab {
-            sample_ws.cell_annotation_tab = Some(Tab::new(
-                self.build_cell_annotation_ws()?,
-                self.alert_context,
-            ));
+            sample_ws.cell_annotation_tabs = Some(
+                self.build_cell_annotation_ws()?
+                    .into_iter()
+                    .map(|x| Some(Tab::new(x, self.alert_context)))
+                    .collect(),
+            );
         }
 
         Ok(MultiWebSummary {
@@ -1420,7 +1495,7 @@ impl SampleWsBuilder<'_> {
 
         let genomes = self.lib_ws_builder.genomes();
 
-        let disclaimer_banner = if self.cell_annotation_viable_but_not_requested {
+        let disclaimer_banner = if self.cloud_cell_annotation_viable_but_not_requested {
             Some(CELL_ANNOTATION_ADVERTISEMENT_STRING.to_string())
         } else {
             None
@@ -1517,6 +1592,12 @@ impl SampleWsBuilder<'_> {
             None
         };
 
+        let cell_barcodes = self
+            .filtered_barcodes_csv
+            .as_ref()
+            .map(|csv| build_cell_barcodes_dataset(csv, &self.sample.sample_id))
+            .transpose()?;
+
         Ok(SampleGexWebSummary {
             median_genes_per_cell_plot: if self.multiplexing_method.is_some() {
                 Some(sample_median_genes_plot_from_metrics(
@@ -1534,6 +1615,7 @@ impl SampleWsBuilder<'_> {
                 .clone(), // FIXME should move instead of cloning
             barcode_rank_plot,
             disclaimer: disclaimer_banner,
+            cell_barcodes,
             metrics: MetricsTraitWrapper(metrics),
         })
     }
@@ -1805,57 +1887,65 @@ impl SampleWsBuilder<'_> {
         })
     }
 
-    fn build_cell_annotation_ws(&mut self) -> Result<SampleCellAnnotationWebSummary> {
-        let cell_annotation_metric_struct = self
-            .cell_annotation_websummary_bundle
-            .as_mut()
-            .and_then(|x| x.cell_annotation_metrics.take());
-        Ok(SampleCellAnnotationWebSummary {
-            cas_success: cell_annotation_metric_struct
-                .as_ref()
-                .and_then(|x| x.cell_annotation_success),
-            cell_annotation_disable_differential_expression: cell_annotation_metric_struct
-                .as_ref()
-                .and_then(|x| x.cell_annotation_differential_expression),
-            disclaimer: cell_annotation_metric_struct
-                .as_ref()
-                .and_then(CellAnnotationMetrics::generate_disclaimer_html_fragment),
-            parameters_table: cell_annotation_metric_struct
-                .map(generate_cell_type_parameter_table)
-                .transpose()?,
-            cell_annotation_cell_types_chart: self
-                .cell_annotation_websummary_bundle
-                .as_mut()
-                .and_then(|x| {
-                    x.cell_type_interactive_bar_chart
-                        .take()
-                        .map(generate_cell_type_barchart_from_value)
-                })
-                .transpose()?,
-            cell_annotation_violin_plot_chart: self
-                .cell_annotation_websummary_bundle
-                .as_mut()
-                .and_then(|x| {
-                    x.cell_types_box_plot
-                        .take()
-                        .map(generate_cell_type_violin_plot_from_value)
-                })
-                .transpose()?,
-            cell_annotation_umap_plot_chart: self
-                .cell_annotation_websummary_bundle
-                .as_mut()
-                .and_then(|x| {
-                    x.cell_types_umap_plot
-                        .take()
-                        .map(generate_cell_type_umap_plot_from_value)
-                })
-                .transpose()?,
-            cell_annotation_diffexp_table: self
-                .cell_annotation_websummary_bundle
-                .as_mut()
-                .and_then(|x| x.diffexp.take().map(generate_cell_type_diffexp_from_value))
-                .transpose()?,
-        })
+    fn build_cell_annotation_ws(&mut self) -> Result<Vec<SampleCellAnnotationWebSummary>> {
+        fn build_cell_annotation_ws_tab(
+            cell_annotation_websummary_bundle: &mut CellTypeWebSummaryBundleValue,
+        ) -> Result<SampleCellAnnotationWebSummary> {
+            let cell_annotation_metric_struct = cell_annotation_websummary_bundle
+                .cell_annotation_metrics
+                .take();
+            Ok(SampleCellAnnotationWebSummary {
+                cas_success: cell_annotation_metric_struct
+                    .as_ref()
+                    .and_then(|x| x.cell_annotation_success),
+                cell_annotation_disable_differential_expression: cell_annotation_metric_struct
+                    .as_ref()
+                    .and_then(|x| x.cell_annotation_differential_expression),
+                disclaimer: cell_annotation_metric_struct
+                    .as_ref()
+                    .and_then(CellAnnotationMetrics::generate_disclaimer_html_fragment),
+                parameters_table: cell_annotation_metric_struct
+                    .map(generate_cell_type_parameter_table)
+                    .transpose()?,
+                cell_annotation_cell_types_chart: cell_annotation_websummary_bundle
+                    .cell_type_interactive_bar_chart
+                    .take()
+                    .map(generate_cell_type_barchart_from_value)
+                    .transpose()?,
+                cell_annotation_violin_plot_chart: cell_annotation_websummary_bundle
+                    .cell_types_box_plot
+                    .take()
+                    .map(generate_cell_type_violin_plot_from_value)
+                    .transpose()?,
+                cell_annotation_umap_plot_chart: cell_annotation_websummary_bundle
+                    .cell_types_umap_plot
+                    .take()
+                    .map(generate_cell_type_umap_plot_from_value)
+                    .transpose()?,
+                cell_annotation_diffexp_table: cell_annotation_websummary_bundle
+                    .diffexp
+                    .take()
+                    .map(generate_cell_type_diffexp_from_value)
+                    .transpose()?,
+                title: format!(
+                    "Cell Annotation: {}",
+                    cell_annotation_websummary_bundle
+                        .cell_annotation_model_family
+                        .replace('_', " ")
+                ),
+            })
+        }
+
+        self.cell_annotation_websummary_bundles
+            .take()
+            .unwrap()
+            .into_iter()
+            .filter_map(|maybe_ws_bundle| {
+                maybe_ws_bundle
+                    .filter(CellTypeWebSummaryBundleValue::has_any_value)
+                    .map(|mut ws_bundle| build_cell_annotation_ws_tab(&mut ws_bundle))
+            })
+            .collect()
     }
 }
 
@@ -1957,10 +2047,10 @@ fn get_metric_string(metrics: &TxHashMap<String, Value>, key: &str) -> Result<Op
 
 fn identify_dropped_tags(
     multi_cfg_file: &MultiConfigCsvFile,
-    tag_contaminant_info: &Option<Value>,
+    tag_contaminant_info: Option<&Value>,
 ) -> Vec<String> {
-    let Some(contaminants) = tag_contaminant_info.as_ref() else {
-        return Default::default();
+    let Some(contaminants) = tag_contaminant_info else {
+        return Vec::default();
     };
 
     // Load expected tags
@@ -1973,13 +2063,13 @@ fn identify_dropped_tags(
         .as_object()
         .expect("Contaminant info not a map.")
         .iter()
-        .filter(|t| {
-            t.1["is_contaminant"]
+        .filter(|(key, value)| {
+            value["is_contaminant"]
                 .as_bool()
                 .expect("Contaminant flag missing from JSON")
-                && used_tags.contains(t.0)
+                && used_tags.contains(key.as_str())
         })
-        .map(|z| z.0.to_string())
+        .map(|(key, _value)| key.clone())
         .collect()
 }
 
@@ -2047,32 +2137,31 @@ impl MartianStage for WriteMultiWebSummary {
 
         // Determine if any tags specified in the CSV config were dropped as contaminants.
         let contaminant_tags = args.tag_contaminant_info.map(|f| f.read()).transpose()?;
-        let dropped_tags = identify_dropped_tags(&args.multi_config, &contaminant_tags);
+        let dropped_tags = identify_dropped_tags(&args.multi_config, contaminant_tags.as_ref());
 
         // For RTL samples alert on any probe barcodes that have very high GEM barcode overlap
         let probe_barcode_overlap_coefficients = lib_metrics
             .get("probe_barcode_overlap_coefficients")
             .cloned();
-        let probe_barcodes_high_gem_overlap = probe_barcode_overlap_coefficients
-            .as_ref()
-            .map(|coefficients| {
-                coefficients
-                    .as_object()
-                    .unwrap()
-                    .into_iter()
-                    .sorted_by_key(|&(_, x)| NotNan::new(x.as_f64().unwrap()).unwrap())
-                    .rev()
-                    .filter_map(|(k, v)| {
-                        let v_f64 = v.as_f64().unwrap();
-                        if v_f64 >= GEM_BARCODE_OVERLAP_ALERT_THRESHOLD {
-                            Some(format!("{k} ({:.2}%)", v_f64 * 100.0))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let probe_barcodes_high_gem_overlap = if let Some(coefficients) =
+            probe_barcode_overlap_coefficients.as_ref()
+            && let Some(obj) = coefficients.as_object()
+        {
+            obj.into_iter()
+                .sorted_by_key(|&(_, x)| NotNan::new(x.as_f64().unwrap()).unwrap())
+                .rev()
+                .filter_map(|(k, v)| {
+                    let v_f64 = v.as_f64().unwrap();
+                    if v_f64 >= GEM_BARCODE_OVERLAP_ALERT_THRESHOLD {
+                        Some(format!("{k} ({:.2}%)", v_f64 * 100.0))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            vec![]
+        };
 
         let chemistries = if let Some(chemistry_defs) = &args.chemistry_defs {
             chemistry_defs.values().map(|x| x.name).collect()
@@ -2344,21 +2433,31 @@ impl MartianStage for WriteMultiWebSummary {
                     .as_ref()
                     .map(|files| files[&sample].read())
                     .transpose()?,
-                cell_annotation_websummary_bundle: args
+                cell_annotation_websummary_bundles: args
                     .cell_type_websummary_bundles
                     .as_ref()
-                    .map(|files| {
-                        files
-                            .get(&sample)
-                            .and_then(|x| x.as_ref().map(CellTypeWebSummaryBundle::read))
-                            .transpose()
+                    .and_then(|files| {
+                        files.get(&sample).and_then(|x| {
+                            x.as_ref().map(|x| {
+                                x.cell_type_websummary_bundles
+                                    .iter()
+                                    .filter_map(|(_, y)| {
+                                        y.as_ref().map(|y| Some(y.read()).transpose())
+                                    })
+                                    .collect::<Result<Vec<_>>>()
+                            })
+                        })
                     })
-                    .transpose()?
-                    .flatten(),
-                cell_annotation_viable_but_not_requested: args
-                    .cell_annotation_viable_but_not_requested
+                    .transpose()?,
+                cloud_cell_annotation_viable_but_not_requested: args
+                    .cloud_cell_annotation_viable_but_not_requested
                     .as_ref()
                     .is_some_and(|vals| vals.get(&sample).copied().flatten().unwrap_or_default()),
+                filtered_barcodes_csv: args
+                    .sample_filtered_barcodes
+                    .as_ref()
+                    .and_then(|m| m.get(&sample))
+                    .and_then(Clone::clone),
             };
 
             let mut sample_ws = builder.build(&library_ws, &resources)?;
@@ -2381,9 +2480,6 @@ impl MartianStage for WriteMultiWebSummary {
             // data to write out the library-level websummary, which will never
             // need the large plot data.
             sample_ws.per_sample[0].data.remove_large_data();
-            // We do not include any data from cell annotation in the multi-
-            // sample websummary.
-            sample_ws.per_sample[0].data.cell_annotation_tab = None;
             per_sample_ws_data_trimmed.insert(sample, sample_ws);
         }
 

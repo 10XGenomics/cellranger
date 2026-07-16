@@ -4,18 +4,15 @@
 use crate::filenames::bcl_processor::{self, BclProcessorFileGroup};
 use crate::filenames::bcl2fastq::{self, IlmnFastqFileGroup, SampleNameSpec};
 use crate::filenames::{LaneMode, LaneSpec};
-use crate::read_pair_iter::InputFastqs;
+use crate::read_pair_iter::FastqSet;
 use crate::sample_index_map::SAMPLE_INDEX_MAP;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use itertools::Itertools;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// TODO: This should be moved to rust-utils
-pub struct Bcl2FastqDir {
-    fastq_path: PathBuf,
-    fastq_data: Vec<(IlmnFastqFileGroup, InputFastqs)>,
-    is_lane_split: bool,
+struct Bcl2FastqDir {
+    fastq_data: Vec<(IlmnFastqFileGroup, FastqSet)>,
     samples: HashSet<String>,
 }
 
@@ -31,14 +28,12 @@ impl Bcl2FastqDir {
         if fastq_data.is_empty() {
             // The caller chooses what to do if the directory has no fastq files.
             return Ok(Bcl2FastqDir {
-                fastq_path,
                 fastq_data,
-                is_lane_split: true,
                 samples: HashSet::default(),
             });
         }
 
-        let Ok(is_lane_split) = fastq_data
+        let no_mixed_lane_split = fastq_data
             .iter()
             .map(|(g, _)| match g.lane_mode {
                 LaneMode::NoLaneSplitting => false,
@@ -46,56 +41,35 @@ impl Bcl2FastqDir {
             })
             .dedup()
             .exactly_one()
-        else {
-            bail!(
-                "Some files in the fastq path {} are split by lane, while some are not. \
+            .is_ok();
+        ensure!(
+            no_mixed_lane_split,
+            "Some files in the fastq path {} are split by lane, while some are not. \
                  This is not supported.",
-                fastq_path.display()
-            );
-        };
+            fastq_path.display()
+        );
 
         let samples = fastq_data.iter().map(|(g, _)| g.sample.clone()).collect();
 
         Ok(Bcl2FastqDir {
-            fastq_path,
             fastq_data,
-            is_lane_split,
             samples,
         })
-    }
-
-    pub fn fastq_count(&self) -> usize {
-        self.fastq_data.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.fastq_data.is_empty()
     }
 
-    pub fn contains_lane(&self, lane: usize) -> bool {
-        assert!(
-            self.is_lane_split,
-            "Fastq files in {} are generated without splitting by lane.",
-            self.fastq_path.display()
-        );
-        self.fastq_data
-            .iter()
-            .any(|(group, _)| group.lane_mode == lane.into())
-    }
-
     pub fn samples(&self) -> &HashSet<String> {
         &self.samples
-    }
-
-    pub fn fastq_data(&self) -> &[(IlmnFastqFileGroup, InputFastqs)] {
-        &self.fastq_data
     }
 
     pub fn filtered_fastq_data<'a>(
         &'a self,
         sample_name_spec: &'a SampleNameSpec,
         lane_spec: &'a LaneSpec,
-    ) -> impl Iterator<Item = &'a (IlmnFastqFileGroup, InputFastqs)> + 'a {
+    ) -> impl Iterator<Item = &'a (IlmnFastqFileGroup, FastqSet)> + 'a {
         self.fastq_data.iter().filter(move |(g, _)| {
             sample_name_spec.contains(&g.sample) && lane_spec.contains(g.lane_mode)
         })
@@ -103,27 +77,23 @@ impl Bcl2FastqDir {
 }
 
 pub struct BclProcessorDir {
-    #[expect(dead_code)]
-    fastq_path: PathBuf,
-    fastq_data: Vec<(BclProcessorFileGroup, InputFastqs)>,
+    fastq_data: Vec<(BclProcessorFileGroup, FastqSet)>,
     sample_indices: HashSet<String>,
     lanes: HashSet<usize>,
 }
 
 impl BclProcessorDir {
-    pub fn new(fastq_path: impl AsRef<Path>) -> Result<Self> {
-        let fastq_path = PathBuf::from(fastq_path.as_ref());
+    pub fn new(fastq_path: &Path) -> Result<Self> {
         if !fastq_path.exists() {
             bail!("{} does not exist", fastq_path.display());
         }
 
-        let fastq_data = bcl_processor::find_flowcell_fastqs(&fastq_path)?;
+        let fastq_data = bcl_processor::find_flowcell_fastqs(fastq_path)?;
         let (sample_indices, lanes) = fastq_data
             .iter()
             .map(|(x, _)| (x.si.clone(), x.lane))
             .unzip();
         Ok(BclProcessorDir {
-            fastq_path,
             fastq_data,
             sample_indices,
             lanes,
@@ -160,17 +130,6 @@ impl BclProcessorDir {
         }
     }
 }
-
-const FQ_HELP: &str = r#"No input FASTQs were found for the requested parameters.
-
-If your files came from bcl2fastq or mkfastq:
- - Make sure you are specifying the correct --sample(s), i.e. matching the sample sheet
- - Make sure your files follow the correct naming convention, e.g. SampleName_S1_L001_R1_001.fastq.gz (and the R2 version)
- - Make sure your --fastqs points to the correct location.
-
-Refer to the "Specifying Input FASTQs" page at https://support.10xgenomics.com/ for more details.
-
-"#;
 
 pub struct FastqChecker;
 
@@ -241,10 +200,5 @@ impl FastqChecker {
             SampleNameSpec::Names(names) => names,
             SampleNameSpec::Any => unreachable!(),
         })
-    }
-
-    /// return the default help text for *_COUNTER_* pipelines
-    pub fn count_help() -> &'static str {
-        FQ_HELP
     }
 }

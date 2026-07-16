@@ -184,7 +184,7 @@ pub fn from_h5(group: &Group) -> Result<FeatureReference> {
 
     let mut tag_datasets = HashMap::new();
     for c in &extra_tags {
-        let ds = require_string_dataset(group, c)?;
+        let ds = require_string_dataset(group, c).with_context(|| c.clone())?;
         tag_datasets.insert(c, ds);
     }
 
@@ -233,7 +233,14 @@ pub fn from_h5(group: &Group) -> Result<FeatureReference> {
                     .or_insert_with(Vec::new)
                     .push(def.index);
             }
-            FeatureType::ProteinExpression | FeatureType::Peaks => (),
+            FeatureType::ProteinExpression
+            | FeatureType::Peaks
+            | FeatureType::DeprecatedCodeword
+            | FeatureType::Unknown
+            | FeatureType::NegativeControlProbe
+            | FeatureType::NegativeControlCodeword
+            | FeatureType::UnassignedCodeword
+            | FeatureType::GenomicControl => (),
         }
     }
 
@@ -503,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_ascii_xml() -> Result<()> {
+    fn test_encode_ascii_xml() {
         // mirrors test_(de|en)code_ascii_xml in lib/python/cellranger/test/test_hdf5.py
         fn decode(mut s: &str) -> Cow<'_, str> {
             let re = Regex::new(r"^&#([1-9]\d*);").unwrap();
@@ -528,7 +535,5 @@ mod tests {
         assert_eq!("Hello, world!", decode(&encode_ascii_xml("Hello, world!")));
         assert_eq!("&#294;ello, world!", encode_ascii_xml("Ħello, world!"));
         assert_eq!("Ħello, world!", decode(&encode_ascii_xml("Ħello, world!")));
-
-        Ok(())
     }
 }

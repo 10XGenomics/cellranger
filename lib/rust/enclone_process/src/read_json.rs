@@ -73,7 +73,7 @@ fn process_json_annotation(
     to_ref_index: &HashMap<usize, usize>,
     donor_list: &[String],
 ) -> anyhow::Result<JsonParseResult> {
-    let mut res: JsonParseResult = Default::default();
+    let mut res: JsonParseResult = JsonParseResult::default();
 
     // Get cell status.  Sometime after CR 4.0 was released, and before 4.1 was released,
     // we added new fields is_asm_cell and is_gex_cell to the json file.  The value of
@@ -516,9 +516,9 @@ pub(crate) fn parse_json_annotations_files(
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     let mut ann = Annotations {
-        tig_bc: Default::default(),
-        gex_cells: Default::default(),
-        gex_cells_specified: Default::default(),
+        tig_bc: Vec::default(),
+        gex_cells: Vec::default(),
+        gex_cells_specified: Vec::default(),
         fate: vec![HashMap::<String, BarcodeFate>::new(); ctl.origin_info.len()],
     };
 

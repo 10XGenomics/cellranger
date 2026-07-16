@@ -49,7 +49,7 @@ impl TelemetryCollector {
             cli_args,
             subcommand,
             should_run: cmd.should_collect_telemetry(),
-            procs: Default::default(),
+            procs: Vec::default(),
         }
     }
 

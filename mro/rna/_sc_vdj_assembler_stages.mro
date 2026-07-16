@@ -22,16 +22,6 @@ filetype lz4;
 filetype bin;
 filetype txt;
 
-stage VDJ_PREFLIGHT(
-    in  map[]  sample_def,
-    in  path   vdj_reference_path,
-    in  bool   denovo,
-    in  bool   full_check,
-    in  path   inner_enrichment_primers,
-    in  string chain_type,
-    src py     "stages/vdj/vdj_preflight",
-)
-
 stage REPORT_CONTIGS(
     in  path   vdj_reference_path,
     in  json   cell_barcodes,

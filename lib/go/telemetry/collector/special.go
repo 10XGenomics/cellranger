@@ -29,6 +29,8 @@ func MakeSpecial(name string) (ValueExtractor, error) {
 		return new(successExtractor), nil
 	case "failed_stage":
 		return new(failedStageExtractor), nil
+	case "perf_stats":
+		return perfStatsCollector{}, nil
 	}
 	return nil, fmt.Errorf("unknown special collector type %s", name)
 }
@@ -65,10 +67,18 @@ func (simpleExtractor) BucketsOptional() bool {
 	return false
 }
 
+func (simpleExtractor) IsMultiValue() bool {
+	return false
+}
+
 type noBucketsExtractor struct{ simpleExtractor }
 
 func (noBucketsExtractor) BucketsOptional() bool {
 	return true
+}
+
+func (noBucketsExtractor) IsMultiValue() bool {
+	return false
 }
 
 type kernelExtractor struct{ simpleExtractor }

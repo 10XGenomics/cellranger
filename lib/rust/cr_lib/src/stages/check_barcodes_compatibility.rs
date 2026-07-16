@@ -54,14 +54,14 @@
 //! - There needs to be a GEX library if there are >1 library types.
 #![deny(missing_docs)]
 
+use crate::barcode_sort::{ReadTrimmingMetrics, pseudo_paired_from_adapters_iter};
 use anyhow::{Result, anyhow, ensure};
 use barcode::{BarcodeConstruct, BcSegSeq, Whitelist};
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::sample_def::SampleDef;
 use cr_types::{ERROR_CODE_INFO, LibraryType};
-use fastq_set::filenames::FindFastqs;
-use fastq_set::read_pair::{ReadPart, RpRange};
-use fastq_set::read_pair_iter::ReadPairIter;
+use fastq_set::long_read_adapter_trimmer::{LongReadTrimmer, TrimmerConfig};
+use fastq_set::read_pair::{ReadHeader, ReadPair, ReadPart, RpRange};
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{MartianStruct, make_mro};
@@ -75,6 +75,7 @@ const MIN_BARCODE_SIMILARITY: f64 = 0.1;
 #[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct CheckBarcodesCompatibilityStageInputs {
     pub chemistry_defs: ChemistryDefs,
+    pub library_trimmers: TxHashMap<LibraryType, TrimmerConfig>,
     pub sample_def: Vec<SampleDef>,
     pub check_library_compatibility: bool,
 }
@@ -88,15 +89,28 @@ pub struct CheckBarcodesCompatibility;
 pub fn sample_valid_barcodes(
     sample_def: &SampleDef,
     barcode_range: RpRange,
+    trimmer: Option<LongReadTrimmer>,
     wl: &Whitelist,
 ) -> Result<SimpleHistogram<BcSegSeq>> {
-    let barcode_iter = sample_def
-        .get_fastq_def()?
+    let read_iter = sample_def
         .find_fastqs()?
         .into_iter()
-        .map(|fastq| ReadPairIter::from_fastq_files(&fastq))
+        .map(|f| f.read_iter(ReadHeader::KeepId, None))
         .flatten_ok()
-        .map(|x| x?)
+        .map(|x| x?);
+
+    let mut trimming_metrics = ReadTrimmingMetrics::default();
+    let read_iter = match trimmer {
+        None => Box::new(read_iter) as Box<dyn Iterator<Item = Result<ReadPair>>>,
+        Some(trimmer) => Box::new(pseudo_paired_from_adapters_iter(
+            read_iter,
+            trimmer,
+            ReadHeader::KeepId,
+            &mut trimming_metrics,
+        )),
+    };
+
+    let barcode_iter = read_iter
         .filter_map_ok(|read| {
             read.get_range(barcode_range, ReadPart::Seq)
                 .map(BcSegSeq::from_bytes)
@@ -151,11 +165,12 @@ impl MartianMain for CheckBarcodesCompatibility {
         let unique_lib_types: TxHashSet<_> = args.chemistry_defs.keys().collect();
 
         // -----------------------------------------------------------------------------------------
-        if args
-            .chemistry_defs
-            .values()
-            .any(|x| matches!(x.barcode_whitelist_spec(), BarcodeConstruct::Segmented(_)))
-        {
+        if args.chemistry_defs.values().any(|x| {
+            matches!(
+                x.barcode_whitelist_spec(),
+                BarcodeConstruct::SpatialSegmented(_)
+            )
+        }) {
             return Ok(CheckBarcodesCompatibilityStageOutputs {});
         }
 
@@ -176,8 +191,12 @@ impl MartianMain for CheckBarcodesCompatibility {
         for sdef in &args.sample_def {
             let chem = &args.chemistry_defs[&sdef.library_type.unwrap()];
             let whitelist = chem.barcode_whitelist_source()?.gel_bead().as_whitelist()?;
+            let trimmer = args
+                .library_trimmers
+                .get(&sdef.library_type.unwrap_or_default())
+                .map(|trimmer_config| trimmer_config.clone().into_trimmer());
             let this_hist =
-                sample_valid_barcodes(sdef, chem.barcode_range().gel_bead(), &whitelist)?;
+                sample_valid_barcodes(sdef, chem.barcode_range().gel_bead(), trimmer, &whitelist)?;
             per_lib_bc_histogram
                 .entry(sdef.library_type.unwrap())
                 .or_insert_with(SimpleHistogram::default)
@@ -229,7 +248,9 @@ fn incompatible_message(
 mod barcode_compatibility_tests {
     use super::*;
     use cr_types::chemistry::{ChemistryDef, ChemistryName};
-    use cr_types::sample_def::FastqMode;
+    use cr_types::sample_def::{FastqMode, SampleDefBuilder};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
 
     fn inputs(
         chemistry: ChemistryName,
@@ -241,6 +262,7 @@ mod barcode_compatibility_tests {
                 .iter()
                 .map(|s| (s.library_type.unwrap(), chem.clone()))
                 .collect(),
+            library_trimmers: HashMap::default(),
             sample_def: samples,
             check_library_compatibility: true,
         }
@@ -250,10 +272,11 @@ mod barcode_compatibility_tests {
     fn test_single_lib_type() {
         let args = inputs(
             ChemistryName::ThreePrimeV3PolyA,
-            vec![SampleDef {
-                library_type: Some(LibraryType::Gex),
-                ..Default::default()
-            }],
+            vec![
+                SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                    .library_type(LibraryType::Gex)
+                    .build(),
+            ],
         );
         CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
@@ -274,26 +297,25 @@ mod barcode_compatibility_tests {
         .collect();
         let args = CheckBarcodesCompatibilityStageInputs {
             chemistry_defs: chems,
+            library_trimmers: HashMap::default(),
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_gex".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
+                        .into(),
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Antibody)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_gex"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             check_library_compatibility: true,
         };
@@ -316,24 +338,22 @@ mod barcode_compatibility_tests {
         .collect();
         let args = CheckBarcodesCompatibilityStageInputs {
             chemistry_defs: chems,
+            library_trimmers: HashMap::default(),
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_crispr"
-                            .into(),
-                    sample_names: Some(vec!["K562_5k_crispr_v3_crispr".into()]),
-                    library_type: Some(LibraryType::Crispr),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_gex"
-                        .into(),
-                    sample_names: Some(vec!["K562_5k_crispr_v3_gex".into()]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_crispr".into(),
+                )
+                .sample_names(vec!["K562_5k_crispr_v3_crispr"])
+                .library_type(LibraryType::Crispr)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_gex".into(),
+                )
+                .sample_names(vec!["K562_5k_crispr_v3_gex"])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             check_library_compatibility: true,
         };
@@ -358,25 +378,24 @@ mod barcode_compatibility_tests {
         .collect();
         let args = CheckBarcodesCompatibilityStageInputs {
             chemistry_defs: chems,
+            library_trimmers: HashMap::default(),
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
                         .into(),
-                    sample_names: Some(vec!["CR-300-01".into()]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Antibody)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             check_library_compatibility: true,
         };
@@ -396,49 +415,40 @@ mod barcode_compatibility_tests {
 
     #[test]
     fn test_incompatible_override() {
+        let sample_def = vec![
+            SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody".into(),
+            )
+            .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+            .lanes(vec![4])
+            .library_type(LibraryType::Antibody)
+            .build(),
+            SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+            )
+            .sample_names(vec!["CR-300-01"])
+            .library_type(LibraryType::Gex)
+            .build(),
+        ];
         // Same as test_incompatible but ensure it works with override
-        let mut args = inputs(
-            ChemistryName::ThreePrimeV3PolyA,
-            vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-300-01".into()]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
-            ],
-        );
+        let mut args = inputs(ChemistryName::ThreePrimeV3PolyA, sample_def);
         args.check_library_compatibility = false;
         CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_missing_gex() {
-        let args = inputs(
-            ChemistryName::ThreePrimeV3PolyA,
-            vec![
-                SampleDef {
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    library_type: Some(LibraryType::Crispr),
-                    ..Default::default()
-                },
-            ],
-        );
+        let sample_def = vec![
+            SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                .library_type(LibraryType::Antibody)
+                .build(),
+            SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new())
+                .library_type(LibraryType::Crispr)
+                .build(),
+        ];
+        let args = inputs(ChemistryName::ThreePrimeV3PolyA, sample_def);
         assert_eq!(
             MISSING_GEX,
             &CheckBarcodesCompatibility
@@ -469,76 +479,71 @@ mod barcode_compatibility_tests {
 
     #[test]
     fn test_3pv3_total_seq_a() {
-        let args = inputs(
-            ChemistryName::ThreePrimeV3PolyA,
-            vec![
-                SampleDef {
-                    fastq_mode: FastqMode::BCL_PROCESSOR,
-                    library_type: Some(LibraryType::Antibody),
-                    sample_indices: Some(vec!["ATTGGCAT".into()]),
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-AB-85_3pv3_totalseqA_antibody".into(),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::BCL_PROCESSOR,
-                    library_type: Some(LibraryType::Gex),
-                    sample_indices: Some(vec!["SI-P2-A8".into()]),
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-AB-85_3pv3_totalseqA_gex".into(),
-                    ..Default::default()
-                },
-            ],
-        );
+        let sample_def = vec![
+            SampleDefBuilder::new(
+                FastqMode::BCL_PROCESSOR,
+                "../dui_tests/test_resources/cellranger-count/CR-300-AB-85_3pv3_totalseqA_antibody"
+                    .into(),
+            )
+            .sample_indices(vec!["ATTGGCAT"])
+            .library_type(LibraryType::Antibody)
+            .build(),
+            SampleDefBuilder::new(
+                FastqMode::BCL_PROCESSOR,
+                "../dui_tests/test_resources/cellranger-count/CR-300-AB-85_3pv3_totalseqA_gex"
+                    .into(),
+            )
+            .sample_indices(vec!["SI-P2-A8"])
+            .library_type(LibraryType::Gex)
+            .build(),
+        ];
+        let args = inputs(ChemistryName::ThreePrimeV3PolyA, sample_def);
         CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_3pv2_total_seq_a() {
-        let args = inputs(
-            ChemistryName::ThreePrimeV2,
-            vec![
-                SampleDef {
-                    fastq_mode: FastqMode::BCL_PROCESSOR,
-                    library_type: Some(LibraryType::Antibody),
-                    sample_indices: Some(vec!["GATCTGAT".into()]),
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-AB-82_3pv2_totalseqA_antibody".into(),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::BCL_PROCESSOR,
-                    library_type: Some(LibraryType::Gex),
-                    sample_indices: Some(vec!["TTTGTACA".into()]),
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-AB-82_3pv2_totalseqA_gex".into(),
-                    ..Default::default()
-                },
-            ],
-        );
+        let sample_def = vec![
+            SampleDefBuilder::new(
+                FastqMode::BCL_PROCESSOR,
+                "../dui_tests/test_resources/cellranger-count/CR-300-AB-82_3pv2_totalseqA_antibody"
+                    .into(),
+            )
+            .sample_indices(vec!["GATCTGAT"])
+            .library_type(LibraryType::Antibody)
+            .build(),
+            SampleDefBuilder::new(
+                FastqMode::BCL_PROCESSOR,
+                "../dui_tests/test_resources/cellranger-count/CR-300-AB-82_3pv2_totalseqA_gex"
+                    .into(),
+            )
+            .sample_indices(vec!["TTTGTACA"])
+            .library_type(LibraryType::Gex)
+            .build(),
+        ];
+        let args = inputs(ChemistryName::ThreePrimeV2, sample_def);
         CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
     #[test]
     fn test_5p_ab_plus_gex() {
-        let args = inputs(
-            ChemistryName::FivePrimeR2,
-            vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_antibody"
-                            .into(),
-                    sample_names: Some(vec!["vdj_v1_hs_pbmc2_antibody".into()]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_gex"
-                        .into(),
-                    sample_names: Some(vec!["vdj_v1_hs_pbmc2_5gex".into()]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
-            ],
-        );
+        let sample_def = vec![
+            SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_antibody".into(),
+            )
+            .sample_names(vec!["vdj_v1_hs_pbmc2_antibody"])
+            .library_type(LibraryType::Antibody)
+            .build(),
+            SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_gex".into(),
+            )
+            .sample_names(vec!["vdj_v1_hs_pbmc2_5gex"])
+            .library_type(LibraryType::Gex)
+            .build(),
+        ];
+        let args = inputs(ChemistryName::FivePrimeR2, sample_def);
         CheckBarcodesCompatibility.test_run_tmpdir(args).unwrap();
     }
 
@@ -559,22 +564,22 @@ mod barcode_compatibility_tests {
         .collect();
         let args = CheckBarcodesCompatibilityStageInputs {
             chemistry_defs: chems,
+            library_trimmers: HashMap::default(),
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::BCL_PROCESSOR,
-                    library_type: Some(LibraryType::Antibody),
-                    sample_indices: Some(vec!["SI-P2-C7".into()]),
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-FZ-172_antibody"
-                        .into(),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::BCL_PROCESSOR,
-                    library_type: Some(LibraryType::Gex),
-                    sample_indices: Some(vec!["SI-P2-C5".into()]),
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-FZ-172_gex".into(),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
+                    "../dui_tests/test_resources/cellranger-count/CR-FZ-172_antibody".into(),
+                )
+                .sample_indices(vec!["SI-P2-C7"])
+                .library_type(LibraryType::Antibody)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
+                    "../dui_tests/test_resources/cellranger-count/CR-FZ-172_gex".into(),
+                )
+                .sample_indices(vec!["SI-P2-C5"])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             check_library_compatibility: true,
         };

@@ -229,8 +229,8 @@ def create_umap_plot(data_frame, plotting_variable: str, color_range: list, titl
         alt.Chart(data_frame)
         .mark_circle(size=10)
         .encode(
-            x=alt.X("umap_x:Q", axis=alt.Axis(title="UMAP1", labelFontSize=14, titleFontSize=16)),
-            y=alt.Y("umap_y:Q", axis=alt.Axis(title="UMAP2", labelFontSize=14, titleFontSize=16)),
+            x=alt.X("umap_x:Q", axis=alt.Axis(title="UMAP X", labelFontSize=14, titleFontSize=16)),
+            y=alt.Y("umap_y:Q", axis=alt.Axis(title="UMAP Y", labelFontSize=14, titleFontSize=16)),
             color=alt.condition(
                 selection,
                 alt.Color(

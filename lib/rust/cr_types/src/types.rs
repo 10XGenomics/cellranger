@@ -1,19 +1,18 @@
 #![expect(missing_docs)]
+use crate::reference::feature_reference::FeatureReference;
 use anyhow::{Context, Result, bail, ensure};
 use barcode::{Barcode, BarcodeConstruct, BarcodeFromString, BcSegSeq};
-use fastq_set::filenames::FastqDef;
-use fastq_set::filenames::bcl2fastq::SampleNameSpec;
 use itertools::Itertools;
 use martian::{AsMartianPrimaryType, MartianFileType, MartianPrimaryType};
 use martian_derive::{MartianStruct, MartianType, martian_filetype};
 use martian_filetypes::FileTypeRead;
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::json_file::{JsonFile, JsonFormat};
-use metric::{AsMetricPrefix, Histogram, SimpleHistogram, TxHashMap, TxHashSet};
+use metric::{AsMetricPrefix, Histogram, JsonReport, SimpleHistogram, TxHashMap, TxHashSet};
 use rust_htslib::bam::{Read as _, Reader as BamReader};
 use serde::de::{IgnoredAny, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_with::DeserializeFromStr;
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use shardio::SortKey;
 use std::borrow::Cow;
 use std::convert::TryFrom;
@@ -22,7 +21,7 @@ use std::fs::read_to_string;
 use std::hash::Hash;
 use std::path::PathBuf;
 use std::str::FromStr;
-use strum::{EnumString, IntoStaticStr};
+use strum::{Display, EnumString, IntoStaticStr};
 use umi::UmiType;
 // Used to indicate a UMI count does not come from a probe
 // in datasets that are mixed probe/no-probe (e.g. RTL + FB)
@@ -53,6 +52,10 @@ pub type BarcodeSetFormat = JsonFormat<BarcodeSetFile, TxHashSet<Barcode>>;
 
 martian_filetype!(_FingerprintFile, "fprint");
 pub type FingerprintFile = JsonFormat<_FingerprintFile, Vec<Fingerprint>>;
+
+// Feature reference file, holding a bincode/serde serialized `FeatureReference`
+martian_filetype!(_FeatureReferenceFile, "frf");
+pub type FeatureReferenceFormat = BinaryFormat<_FeatureReferenceFile, FeatureReference>;
 
 // End File Types
 
@@ -210,6 +213,7 @@ pub struct FileOrBytes {
     pub bytes: Option<String>,
 }
 
+#[macro_export]
 macro_rules! enum_maker {
     ($(#[$meta:meta])* $name:ident, $( ($field:ident, $lit: literal $(, $alias: literal)*) ),*) => {
         #[derive(
@@ -469,7 +473,8 @@ enum_maker! {
     /// Multiplexing information encoded at the level of reads.
     ReadLevel,
     (RTL, "RTL"),
-    (OH, "OH")
+    (OH, "OH"),
+    (CMX,"CMX")
 }
 
 enum_maker! {
@@ -492,6 +497,7 @@ impl BarcodeMultiplexingType {
     pub const Hashtag: Self = Self::CellLevel(CellLevel::Hashtag);
     pub const RTL: Self = Self::ReadLevel(ReadLevel::RTL);
     pub const OH: Self = Self::ReadLevel(ReadLevel::OH);
+    pub const CMX: Self = Self::ReadLevel(ReadLevel::CMX);
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -506,6 +512,10 @@ impl BarcodeMultiplexingType {
 
     pub fn is_oh(&self) -> bool {
         *self == Self::OH
+    }
+
+    pub fn is_cmx(&self) -> bool {
+        *self == Self::CMX
     }
 
     pub fn is_cmo(&self) -> bool {
@@ -524,6 +534,7 @@ impl AsMartianPrimaryType for BarcodeMultiplexingType {
 }
 
 enum_maker! {
+    #[derive(MartianType)]
     VdjChainType,
     (VdjT, "VDJ-T"),
     (VdjB, "VDJ-B"),
@@ -741,92 +752,66 @@ impl AsMetricPrefix for LibraryType {
     }
 }
 
-/// A group of GEMs that were processed together, usually derived from a single
-/// microfluidic channel
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GemWell(pub u16);
-impl AsMartianPrimaryType for GemWell {
-    fn as_martian_primary_type() -> MartianPrimaryType {
-        MartianPrimaryType::Int
-    }
+#[derive(
+    Debug,
+    Default,
+    Copy,
+    Clone,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Hash,
+    SerializeDisplay,
+    DeserializeFromStr,
+    Display,
+    EnumString,
+)]
+pub enum SequencingPlatform {
+    #[default]
+    #[strum(serialize = "ilmn")]
+    Illumina,
+    #[strum(serialize = "ont")]
+    OxfordNanopore,
+    #[strum(serialize = "pb")]
+    PacBio,
+    #[strum(serialize = "sbx")]
+    Sbx,
+    #[strum(serialize = "ult")]
+    Ultima,
 }
-impl Default for GemWell {
-    fn default() -> Self {
-        GemWell(1)
-    }
-}
-impl From<u16> for GemWell {
-    fn from(gem_well: u16) -> Self {
-        GemWell(gem_well)
-    }
-}
-impl GemWell {
-    pub fn inner(self) -> u16 {
-        self.0
+
+impl JsonReport for SequencingPlatform {
+    fn to_json_reporter(&self) -> metric::JsonReporter {
+        self.to_string().to_json_reporter()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Fastq {
-    id: String,
-    subsample_rate: Option<f64>,
-    def: FastqDef,
+/// Details about how the library was amplified for sequencing.
+#[derive(strum::Display)]
+pub enum LibraryOrigin {
+    /// The library was sourced from pre-amp material.
+    PreAmp,
+    /// The library was sourced from post-amp material (Illumina library conversion).
+    PostAmp,
 }
 
-impl Fastq {
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-}
-
-/// Pointer to all the FASTQs from a unique (library, gem_group) tuple.
 /// Entries with the same `library_name` must be from the same physical sequencing
 /// library, and must have been configured with the same `gem_well`, `library_type`,
 /// and `feature_types`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LibraryDef {
     pub physical_library_id: String,
-    pub gem_well: GemWell,
     pub library_type: LibraryType,
-    /// In CS mode, this will be `FastqDef::Bcl2Fastq(..)`. The `fastq_id` column corresponds to the
-    /// `sample_name` in Bcl2Fastq
-    pub fastqs: Vec<Fastq>, // Should be non empty
 }
 
-impl LibraryDef {
-    fn push_fastq(&mut self, fastq_def: FastqDef, subsample_rate: Option<f64>) {
-        let fastq_id = match fastq_def {
-            FastqDef::Bcl2Fastq(ref def) => match &def.sample_name_spec {
-                SampleNameSpec::Any => unreachable!(),
-                SampleNameSpec::Names(names) => names.iter().exactly_one().unwrap().clone(),
-            },
-            FastqDef::BclProcessor(_) => {
-                // TODO: Not sure if there is any other obvious name
-                format!("{}_fastq_{}", self.physical_library_id, self.fastqs.len())
-            }
-        };
-        self.fastqs.push(Fastq {
-            id: fastq_id,
-            subsample_rate,
-            def: fastq_def,
-        });
-    }
-}
-
-/// A fingerprint refers to either:
-/// - `Untagged(GemWell)`: All the cells in a gem well where the cells
-///   are not tagged
-/// - `Tagged(GemWell, SampleBarcodeID)`: A subset of cells in a gem well
-///   which are tagged with a CMO with the given feature name
-///   We can assume that no two samples within a multi run can share the same
-///   `Fingerprint`.
+/// Cells assigned to a particular sample or untagged cells.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Fingerprint {
-    Untagged {
-        gem_well: GemWell,
-    },
+    /// All the cells that are not tagged with a sample barcode.
+    Untagged,
+    /// Cells that are tagged with a particular sample barcode.
     Tagged {
-        gem_well: GemWell,
         tag_name: SampleBarcodeID,
         /// Sample barcodes that were dynamically translated into this tag.
         translated_tag_names: Vec<SampleBarcodeID>,
@@ -835,18 +820,13 @@ pub enum Fingerprint {
 }
 
 impl Fingerprint {
-    pub fn untagged(gem_well: GemWell) -> Self {
-        Self::Untagged { gem_well }
-    }
-
+    /// Return a tagged fingerprint for a particular sample barcode.
     pub fn tagged(
-        gem_well: GemWell,
         tag_name: SampleBarcodeID,
         translated_tag_names: Vec<SampleBarcodeID>,
         barcode_multiplexing_type: BarcodeMultiplexingType,
     ) -> Self {
         Self::Tagged {
-            gem_well,
             tag_name,
             translated_tag_names,
             barcode_multiplexing_type,
@@ -856,7 +836,7 @@ impl Fingerprint {
     /// Return true if this fingerprint is tagged.
     fn is_tagged(&self) -> bool {
         match *self {
-            Fingerprint::Untagged { .. } => false,
+            Fingerprint::Untagged => false,
             Fingerprint::Tagged { .. } => true,
         }
     }
@@ -864,7 +844,7 @@ impl Fingerprint {
     /// Return an iterator over all tag names.
     pub fn tag_names(&self) -> Box<dyn Iterator<Item = &SampleBarcodeID> + '_> {
         match self {
-            Fingerprint::Untagged { .. } => Box::new(std::iter::empty()),
+            Fingerprint::Untagged => Box::new(std::iter::empty()),
             Fingerprint::Tagged {
                 tag_name,
                 translated_tag_names,
@@ -873,15 +853,10 @@ impl Fingerprint {
         }
     }
 
-    pub fn gem_well(&self) -> GemWell {
-        match *self {
-            Fingerprint::Untagged { gem_well } | Fingerprint::Tagged { gem_well, .. } => gem_well,
-        }
-    }
-
+    /// Return the barcode multiplexing type if this fingerprint is tagged.
     pub fn barcode_multiplexing_type(&self) -> Option<BarcodeMultiplexingType> {
         match self {
-            Fingerprint::Untagged { .. } => None,
+            Fingerprint::Untagged => None,
             Fingerprint::Tagged {
                 barcode_multiplexing_type: cell_multiplexing_type,
                 ..
@@ -940,80 +915,41 @@ impl Sample {
 /// perform validations as new entries as added.
 pub struct CrMultiGraphBuilder {
     libraries: TxHashMap<String, LibraryDef>,
-    // Set of library features of each gem well
-    // In 4.0, all gem wells need to have identical set of library features
-    gem_well_feat: TxHashMap<GemWell, TxHashSet<LibraryType>>,
     samples: TxHashMap<String, Sample>,
     fingerprints: TxHashSet<Fingerprint>,
-    multiplexed_gem_wells: TxHashSet<GemWell>,
 }
 
 impl CrMultiGraphBuilder {
     pub fn new() -> Self {
         CrMultiGraphBuilder {
             libraries: TxHashMap::default(),
-            gem_well_feat: TxHashMap::default(),
             samples: TxHashMap::default(),
             fingerprints: TxHashSet::default(),
-            multiplexed_gem_wells: TxHashSet::default(),
         }
     }
+
     pub fn push_library(
         &mut self,
         physical_library_id: String,
-        fastq: FastqDef,
         library_type: LibraryType,
-        gem_well: GemWell,
     ) -> Result<()> {
-        if library_type.is_fb_type(FeatureBarcodeType::Multiplexing) {
-            self.multiplexed_gem_wells.insert(gem_well);
-        }
-
         match self.libraries.entry(physical_library_id.clone()) {
             std::collections::hash_map::Entry::Vacant(e) => {
-                let mut lib_def = LibraryDef {
+                e.insert(LibraryDef {
                     physical_library_id,
-                    gem_well,
                     library_type,
-                    fastqs: vec![],
-                };
-                lib_def.push_fastq(fastq, None);
-                e.insert(lib_def);
+                });
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
                 let entry = e.get_mut();
 
-                // Consistent checks: make sure there aren't conflicting entries for the same library
-                if entry.gem_well != gem_well {
-                    bail!(
-                        "You supplied two different 'gem_well' values for physical_library_id = '{}'.\nEach physical_library_id must be associated with a single 'gem_well'. Supplied 'gem_well' values: '{}' and '{}'",
-                        physical_library_id,
-                        entry.gem_well.0,
-                        gem_well.0
-                    );
-                }
-
-                if entry.library_type != library_type {
-                    bail!(
-                        "You supplied two different 'feature_type' values for physical_library_id = {physical_library_id}.\nEach physical_library_id must be associated with a single 'feature_type'.",
-                    );
-                }
-
-                // duplicate FASTQ def
-                if entry.fastqs.iter().any(|fq| fq.def == fastq) {
-                    bail!(
-                        "You supplied duplicate FASTQ inforation different for physical_library_id = {physical_library_id}.\n You may have a redundant entry in your library specificaiton. Duplicate FASTQ definition:\n'{fastq:#?}",
-                    );
-                }
-
-                entry.push_fastq(fastq, None);
+                ensure!(
+                    entry.library_type == library_type,
+                    "You supplied two different 'feature_type' values for physical_library_id = {physical_library_id}.\n\
+                     Each physical_library_id must be associated with a single 'feature_type'.",
+                );
             }
         }
-        self.gem_well_feat
-            .entry(gem_well)
-            .or_default()
-            .insert(library_type);
-
         Ok(())
     }
 
@@ -1034,14 +970,13 @@ impl CrMultiGraphBuilder {
             // Check that all the fingerprints are cmo tagged
             assert!(self.fingerprints.iter().all(Fingerprint::is_tagged));
 
-            // make sure the GemWell containing this sample is multiplexed
-            if fingerprint.is_cmo_multiplexed()
-                && !self.multiplexed_gem_wells.contains(&fingerprint.gem_well())
-            {
-                bail!(
-                    "Sample with sample_id = '{}' in gem_well = '{}' was declared as a multiplexed sample, but no 'Multiplexing Capture' library was provided for that gem_well in the [libraries] section",
-                    sample_id,
-                    &fingerprint.gem_well().0
+            if fingerprint.is_cmo_multiplexed() {
+                ensure!(
+                    self.libraries
+                        .values()
+                        .any(|lib| lib.library_type == LibraryType::Cellplex),
+                    "Sample with sample_id = '{sample_id}' was declared as a multiplexed sample, \
+                     but no 'Multiplexing Capture' library was provided in the [libraries] section",
                 );
             }
         } else {
@@ -1049,9 +984,6 @@ impl CrMultiGraphBuilder {
             assert!(self.fingerprints.iter().all(|fp| !fp.is_tagged()));
         }
         self.fingerprints.insert(fingerprint.clone());
-
-        // Make sure that we have see this gem well
-        assert!(self.gem_well_feat.contains_key(&fingerprint.gem_well())); // TODO: Good error message
 
         // TODO: Check that the description is consistent between two entries of a sample
         self.samples
@@ -1068,31 +1000,18 @@ impl CrMultiGraphBuilder {
     }
 
     pub fn build(self) -> CrMultiGraph {
-        assert!(
-            self.multiplexed_gem_wells.is_empty()
-                || self
-                    .multiplexed_gem_wells
-                    .iter()
-                    .all(|gw| self.gem_well_feat.contains_key(gw))
-        ); // TODO: Good error message
-
-        // Make sure that there is at least one sample per gem well
-        let sample_gem_wells: TxHashSet<_> = self
-            .fingerprints
-            .iter()
-            .map(Fingerprint::gem_well)
-            .collect();
-        assert!(sample_gem_wells.len() == self.gem_well_feat.len());
-
-        let mut libraries: Vec<_> = self.libraries.into_values().collect();
-        libraries.sort_by(|a, b| {
-            (a.gem_well, &a.physical_library_id).cmp(&(b.gem_well, &b.physical_library_id))
-        });
-
-        let mut samples: Vec<_> = self.samples.into_values().collect();
-        samples.sort_by(|a, b| a.sample_id.cmp(&b.sample_id));
-
-        CrMultiGraph { libraries, samples }
+        CrMultiGraph {
+            libraries: self
+                .libraries
+                .into_values()
+                .sorted_by(|a, b| a.physical_library_id.cmp(&b.physical_library_id))
+                .collect(),
+            samples: self
+                .samples
+                .into_values()
+                .sorted_by(|a, b| a.sample_id.cmp(&b.sample_id))
+                .collect(),
+        }
     }
 }
 
@@ -1219,7 +1138,9 @@ impl TryFrom<LibraryInfo> for crate::aggr::LibraryInfo {
 }
 
 /// The aligner used to align the reads to the reference.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, MartianType, EnumString, Deserialize, Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, MartianType, EnumString, Deserialize, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum AlignerParam {
@@ -1240,6 +1161,34 @@ impl AlignerParam {
             AlignerParam::Minimap2 => 60,
         }
     }
+}
+
+/// Supported Minimap2 -x Preset options
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    MartianType,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    EnumString,
+)]
+pub enum MinimapPreset {
+    /// Long-read spliced alignment (splice)
+    #[serde(rename = "splice")]
+    #[strum(to_string = "splice")]
+    Splice,
+    /// Spliced alignment for iso-seq reads (splice:hq)
+    #[serde(rename = "splice:hq")]
+    #[strum(to_string = "splice:hq")]
+    SpliceHq,
+    /// Spliced alignment for short RNA-seq reads (splice:sr)
+    #[serde(rename = "splice:sr")]
+    #[strum(to_string = "splice:sr")]
+    SpliceSr,
 }
 
 /// GeneticDemuxParams struct
@@ -1344,7 +1293,6 @@ impl Mtx {
 mod tests {
     use super::*;
     use barcode::BcSeq;
-    use fastq_set::filenames::LaneSpec;
     use insta::assert_json_snapshot;
     use std::fs::write;
     use tempfile::NamedTempFile;
@@ -1398,108 +1346,31 @@ mod tests {
     fn untagged_single_gw_graph() -> Result<CrMultiGraph> {
         // 1 sample, 1 gem well, GEX + VDJ + Ab, 1 sequencing per library
         let mut builder = CrMultiGraphBuilder::new();
-        builder.push_library(
-            "GEX_LIB".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/gex/fastq/".into(),
-                "my_gex_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::Gex,
-            GemWell(1),
-        )?;
+        builder.push_library("GEX_LIB".into(), LibraryType::Gex)?;
 
-        builder.push_library(
-            "VDJ_LIB".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/vdj/fastq/".into(),
-                "my_vdj_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::VdjAuto,
-            GemWell(1),
-        )?;
+        builder.push_library("VDJ_LIB".into(), LibraryType::VdjAuto)?;
 
-        builder.push_library(
-            "AB_LIB".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/ab/fastq/".into(),
-                "my_ab_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::Antibody,
-            GemWell(1),
-        )?;
+        builder.push_library("AB_LIB".into(), LibraryType::Antibody)?;
 
         builder.push_fingerprint(
             "PBMC".into(),
             "10k Human PBMC".into(),
-            Fingerprint::untagged(GemWell(1)),
+            Fingerprint::Untagged,
         )?;
 
         Ok(builder.build())
     }
 
     fn tagged_multi_gw_graph() -> Result<CrMultiGraph> {
-        // 2 samples, 1 tag per sample, 2 gem wells, GEX + CMO, 1 sequencing per library
+        // 2 samples, 1 tag per sample, GEX + CMO
         let mut builder = CrMultiGraphBuilder::new();
-        builder.push_library(
-            "GEX_LIB_1".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/gex_1/fastq/".into(),
-                "my_gex_1_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::Gex,
-            GemWell(1),
-        )?;
-        builder.push_library(
-            "GEX_LIB_2".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/gex_2/fastq/".into(),
-                "my_gex_2_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::Gex,
-            GemWell(2),
-        )?;
-        builder.push_library(
-            "CMO_LIB_1".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/cmo_1/fastq/".into(),
-                "my_cmo_1_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::Cellplex,
-            GemWell(1),
-        )?;
-        builder.push_library(
-            "CMO_LIB_2".into(),
-            FastqDef::bcl2fastq(
-                "/path/to/cmo_2/fastq/".into(),
-                "my_cmo_2_data".into(),
-                LaneSpec::Any,
-            ),
-            LibraryType::Cellplex,
-            GemWell(2),
-        )?;
+        builder.push_library("GEX_LIB_1".into(), LibraryType::Gex)?;
+        builder.push_library("CMO_LIB_1".into(), LibraryType::Cellplex)?;
 
         builder.push_fingerprint(
             "PBMC_donor_A".into(),
             "Human PBMC from donor A".into(),
             Fingerprint::tagged(
-                GemWell(1),
-                "CMO500".into(),
-                Vec::default(),
-                BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
-            ),
-        )?;
-
-        builder.push_fingerprint(
-            "PBMC_donor_A".into(),
-            "Human PBMC from donor A".into(),
-            Fingerprint::tagged(
-                GemWell(2),
                 "CMO500".into(),
                 Vec::default(),
                 BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
@@ -1510,18 +1381,6 @@ mod tests {
             "PBMC_donor_B".into(),
             "Human PBMC from donor B".into(),
             Fingerprint::tagged(
-                GemWell(1),
-                "CMO501".into(),
-                Vec::default(),
-                BarcodeMultiplexingType::CellLevel(CellLevel::CMO),
-            ),
-        )?;
-
-        builder.push_fingerprint(
-            "PBMC_donor_B".into(),
-            "Human PBMC from donor B".into(),
-            Fingerprint::tagged(
-                GemWell(2),
                 "CMO501".into(),
                 Vec::default(),
                 BarcodeMultiplexingType::CellLevel(CellLevel::CMO),

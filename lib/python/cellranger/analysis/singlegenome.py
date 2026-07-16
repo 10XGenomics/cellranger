@@ -8,15 +8,14 @@ from __future__ import annotations
 import os.path
 import re
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import h5py as h5
 import numpy as np
-from six import ensure_binary
 
 import cellranger.analysis.clustering as cr_clustering
 import cellranger.analysis.constants as analysis_constants
 import cellranger.analysis.io as analysis_io
-import cellranger.matrix as cr_matrix
 from cellranger.analysis.analysis_types import (
     LSA,
     PCA,
@@ -25,7 +24,11 @@ from cellranger.analysis.analysis_types import (
     UMAP,
     DifferentialExpression,
 )
+from cellranger.matrix import CountMatrix
 from cellranger.wrapped_tables import tables
+
+if TYPE_CHECKING:
+    from cellranger.feature_ref import FeatureReference
 
 COMPONENTS = {
     "pca": analysis_constants.PCA_N_COMPONENTS_DEFAULT,
@@ -42,12 +45,16 @@ type Projection = str
 
 class SingleGenomeAnalysis:
     def __init__(
-        self, matrix: cr_matrix.CountMatrix, method: str, projections: Sequence[str] = (TSNE_NAME,)
+        self,
+        barcodes: list[bytes],
+        feature_ref: FeatureReference,
+        method: str,
+        projections: Sequence[str] = (TSNE_NAME,),
     ):
         """Initialize secondary analysis results for a single genome analysis.
 
         Args:
-            matrix (cr_matrix.CountMatrix): count matrix
+            barcodes: list of barcodes
             method (str): dimensionality reduction method pca|lsa|plsa
             projections (Sequence[str], optional): List of manifold projections
                 to load. Defaults to ("tsne",).
@@ -56,7 +63,10 @@ class SingleGenomeAnalysis:
         for proj in projections:
             assert proj in (TSNE_NAME, UMAP_NAME)
         self.projections = projections
-        self.matrix = matrix
+
+        self.barcodes = barcodes
+        self.feature_ref = feature_ref
+        self.matrix = None
 
         # parameters
         self.method = method
@@ -74,8 +84,6 @@ class SingleGenomeAnalysis:
         self.n_umap_components = analysis_constants.UMAP_N_COMPONENTS
         self.umap_min_dist = analysis_constants.UMAP_MIN_DIST
         self.umap_n_neighbors = analysis_constants.UMAP_DEFAULT_N_NEIGHBORS
-        self.dr_bcs = matrix.bcs_dim
-        self.dr_features = matrix.features_dim
 
         # DR: n_components -> DR
         self.dimensionality_reduced_matrix: dict[int, PCA | PLSA | LSA] = {}
@@ -96,15 +104,23 @@ class SingleGenomeAnalysis:
         np.random.seed(0)
 
     def is_zero_matrix(self):
-        return self.matrix.bcs_dim == 0 or self.matrix.features_dim == 0
+        return len(self.barcodes) == 0
 
     def get_cluster_sizes(self):
         return {k: cr_clustering.get_cluster_sizes(v) for k, v in self.clusterings.items()}
 
-    def _select_bc_indices(self, cell_bc_indices):
-        self.matrix = self.matrix.select_barcodes(cell_bc_indices)
+    def subsample_bcs(self, num_barcodes: int):
+        """Subsample barcodes across entire analysis (matrix, DR, etc)."""
+        if num_barcodes >= len(self.barcodes):
+            return
 
-        self.dr_bcs = min(self.dr_bcs, len(cell_bc_indices))
+        cell_bc_indices = np.sort(
+            np.random.choice(len(self.barcodes), size=num_barcodes, replace=False)
+        )
+        self.barcodes = [self.barcodes[i] for i in cell_bc_indices]
+        if self.matrix is not None:
+            self.matrix = self.matrix.select_barcodes(cell_bc_indices)
+
         if self.method == "pca":
             for n_components, pca in self.dimensionality_reduced_matrix.items():
                 assert isinstance(pca, PCA)
@@ -149,16 +165,6 @@ class SingleGenomeAnalysis:
             self.umap[name] = UMAP(
                 umap.transformed_umap_matrix[cell_bc_indices, :], name=umap.name, key=umap.key
             )
-
-    def subsample_bcs(self, num_bcs):
-        """Subsample barcodes across entire analysis (matrix, DR, etc)."""
-        if num_bcs >= self.matrix.bcs_dim:
-            return
-
-        cell_bc_indices = np.sort(
-            np.random.choice(np.arange(self.matrix.bcs_dim), size=num_bcs, replace=False)
-        )
-        self._select_bc_indices(cell_bc_indices)
 
     def get_dimensionality_reduced_matrix(self, n_components=None):
         if not n_components:
@@ -231,15 +237,22 @@ class SingleGenomeAnalysis:
         return umap
 
     @staticmethod
-    def load_h5(filename, method, projections: Sequence[str] = (TSNE_NAME,)):
+    def load_h5_without_matrix(
+        filename: str,
+        method: str,
+        *,
+        projections: Sequence[str],
+    ) -> SingleGenomeAnalysis:
+        """Load secondary analyses from an analysis HDF5 file."""
         assert projections, "Must specify projection(s) to load"
-
-        # CountMatrix uses h5py, not pytables
-        with h5.File(ensure_binary(filename), "r") as f:
-            group: h5.Group = f[analysis_constants.ANALYSIS_H5_MATRIX_GROUP]
-            matrix = cr_matrix.CountMatrix.load(group)
-
-        analysis = SingleGenomeAnalysis(matrix, method, projections=projections)
+        with h5.File(filename, "r") as f:
+            barcodes = CountMatrix.load_bcs_from_h5_group(
+                f[analysis_constants.ANALYSIS_H5_MATRIX_GROUP]
+            )
+            feature_ref = CountMatrix.load_feature_ref_from_h5_group(
+                f[analysis_constants.ANALYSIS_H5_MATRIX_GROUP]
+            )
+        analysis = SingleGenomeAnalysis(barcodes, feature_ref, method, projections=projections)
 
         with tables.open_file(filename, "r") as f:
             grp = None
@@ -270,6 +283,16 @@ class SingleGenomeAnalysis:
 
         return analysis
 
+    @staticmethod
+    def load_h5(filename: str, method: str, *, projections: Sequence[str]) -> SingleGenomeAnalysis:
+        """Load the filtered matrix and secondary analyses from an analysis HDF5 file."""
+        analysis = SingleGenomeAnalysis.load_h5_without_matrix(
+            filename, method, projections=projections
+        )
+        with h5.File(filename, "r") as f:
+            analysis.matrix = CountMatrix.load(f[analysis_constants.ANALYSIS_H5_MATRIX_GROUP])
+        return analysis
+
     def _load_dimensionality_reduced_matrix_h5(self, group):
         regex = re.compile(r"^([^\d]*?)_?(\d+)$")
         method_to_class = {"pca": PCA, "lsa": LSA, "plsa": PLSA}
@@ -279,7 +302,9 @@ class SingleGenomeAnalysis:
                 m = regex.match(key)
                 if m is None:
                     print(f"key: {key}")
-                n_components = int(regex.match(key).group(2))
+                regex_match = regex.match(key)
+                assert regex_match is not None
+                n_components = int(regex_match.group(2))
                 self.n_dimensionality_reduction_components.append(n_components)
                 self.dimensionality_reduced_matrix[n_components] = dim_red
             return
@@ -322,8 +347,9 @@ class SingleGenomeAnalysis:
 
     @staticmethod
     def load_default_format(base_dir, *, method, projections: Sequence[Projection]):
+        """Load the filtered matrix and secondary analyses from an analysis HDF5 file."""
         h5_file_path = analysis_io.h5_path(base_dir)
         if os.path.exists(h5_file_path):
-            return SingleGenomeAnalysis.load_h5(h5_file_path, method, projections)
+            return SingleGenomeAnalysis.load_h5(h5_file_path, method, projections=projections)
         else:
             return None

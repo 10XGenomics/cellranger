@@ -26,11 +26,11 @@ pipeline _SLFE_MATRIX_COMPUTER(
     in  string             sample_id,
     in  map<ChemistryDef>  chemistry_defs,
     in  bool               is_pd,
-    in  map[]              chunks,
+    in  bool               is_spatial,
+    in  json               chunks,
     in  csv                target_features,
     in  FeatureConfig      feature_config,
     # Note: _SLFE_MATRIX_COMPUTER processes data from a single gem well.
-    in  int                gem_well,
     in  V1PatternFixParams v1_pattern_fix_params,
     in  BarcodeIndexOutput barcode_index_override,
     out frf.bincode        slfe_feature_reference,
@@ -49,7 +49,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
     out csf[]              probe_barcode_counts,
     out sam                bam_header,
     out asf[]              alignments,
-    out map[]              read_chunks,
+    out json               read_chunks,
     out SampleMetrics[]    multi_metrics,
     out json               gem_well_alignment_metrics,
     out bi.bincode         barcode_index,
@@ -64,9 +64,10 @@ pipeline _SLFE_MATRIX_COMPUTER(
     call MAKE_SHARD(
         chemistry_defs  = self.chemistry_defs,
         feature_config  = self.feature_config,
-        gem_well        = self.gem_well,
         read_chunks     = self.chunks,
         target_features = self.target_features,
+        skip_read_id    = self.count_inputs.no_bam,
+        receptor        = null,
         *               = self.count_inputs,
     )
 
@@ -93,6 +94,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
     call WRITE_MINIMAP_INDEX(
         reference_path = self.count_inputs.reference_info.transcriptome_info.reference_path,
         aligner        = self.count_inputs.aligner,
+        minimap_preset = self.count_inputs.minimap_preset,
     ) using (
         disabled = self.count_inputs.no_minimap,
     )
@@ -107,6 +109,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
         barcode_subset           = null,
         chemistry_defs           = self.chemistry_defs,
         is_pd                    = self.is_pd,
+        is_spatial               = self.is_spatial,
         read_chunks              = self.chunks,
         reference_path           = self.count_inputs.reference_info.transcriptome_info.reference_path,
         transcriptome_min_score  = 30,
@@ -140,13 +143,13 @@ pipeline _SLFE_MATRIX_COMPUTER(
         feature_reference    = MAKE_SHARD.feature_reference_binary,
         counts               = ALIGN_AND_COUNT.counts_bc_order,
         chemistry_defs       = self.chemistry_defs,
-        gem_well             = self.gem_well,
         sample_id            = self.sample_id,
     )
 
-    call SUMMARIZE_H5_DIMS(
-        prefix = "raw_matrix",
-        matrix = WRITE_H5_MATRIX.matrix,
+    call SUMMARIZE_MATRIX_DIMS(
+        prefix    = "raw_matrix",
+        matrix    = WRITE_H5_MATRIX.matrix,
+        probe_set = null,
     )
 
     call WRITE_MATRIX_MARKET(
@@ -162,7 +165,7 @@ pipeline _SLFE_MATRIX_COMPUTER(
             ALIGN_AND_COUNT.summary,
             COLLATE_METRICS.summary,
             WRITE_BARCODE_INDEX.summary,
-            SUMMARIZE_H5_DIMS.summary,
+            SUMMARIZE_MATRIX_DIMS.summary,
         ],
     )
 

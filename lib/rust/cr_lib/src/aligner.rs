@@ -21,7 +21,7 @@ use martian_filetypes::bin_file::BinaryFormat;
 use metric::TxHasher;
 use orbit::StarAligner;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -111,28 +111,28 @@ impl Adapters {
 }
 
 /// Adapter trimmers.
-struct Trimmers<'a> {
+struct Trimmers {
     /// PolyA trimmer.
-    polya: AdapterTrimmer<'a>,
+    polya: AdapterTrimmer,
 
     /// TSO trimmer.
-    tso: AdapterTrimmer<'a>,
+    tso: AdapterTrimmer,
 
     /// Trimming parameters.
     trim_polya_min_score: Option<i32>,
     trim_tso_min_score: Option<i32>,
 }
 
-impl<'a> Trimmers<'a> {
+impl Trimmers {
     /// Return new adapter trimmers.
     fn new(
-        adapters: &'a Adapters,
+        adapters: Adapters,
         trim_polya_min_score: Option<usize>,
         trim_tso_min_score: Option<usize>,
     ) -> Self {
         Trimmers {
-            polya: AdapterTrimmer::new(&adapters.polya),
-            tso: AdapterTrimmer::new(&adapters.tso),
+            polya: AdapterTrimmer::new(adapters.polya),
+            tso: AdapterTrimmer::new(adapters.tso),
             trim_polya_min_score: trim_polya_min_score.map(|v| v as i32),
             trim_tso_min_score: trim_tso_min_score.map(|v| v as i32),
         }
@@ -218,11 +218,11 @@ impl TrimResults {
         }
         for rec in records {
             if self.polya.score > 0 {
-                rec.push_aux(b"pa", Aux::I32(self.polya.trim_range.len() as i32))
+                rec.push_aux_unchecked(b"pa", Aux::I32(self.polya.trim_range.len() as i32))
                     .unwrap();
             }
             if self.tso.score > 0 {
-                rec.push_aux(b"ts", Aux::I32(self.tso.trim_range.len() as i32))
+                rec.push_aux_unchecked(b"ts", Aux::I32(self.tso.trim_range.len() as i32))
                     .unwrap();
             }
         }
@@ -342,12 +342,18 @@ impl Aligner {
         let mut pd_rng = barcode_seeded_rng(barcode);
 
         // First pass through the reads
-        for read in reads {
+        for (index, read) in reads.into_iter().enumerate() {
             let read = read?;
             let pd_align_feature_bc_read = alignment_options.is_pd
                 && self.aligner.is_some()
                 && pd_rng.random_bool(PD_FRAC_FB_READS_TO_ALIGN);
-            let ann = self.annotate_read(read, alignment_options, no_bam, pd_align_feature_bc_read);
+            let ann = self.annotate_read(
+                read,
+                alignment_options,
+                no_bam,
+                pd_align_feature_bc_read,
+                index,
+            );
             dup_builder
                 .entry(ann.read.library_type)
                 .or_default()
@@ -385,8 +391,14 @@ impl Aligner {
     }
 
     /// Map an RTL read to the target panel CSV reference.
-    fn align_probe_read(&mut self, no_bam: bool, is_pd: bool, read: RnaRead) -> ReadAnnotations {
-        let name = read.header().split(|c| *c == b' ').next().unwrap();
+    fn align_probe_read(
+        &mut self,
+        no_bam: bool,
+        is_pd: bool,
+        read: RnaRead,
+        index: usize,
+    ) -> ReadAnnotations {
+        let name = read.id().unwrap_or(b"<EMPTY>");
         let umi_info = UmiInfo::new(read.raw_umi_seq(), read.raw_umi_qual());
 
         let seq = read.r1_seq();
@@ -409,23 +421,22 @@ impl Aligner {
         } else {
             self.aligner().align_read(name, seq, qual)
         };
-        ReadAnnotations::from_mapped_probe(read, recs, mapped_probe, umi_info)
+        ReadAnnotations::from_mapped_probe(read, recs, mapped_probe, umi_info, index)
     }
 
     fn align_read(
         &mut self,
         read: RnaRead,
         alignment_options: &AlignmentOptions,
+        index: usize,
     ) -> ReadAnnotations {
-        let adapters = Adapters::new();
         let mut trimmers = Trimmers::new(
-            &adapters,
+            Adapters::new(),
             alignment_options.trim_polya_min_score,
             alignment_options.trim_tso_min_score,
         );
 
-        // Split the qname at the first space.
-        let name = read.header().split(|c| *c == b' ').next().unwrap();
+        let name = read.id().unwrap_or(b"<EMPTY>");
         let umi_info = UmiInfo::new(read.raw_umi_seq(), read.raw_umi_qual());
 
         // Align and trim adapter sequence.
@@ -475,7 +486,7 @@ impl Aligner {
                         .annotator
                         .as_ref()
                         .unwrap()
-                        .annotate_read_pe(read, recs1, recs2, umi_info)
+                        .annotate_read_pe(read, recs1, recs2, umi_info, index)
                 }
             }
             None => {
@@ -509,7 +520,7 @@ impl Aligner {
                         let r1_polyt_matches =
                             count_homopolymer_matches(b'T', read.raw_illumina_read1_seq());
                         for rec in &mut read_recs {
-                            rec.push_aux(b"t1", Aux::I32(r1_polyt_matches as i32))
+                            rec.push_aux_unchecked(b"t1", Aux::I32(r1_polyt_matches as i32))
                                 .unwrap();
                         }
                     }
@@ -522,7 +533,7 @@ impl Aligner {
                         .annotator
                         .as_ref()
                         .unwrap()
-                        .annotate_read_se(read, read_recs, umi_info)
+                        .annotate_read_se(read, read_recs, umi_info, index)
                 }
             }
         }
@@ -534,13 +545,14 @@ impl Aligner {
         alignment_options: &AlignmentOptions,
         no_bam: bool,
         pd_align_feature_bc_read: bool,
+        index: usize,
     ) -> ReadAnnotations {
         match read.library_type {
             LibraryType::Gex => {
                 if self.target_panel_reference.is_some() {
-                    self.align_probe_read(no_bam, alignment_options.is_pd, read)
+                    self.align_probe_read(no_bam, alignment_options.is_pd, read, index)
                 } else {
-                    self.align_read(read, alignment_options)
+                    self.align_read(read, alignment_options, index)
                 }
             }
             LibraryType::FeatureBarcodes(_) => {
@@ -571,7 +583,10 @@ impl Aligner {
                             self.get_aligner_param(),
                         ))
                     }
-                    (true, _) => Some(self.align_read(read.clone(), alignment_options).primary),
+                    (true, _) => Some(
+                        self.align_read(read.clone(), alignment_options, index)
+                            .primary,
+                    ),
                     _ => None,
                 };
 
@@ -584,6 +599,7 @@ impl Aligner {
                     umi_info,
                     dup_info: None,
                     pd_alignment,
+                    index,
                 }
             }
             LibraryType::Vdj(_) | LibraryType::Atac => unreachable!("{}", read.library_type),
@@ -654,8 +670,7 @@ impl Aligner {
     }
 
     fn new_unmapped_records(read: &RnaRead) -> (Record, Option<Record>) {
-        // split the qname at the first space
-        let name = read.header().split(|c| *c == b' ').next().unwrap();
+        let name = read.id().unwrap_or(b"<EMPTY>");
         let qual: Vec<_> = read
             .r1_qual()
             .iter()
@@ -758,12 +773,8 @@ impl Iterator for AnnotationIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::aligner::{Aligner, barcode_seeded_rng};
-    use barcode::{Barcode, BcSeq};
-    use metric::TxHasher;
-    use rand::rngs::SmallRng;
-    use rand::{Rng, SeedableRng};
-    use rust_htslib::bam::record::{Aux, Cigar, CigarString, Record};
+    use super::*;
+    use barcode::BcSeq;
 
     #[test]
     #[allow(clippy::float_cmp)]
@@ -800,7 +811,7 @@ mod tests {
             b"",
             b"",
         );
-        recs[0].push_aux(b"AS", Aux::I32(12345)).unwrap();
+        recs[0].push_aux_unchecked(b"AS", Aux::I32(12345)).unwrap();
 
         Aligner::restore_trimmed_sequence(&mut recs, name, seq, qual, &(2..5));
         assert_eq!(recs[0].qname(), b"123");

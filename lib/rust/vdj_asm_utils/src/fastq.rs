@@ -1,4 +1,6 @@
 #![deny(missing_docs)]
+
+use itertools::Itertools;
 use std::collections::HashMap;
 
 pub(super) struct CellrangerFastqHeader {
@@ -9,19 +11,14 @@ pub(super) struct CellrangerFastqHeader {
 
 impl CellrangerFastqHeader {
     pub(super) fn new(header: String) -> CellrangerFastqHeader {
-        let parts: Vec<_> = header.split("|||").map(String::from).collect();
-        let mut tags = HashMap::new();
-        if parts.len() > 1 {
-            for idx in 1..parts.len() {
-                if idx % 2 == 0 {
-                    continue;
-                }
-                tags.insert(parts[idx].to_string(), parts[idx + 1].to_string());
-            }
-        }
-
+        let mut parts = header.split("|||");
+        let qname = String::from(parts.next().unwrap());
+        let tags = parts
+            .tuples()
+            .map(|(k, v)| (String::from(k), String::from(v)))
+            .collect();
         CellrangerFastqHeader {
-            qname: parts[0].to_string(),
+            qname,
             header,
             tags,
         }

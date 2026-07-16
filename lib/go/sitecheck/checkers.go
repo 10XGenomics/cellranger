@@ -245,7 +245,7 @@ func checkCpu(_ context.Context, index int, results chan<- siteCheckSection) {
 	}
 }
 
-// Get total system memory amount
+// Get total system memory amount.
 func checkMemory(_ context.Context, index int, results chan<- siteCheckSection) {
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {

@@ -251,29 +251,6 @@ def make_cell_types_df(
     cell_types = cell_types.join(valid_cell_types, on=group_by_name, how="inner")
     cell_types = cell_types.with_columns((pl.col("umi_counts") + 1).alias("umi_counts"))
 
-    # If there are cell types with over 1000 entries split into large and small groups
-    is_large = pl.col("count") > SAMPLING_THRESHOLD
-    large = cell_types.filter(is_large)
-    small = cell_types.filter(~is_large)
-    max_min_rows = cell_types.filter(
-        (pl.col("umi_counts") == pl.col("umi_counts").min().over(group_by_name))
-        | (pl.col("umi_counts") == pl.col("umi_counts").max().over(group_by_name))
-    )
-    if large.height > 0:
-        non_group_cols = [col for col in cell_types.columns if col != group_by_name]
-        sampled_large = (
-            large.group_by(group_by_name)
-            .agg(
-                pl.all().sample(n=SAMPLING_THRESHOLD, with_replacement=False, shuffle=True, seed=42)
-            )
-            .explode(non_group_cols)
-        )
-    else:
-        sampled_large = pl.DataFrame(schema=cell_types.schema)
-
-    kept_small = small if small.height > 0 else pl.DataFrame(schema=cell_types.schema)
-
-    cell_types = pl.concat([sampled_large, kept_small, max_min_rows], how="vertical")
     # Ensure there are no duplicate rows
     cell_types.unique(maintain_order=True)
     cell_levels = cell_types[group_by_name].n_unique()
@@ -359,47 +336,54 @@ def make_cell_types_boxplot(
     cell_types, cell_levels = make_cell_types_df(
         h5_path, cell_types, barcode_lower_bound, group_by_name
     )
+
+    # Calculate statistics per cell type
+    stats_pl = cell_types.group_by(group_by_name).agg(
+        pl.col("umi_counts").min().alias("min_val"),
+        pl.col("umi_counts").quantile(0.25).alias("q1"),
+        pl.col("umi_counts").median().alias("median"),
+        pl.col("umi_counts").mean().alias("mean"),
+        pl.col("umi_counts").quantile(0.75).alias("q3"),
+        pl.col("umi_counts").max().alias("max_val"),
+        pl.col("umi_counts").count().alias("count"),
+    )
+
     box_width = final_plot_width / (cell_levels + 1)
-    box_plot = alt.Chart(cell_types).mark_boxplot(size=box_width).encode(
+
+    base = alt.Chart(stats_pl).encode(
         alt.X(
             f"{group_by_name}:N",
             axis=alt.Axis(labelAngle=-45, labelFontSize=15, title=None),
-        ),
-        alt.Y("umi_counts:Q", title="1+UMI").scale(type="log"),
+        )
+    )
+
+    whiskers = base.mark_rule().encode(
+        alt.Y("min_val:Q", title="1+UMI", scale=alt.Scale(type="log")), alt.Y2("max_val:Q")
+    )
+
+    box = base.mark_bar(size=box_width).encode(
+        alt.Y("q1:Q"),
+        alt.Y2("q3:Q"),
         alt.Color(f"{group_by_name}:N").legend(None),
-        tooltip=[
-            alt.Tooltip("umi_counts:Q", title="UMI", format=",.2f"),
-        ],
-    ) + alt.Chart(cell_types).transform_aggregate(
-        min="min(umi_counts)",
-        max="max(umi_counts)",
-        mean="mean(umi_counts)",
-        median="median(umi_counts)",
-        q1="q1(umi_counts)",
-        q3="q3(umi_counts)",
-        count="max(count)",
-        groupby=[f"{group_by_name}"],
-    ).mark_bar(
-        opacity=0
-    ).encode(
-        x=f"{group_by_name}:N",
-        y="q1:Q",
-        y2="q3:Q",
         tooltip=[
             alt.Tooltip(f"{group_by_name}:N", title="Cell Type"),
             alt.Tooltip("count:Q", title="# Barcodes"),
-            alt.Tooltip("min:Q", title="Minimum UMI", format=".2f"),
+            alt.Tooltip("min_val:Q", title="Minimum UMI", format=".2f"),
             alt.Tooltip("q1:Q", title="Lower Quartile", format=".2f"),
             alt.Tooltip("mean:Q", title="Mean UMI", format=".2f"),
             alt.Tooltip("median:Q", title="Median UMI", format=".2f"),
             alt.Tooltip("q3:Q", title="Upper Quartile", format=".2f"),
-            alt.Tooltip("max:Q", title="Maximum UMI", format=".2f"),
+            alt.Tooltip("max_val:Q", title="Maximum UMI", format=".2f"),
         ],
-    ).properties(
-        width=final_plot_width
     )
+
+    median_line = base.mark_tick(color="white", thickness=2, size=box_width).encode(
+        alt.Y("median:Q")
+    )
+
+    final_chart = (whiskers + box + median_line).properties(width=final_plot_width)
+
     if return_plot:
-        return box_plot
+        return final_chart
     else:
-        box_plot = alt_utils.chart_to_json(box_plot)
-        return box_plot
+        return alt_utils.chart_to_json(final_chart)

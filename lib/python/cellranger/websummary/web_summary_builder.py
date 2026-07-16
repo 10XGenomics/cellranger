@@ -26,13 +26,14 @@ from cellranger.websummary.analysis_tab_aux import (
     barnyard_table,
     gdna_table,
     median_gene_plot,
+    median_umi_plot,
     seq_saturation_plot,
     targeted_table,
 )
 from cellranger.websummary.analysis_tab_core import analysis_by_clustering, umi_on_projection_plot
+from cellranger.websummary.cell_barcode_dataset import build_cell_barcode_dataset
 from cellranger.websummary.metrics import (
     INFO_THRESHOLD,
-    LTMetricAnnotations,
     MetricAnnotations,
     TargetedMetricAnnotations,
 )
@@ -69,15 +70,15 @@ if TYPE_CHECKING:
 
 
 def _build_summary_tab_common(
-    metadata,
+    metadata: TargetedMetricAnnotations | MetricAnnotations,
     sample_data: SampleData,
-    species_list,
-    sample_properties,
-    pipeline,
+    species_list: list[str],
+    sample_properties: CountSampleProperties,
+    pipeline: str,
     ws_data,
     zoom_images,
     regist_images,
-    sample_defs=None,
+    sample_defs: list[dict] | None = None,
 ):
     """Code to create summary tab shared by spatial and single cell, updates ws_data."""
     alarm_list = ws_data.alarms
@@ -225,6 +226,11 @@ def _build_analysis_tab_common(
         alarm_list,
         median_gene_plot(sample_data, sample_properties, species_list),
     )
+    add_data(
+        analysis_tab,
+        alarm_list,
+        median_umi_plot(sample_data, sample_properties, species_list),
+    )
     ws_data.clustering_selector = analysis_by_clustering(
         sample_data, spatial=sample_properties.is_spatial, projection=projection
     )
@@ -300,6 +306,25 @@ def _build_antigen_tab_common(sample_data, ws_data):
     )
 
 
+def _build_cell_annotation_tabs(
+    ws_data,
+    cell_type_websummary_bundle_value: list[dict | None] | None,
+) -> None:
+    """Populate cell annotation tabs on ws_data from a list of CellTypeWebSummaryBundleValue dicts.
+
+    Each bundle in the list corresponds to one annotation method/model and produces one tab.
+    Tab data is pre-formatted in Rust as CellTypesTabData and passed through directly.
+    """
+    if not cell_type_websummary_bundle_value:
+        return
+    for bundle in cell_type_websummary_bundle_value:
+        if bundle is None:
+            continue
+        tab_data = bundle["cell_types_tab_data"]
+        if tab_data is not None:
+            ws_data.add_cell_annotation_tab(tab_data)
+
+
 def _build_diagnostic_values(sample_data, ws_data):
     """Some metrics are useful for debugging but not yet ready to be displayed to the customer,.
 
@@ -323,14 +348,14 @@ def _build_diagnostic_values(sample_data, ws_data):
 
 
 def build_web_summary_data_common(
-    sample_properties,
+    sample_properties: CountSampleProperties,
     sample_data: SampleData,
-    pipeline,
-    metadata,
-    command,
+    pipeline: str,
+    metadata: TargetedMetricAnnotations | MetricAnnotations,
+    command: str,
     zoom_images=None,
     regist_images=None,
-    sample_defs=None,
+    sample_defs: list[dict] | None = None,
     *,
     projection: Projection,
 ):
@@ -396,23 +421,30 @@ def build_web_summary_data_common(
         wsd.alarms,
         targeted_table(metadata, sample_data, species_list, is_spatial=is_spatial),
     )
+
+    if pipeline != PIPELINE_AGGR and sample_data.cell_barcodes is not None:
+        wsd.cell_barcodes = build_cell_barcode_dataset(
+            sample_data.cell_barcodes, sample_properties.sample_id
+        )
+
     return wsd
 
 
 def build_web_summary_html_sc_and_aggr(
-    sample_properties,
-    sample_data_paths,
-    pipeline,
-    metadata,
-    command_name,
+    sample_properties: CountSampleProperties,
+    sample_data_paths: wsp.SampleDataPaths,
+    pipeline: str,
+    metadata: TargetedMetricAnnotations | MetricAnnotations,
+    command_name: str,
     *,
     projection: Projection,
-    sample_defs=None,
+    sample_defs: list[dict] | None = None,
+    cell_type_websummary_bundle_value: list[dict] | None = None,
 ):
     """Produce the main websummary."""
     assert isinstance(sample_properties, CountSampleProperties)
     assert isinstance(sample_data_paths, SampleDataPaths)
-    sample_data = load_sample_data(sample_properties, sample_data_paths, (projection,))
+    sample_data = load_sample_data(sample_properties, sample_data_paths, projections=(projection,))
 
     species_list = sample_properties.genomes
     web_sum_data = build_web_summary_data_common(
@@ -443,7 +475,7 @@ def build_web_summary_html_sc_and_aggr(
     )
 
     # If cell annotation could have been run but the user chose not to, add info to the web summary.
-    if sample_properties.cell_annotation_viable_but_not_requested:
+    if sample_properties.cloud_cell_annotation_viable_but_not_requested:
         web_sum_data.alarms.append(
             {
                 "formatted_value": None,
@@ -456,7 +488,9 @@ def build_web_summary_html_sc_and_aggr(
     # t-SNE/UMAP plot appears as a constant left plot in the Cell Ranger
     # clustering selector
     if web_sum_data.clustering_selector:
+        assert sample_data_paths.analysis_path is not None
         web_sum_data.clustering_selector.left_plots = umi_on_projection_plot(
+            sample_data_paths.analysis_path,
             sample_data,
             spatial=sample_properties.is_spatial,
             projection=projection,
@@ -464,7 +498,9 @@ def build_web_summary_html_sc_and_aggr(
             tag_type=None,
         )
     if web_sum_data.antibody_clustering_selector:
+        assert sample_data_paths.analysis_path is not None
         web_sum_data.antibody_clustering_selector.left_plots = umi_on_projection_plot(
+            sample_data_paths.analysis_path,
             sample_data,
             projection=projection,
             spatial=sample_properties.is_spatial,
@@ -475,7 +511,12 @@ def build_web_summary_html_sc_and_aggr(
     # Barnyard
     b_table = barnyard_table(metadata, sample_data, species_list)
     if b_table:
+        assert web_sum_data.analysis_tab is not None
         web_sum_data.analysis_tab["barnyard"] = b_table
+
+    # Cell annotation tabs — one tab per annotation model/method
+    _build_cell_annotation_tabs(web_sum_data, cell_type_websummary_bundle_value)
+
     return web_sum_data
 
 
@@ -485,10 +526,9 @@ def build_web_summary_html_sc(
     sample_data_paths: SampleDataPaths,
     pipeline: str,
     sample_defs=None,
+    cell_type_websummary_bundle_value: list[dict] | None = None,
 ):
-    if sample_properties.is_lt:
-        metadata = LTMetricAnnotations(intron_mode_alerts=sample_properties.include_introns)
-    elif sample_properties.is_targeted:
+    if sample_properties.is_targeted:
         metadata = TargetedMetricAnnotations()
     else:
         metadata = MetricAnnotations(intron_mode_alerts=sample_properties.include_introns)
@@ -502,6 +542,7 @@ def build_web_summary_html_sc(
         command,
         projection=UMAP_NAME,
         sample_defs=sample_defs,
+        cell_type_websummary_bundle_value=cell_type_websummary_bundle_value,
     )
     # to circumvent self._check_valid
     data = copy.deepcopy(web_sum_data)

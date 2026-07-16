@@ -467,7 +467,7 @@ impl JibesEMO3 {
     }
     #[allow(non_snake_case)]
     #[pyo3(signature=(max_reps=50000, abs_tol=1e-2, rel_tol=1e-7))]
-    fn perform_EM(&mut self, max_reps: i32, abs_tol: f64, rel_tol: f64) -> PyResult<f64> {
+    fn perform_EM(&mut self, max_reps: i32, abs_tol: f64, rel_tol: f64) -> f64 {
         //  Run the EM algorithm until either max_reps is exceeded or the change in  the LL after
         // a run is <= tol or 1 - new/old <= rel_tol
         // :param max_reps: Maximum number of repetitions
@@ -502,7 +502,7 @@ impl JibesEMO3 {
                 last_ll = self.LL;
             }
         }
-        Ok(self.LL)
+        self.LL
     }
 
     fn get_snr_dictionary(&self, py: Python<'_>) -> HashMap<String, f64> {

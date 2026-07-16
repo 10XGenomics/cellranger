@@ -416,37 +416,6 @@
             }
         ]
     },
-    "SC3Pv3LT": {
-        "barcode": [
-            {
-                "kind": "gel_bead",
-                "length": 16,
-                "offset": 0,
-                "read_type": "R1",
-                "whitelist": {
-                    "name": "9K-LT-march-2021"
-                }
-            }
-        ],
-        "description": "Single Cell 3' v3 LT",
-        "endedness": "three_prime",
-        "name": "SC3Pv3LT",
-        "rna": {
-            "length": null,
-            "offset": 0,
-            "read_type": "R2"
-        },
-        "rna2": null,
-        "strandedness": "+",
-        "umi": [
-            {
-                "length": 12,
-                "min_length": 10,
-                "offset": 16,
-                "read_type": "R1"
-            }
-        ]
-    },
     "SC5P-R1": {
         "barcode": [
             {
@@ -1884,45 +1853,45 @@
         ]
     },
     "Flex-v2-CRISPR-R2:1": {
-      "barcode": [
-        {
-          "kind": "gel_bead",
-          "length": 16,
-          "offset": 0,
-          "read_type": "R1",
-          "whitelist": {
-            "name": "737K-flex-v2"
-          }
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 16,
+                "offset": 0,
+                "read_type": "R1",
+                "whitelist": {
+                    "name": "737K-flex-v2"
+                }
+            },
+            {
+                "kind": "right_probe",
+                "length": 10,
+                "offset": 0,
+                "read_type": "R2",
+                "whitelist": {
+                    "name": "flex-v2-384",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "GEM-X Flex v2 CRISPR (R2:1)",
+        "endedness": "three_prime",
+        "name": "Flex-v2-CRISPR-R2:1",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R2"
         },
-        {
-          "kind": "right_probe",
-          "length": 10,
-          "offset": 0,
-          "read_type": "R2",
-          "whitelist": {
-            "name": "flex-v2-384",
-            "translation": true
-          }
-        }
-      ],
-      "description": "GEM-X Flex v2 CRISPR (R2:1)",
-      "endedness": "three_prime",
-      "name": "Flex-v2-CRISPR-R2:1",
-      "rna": {
-        "length": null,
-        "offset": 0,
-        "read_type": "R2"
-      },
-      "rna2": null,
-      "strandedness": "-",
-      "umi": [
-        {
-          "length": 12,
-          "min_length": 10,
-          "offset": 16,
-          "read_type": "R1"
-        }
-      ]
+        "rna2": null,
+        "strandedness": "-",
+        "umi": [
+            {
+                "length": 12,
+                "min_length": 10,
+                "offset": 16,
+                "read_type": "R1"
+            }
+        ]
     },
     "Flex-v2-singleplex": {
         "barcode": [
@@ -2157,8 +2126,7 @@
                 "length": 9,
                 "min_length": 9,
                 "offset": 0,
-                "read_type": "R1",
-                "whitelist": null
+                "read_type": "R1"
             }
         ]
     },
@@ -2208,8 +2176,107 @@
                 "length": 9,
                 "min_length": 9,
                 "offset": 0,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SPATIAL-HD-v1-11mm": {
+        "barcode": [
+            {
+                "kind": "spot_segment",
+                "length": 14,
+                "offset": 11,
                 "read_type": "R1",
-                "whitelist": null
+                "whitelist": {
+                    "part": "bc1",
+                    "slide": "visium_hd_11mm_v1"
+                }
+            },
+            {
+                "kind": "spot_segment",
+                "length": 14,
+                "offset": 25,
+                "read_type": "R1",
+                "whitelist": {
+                    "part": "bc2",
+                    "slide": "visium_hd_11mm_v1"
+                }
+            }
+        ],
+        "barcode_extraction": {
+            "method": "joint_bc1_bc2",
+            "params": {
+                "max_offset": 12,
+                "min_offset": 8
+            }
+        },
+        "description": "Visium HD v1 - 11mm",
+        "endedness": "three_prime",
+        "name": "SPATIAL-HD-v1-11mm",
+        "rna": {
+            "length": 50,
+            "min_length": 30,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "-",
+        "umi": [
+            {
+                "length": 9,
+                "min_length": 9,
+                "offset": 0,
+                "read_type": "R1"
+            }
+        ]
+    },
+    "SPATIAL-HD-v1-3P-11mm": {
+        "barcode": [
+            {
+                "kind": "spot_segment",
+                "length": 14,
+                "offset": 11,
+                "read_type": "R1",
+                "whitelist": {
+                    "part": "bc1",
+                    "slide": "visium_hd_11mm_v1"
+                }
+            },
+            {
+                "kind": "spot_segment",
+                "length": 14,
+                "offset": 25,
+                "read_type": "R1",
+                "whitelist": {
+                    "part": "bc2",
+                    "slide": "visium_hd_11mm_v1"
+                }
+            }
+        ],
+        "barcode_extraction": {
+            "method": "joint_bc1_bc2",
+            "params": {
+                "max_offset": 12,
+                "min_offset": 8
+            }
+        },
+        "description": "Visium HD v1 - 3' 11mm",
+        "endedness": "three_prime",
+        "name": "SPATIAL-HD-v1-3P-11mm",
+        "rna": {
+            "length": null,
+            "min_length": null,
+            "offset": 0,
+            "read_type": "R2"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 9,
+                "min_length": 9,
+                "offset": 0,
+                "read_type": "R1"
             }
         ]
     },
@@ -2225,7 +2292,7 @@
                 }
             }
         ],
-        "description": "Single Cell Multiome ATAC + Gene Expression v1",
+        "description": "Single Cell Multiome ATAC + Gene Expression v1 or v2",
         "endedness": "three_prime",
         "name": "ARC-v1",
         "rna": {
@@ -2311,6 +2378,64 @@
                 "length": 12,
                 "offset": 16,
                 "read_type": "R1"
+            }
+        ]
+    },
+    "CombinatorialMultiplexingV1": {
+        "barcode": [
+            {
+                "kind": "gel_bead",
+                "length": 8,
+                "offset": 0,
+                "read_type": "I1",
+                "whitelist": {
+                    "name": "cmx_bead_barcode1"
+                }
+            },
+            {
+                "kind": "gel_bead",
+                "length": 8,
+                "offset": 12,
+                "read_type": "I1",
+                "whitelist": {
+                    "name": "cmx_bead_barcode2"
+                }
+            },
+            {
+                "kind": "gel_bead",
+                "length": 8,
+                "offset": 24,
+                "read_type": "I1",
+                "whitelist": {
+                    "name": "cmx_bead_barcode3"
+                }
+            },
+            {
+                "kind": "overhang",
+                "length": 8,
+                "offset": 8,
+                "read_type": "R2",
+                "whitelist": {
+                    "name": "cmx_rt",
+                    "translation": true
+                }
+            }
+        ],
+        "description": "Combinatorial Multiplexing",
+        "endedness": "three_prime",
+        "name": "CombinatorialMultiplexingV1",
+        "rna": {
+            "length": null,
+            "offset": 0,
+            "read_type": "R1"
+        },
+        "rna2": null,
+        "strandedness": "+",
+        "umi": [
+            {
+                "length": 8,
+                "offset": 0,
+                "read_type": "R2"
             }
         ]
     }

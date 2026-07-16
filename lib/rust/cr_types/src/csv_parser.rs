@@ -3,8 +3,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use csv::StringRecord;
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
-use std::fs::File;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -27,22 +25,13 @@ impl CsvParser {
         required_headers: impl IntoIterator<Item = T>,
         filetype: &str,
     ) -> Result<CsvParser> {
-        let file = File::open(filename).with_context(|| filename.display().to_string())?;
-        let buf_rdr = BufReader::new(file);
-        let mut rdr = csv::Reader::from_reader(buf_rdr);
-
-        let mut headers = rdr.headers()?.clone();
-        headers.trim();
-        let headers: Vec<_> = headers.iter().map(String::from).collect();
-
-        let mut rows = Vec::new();
-        for result in rdr.records() {
-            let mut record = result?;
-            record.trim();
-            rows.push(record);
-        }
-
+        let mut reader = csv::ReaderBuilder::new()
+            .trim(csv::Trim::All)
+            .from_path(filename)
+            .with_context(|| filename.display().to_string())?;
+        let headers: Vec<String> = reader.headers()?.iter().map(String::from).collect();
         let col_map = CsvParser::check_headers(filename, required_headers, &headers)?;
+        let rows = reader.into_records().try_collect()?;
 
         Ok(CsvParser {
             filetype: filetype.to_string(),
@@ -250,7 +239,7 @@ impl CsvParser {
 
         // column name to column index map
         for (i, h) in headers.iter().enumerate() {
-            result.insert(h.to_string(), i);
+            result.insert(h.clone(), i);
         }
 
         Ok(result)

@@ -32,10 +32,10 @@ DISPLAY_PREFIX_CUSTOM = rna_library.get_library_type_report_prefix(rna_library.C
 MULTIPLEXING_NAME = "Tag"
 
 PCA_PRCT_CLIP = [0.1, 99.9]
-TSNE_TOTALCOUNTS_PRCT_CLIP = [5, 95]
-TSNE_TOTALCOUNTS_DESCRIPTION = "UMI counts"
-TSNE_GEMGROUPS_DESCRIPTION = "Gem group"
-TSNE_CLUSTER_DESCRIPTION = ""
+UMAP_TOTALCOUNTS_PRCT_CLIP = [5, 95]
+UMAP_TOTALCOUNTS_DESCRIPTION = "UMI counts"
+UMAP_GEMGROUPS_DESCRIPTION = "Gem group"
+UMAP_CLUSTER_DESCRIPTION = ""
 MAX_TOP_N_GENES = 50
 MAX_DE_TABLE_ENTRIES = 10000
 TOP_DE_GENES_MIN_MEAN = 1.0
@@ -1202,32 +1202,32 @@ CHARTS = [
             }
         ],
         "config": shared.CHARTS_PLOTLY_MOVABLE_CONFIG,
-        "name": "tsne_counts",
+        "name": "umap_counts",
         "description": "Shown here are the total UMI counts for each cell-barcode. "
         "Cells with greater UMI counts likely have higher RNA content than cells with fewer UMI counts. "
-        "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
+        "The axes correspond to the 2-dimensional embedding produced by the UMAP algorithm. "
         "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
         f"The display is limited to a random subset of {MAX_WEBSHIM_BCS_DIM} cells.",
-        "function": "plot_tsne_totalcounts",
+        "function": "plot_umap_totalcounts",
     },
     {
         "layout": {
-            "title": "t-SNE projection of Cells Colored by Automated Clustering",
+            "title": "UMAP projection of Cells Colored by Automated Clustering",
             "width": 588,
             "height": 400,
             "margin": {"l": 70, "r": 0, "t": 30, "b": 70},
             "hovermode": "closest",
-            "xaxis": {"title": "t-SNE1"},
-            "yaxis": {"title": "t-SNE2"},
+            "xaxis": {"title": "UMAP1"},
+            "yaxis": {"title": "UMAP2"},
         },
-        "name": "tsne_clustering",
+        "name": "umap_clustering",
         "description": "These are the assignments of each cell-barcode a clusters by an automated clustering algorithm. "
         "The clustering groups together cells that have similar expression profiles. "
-        "The axes correspond to the 2-dimensional embedding produced by the t-SNE algorithm. "
+        "The axes correspond to the 2-dimensional embedding produced by the UMAP algorithm. "
         "In this space, pairs of cells that are close to each other have more similar gene expression profiles than cells that are distant from each other. "
         f"The display is limited to a random subset of {MAX_WEBSHIM_BCS_DIM} cells and K-means up to K={MAX_WEBSHIM_KMEANS_K}. "
         "Please use Loupe Browser to view the entire dataset.",
-        "function": "plot_tsne",
+        "function": "plot_umap",
     },
     {
         "table": {"width": 999, "height": 1000},

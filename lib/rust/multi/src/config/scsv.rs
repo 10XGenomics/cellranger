@@ -1,12 +1,12 @@
 #![deny(missing_docs)]
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{char, space0, space1};
+use nom::character::complete::char;
 use nom::combinator::peek;
 use nom::error::{ErrorKind, make_error};
 use nom::multi::{many_till, many0, many1};
 use nom::sequence::{delimited, preceded, terminated};
-use nom::{Err, IResult, InputTake, Slice};
+use nom::{Err, IResult, InputTake, InputTakeAtPosition, Slice};
 use nom_locate::LocatedSpan;
 use std::convert::AsRef;
 use std::fmt::{Display, Formatter};
@@ -102,6 +102,19 @@ impl<'a, T: Display> Section<'a, T> {
     }
 }
 
+/// Recognizes zero or more UTF whitespace characters except carriage return and newline.
+pub(super) fn space0(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
+    input.split_at_position_complete(|c| !c.is_whitespace() || matches!(c, '\r' | '\n'))
+}
+
+/// Recognizes one or more UTF whitespace characters except carriage return and newline.
+pub(super) fn space1(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
+    input.split_at_position1_complete(
+        |c| !c.is_whitespace() || matches!(c, '\r' | '\n'),
+        ErrorKind::Space,
+    )
+}
+
 fn line_ending(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     let f = input.fragment();
     match f.get(0..=0) {
@@ -120,9 +133,8 @@ fn line_ending(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
 fn take_until_newline(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     let f = input.fragment();
     for i in 0..f.len() {
-        match f.get(i..=i) {
-            Some("\r") | Some("\n") => return Ok((input.slice(i..), input.slice(..i))),
-            _ => {}
+        if let Some("\r" | "\n") = f.get(i..=i) {
+            return Ok((input.slice(i..), input.slice(..i)));
         }
     }
     Err(Err::Error(make_error(input, ErrorKind::Eof)))
@@ -143,17 +155,17 @@ pub(crate) fn eof(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     Err(Err::Error(make_error(input, ErrorKind::Eof)))
 }
 
-pub(crate) fn take_until_eof(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
+pub(crate) fn take_until_eof(input: Span<'_>) -> (Span<'_>, Span<'_>) {
     let l = input.fragment().len();
     let s = input.slice(l..);
-    Ok((s, input.slice(..l)))
+    (s, input.slice(..l))
 }
 
 fn line_end(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     alt((eof, line_ending, comment))(input)
 }
 
-fn header_chars(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
+fn header_chars(input: Span<'_>) -> (Span<'_>, Span<'_>) {
     let f = input.fragment();
     let l = f.len();
     let mut i = 0usize;
@@ -172,7 +184,7 @@ fn header_chars(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
         i += 1;
     }
     i -= ws;
-    Ok((input.slice(i..), input.slice(..i)))
+    (input.slice(i..), input.slice(..i))
 }
 
 fn header(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
@@ -182,7 +194,7 @@ fn header(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
             terminated(
                 delimited(
                     char('['),
-                    delimited(space0, header_chars, space0),
+                    delimited(space0, |x| Ok(header_chars(x)), space0),
                     char(']'),
                 ),
                 many0(alt((tag(","), space1))),
@@ -193,7 +205,7 @@ fn header(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     )(input)
 }
 
-fn inside_double_quotes(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
+fn inside_double_quotes(input: Span<'_>) -> (Span<'_>, Span<'_>) {
     let f = input.fragment();
     let l = f.len();
     let mut i = 0usize;
@@ -213,40 +225,36 @@ fn inside_double_quotes(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
         }
         i += 1;
     }
-    Ok((input.slice(i..), input.slice(..i)))
+    (input.slice(i..), input.slice(..i))
 }
 
 fn double_quoted(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
-    delimited(char('"'), inside_double_quotes, char('"'))(input)
+    delimited(char('"'), |x| Ok(inside_double_quotes(x)), char('"'))(input)
 }
 
 fn quoted(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     delimited(space0, double_quoted, space0)(input)
 }
 
-// this could technically be IResult<&str, ()>, no?
 fn end_cell(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     preceded(space0, alt((peek(tag(",")), peek(line_end), peek(comment))))(input)
 }
 
 pub(crate) fn rstrip_space(input: Span<'_>) -> Span<'_> {
-    let mut l = input.fragment().len();
-    for c in input.fragment().chars().rev() {
-        if c == ' ' || c == '\t' {
-            l -= 1;
-        } else {
-            break;
-        }
-    }
-    input.slice(..l)
+    let n_whitespace: usize = input
+        .chars()
+        .rev()
+        .take_while(|c| c.is_whitespace())
+        .map(char::len_utf8)
+        .sum();
+    input.slice(..(input.fragment().len() - n_whitespace))
 }
 
 fn not_end_cell(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
     let (s, r) = terminated(
-        alt((
-            take_till(|c| c == ',' || c == '\r' || c == '\n'),
-            take_until_eof,
-        )),
+        alt((take_till(|c| c == ',' || c == '\r' || c == '\n'), |x| {
+            Ok(take_until_eof(x))
+        })),
         space0,
     )(input)?;
     Ok((s, rstrip_space(r)))
@@ -305,8 +313,9 @@ pub(crate) fn plain_csv<T: Display>(name: T, input: Span<'_>) -> IResult<Span<'_
 
 #[cfg(test)]
 mod tests {
-    use super::{Section, SectionHdr, Span, XtraData, section_csv};
+    use super::*;
     use anyhow::Result;
+    use itertools::assert_equal;
     use std::convert::Into;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -490,6 +499,16 @@ aaa,"b\"bb",ccc
         let (_input, parsed) = section_csv(scsv)?;
         let expected = SectionStr::new("hi there", vec![vec!["yes", "1", "2"]]);
         assert_eq!(expected, parsed[0].clone().into());
+        Ok(())
+    }
+
+    #[test]
+    fn test_nbsp() -> Result<()> {
+        let (_input, parsed) = row(Span::new_extra(
+            "\u{00a0}foo\u{00a0},\u{00a0}bar\u{00a0}",
+            XtraData::new(""),
+        ))?;
+        assert_equal(parsed.iter().map(|x| *x.fragment()), ["foo", "bar"]);
         Ok(())
     }
 }

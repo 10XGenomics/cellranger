@@ -5,9 +5,13 @@ from __future__ import annotations
 import csv
 import os
 from collections import Counter
+from typing import TYPE_CHECKING
 
 import numpy as np
 from six import ensure_binary, ensure_str
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 
 class CSVParseException(Exception):
@@ -155,7 +159,10 @@ def load_csv_filter_comments(
     return reader
 
 
-def write_filtered_barcodes(out_csv: os.PathLike, bcs_per_genome: dict[str, list[str]]):
+def write_filtered_barcodes(
+    out_csv: os.PathLike | str,
+    bcs_per_genome: Mapping[str | bytes, Iterable[bytes | str]],
+):
     """Write the barcodes to a CSV.
 
     Args:

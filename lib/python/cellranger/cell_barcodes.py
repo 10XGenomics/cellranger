@@ -15,7 +15,7 @@ class InvalidCellBarcode(Exception):
     """Barcode is not from a given whitelist."""
 
 
-class CellBarcodes(list):
+class CellBarcodes(list[bytes]):
     """Python equivalent of file produced by Rust code, list of barcodes as bytes."""
 
     def __init__(self, json_file_name):
@@ -42,6 +42,7 @@ class CellBarcodes(list):
         """
         super().__init__()
         with open(json_file_name) as f:
+            bc: str
             for bc in json.load(f):
                 self.append(bc.encode())
 

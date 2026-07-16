@@ -8,11 +8,11 @@ use bio::io::fasta;
 use cr_types::filtered_barcodes::FilteredBarcodesCsv;
 use cr_types::{BarcodeIndex, GeneticDemuxParams, Mtx, SamHeaderFile};
 use itertools::Itertools;
-use martian::prelude::{MartianRover, MartianStage};
-use martian::{Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::bin_file::BincodeFile;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
+use metric::Histogram;
 use rust_htslib::bam::IndexedReader as BamReader;
 use rust_htslib::bcf::Reader as BcfReader;
 use serde::{Deserialize, Serialize};
@@ -185,12 +185,12 @@ impl MartianStage for CountAlleles {
                     ref_matrix.add_triplet(
                         results.rec_idx,
                         calls.cb_idx,
-                        calls.allele_counts[&AlleleType::Ref],
+                        calls.allele_counts.get(&AlleleType::Ref),
                     );
                     alt_matrix.add_triplet(
                         results.rec_idx,
                         calls.cb_idx,
-                        calls.allele_counts[&AlleleType::Alt],
+                        calls.allele_counts.get(&AlleleType::Alt),
                     );
                 }
             }

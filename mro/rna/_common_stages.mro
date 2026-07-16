@@ -37,24 +37,6 @@ struct CellCallingParam(
     map<float> per_sample,
 )
 
-stage CELLRANGER_PREFLIGHT(
-    in  bool             full_check,
-    in  string           chemistry,
-    in  map[]            sample_def,
-    in  csv              target_set,
-    in  path             reference_path,
-    in  csv              feature_reference,
-    in  CellCallingParam recovered_cells,
-    in  CellCallingParam force_cells,
-    in  int              r1_length,
-    in  int              r2_length,
-    in  string           targeting_method,
-    src py               "stages/common/cellranger_preflight",
-) using (
-    mem_gb   = 8,
-    volatile = strict,
-)
-
 stage DISABLE_FEATURE_STAGES(
     in  map[]               sample_def,
     in  bool                disable_multi,
@@ -84,10 +66,11 @@ stage DISABLE_SECONDARY_ANALYSIS(
     in  bool is_spatial,
     in  h5   filtered_matrices_h5,
     in  bool no_secondary_analysis,
-    in  bool is_visium_hd_main_run  "Boolean indicating if this is being called from a main (not-binning) Visium HD run",
+    in  bool is_visium_hd_main_run_in  "Boolean indicating if this is being called from a main (not-binning) Visium HD run. May be null",
     out bool no_secondary_analysis,
-    out bool sketch_graphclust      "Boolean indicating if sketch based graphclust should be enabled",
-    out bool parallel_umap          "Boolean indicating if parallel UMAP should be enabled",
+    out bool sketch_graphclust         "Boolean indicating if sketch based graphclust should be enabled",
+    out bool parallel_umap             "Boolean indicating if parallel UMAP should be enabled",
+    out bool is_visium_hd_main_run     "Boolean indicating if this is being called from a main (not-binning) Visium HD run. Never null. Can be used by disables.",
     src py   "stages/common/disable_secondary_analysis",
 ) using (
     volatile = strict,
@@ -96,19 +79,14 @@ stage DISABLE_SECONDARY_ANALYSIS(
 stage PARSE_TARGET_FEATURES(
     in  string   target_set_name,
     in  csv      target_set,
-    in  path     reference_path,
     in  json     gene_index,
     in  bool     filter_probes,
-    in  bool     no_bam,
-    in  bool     is_pd,
     in  bool     is_antibody_only,
-    out fa       bait_fasta,
     out csv      target_panel,
     out csv      probe_set,
     out csv      target_panel_or_probe_set,
     out csv      target_gene_indices,
     out bool     disable_targeted,
-    out bool     no_bam,
     out string   target_set_name,
     out string   targeting_method,
     out tps.json target_panel_summary,

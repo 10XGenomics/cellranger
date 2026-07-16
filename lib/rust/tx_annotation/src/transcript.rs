@@ -100,7 +100,7 @@ impl AnnotationData {
         }
     }
 
-    pub fn make_re_tag(&self) -> Option<&'static str> {
+    pub fn make_re_tag(&self) -> &'static str {
         self.region.to_tag()
     }
 
@@ -205,11 +205,11 @@ impl AsMetricPrefix for AnnotationRegion {
 }
 
 impl AnnotationRegion {
-    fn to_tag(self) -> Option<&'static str> {
+    fn to_tag(self) -> &'static str {
         match self {
-            AnnotationRegion::Exonic => Some("E"),
-            AnnotationRegion::Intronic => Some("N"),
-            AnnotationRegion::Intergenic => Some("I"),
+            AnnotationRegion::Exonic => "E",
+            AnnotationRegion::Intronic => "N",
+            AnnotationRegion::Intergenic => "I",
         }
     }
 }

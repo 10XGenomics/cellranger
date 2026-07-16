@@ -7,7 +7,7 @@ use cr_h5::molecule_info::{
     BarcodeIdxType, LibraryIdxType, MoleculeInfoIterator, MoleculeInfoReader, MoleculeInfoWriter,
     bin_barcodes, open_for_modification, trim_barcodes,
 };
-use cr_types::aggr::SampleDef;
+use cr_types::aggr::CountAggrSampleDef;
 use cr_types::probe_set::Probe;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::{LibraryInfo, aggr};
@@ -26,18 +26,18 @@ martian_filetype!(H5File, "h5");
 
 #[derive(Debug, Deserialize, Clone, MartianStruct)]
 pub struct MergeMoleculesStageInputs {
-    sample_defs: Vec<SampleDef>,
+    sample_defs: Vec<CountAggrSampleDef>,
     libraries: Vec<aggr::LibraryInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, MartianStruct)]
 pub struct MergeMoleculesChunkInputs {
-    sample_def: SampleDef,
+    sample_def: CountAggrSampleDef,
 }
 
 #[derive(Debug, Serialize, Deserialize, MartianStruct)]
 pub struct MergeMoleculesChunkOutputs {
-    sample_def: SampleDef,
+    sample_def: CountAggrSampleDef,
 }
 
 #[derive(Debug, Serialize, Deserialize, MartianStruct)]
@@ -127,7 +127,7 @@ impl MartianStage for MergeMolecules {
         trim_barcodes(&molecule_h5, false)?;
 
         Ok(MergeMoleculesChunkOutputs {
-            sample_def: SampleDef {
+            sample_def: CountAggrSampleDef {
                 molecule_h5,
                 ..chunk_args.sample_def
             },
@@ -157,7 +157,7 @@ impl MartianStage for MergeMolecules {
 
         let (feature_ref, probes) = get_fref_and_probes(&new_sample_defs)?;
 
-        let mut gem_group_barcode_ranges: HashMap<String, Vec<u64>> = Default::default();
+        let mut gem_group_barcode_ranges: HashMap<String, Vec<u64>> = HashMap::default();
         let mut barcode_idx_offset: usize = 0;
 
         let mut total_rows = 0;
@@ -379,7 +379,7 @@ impl ProbesState {
 /// Prefer targeted feature reference if present.
 /// Only include probes data if all inputs have probes.
 fn get_fref_and_probes(
-    new_sample_defs: &[SampleDef],
+    new_sample_defs: &[CountAggrSampleDef],
 ) -> Result<(FeatureReference, Option<Vec<Probe>>)> {
     let mut feature_ref = None;
     let mut probes = ProbesState::Undetermined;
@@ -545,7 +545,7 @@ mod merge_molecules_tests {
         let sample_defs: Vec<_> = tfiles
             .iter()
             .enumerate()
-            .map(|(i, tfile)| SampleDef {
+            .map(|(i, tfile)| CountAggrSampleDef {
                 library_id: format!("mi_{i}"),
                 molecule_h5: tfile.as_ref().into(),
             })

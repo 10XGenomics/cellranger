@@ -3,149 +3,178 @@
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved
 #
 
+from __future__ import annotations
+
 import csv
 import itertools
-import math
+import json
 import os
-from collections import Counter
+from typing import TYPE_CHECKING
 
 import martian
+import numpy as np
+import scipy.sparse as sp_sparse
 
 from cellranger import cr_io
 from cellranger.analysis.diffexp import save_differential_expression_csv
-from cellranger.constants import FILTER_LIST
 from cellranger.feature.crispr.measure_perturbations import (
-    MIN_NUMBER_CELLS_PER_PERTURBATION,
-    NON_TARGETING,
     NUM_THREADS,
-    TargetInfo,
     get_perturbation_efficiency,
     read_and_validate_feature_ref,
+    read_bootstrap_count_total,
+    read_perturbation_stats,
     save_perturbation_efficiency_summary,
 )
 from cellranger.matrix import CountMatrix
-from cellranger.rna.library import CRISPR_LIBRARY_TYPE, GENE_EXPRESSION_LIBRARY_TYPE
+from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage MEASURE_PERTURBATIONS(
-    in  csv  protospacer_calls_per_cell,
-    in  h5   filtered_feature_counts_matrix,
-    in  bool by_feature,
-    out csv  perturbation_efficiencies,
-    out path perturbation_effects_path,
-    src py   "stages/feature/measure_perturbations",
+    in  csv   protospacer_calls_per_cell,
+    in  h5    control_stats,
+    in  h5    control_bootstrap,
+    in  h5[]  chunk_stats,
+    in  h5[]  chunk_bootstrap,
+    in  json  chunk_perturbations,
+    in  bool  by_feature,
+    out csv   perturbation_efficiencies,
+    out path  perturbation_effects_path,
+    src py    "stages/feature/measure_perturbations",
 ) split (
-    in  int  chunk_start,
-    in  int  chunk_end,
-    out csv  chunk_perturbation_efficiencies,
-    out csv  chunk_perturbation_effects,
+    in  h5       chunk_stats_slice,
+    in  h5       chunk_bootstrap_slice,
+    in  string[] which_perturbations,
+    out csv      chunk_perturbation_efficiencies,
+    out csv      chunk_perturbation_effects,
 ) using (
     volatile = strict,
 )
 """
 
 
-def get_target(perturbation: str, target_info: dict[str, TargetInfo]) -> str:
-    """Return the target gene names of the specified pipe-separated perturbation.
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """MEASURE_PERTURBATIONS stage inputs.
 
-    Deduplicate by gene ID and return the gene names.
-    Match the behaviour of `_get_ps_clusters_by_target`.
+    SPLIT_PERTURBATION_MATRIX has reduced the matrix upstream: `control_stats` holds the shared
+    non-targeting control's sSeq sufficient statistics (+ the full feature reference), `chunk_stats[k]`
+    holds chunk k's perturbations' statistics, and `control_bootstrap` / `chunk_bootstrap[k]` hold the
+    small target-gene matrices the empirical-CI bootstrap resamples. `chunk_perturbations` (from
+    COMPUTE_PRESPLIT_ASSIGNMENT) lists the perturbation names for each chunk, in slice order -- the
+    single source of chunk membership, so it is never recomputed here.
     """
-    gene_id_names = sorted(
-        set((target_info[x].gene_id, target_info[x].gene_name) for x in perturbation.split("|"))
-    )
-    if all(gene_id == NON_TARGETING for gene_id, _ in gene_id_names):
-        return NON_TARGETING
 
-    target = "|".join(
-        gene_name for gene_id, gene_name in gene_id_names if gene_id not in FILTER_LIST
-    )
-    return target if target else "Ignore"
+    protospacer_calls_per_cell: None | mro_filetypes.csv
+    control_stats: mro_filetypes.h5
+    control_bootstrap: mro_filetypes.h5
+    chunk_stats: list[mro_filetypes.h5]
+    chunk_bootstrap: list[mro_filetypes.h5]
+    chunk_perturbations: mro_filetypes.json
+    by_feature: bool
 
 
-def get_perturbations(
-    protospacer_calls_per_cell: str,
-    target_info: dict[str, TargetInfo],
-    by_feature: bool,
-) -> list[str]:
-    """Return a sorted list of perturbations from the protospacer calls per cell file.
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """MEASURE_PERTURBATIONS stage outputs."""
 
-    Translate protospacer IDs to target gene names when by_feature is false.
-    """
-    with open(protospacer_calls_per_cell) as f:
-        feature_calls = (x["feature_call"] for x in csv.DictReader(f))
-        perturbation_counts = (
-            Counter(feature_calls)
-            if by_feature
-            else Counter(get_target(x, target_info) for x in feature_calls)
-        )
-        return sorted(
-            perturbation
-            for perturbation, cells in perturbation_counts.items()
-            if cells >= MIN_NUMBER_CELLS_PER_PERTURBATION
-        )
+    perturbation_efficiencies: mro_filetypes.csv
+    perturbation_effects_path: mro_filetypes.path
 
 
-def split(args):
-    feature_ref = CountMatrix.load_feature_ref_from_h5_file(args.filtered_feature_counts_matrix)
-    target_info = read_and_validate_feature_ref(feature_ref)
-    if args.protospacer_calls_per_cell is None or target_info is None:
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """MEASURE_PERTURBATIONS chunk inputs."""
+
+    chunk_stats_slice: mro_filetypes.h5
+    chunk_bootstrap_slice: mro_filetypes.h5
+    which_perturbations: list[str]
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """MEASURE_PERTURBATIONS chunk outputs."""
+
+    chunk_perturbation_efficiencies: None | mro_filetypes.csv
+    chunk_perturbation_effects: None | mro_filetypes.csv
+
+
+def split(args: StageInputs):
+    with open(args.chunk_perturbations) as f:
+        chunk_perturbations = json.load(f)
+
+    if not chunk_perturbations:
         return {"chunks": []}
 
-    num_perturbations = len(
-        get_perturbations(args.protospacer_calls_per_cell, target_info, args.by_feature)
-    )
-    if num_perturbations == 0:
-        return {"chunks": []}
+    assert (
+        len(chunk_perturbations) == len(args.chunk_stats) == len(args.chunk_bootstrap)
+    ), "chunk_perturbations, chunk_stats and chunk_bootstrap must align position-for-position"
 
-    num_gex_features = feature_ref.get_count_of_feature_type(GENE_EXPRESSION_LIBRARY_TYPE)
-    num_crispr_features = feature_ref.get_count_of_feature_type(CRISPR_LIBRARY_TYPE)
-    num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(
-        args.filtered_feature_counts_matrix
-    )
-    mem_gib = 1 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1.5)
+    # Each chunk loads only the shared control bootstrap + its bootstrap slice (target-gene rows
+    # only) and the compact statistics, so size memory from the bootstrap dims (the matrix is gone).
+    _, control_barcodes, control_nnz = CountMatrix.load_dims_from_h5(args.control_bootstrap)
 
-    print(
-        f"{num_perturbations=},{num_gex_features=},{num_crispr_features=},"
-        f"{num_features=},{num_barcodes=},{nnz=},{mem_gib=}"
-    )
-    num_chunks = min(100, num_perturbations, math.ceil(num_perturbations / 50))
-    num_perturbations_per_chunk = math.ceil(num_perturbations / num_chunks)
-
-    return {
-        "chunks": [
+    chunks = []
+    for chunk_stats_slice, chunk_bootstrap_slice, which_perturbations in zip(
+        args.chunk_stats, args.chunk_bootstrap, chunk_perturbations
+    ):
+        _, slice_barcodes, slice_nnz = CountMatrix.load_dims_from_h5(chunk_bootstrap_slice)
+        # The scale=1.5 matrix term already exceeds observed peak (~1.8x peak on the by-target chunks),
+        # so it carries the data scaling; a +0.5 cushion + 1 GiB floor covers
+        # the DE result arrays and clustering on [control ++ slice] for the small base-dominated chunks.
+        mem_gib = max(
+            1.0,
+            0.5
+            + CountMatrix.get_mem_gb_from_matrix_dim(
+                control_barcodes + slice_barcodes, control_nnz + slice_nnz, scale=1.5
+            ),
+        )
+        chunks.append(
             {
-                "chunk_start": start,
-                "chunk_end": min(num_perturbations, start + num_perturbations_per_chunk),
+                "chunk_stats_slice": chunk_stats_slice,
+                "chunk_bootstrap_slice": chunk_bootstrap_slice,
+                "which_perturbations": which_perturbations,
                 "__mem_gb": mem_gib,
                 "__threads": NUM_THREADS,
             }
-            for start in range(0, num_perturbations, num_perturbations_per_chunk)
-        ]
-    }
+        )
+    return {"chunks": chunks}
 
 
-def main(args, outs):
-    target_info = read_and_validate_feature_ref(
-        CountMatrix.load_feature_ref_from_h5_file(args.filtered_feature_counts_matrix)
-    )
+def main(args: ChunkInputs, outs: ChunkOutputs):
+    full_feature_ref = CountMatrix.load_feature_ref_from_h5_file(args.control_stats)
+    target_info = read_and_validate_feature_ref(full_feature_ref)
     assert target_info is not None
+    # Full GEX feature reference: gene_id -> result-array row, and the gene axis of the output CSVs.
+    gex_feature_ref = full_feature_ref.select_features_by_type(GENE_EXPRESSION_LIBRARY_TYPE)
 
-    gex_count_matrix = CountMatrix.load_data_for_library_type_from_h5(
-        args.filtered_feature_counts_matrix, GENE_EXPRESSION_LIBRARY_TYPE
-    )
+    control_stats = read_perturbation_stats(args.control_stats)
+    chunk_stats = read_perturbation_stats(args.chunk_stats_slice)
 
-    which_perturbations = set(
-        get_perturbations(args.protospacer_calls_per_cell, target_info, args.by_feature)[
-            args.chunk_start : args.chunk_end
+    # The bootstrap matrix = target-gene rows x [control cells ++ this chunk's perturbed cells], in
+    # storage order -- the same cell order the pre-split path got from hstack([control, slice]), so
+    # the bootstrap draws stay bit-identical. combined_col_sums is each cell's all-GEX count_total in
+    # that same order (the size-factor numerator), read alongside each bootstrap matrix.
+    control_boot = CountMatrix.load_h5_file(args.control_bootstrap)
+    chunk_boot = CountMatrix.load_h5_file(args.chunk_bootstrap_slice)
+    combined_matrix = sp_sparse.hstack([control_boot.m, chunk_boot.m], format="csc")
+    combined_bcs = list(control_boot.bcs) + list(chunk_boot.bcs)
+    bootstrap_matrix = CountMatrix(control_boot.feature_ref, combined_bcs, combined_matrix)
+    combined_col_sums = np.concatenate(
+        [
+            read_bootstrap_count_total(args.control_bootstrap),
+            read_bootstrap_count_total(args.chunk_bootstrap_slice),
         ]
-    )
+    ).astype(np.float64)
 
     perturbation_result = get_perturbation_efficiency(
-        which_perturbations,
+        set(args.which_perturbations),
         target_info,
         args.protospacer_calls_per_cell,
-        gex_count_matrix,
+        combined_bcs,
+        gex_feature_ref,
+        control_stats,
+        chunk_stats,
+        bootstrap_matrix,
+        combined_col_sums,
         by_feature=args.by_feature,
     )
     if perturbation_result is None:
@@ -164,17 +193,24 @@ def main(args, outs):
         fold_change_per_perturbation,
         args.by_feature,
     )
+    # save_differential_expression_csv only needs the gene axis (feature_ref.feature_defs); the DE
+    # result rows are the full GEX genes, so pass an empty matrix carrying the GEX feature reference.
     save_differential_expression_csv(
         None,
         results_all_perturbations,
-        gex_count_matrix,
+        CountMatrix.empty(gex_feature_ref, []),
         cluster_names=perturbation_names,
         base_dir=os.path.dirname(outs.chunk_perturbation_effects),
         file_name=os.path.basename(outs.chunk_perturbation_effects).removesuffix(".csv"),
     )
 
 
-def join(_args, outs, _chunk_defs, chunk_outs):
+def join(
+    _args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     if chunk_outs == [] or all(
         chunk.chunk_perturbation_efficiencies is None for chunk in chunk_outs
     ):

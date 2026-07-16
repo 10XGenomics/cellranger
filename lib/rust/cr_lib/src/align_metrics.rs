@@ -131,7 +131,7 @@ pub struct AlignAndCountVisitor {
     library_type: LibraryType,
     /// If targeted, the set of genes which are on target
     target_genes: Option<HashSet<Gene>>,
-    pub barcode_summaries: Vec<BarcodeSummary>,
+    pub barcode_summaries: Option<Vec<BarcodeSummary>>,
     pub last_barcode: Option<Barcode>,
     metrics_sender: ShardSender<BarcodeMetrics, LibFeatThenBarcodeOrder>,
 }
@@ -141,12 +141,13 @@ impl AlignAndCountVisitor {
         library_type: LibraryType,
         metrics_sender: ShardSender<BarcodeMetrics, LibFeatThenBarcodeOrder>,
         target_genes: Option<HashSet<Gene>>,
+        is_spatial: bool,
     ) -> Self {
         AlignAndCountVisitor {
             metrics: VisitorMetrics::default(),
             library_type,
             target_genes,
-            barcode_summaries: Vec::new(),
+            barcode_summaries: (!is_spatial).then_some(vec![]),
             last_barcode: None,
             metrics_sender,
         }
@@ -742,15 +743,13 @@ impl AnnotatedReadVisitor for AlignAndCountVisitor {
         };
 
         if barcode.is_valid() {
-            if self.last_barcode.is_none_or(|x| x != barcode) {
-                // Add a BarcodeSummary element for the first barcode
-                self.barcode_summaries
-                    .push(BarcodeSummary::new(barcode.to_string(), self.library_type));
+            if let Some(bc_summaries) = self.barcode_summaries.as_mut() {
+                if self.last_barcode.is_none_or(|x| x != barcode) {
+                    // Add a BarcodeSummary element for the first barcode
+                    bc_summaries.push(BarcodeSummary::new(barcode.to_string(), self.library_type));
+                }
+                bc_summaries.last_mut().unwrap().observe(annotation);
             }
-            self.barcode_summaries
-                .last_mut()
-                .unwrap()
-                .observe(annotation);
             self.metrics
                 .good_umi_with_good_bc
                 .increment(annotation.umi_info.is_valid);

@@ -4,10 +4,18 @@
 #
 """Convert antibody_analysis folder out to a single file aggregate_barcodes.csv out."""
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING
+
+import martian
 
 import cellranger.rna.library as rna_library
 from cellranger.cr_io import hard_link
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage GET_AGGREGATE_BARCODES_OUT(
@@ -20,7 +28,29 @@ stage GET_AGGREGATE_BARCODES_OUT(
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """GET_AGGREGATE_BARCODES_OUT stage inputs."""
+
+    antibody_analysis: None | mro_filetypes.path
+    is_multi: bool
+    multiplexing_method: None | str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """GET_AGGREGATE_BARCODES_OUT stage outputs."""
+
+    aggregate_barcodes: None | mro_filetypes.csv
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """GET_AGGREGATE_BARCODES_OUT chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """GET_AGGREGATE_BARCODES_OUT chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
     make_aggregate_file = True
     if args.is_multi:
         if args.multiplexing_method is None:

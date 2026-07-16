@@ -75,6 +75,11 @@ type ValueExtractor interface {
 
 	// Returns true if buckets are optional for this metric.
 	BucketsOptional() bool
+
+	// Returns true if this extractor returns a map of many values.
+	//
+	// Each returned value gets the overall key prepended.
+	IsMultiValue() bool
 }
 
 func WithGlob(ve ValueExtractor, globs map[string]string) ValueExtractor {

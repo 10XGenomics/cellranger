@@ -10,22 +10,25 @@ use anyhow::{Context, Result, bail};
 use barcode::{Barcode, MAX_BARCODE_AND_GEM_GROUP_LENGTH};
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::reference::feature_reference::{FeatureDef, FeatureReference, FeatureType};
-use cr_types::{BarcodeThenFeatureOrder, CountShardFile, FeatureBarcodeCount, GemWell, H5File};
+use cr_types::{BarcodeThenFeatureOrder, CountShardFile, FeatureBarcodeCount, H5File};
 use hdf5::Group;
 use hdf5::types::{FixedAscii, VarLenAscii, VarLenUnicode};
 use itertools::{Itertools, zip_eq};
 use martian_derive::martian_filetype;
 use serde::{Deserialize, Serialize};
 use shardio::ShardReader;
+use std::collections::HashMap;
 use std::io::Write;
 use std::iter::zip;
 use std::mem::size_of;
 use std::ops::Range;
 use std::str::FromStr;
 
-// Group keys.
-const MATRIX_GROUP: &str = "matrix";
-const FEATURE_REF_GROUP: &str = "features";
+// Group keys. Public so stages that write count-matrix-format H5 files (e.g.
+// WRITE_CRISPR_ONLY_MATRIX, SPLIT_PERTURBATION_MATRIX) source the group layout from the
+// canonical writer here rather than re-declaring the strings.
+pub const MATRIX_GROUP: &str = "matrix";
+pub const FEATURE_REF_GROUP: &str = "features";
 
 const MATRIX_SHAPE_DATASET: &str = "shape";
 
@@ -78,6 +81,13 @@ impl CountMatrixFile {
             num_barcodes: *num_barcodes as usize,
             num_non_zeros: nnz,
         })
+    }
+
+    /// Return the number of features in the matrix for each feature type.
+    pub fn load_feature_type_counts(&self) -> Result<HashMap<FeatureType, usize>> {
+        let matrix_group = self.matrix_group()?;
+        let feature_ref = feature_reference_io::from_h5(&matrix_group.group(FEATURE_REF_GROUP)?)?;
+        Ok(feature_ref.num_features_per_type())
     }
 
     // Return the amount of memory in GiB required for loading the matrix.
@@ -233,7 +243,7 @@ impl CountMatrixStreaming {
     /// in the output, with a count of zero.
     /// Note that this will not include barcodes present in the barcodes array
     /// but which have no counts even before filtering.
-    fn filtered_barcode_counts<F: Fn(&AnnotatedCount<'_>) -> bool>(
+    pub fn filtered_barcode_counts<F: Fn(&AnnotatedCount<'_>) -> bool>(
         &self,
         filter: F,
     ) -> Result<impl Iterator<Item = Result<(&BarcodeWithGemGroup, i64)>>> {
@@ -294,27 +304,27 @@ impl CountMatrixStreaming {
 
     fn raw_counts_inner(&self) -> Result<impl Iterator<Item = Result<RawCount>>> {
         let matrix = self.file.matrix_group()?;
-        if self.use_async {
+        Ok(if self.use_async {
             let bare_counts_iter =
                 ThreadedH5Iterator::new(matrix.dataset(DATASET_DATA)?, MAT_H5_BUF_SZ, 1);
             let feat_idx_iter =
                 ThreadedH5Iterator::new(matrix.dataset(DATASET_FEATURE_INDICES)?, MAT_H5_BUF_SZ, 1);
-            return self
-                .raw_counts_from_iters(bare_counts_iter, feat_idx_iter)
-                .map(|iter| Box::new(iter) as Box<dyn Iterator<Item = Result<RawCount>>>);
-        }
-        let bare_counts_iter = H5Iterator::new(matrix.dataset(DATASET_DATA)?, MAT_H5_BUF_SZ);
-        let feat_idx_iter =
-            H5Iterator::new(matrix.dataset(DATASET_FEATURE_INDICES)?, MAT_H5_BUF_SZ);
-        self.raw_counts_from_iters(bare_counts_iter, feat_idx_iter)
-            .map(|iter| Box::new(iter) as Box<dyn Iterator<Item = Result<RawCount>>>)
+            Box::new(self.raw_counts_from_iters(bare_counts_iter, feat_idx_iter))
+                as Box<dyn Iterator<Item = Result<RawCount>>>
+        } else {
+            let bare_counts_iter = H5Iterator::new(matrix.dataset(DATASET_DATA)?, MAT_H5_BUF_SZ);
+            let feat_idx_iter =
+                H5Iterator::new(matrix.dataset(DATASET_FEATURE_INDICES)?, MAT_H5_BUF_SZ);
+            Box::new(self.raw_counts_from_iters(bare_counts_iter, feat_idx_iter))
+                as Box<dyn Iterator<Item = Result<RawCount>>>
+        })
     }
 
     fn raw_counts_from_iters<C, F>(
         &self,
         bare_counts_iter: C,
         feat_idx_iter: F,
-    ) -> Result<impl Iterator<Item = Result<RawCount>>>
+    ) -> impl Iterator<Item = Result<RawCount>>
     where
         C: Iterator<Item = Result<Count>>,
         F: Iterator<Item = Result<FeatureIdx>>,
@@ -333,7 +343,7 @@ impl CountMatrixStreaming {
                 std::iter::repeat_n(bc_idx, count as usize)
             });
 
-        Ok(zip_eq(bare_counts_iter, feat_idx_iter)
+        zip_eq(bare_counts_iter, feat_idx_iter)
             .zip_eq(bc_idx_iter)
             .map(|((count_result, feature_idx_result), barcode_idx)| {
                 let count = count_result.with_context(|| self.file.display().to_string())?;
@@ -344,7 +354,7 @@ impl CountMatrixStreaming {
                     barcode_idx,
                     feature_idx: feature_idx as usize,
                 })
-            }))
+            })
     }
 }
 
@@ -553,14 +563,11 @@ pub fn write_matrix_h5(
     feature_ref: &FeatureReference,
     sample_id: &str,
     chemistry_description: &str,
-    gem_well: GemWell,
     barcode_index: &BarcodeIndex,
     software_version: &str,
 ) -> Result<()> {
     let reader: ShardReader<FeatureBarcodeCount, BarcodeThenFeatureOrder> =
         ShardReader::open_set(chunks)?;
-
-    let unique_gem_groups = [gem_well.inner() as usize];
 
     let f = hdf5::File::create(path)?;
     let mut group = f.create_group(MATRIX_GROUP)?;
@@ -590,27 +597,13 @@ pub fn write_matrix_h5(
         VarLenAscii::from_ascii(chemistry_description)?,
     )?;
 
-    let library_id_mapping = ndarray::Array1::from_elem(
-        unique_gem_groups.len(),
-        FixedAscii::<256>::from_ascii(sample_id)?,
-    );
-    let attr = f
-        .new_attr::<FixedAscii<256>>()
-        .shape(library_id_mapping.shape())
+    f.new_attr_builder()
+        .with_data(&[FixedAscii::<256>::from_ascii(sample_id)?])
         .create(H5_LIBRARY_ID_MAPPING_KEY)?;
-    attr.as_writer().write(library_id_mapping.view())?;
 
-    let orig_gem_group = ndarray::Array1::from(
-        unique_gem_groups
-            .iter()
-            .map(|&x| x as isize)
-            .collect::<Vec<_>>(),
-    );
-    let attr = f
-        .new_attr::<isize>()
-        .shape(orig_gem_group.shape())
+    f.new_attr_builder()
+        .with_data(&[1isize])
         .create(H5_ORIG_GEM_GROUP_MAPPING_KEY)?;
-    attr.as_writer().write(orig_gem_group.view())?;
 
     f.close()?;
     Ok(())

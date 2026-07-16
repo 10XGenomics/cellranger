@@ -2,8 +2,10 @@
 #![deny(missing_docs)]
 
 use crate::barcode_overlap::FRPGemBarcodeOverlapRow;
+use crate::detect_chemistry::adapter_filter::preprocess_units;
 use crate::detect_chemistry::chemistry_filter::{
-    ChemistryFilter, DetectChemistryUnit, detect_chemistry_units, named_candidates,
+    ChemistryFilter, DetectChemistryCandidates, DetectChemistryUnit, LoadedUnit, UnitsPerLibrary,
+    detect_chemistry_units, named_candidates,
 };
 use crate::detect_chemistry::errors::DetectChemistryErrors;
 use crate::detect_chemistry::identity_check::check_fastq_identity;
@@ -16,27 +18,29 @@ use crate::detect_chemistry::probe_bc_pairing::{
 use crate::detect_chemistry::whitelist_filter::WhitelistMatchFilter;
 use anyhow::{Context, Result, bail, ensure};
 use barcode::whitelist::BarcodeId;
-use cr_types::LibraryType;
+use cr_types::chemistry::adapter::trimmer_for_chemistry;
 use cr_types::chemistry::{
     AutoChemistryName, AutoOrRefinedChemistry, ChemistryDef, ChemistryDefs, ChemistryName,
     ChemistrySpecs, normalize_chemistry_def,
 };
+use cr_types::probe_set::ProbeSetReference;
 use cr_types::reference::feature_reference::{FeatureConfig, FeatureReferenceFile};
+use cr_types::reference::probe_set_reference::TargetSetFile;
 use cr_types::sample_def::SampleDef;
-use fastq_set::read_pair::ReadPair;
+use cr_types::{AlignerParam, BarcodeMultiplexingType, LibraryType, ReadLevel};
+use fastq_set::long_read_adapter_trimmer::{AdapterLayout, TrimmerConfig};
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeWrite;
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::CsvFile;
-use metric::{TxHashMap, TxHashSet, join_metric_name, set};
-use multi::config::{
-    MultiConfigCsv, MultiConfigCsvFile, ProbeBarcodeIterationMode, SamplesCsv, multiconst,
-};
+use metric::{TxHashMap, TxHashSet, join_metric_name};
+use multi::config::multiconst::DEFAULT_INCLUDE_INTRONS;
+use multi::config::{MultiConfigCsv, MultiConfigCsvFile, ProbeBarcodeIterationMode, SamplesCsv};
 use serde::{Deserialize, Serialize};
-use slice_group_by::GroupBy;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::default::Default;
 use std::path::{Path, PathBuf};
 
 const MIN_READS_NEEDED: usize = 10_000;
@@ -58,6 +62,9 @@ pub struct DetectChemistryStageInputs {
     pub is_pd: bool,
     pub custom_chemistry_defs: ChemistryDefs,
     pub feature_config: Option<FeatureConfig>,
+    pub target_set: Option<TargetSetFile>,
+    pub is_spatial: bool,
+    pub aligner: Option<AlignerParam>,
 }
 
 impl DetectChemistryStageInputs {
@@ -69,6 +76,7 @@ impl DetectChemistryStageInputs {
             feature_reference: self.feature_reference.as_ref(),
             feature_config: self.feature_config.as_ref(),
             is_pd: self.is_pd,
+            is_spatial: self.is_spatial,
         }
     }
 }
@@ -81,6 +89,7 @@ struct Metadata<'a> {
     pub feature_reference: Option<&'a FeatureReferenceFile>,
     pub feature_config: Option<&'a FeatureConfig>,
     pub is_pd: bool,
+    pub is_spatial: bool,
 }
 
 pub type DetectedProbeBarcodePairingFile = JsonFile<TxHashMap<BarcodeId, BarcodeId>>;
@@ -89,6 +98,7 @@ pub type DetectedProbeBarcodePairingFile = JsonFile<TxHashMap<BarcodeId, Barcode
 #[cfg_attr(test, derive(Debug))]
 pub struct DetectChemistryStageOutputs {
     pub chemistry_defs: ChemistryDefs,
+    pub library_trimmers: TxHashMap<LibraryType, TrimmerConfig>,
     pub is_antibody_only: bool,
     #[mro_retain]
     pub probe_barcode_overlap: Option<CsvFile<FRPGemBarcodeOverlapRow>>,
@@ -117,30 +127,39 @@ impl MartianMain for DetectChemistry {
             .map(|csv| csv.read().with_context(|| csv.display().to_string()))
             .transpose()?;
 
-        // Get chemistry detection parameters from multi config or use defaults
-        let sample_reads = multi_config_csv
-            .as_ref()
-            .and_then(|config| config.gene_expression.as_ref())
-            .and_then(|gex_params| gex_params.detect_chemistry_sample_reads)
-            .unwrap_or(DEFAULT_CHEMISTRY_SAMPLE_READS);
-
-        let total_reads = multi_config_csv
-            .as_ref()
-            .and_then(|config| config.gene_expression.as_ref())
-            .and_then(|gex_params| gex_params.detect_chemistry_total_reads)
-            .unwrap_or(DEFAULT_CHEMISTRY_TOTAL_READS);
-
-        let units = &load_reads(&args, sample_reads, total_reads)?;
-        ensure!(!units.is_empty(), "no reads loaded");
-
-        let chemistry_defs = select_chemistries(&args, multi_config_csv.as_ref(), units)?;
+        let (chemistry_defs, units, selected_layouts) =
+            select_chemistries(&args, multi_config_csv.as_ref())?;
 
         let is_antibody_only = args
             .sample_def
             .iter()
             .all(|x| x.library_type == Some(LibraryType::Antibody));
 
+        let library_trimmers: TxHashMap<LibraryType, TrimmerConfig> = chemistry_defs
+            .iter()
+            .filter_map(|(&lib_type, chem)| {
+                let params = units[&lib_type][0]
+                    .0
+                    .fastq_mode
+                    .adapter_trimming_parameters(args.aligner)?;
+                let layout = selected_layouts.get(&lib_type).cloned().unwrap_or_else(|| {
+                    panic!("No empirically determined adapter layout found for {lib_type}")
+                });
+                Some((lib_type, chem, params, layout))
+            })
+            .map(|(lib_type, chem, params, layout)| {
+                let Some(trimmer) = trimmer_for_chemistry(chem, lib_type, layout, &params)? else {
+                    bail!(
+                        "unable to construct a read trimmer for {} {lib_type}",
+                        chem.name
+                    );
+                };
+                anyhow::Ok((lib_type, trimmer))
+            })
+            .try_collect()?;
+
         let mut outputs = DetectChemistryStageOutputs {
+            library_trimmers,
             chemistry_defs,
             is_antibody_only,
             probe_barcode_overlap: None,
@@ -148,67 +167,160 @@ impl MartianMain for DetectChemistry {
         };
 
         if let Some(multi_config_csv) = &multi_config_csv {
-            handle_probe_barcode_translation(&rover, multi_config_csv, units, &mut outputs)?;
+            handle_probe_barcode_translation(&rover, multi_config_csv, &units, &mut outputs)?;
+        }
+
+        // Remove RNA length if we're doing gapfill.
+        if let Some(target_set) = &args.target_set
+            && let Some(gex_chem) = outputs.chemistry_defs.get_mut(&LibraryType::Gex)
+            && ProbeSetReference::from_path(target_set, None, 0)?.has_gap_probes
+        {
+            gex_chem.rna.length = None;
         }
 
         Ok(outputs)
     }
 }
 
+type AdaptersPerLibrary = TxHashMap<LibraryType, AdapterLayout>;
+
 /// Top-level entry point to define the map of chemistries per library type.
 fn select_chemistries(
     args: &DetectChemistryStageInputs,
     multi_config_csv: Option<&MultiConfigCsv>,
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
-) -> Result<ChemistryDefs> {
+) -> Result<(ChemistryDefs, UnitsPerLibrary, AdaptersPerLibrary)> {
+    let units = detect_chemistry_units(&args.sample_def, args.r1_length, args.r2_length)?;
+    println!(
+        "Number of fastq units = {}",
+        units.values().map(Vec::len).sum::<usize>()
+    );
+
+    let (units, selected_layouts) = load_reads(units, multi_config_csv)?;
+    ensure!(!units.is_empty(), "no reads loaded");
+
     let metadata = args.to_metadata();
     // Handle manually-specified chemistry.
-    Ok(match unpack_chemistry_specs(&args.chemistry_specs)? {
+    let final_defs = match unpack_chemistry_specs(&args.chemistry_specs)? {
         UnpackedChemistrySpecs::Manual(chems) => use_manual_chemistries(
             &chems,
             &metadata,
             multi_config_csv,
             &args.custom_chemistry_defs,
-            units,
-        )?,
-
+            &units,
+        ),
         UnpackedChemistrySpecs::Auto(mode) => {
-            match detect_chemistry(mode, &metadata, multi_config_csv, units) {
-                Ok(chemistry_def) => {
-                    // One chemistry was compatible with all units.
-                    clone_chemistry_for_libraries(&chemistry_def, units)
+            // -----------------------------------------------------------------------------------------
+            // If the sample def contains VDJ, none of the other library types should be present and
+            // the chemistry def should be `SCVDJ_auto`.
+            if metadata
+                .sample_defs
+                .iter()
+                .any(|sd| sd.library_type.is_some_and(|lt| lt.is_vdj()))
+            {
+                ensure!(
+                    metadata
+                        .sample_defs
+                        .iter()
+                        .all(|sd| sd.library_type.is_some_and(|lt| lt.is_vdj())),
+                    "VDJ cannot be mixed with other library types"
+                );
+                ensure!(
+                    mode == AutoChemistryName::Vdj,
+                    "VDJ chemistry_name_spec should be SCVDJ_auto"
+                );
+            }
+
+            let candidates = {
+                let mut selected_mode_chems = mode.allowed_chemistries(
+                    metadata.is_pd,
+                    multi_config_csv.is_some_and(|x| x.samples.is_some()),
+                    multi_config_csv.is_some_and(is_rtl_uncollapsed),
+                );
+                if let Some(allowed_chems) = metadata.allowed_chems {
+                    let allowed_chems: TxHashSet<_> = allowed_chems
+                        .iter()
+                        .filter_map(AutoOrRefinedChemistry::refined)
+                        .collect();
+                    // Filter down the possible chemistries using the allowed list.
+                    selected_mode_chems.retain(|chem| allowed_chems.contains(chem));
                 }
+                named_candidates(&selected_mode_chems)
+            };
 
-                Err(err) => {
-                    // No single chemistry was compatible with all units.
-                    // Attempt to detect chemistry per library type for RTL,
-                    // SC3Pv3, and SC3Pv4.
-                    let Some(DetectChemistryErrors::ConflictingChemistries {
-                        per_unit_chems, ..
-                    }) = err.downcast_ref::<DetectChemistryErrors>()
-                    else {
-                        bail!(err);
-                    };
+            let is_overhang_multiplexed =
+                multi_config_csv.is_some_and(MultiConfigCsv::is_overhang_multiplexed);
 
-                    let is_rtl = per_unit_chems
-                        .iter()
-                        .flatten()
-                        .all(|(name, _def)| name.is_rtl().unwrap_or(false));
-                    let is_3p_v3 = per_unit_chems
-                        .iter()
-                        .flatten()
-                        .all(|(name, _def)| name.is_sc_3p_v3());
-                    let is_3p_v4 = per_unit_chems
-                        .iter()
-                        .flatten()
-                        .all(|(name, _def)| name.is_sc_3p_v4());
-                    ensure!(is_rtl || is_3p_v3 || is_3p_v4, err);
+            let chems: ChemistryDefs =
+                detect_chemistry_per_library_type(&candidates, &metadata, &units)?
+                    .into_iter()
+                    .map(|(library_type, chem)| {
+                        let chem = validate_chemistry(
+                            chem,
+                            metadata.allowed_chems,
+                            multi_config_csv,
+                            is_overhang_multiplexed,
+                        )?;
+                        anyhow::Ok((library_type, chem))
+                    })
+                    .try_collect()?;
+            assert!(!chems.is_empty());
 
-                    detect_chemistry_per_library_type(mode, &metadata, multi_config_csv, units)?
+            if let Some(config) = multi_config_csv
+                && let Some(gex_chem) = chems.get(&LibraryType::Gex)
+                && gex_chem.name.is_rtl() == Some(false)
+            {
+                let gex = config.gene_expression.as_ref();
+                ensure!(
+                    gex.is_some_and(|gex| gex.reference_path.is_some()),
+                    "A reference transcriptome is required to analyze a Gene Expression library."
+                );
+            }
+
+            let names: Vec<_> = chems.values().map(|chem| chem.name).unique().collect();
+
+            // Ensure that we produced compatible chemistries. For earlier
+            // products, this implies that we should have the same chemistry for
+            // each library. For newer products, make sure that all chemistries
+            // are from a single product family. For now we check identity based
+            // on chemistry name, we may want to be more stringent in the future.
+
+            if names.len() == 1 {
+                // A single chemistry worked for all libraries. Do a bit of
+                // validation.
+                if names[0].is_sfrp() {
+                    // Extract min_major_probe_bc_frac from multi config or use default
+                    let min_major_probe_bc_frac = multi_config_csv
+                        .and_then(|config| config.gene_expression.as_ref())
+                        .and_then(|gex_params| gex_params.min_major_probe_bc_frac)
+                        .unwrap_or(DEFAULT_MIN_MAJOR_PROBE_BC_FRAC);
+
+                    // Bail out if a mixture of probe barcodes is observed for singleplex FRP chemistry
+                    validate_no_probe_bc_mixture_in_sfrp(
+                        chems.values().next().unwrap(),
+                        &units,
+                        metadata.feature_reference,
+                        metadata.feature_config,
+                        min_major_probe_bc_frac,
+                    )?;
                 }
+                Ok(chems)
+            }
+            // Otherwise, check that we found chemistries from compatible
+            // product families.
+            else if names.iter().all(|chem| chem.is_rtl().unwrap_or(false))
+                || names.iter().all(ChemistryName::is_sc_3p_v3)
+                || names.iter().all(ChemistryName::is_sc_3p_v4)
+            {
+                Ok(chems)
+            } else {
+                // Chemistries seem to be mutually incompatible.
+                bail!(DetectChemistryErrors::PerLibraryConflictingChemistries(
+                    chems
+                ))
             }
         }
-    })
+    }?;
+    Ok((final_defs, units, selected_layouts))
 }
 
 /// Represent the possible valid ways of unpacking chemistry specs.
@@ -255,17 +367,18 @@ fn use_manual_chemistries(
     metadata: &Metadata<'_>,
     multi_config_csv: Option<&MultiConfigCsv>,
     custom_chemistry_defs: &ChemistryDefs,
-    all_units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    all_units: &UnitsPerLibrary,
 ) -> Result<ChemistryDefs> {
-    divide_units_by_library_type(all_units)
-        .map(|(library_type, units)| {
+    all_units
+        .iter()
+        .map(|(&library_type, units)| {
             let chem_name = chems[&library_type];
-            if chem_name == ChemistryName::Custom {
-                use_custom_chemistry(custom_chemistry_defs.get(&library_type))
+            let chem_def = if chem_name == ChemistryName::Custom {
+                use_custom_chemistry(custom_chemistry_defs.get(&library_type))?
             } else {
-                use_manual_chemistry(library_type, chem_name, metadata, multi_config_csv, units)
-            }
-            .map(|chem_def| (library_type, chem_def))
+                use_manual_chemistry(library_type, chem_name, metadata, multi_config_csv, units)?
+            };
+            Ok((library_type, chem_def))
         })
         .try_collect()
 }
@@ -294,129 +407,134 @@ fn use_custom_chemistry(custom_chemistry_def: Option<&ChemistryDef>) -> Result<C
 /// here. Emit a warning if there are few valid barcodes.
 fn use_manual_chemistry(
     library_type: LibraryType,
-    name: ChemistryName,
+    chem: ChemistryName,
     metadata: &Metadata<'_>,
     multi_config_csv: Option<&MultiConfigCsv>,
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    units: &[LoadedUnit],
 ) -> Result<ChemistryDef> {
-    let mut def = ChemistryDef::named(name);
+    let mut chem = ChemistryDef::named(chem);
     if library_type == LibraryType::Crispr
         && let Some(crispr_probe_barcode_location) = multi_config_csv
             .and_then(|config| config.feature.as_ref())
             .and_then(|feature| feature.crispr_probe_barcode_location)
     {
         // Config validation should have made sure of this.
-        assert!(name.is_mfrp());
-        def.override_probe_barcode_extraction(crispr_probe_barcode_location);
+        assert!(chem.name.is_mfrp());
+        chem.override_probe_barcode_extraction(crispr_probe_barcode_location);
     }
-    let chems: TxHashMap<_, _> = [(name, def.clone())].into_iter().collect();
+    let chems: TxHashMap<_, _> = [(chem.name, chem.clone())].into_iter().collect();
 
-    if name.is_mfrp() {
+    if chem.name.is_mfrp() {
         // Check the read length to ensure that the probe barcode is sequenced.
-        let _matching_chemistries =
-            LengthFilter::new(metadata.feature_reference, metadata.feature_config)?
-                .filter_chemistries(&chems, units)?;
+        let _matching_chemistries = LengthFilter::new(
+            library_type,
+            metadata.feature_reference,
+            metadata.feature_config,
+        )?
+        .filter_chemistries(&chems, units)?;
     }
 
-    if let Err(err) = WhitelistMatchFilter::default().filter_chemistries(&chems, units) {
-        if name.is_spatial() || matches!(err, DetectChemistryErrors::WhitelistLoadError(_)) {
+    if let Err(err) =
+        WhitelistMatchFilter::new(metadata.is_spatial).filter_chemistries(&chems, units)
+    {
+        if metadata.is_spatial || matches!(err, DetectChemistryErrors::WhitelistLoadError(_)) {
             bail!(err);
         }
         println!("WARNING: {err:#}");
     }
 
-    validate_multiplexing(name, metadata.sample_defs)?;
-    validate_rtl(multi_config_csv, name)?;
-    Ok(def)
+    validate_rtl(multi_config_csv, &chem)?;
+    Ok(chem)
 }
 
-/// Populate a ChemistryDefs map with a copy of the chemistry for each library type.
-fn clone_chemistry_for_libraries(
-    chemistry_def: &ChemistryDef,
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
-) -> ChemistryDefs {
-    units
-        .iter()
-        .map(|(unit, _reads)| unit.library_type)
-        .unique()
-        .zip(std::iter::repeat(chemistry_def.clone()))
-        .collect()
-}
+type CandidatesPerLibrary = HashMap<LibraryType, DetectChemistryCandidates>;
 
 /// Load a subsample of reads from each input unit.
+///
+/// Potentially perform post-processing of the reads if necessary for the
+/// sequencing platform in use. Returns the loaded units and the empirically
+/// selected adapter layout per library type (for libraries that require adapter
+/// trimming).
 fn load_reads(
-    args: &DetectChemistryStageInputs,
-    sample_reads: usize,
-    total_reads: usize,
-) -> Result<Vec<(DetectChemistryUnit, Vec<ReadPair>)>> {
-    let units = detect_chemistry_units(&args.sample_def, args.r1_length, args.r2_length)?;
-    println!("Number of fastq units = {}", units.len());
-
+    units: HashMap<LibraryType, Vec<DetectChemistryUnit>>,
+    multi_config_csv: Option<&MultiConfigCsv>,
+) -> Result<(UnitsPerLibrary, AdaptersPerLibrary)> {
     // Check for duplicate R1 and R2 files amongst units.
-    check_fastq_identity(&units)?;
+    check_fastq_identity(units.values().flatten())?;
 
-    units
+    // Get chemistry detection parameters from multi config or use defaults
+    let sample_reads = multi_config_csv
+        .as_ref()
+        .and_then(|config| config.gene_expression.as_ref())
+        .and_then(|gex_params| gex_params.detect_chemistry_sample_reads)
+        .unwrap_or(DEFAULT_CHEMISTRY_SAMPLE_READS);
+
+    let total_reads = multi_config_csv
+        .as_ref()
+        .and_then(|config| config.gene_expression.as_ref())
+        .and_then(|gex_params| gex_params.detect_chemistry_total_reads)
+        .unwrap_or(DEFAULT_CHEMISTRY_TOTAL_READS);
+
+    let combined: Vec<(LibraryType, Vec<LoadedUnit>, Option<AdapterLayout>)> = units
         .into_iter()
-        .sorted_by_key(|unit| unit.library_type)
-        .map(|unit| {
-            println!("Sampling reads from: {unit}");
-            let reads = unit.sampled_read_pairs(sample_reads, total_reads)?;
-            Ok((unit, reads))
+        .sorted_by_key(|(lib_type, _)| *lib_type)
+        .map(|(lib_type, units)| {
+            let loaded: Vec<LoadedUnit> = units
+                .iter()
+                .map(|unit| {
+                    println!("Sampling reads from: {unit}");
+                    let reads = unit.sampled_read_pairs(sample_reads, total_reads, None)?;
+                    anyhow::Ok((unit.clone(), reads))
+                })
+                .try_collect()?;
+
+            // STAR aligner is used by the downstream ReadMappingFilter.
+            let Some(trimmer_params) = units
+                .iter()
+                .map(|u| {
+                    u.fastq_mode
+                        .adapter_trimming_parameters(Some(AlignerParam::Star))
+                })
+                .unique()
+                .exactly_one()
+                .unwrap()
+            else {
+                return anyhow::Ok((lib_type, loaded, None));
+            };
+
+            // We need to do adapter trimming on these units.
+            let (reloaded, selected_layout) =
+                preprocess_units(loaded, &trimmer_params, lib_type, sample_reads, total_reads)?;
+
+            anyhow::Ok((lib_type, reloaded, Some(selected_layout)))
         })
-        .try_collect()
+        .try_collect()?;
+
+    let mut units_per_library = UnitsPerLibrary::new();
+    let mut selected_layouts = AdaptersPerLibrary::default();
+    for (lib_type, units, layout) in combined {
+        units_per_library.insert(lib_type, units);
+        if let Some(layout) = layout {
+            selected_layouts.insert(lib_type, layout);
+        }
+    }
+    Ok((units_per_library, selected_layouts))
 }
 
-/// Determine which chemistry to use for the specified auto detection mode.
-fn detect_chemistry(
-    mode: AutoChemistryName,
+/// Determine which chemistry to use for all units of a single library type.
+///
+/// For most cases this will resolve to a single compatible chemistry.
+/// For certain cases such as Antigen Capture, we cannot select a unique
+/// chemistry, and we require a follow-on consensus step to resolve to a single
+/// chemistry.
+fn detect_chemistry_for_library(
+    library_type: LibraryType,
+    candidates: &DetectChemistryCandidates,
     metadata: &Metadata<'_>,
-    multi_config_csv: Option<&MultiConfigCsv>,
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
-) -> Result<ChemistryDef> {
+    units: &[LoadedUnit],
+) -> Result<DetectChemistryCandidates> {
     #[allow(clippy::enum_glob_use)]
     use ChemistryName::*;
-
-    // Check for overhang multiplexing
-    let is_overhang_multiplexed =
-        multi_config_csv.is_some_and(MultiConfigCsv::is_overhang_multiplexed);
-
-    // -----------------------------------------------------------------------------------------
-    // If the sample def contains VDJ, none of the other library types should be present and
-    // the chemistry def should be `SCVDJ_auto`.
-    if metadata
-        .sample_defs
-        .iter()
-        .any(|sd| sd.library_type.is_some_and(|lt| lt.is_vdj()))
-    {
-        ensure!(
-            metadata
-                .sample_defs
-                .iter()
-                .all(|sd| sd.library_type.is_some_and(|lt| lt.is_vdj())),
-            "VDJ cannot be mixed with other library types"
-        );
-        ensure!(
-            mode == AutoChemistryName::Vdj,
-            "VDJ chemistry_name_spec should be SCVDJ_auto"
-        );
-    }
-
-    let candidates = {
-        let mut selected_mode_chems = mode.allowed_chemistries(
-            metadata.is_pd,
-            multi_config_csv.is_some_and(|x| x.samples.is_some()),
-            multi_config_csv.is_some_and(is_rtl_uncollapsed),
-        );
-        if let Some(allowed_chems) = metadata.allowed_chems {
-            let allowed_chems: TxHashSet<_> = allowed_chems
-                .iter()
-                .filter_map(AutoOrRefinedChemistry::refined)
-                .collect();
-            // Filter down the possible chemistries using the allowed list.
-            selected_mode_chems.retain(|chem| allowed_chems.contains(chem));
-        }
-        selected_mode_chems
-    };
 
     for (unit, read_pairs) in units {
         ensure!(
@@ -431,144 +549,50 @@ fn detect_chemistry(
 
     println!(
         "Potential chemistries: {}",
-        candidates.iter().sorted().format(", ")
+        candidates.keys().sorted().format(", ")
     );
 
-    // Read length based filtering on a per-unit basis.
-    // Note: this is a bit tedious due to the issues in CELLRANGER-9488
-    // TODO: flatten this method and the per-library chemistry detection back into
-    // a single method that always detects chemistry per-library and then enforces
-    // the constraint that we must have a single result only for certain analyses.
-    let candidates_per_unit = {
-        let mut candidates_per_unit =
-            LengthFilter::new(metadata.feature_reference, metadata.feature_config)?
-                .filter_chemistries_per_unit(&named_candidates(&candidates), units)?;
-        // Post-process results to handle paired-end case based on the possible consensus chems.
-        // Also evaluate the consensus and fail fast if we already have no
-        // mutually compatible chemistries.
-        let mut consensus =
-            LengthFilter::reduce_per_unit_chems(units, candidates_per_unit.clone())?;
-        for candidates in &mut candidates_per_unit {
-            LengthFilter::post_process_pe(&consensus, candidates);
-        }
-        // Filter the consensus for PE to maintain consistent interpretation of logging.
-        LengthFilter::post_process_pe(&consensus.clone(), &mut consensus);
-        println!(
-            "Consensus candidates after length filter: {}",
-            consensus.keys().sorted().format(", ")
-        );
-        candidates_per_unit
-    };
+    // Read length based filtering.
+    let candidates = LengthFilter::new(
+        library_type,
+        metadata.feature_reference,
+        metadata.feature_config,
+    )?
+    .filter_chemistries(candidates, units)?;
+
+    println!(
+        "Candidates after length filter: {}",
+        candidates.keys().sorted().format(", ")
+    );
 
     // -----------------------------------------------------------------------------------------
     // For each unit of fastqs, ensure that a sufficient fraction of reads contain barcodes
-    // which match the whitelist for at least one of the possible chemistries
-    let candidates: TxHashSet<_> = {
-        let mut wl_filter = WhitelistMatchFilter::default();
-        let candidates_per_unit: Vec<_> = candidates_per_unit
-            .into_iter()
-            .zip_eq(units)
-            .map(|(candidates, unit)| wl_filter.filter_chemistries_single_unit(&candidates, unit))
-            .try_collect()?;
+    // which match the whitelist for at least one of the possible chemistries.
+    // TODO: we should share the whitelist cache between different invocations of
+    // this function to avoid repeatedly loading them for each library type.
+    let mut candidates =
+        WhitelistMatchFilter::new(metadata.is_spatial).filter_chemistries(&candidates, units)?;
 
-        WhitelistMatchFilter::reduce_per_unit_chems(units, candidates_per_unit)?
-            .into_keys()
-            .collect()
-    };
+    // If we're down to one candidate, we're done.
+    if candidates.len() == 1 {
+        return Ok(candidates);
+    }
 
-    let chosen_chemistry_def = if candidates.len() == 1 {
-        let &chem = candidates.iter().exactly_one().unwrap();
-        if chem.is_sfrp() {
-            // Extract min_major_probe_bc_frac from multi config or use default
-            let min_major_probe_bc_frac = multi_config_csv
-                .and_then(|config| config.gene_expression.as_ref())
-                .and_then(|gex_params| gex_params.min_major_probe_bc_frac)
-                .unwrap_or(DEFAULT_MIN_MAJOR_PROBE_BC_FRAC);
-
-            // Bail out if a mixture of probe barcodes is observed for singleplex FRP chemistry
-            validate_no_probe_bc_mixture_in_sfrp(
-                chem,
-                units,
-                metadata.feature_reference,
-                metadata.feature_config,
-                min_major_probe_bc_frac,
-            )?;
-        }
-        Some(validate_chemistry(
-            chem,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![ThreePrimeV3PolyA, ThreePrimeV3HTPolyA, ThreePrimeV3LT]
-        || candidates == set![ThreePrimeV3CS1, ThreePrimeV3HTCS1, ThreePrimeV3LT]
-    {
-        Some(validate_chemistry(
-            ThreePrimeV3LT,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![ThreePrimeV3PolyA, ThreePrimeV3HTPolyA] {
-        Some(validate_chemistry(
-            ThreePrimeV3PolyA,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![ThreePrimeV3CS1, ThreePrimeV3HTCS1] {
-        Some(validate_chemistry(
-            ThreePrimeV3CS1,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![ThreePrimeV4PolyA] {
-        Some(validate_chemistry(
-            ThreePrimeV4PolyA,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![ThreePrimeV4CS1] {
-        Some(validate_chemistry(
-            ThreePrimeV4CS1,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![FivePrimeR2, FivePrimeHT] {
-        Some(validate_chemistry(
-            FivePrimeR2,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else if candidates == set![FivePrimeR2V3] {
-        Some(validate_chemistry(
-            FivePrimeR2V3,
-            metadata.allowed_chems,
-            metadata.sample_defs,
-            multi_config_csv,
-            is_overhang_multiplexed,
-        )?)
-    } else {
-        None
-    };
-    if let Some(chosen_chemistry_def) = chosen_chemistry_def {
-        return Ok(chosen_chemistry_def);
+    // Downselect to regular throughput kits if HT and regular are both compatible.
+    if candidates_are(&candidates, &[ThreePrimeV3PolyA, ThreePrimeV3HTPolyA]) {
+        candidates.remove(&ThreePrimeV3HTPolyA).unwrap();
+        return Ok(candidates);
+    } else if candidates_are(&candidates, &[ThreePrimeV3CS1, ThreePrimeV3HTCS1]) {
+        candidates.remove(&ThreePrimeV3HTCS1).unwrap();
+        return Ok(candidates);
+    } else if candidates_are(&candidates, &[FivePrimeR2, FivePrimeHT]) {
+        candidates.remove(&FivePrimeHT).unwrap();
+        return Ok(candidates);
     }
 
     println!(
         "After whitelist filter: {}",
-        candidates.iter().sorted().format(", ")
+        candidates.keys().sorted().format(", ")
     );
 
     let is_antibody_only = metadata
@@ -580,71 +604,124 @@ fn detect_chemistry(
         // we define a new chemistry named "SC-FB" because this could be 3' v2 polyA capture
         // antibody library or a 5' antibody library
         let redundant_ab_chems = [ThreePrimeV2, FivePrimeR2, FivePrimePE];
-        if redundant_ab_chems.iter().any(|chem| result.contains(chem)) {
-            result.insert(FeatureBarcodingOnly);
+
+        if redundant_ab_chems
+            .iter()
+            .any(|chem| result.contains_key(chem))
+        {
+            // FIXME: this is a hole in ensuring that chemistry defs flow through
+            // Any state updated on the input defs is lost here... may not be important
+            // if this is only for old products.
+            result.insert(FeatureBarcodingOnly, FeatureBarcodingOnly.def());
             for chem in &redundant_ab_chems {
                 result.remove(chem);
             }
         }
         result
-    } else {
+    } else if library_type.is_gex() {
         ReadMappingFilter::new(metadata.reference_path.unwrap())?
-            .filter_named_chemistries(&candidates, units)?
+            .filter_chemistries(&candidates, units)?
+    } else {
+        candidates
     };
 
     println!(
         "After mapping filter: {}",
-        candidates.iter().sorted().format(", ")
+        candidates.keys().sorted().format(", ")
     );
 
-    ensure!(
-        candidates.len() == 1,
-        "Could not distinguish between {}",
-        candidates.iter().sorted().format(", ")
-    );
+    if candidates.len() != 1 {
+        println!(
+            "Could not distinguish between {} for {library_type}",
+            candidates.keys().sorted().format(", ")
+        );
+    }
 
-    validate_chemistry(
-        candidates.into_iter().exactly_one().unwrap(),
-        metadata.allowed_chems,
-        metadata.sample_defs,
-        multi_config_csv,
-        is_overhang_multiplexed,
-    )
+    Ok(candidates)
+}
+
+/// Return true if the candidates are an exact match to the provided set of names.
+fn candidates_are(candidates: &DetectChemistryCandidates, are: &[ChemistryName]) -> bool {
+    if candidates.len() != are.len() {
+        return false;
+    }
+    are.iter().all(|name| candidates.contains_key(name))
 }
 
 /// Run chemistry detection on every library independently.
-/// This variant produces an independent result for each library without any
-/// constraint on the individual chemistries being mutually compatible.
 fn detect_chemistry_per_library_type(
-    mode: AutoChemistryName,
+    candidates: &DetectChemistryCandidates,
     metadata: &Metadata<'_>,
-    multi_config_csv: Option<&MultiConfigCsv>,
-    all_units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    all_units: &UnitsPerLibrary,
 ) -> Result<ChemistryDefs> {
-    divide_units_by_library_type(all_units)
-        .map(|(library_type, units)| {
+    let candidates_per_library: CandidatesPerLibrary = all_units
+        .iter()
+        .sorted_by_key(|&(&lib_type, _)| lib_type)
+        .map(|(&library_type, units)| {
             println!("\nDetecting chemistry for {library_type}");
-            let chemistry = detect_chemistry(mode, metadata, multi_config_csv, units)?;
-            ensure!(
-                chemistry.name.compatible_with_library_type(library_type),
-                "The chemistry {} was detected for {library_type} but they are not compatible; \
-                 please check that your library configurations are associated with the correct \
-                 library type.",
-                chemistry.name,
-            );
-            println!("\nDetected chemistry {} for {library_type}", chemistry.name);
-            anyhow::Ok((library_type, chemistry))
-        })
-        .try_collect()
-}
+            let candidates =
+                detect_chemistry_for_library(library_type, candidates, metadata, units)?;
 
-/// Divide up the read units into slices based on library type.
-fn divide_units_by_library_type(
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
-) -> impl Iterator<Item = (LibraryType, &[(DetectChemistryUnit, Vec<ReadPair>)])> {
-    units
-        .linear_group_by_key(|(unit, _reads)| unit.library_type)
-        .map(|units| (units[0].0.library_type, units))
+            println!(
+                "\nDetected {} for {library_type}",
+                candidates.keys().format(", ")
+            );
+            anyhow::Ok((library_type, candidates))
+        })
+        .try_collect()?;
+
+    // If we have one chemistry per library type, we're done.
+    if candidates_per_library
+        .values()
+        .all(|chems| chems.len() == 1)
+    {
+        return Ok(candidates_per_library
+            .into_iter()
+            .map(|(library_type, chems)| (library_type, chems.into_values().exactly_one().unwrap()))
+            .collect());
+    }
+
+    // If we can find a consensus chemistry that works for all libraries, use it.
+    // Note that we take the consensus based on chemistry name but then retain
+    // the individual defs for each library, in case a library-specific customization
+    // was applied.
+    let consensus: Vec<_> = candidates_per_library
+        .values()
+        .map(|candidates| {
+            candidates
+                .keys()
+                .copied()
+                .collect::<HashSet<ChemistryName>>()
+        })
+        .reduce(|consensus, names| &consensus & &names)
+        .unwrap()
+        .into_iter()
+        .sorted()
+        .collect();
+    match consensus.as_slice() {
+        [] => {
+            // Arbitrarily report one library with multiple chems to fail with.
+            let (lib_type, candidates) = candidates_per_library
+                .into_iter()
+                .sorted_by_key(|(lib_type, _)| *lib_type)
+                .find(|(_, candidates)| candidates.len() > 1)
+                .unwrap();
+            bail!(
+                "Could not distinguish between {} for {lib_type}",
+                candidates.keys().sorted().format(", ")
+            );
+        }
+        [consensus] => Ok(candidates_per_library
+            .into_iter()
+            .map(|(library_type, mut chems)| (library_type, chems.remove(consensus).unwrap()))
+            .collect()),
+        too_many => {
+            bail!(
+                "Could not distinguish between {}",
+                too_many.iter().format(", ")
+            );
+        }
+    }
 }
 
 /// Validate that the specified chemistry is allowed.
@@ -667,92 +744,59 @@ fn validate_chemistry_spec(
     Ok(())
 }
 
-/// Validate a chemistry.
+/// Validate a chemistry, and do some post-processing.
 fn validate_chemistry(
-    chemistry: ChemistryName,
+    chemistry: ChemistryDef,
     allowed_chems: Option<&[AutoOrRefinedChemistry]>,
-    sample_defs: &[SampleDef],
     multi_config_csv: Option<&MultiConfigCsv>,
     overhang_multiplexing: bool,
 ) -> Result<ChemistryDef> {
-    if chemistry == ChemistryName::ThreePrimeV3LT {
+    if chemistry.name == ChemistryName::ArcV1 {
         bail!(
-            "The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier."
-        );
-    }
-    if chemistry == ChemistryName::ArcV1 {
-        bail!(
-            "Cell Ranger detected the chemistry {chemistry}, which may indicate a workflow \
+            "Cell Ranger detected the chemistry {}, which may indicate a workflow \
             error during sample preparation. Please check the reagents used to prepare this \
             sample and contact 10x Genomics support for further assistance. If this workflow is \
             intentional, you can force Cell Ranger to process this data by manually specifying \
-            the {chemistry} chemistry in your analysis configuration."
+            the {} chemistry in your analysis configuration.",
+            chemistry.name,
+            chemistry.name
         );
     }
 
-    if let Some(config) = multi_config_csv
-        && config.libraries.has_gene_expression()
-        && chemistry.is_rtl() == Some(false)
-    {
-        let gex = config.gene_expression.as_ref();
-        ensure!(
-            gex.is_some_and(|gex| gex.reference_path.is_some()),
-            "A reference transcriptome is required to analyze a Gene Expression library."
-        );
-    }
-
-    validate_multiplexing(chemistry, sample_defs)?;
-    validate_rtl(multi_config_csv, chemistry)?;
+    validate_rtl(multi_config_csv, &chemistry)?;
 
     let chemistry_with_overhang = if overhang_multiplexing {
-        chemistry.get_overhang_version()?
+        // FIXME: this will discard any dynamic changes made to the chemistry
+        ChemistryDef::named(chemistry.name.get_overhang_version()?)
     } else {
         chemistry
     };
 
     validate_chemistry_spec(
-        AutoOrRefinedChemistry::Refined(chemistry_with_overhang),
+        AutoOrRefinedChemistry::Refined(chemistry_with_overhang.name),
         allowed_chems,
     )?;
 
-    Ok(ChemistryDef::named(chemistry_with_overhang))
-}
-
-/// Validate combinations of chemistry and types of multiplexing.
-fn validate_multiplexing(chemistry_type: ChemistryName, sample_defs: &[SampleDef]) -> Result<()> {
-    #[allow(clippy::enum_glob_use)]
-    use ChemistryName::*;
-
-    if !sample_defs
-        .iter()
-        .any(|sdef| sdef.library_type == Some(LibraryType::Cellplex))
-    {
-        return Ok(());
-    }
-
-    ensure!(
-        chemistry_type != ThreePrimeV3LT,
-        "Multiplexing Capture libraries are not supported with Single Cell 3' v3 LT chemistry"
-    );
-    Ok(())
+    Ok(chemistry_with_overhang)
 }
 
 /// Validate the chemistry with RTL-related parameters.
-fn validate_rtl(multi_config_csv: Option<&MultiConfigCsv>, chemistry: ChemistryName) -> Result<()> {
+fn validate_rtl(multi_config_csv: Option<&MultiConfigCsv>, chemistry: &ChemistryDef) -> Result<()> {
     let Some(config) = multi_config_csv else {
         // cellranger count does not support RTL chemistries.
         return Ok(());
     };
 
-    if !chemistry.is_rtl().expect("is_rtl is None only for custom and spatial chemistries, which do not use chemistry detection") {
+    if !chemistry.name.is_rtl().expect("is_rtl is None only for custom and spatial chemistries, which do not use chemistry detection") {
         let Some(samples) = &config.samples else {
             return Ok(());
         };
         ensure!(
-            !samples.has_probe_barcode_ids(),
-            "A non-Flex chemistry {chemistry} was detected, and the [samples] \
+            samples.multiplexing_type!=BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL),
+            "A non-Flex chemistry {} was detected, and the [samples] \
              section has a probe_barcode_ids column. The probe_barcode_ids column may only be \
              specified with Flex chemistries.",
+             chemistry.name
         );
         return Ok(());
     }
@@ -762,13 +806,13 @@ fn validate_rtl(multi_config_csv: Option<&MultiConfigCsv>, chemistry: ChemistryN
             ensure!(gex.has_probe_set(), "Flex chemistries require a probe-set.");
         }
         ensure!(
-            gex.include_introns == multiconst::DEFAULT_INCLUDE_INTRONS,
+            gex.include_introns == DEFAULT_INCLUDE_INTRONS,
             "The [gene-expression] section specifies the parameter include-introns, \
              which is not valid for Flex chemistries."
         );
     }
 
-    if chemistry.is_sfrp() {
+    if chemistry.name.is_sfrp() {
         ensure!(
             config.samples.is_none(),
             "We detected singleplex Flex chemistry from the data. \
@@ -794,7 +838,7 @@ fn is_rtl_uncollapsed(multi_config_csv: &MultiConfigCsv) -> bool {
 fn handle_probe_barcode_translation(
     rover: &MartianRover,
     multi_config_csv: &MultiConfigCsv,
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    units: &UnitsPerLibrary,
     outputs: &mut DetectChemistryStageOutputs,
 ) -> Result<()> {
     let detected_pairing_id_translation = if !should_detect_probe_barcode_pairing(multi_config_csv)
@@ -859,13 +903,18 @@ fn handle_probe_barcode_translation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cr_types::LibraryType;
+    use cr_types::chemistry::adapter::{layouts, trimmer_for_chemistry};
     use cr_types::chemistry::{ChemistryDefsExt, known_chemistry_defs};
     use cr_types::reference::probe_set_reference::TargetSetFile;
-    use cr_types::sample_def::FastqMode;
+    use cr_types::sample_def::{FastqMode, SampleDefBuilder};
+    use cr_types::{BarcodeMultiplexingType, LibraryType, ReadLevel, SequencingPlatform};
     use dui_tests::stage_test::StageFailTest;
     use dui_tests::{DuiTest, stage_fail_dui_test};
-    use multi::config::{GemWell, GeneExpressionParams, Lanes, LibrariesCsv, Library, SampleRow};
+    use metric::set;
+    use multi::config::{
+        DataType, GeneExpressionParams, Lanes, LibrariesCsv, Library, SampleBarcodeColumn,
+        SampleRow,
+    };
     use std::io::Write;
     use std::path::Path;
     use std::string::ToString;
@@ -874,71 +923,83 @@ mod tests {
     fn test_validate_rtl() {
         use ChemistryName::{MFRP_Ab, MFRP_RNA, SFRP, ThreePrimeV3CS1, ThreePrimeV3PolyA};
 
-        assert!(validate_rtl(None, ThreePrimeV3PolyA).is_ok());
+        assert!(validate_rtl(None, &ThreePrimeV3PolyA.def()).is_ok());
 
-        let gex_library = Library::BclProcessor {
-            fastq_path: PathBuf::default(),
-            sample_indices: Vec::default(),
-            lanes: Lanes::Any,
+        let gex_library = Library {
+            read_path: PathBuf::default(),
             physical_library_id: String::default(),
             feature_type: LibraryType::Gex,
-            gem_well: GemWell(0),
             subsample_rate: None,
             chemistry: None,
+            data_type: DataType::BclProcessor {
+                sample_indices: Vec::default(),
+                lanes: Lanes::Any,
+            },
+            platform: SequencingPlatform::Illumina,
         };
 
-        let antibody_library = Library::BclProcessor {
-            fastq_path: PathBuf::default(),
-            sample_indices: Vec::default(),
-            lanes: Lanes::Any,
+        let antibody_library = Library {
+            read_path: PathBuf::default(),
             physical_library_id: String::default(),
             feature_type: LibraryType::Antibody,
-            gem_well: GemWell(0),
             subsample_rate: None,
             chemistry: None,
+            data_type: DataType::BclProcessor {
+                sample_indices: Vec::default(),
+                lanes: Lanes::Any,
+            },
+            platform: SequencingPlatform::Illumina,
         };
 
         let gex_without_probe_set = MultiConfigCsv {
-            libraries: LibrariesCsv(vec![gex_library]),
+            libraries: LibrariesCsv::new(vec![gex_library]),
             gene_expression: Some(GeneExpressionParams {
                 probe_set: vec![],
-                include_introns: multiconst::DEFAULT_INCLUDE_INTRONS,
+                include_introns: DEFAULT_INCLUDE_INTRONS,
                 ..GeneExpressionParams::default()
             }),
-            ..MultiConfigCsv::default()
+            feature: None,
+            vdj: None,
+            samples: None,
+            antigen_specificity: None,
+            functional_map: None,
         };
-        assert!(validate_rtl(Some(&gex_without_probe_set), MFRP_RNA).is_err());
-        assert!(validate_rtl(Some(&gex_without_probe_set), SFRP).is_err());
-        assert!(validate_rtl(Some(&gex_without_probe_set), ThreePrimeV3PolyA).is_ok());
+        assert!(validate_rtl(Some(&gex_without_probe_set), &MFRP_RNA.def()).is_err());
+        assert!(validate_rtl(Some(&gex_without_probe_set), &SFRP.def()).is_err());
+        assert!(validate_rtl(Some(&gex_without_probe_set), &ThreePrimeV3PolyA.def()).is_ok());
 
         let gex_with_probe_set = MultiConfigCsv {
             gene_expression: Some(GeneExpressionParams {
                 probe_set: vec![TargetSetFile::from("probe_set")],
-                include_introns: multiconst::DEFAULT_INCLUDE_INTRONS,
+                include_introns: DEFAULT_INCLUDE_INTRONS,
                 ..GeneExpressionParams::default()
             }),
             ..gex_without_probe_set
         };
-        assert!(validate_rtl(Some(&gex_with_probe_set), MFRP_RNA).is_ok());
-        assert!(validate_rtl(Some(&gex_with_probe_set), SFRP).is_ok());
-        assert!(validate_rtl(Some(&gex_with_probe_set), ThreePrimeV3PolyA).is_ok()); // to aggr with RTL
+        assert!(validate_rtl(Some(&gex_with_probe_set), &MFRP_RNA.def()).is_ok());
+        assert!(validate_rtl(Some(&gex_with_probe_set), &SFRP.def()).is_ok());
+        assert!(validate_rtl(Some(&gex_with_probe_set), &ThreePrimeV3PolyA.def()).is_ok()); // to aggr with RTL
 
         let antibody_only = MultiConfigCsv {
-            libraries: LibrariesCsv(vec![antibody_library]),
+            libraries: LibrariesCsv::new(vec![antibody_library]),
             gene_expression: Some(GeneExpressionParams {
                 probe_set: vec![],
-                include_introns: multiconst::DEFAULT_INCLUDE_INTRONS,
+                include_introns: DEFAULT_INCLUDE_INTRONS,
                 ..GeneExpressionParams::default()
             }),
-            ..MultiConfigCsv::default()
+            feature: None,
+            vdj: None,
+            samples: None,
+            antigen_specificity: None,
+            functional_map: None,
         };
         // This assertion might seem non-sensical, but the validation function
         // under test doesn't care about the library type, so it should not fail
         // for Gex even if the config is for antibody-only.
-        assert!(validate_rtl(Some(&antibody_only), MFRP_RNA).is_ok());
-        assert!(validate_rtl(Some(&antibody_only), MFRP_Ab).is_ok());
-        assert!(validate_rtl(Some(&antibody_only), SFRP).is_ok());
-        assert!(validate_rtl(Some(&antibody_only), ThreePrimeV3CS1).is_ok());
+        assert!(validate_rtl(Some(&antibody_only), &MFRP_RNA.def()).is_ok());
+        assert!(validate_rtl(Some(&antibody_only), &MFRP_Ab.def()).is_ok());
+        assert!(validate_rtl(Some(&antibody_only), &SFRP.def()).is_ok());
+        assert!(validate_rtl(Some(&antibody_only), &ThreePrimeV3CS1.def()).is_ok());
 
         let include_introns_false = MultiConfigCsv {
             gene_expression: Some(GeneExpressionParams {
@@ -946,19 +1007,28 @@ mod tests {
                 include_introns: false,
                 ..GeneExpressionParams::default()
             }),
-            ..MultiConfigCsv::default()
+            libraries: LibrariesCsv::new(vec![]),
+            feature: None,
+            vdj: None,
+            samples: None,
+            antigen_specificity: None,
+            functional_map: None,
         };
-        assert!(validate_rtl(Some(&include_introns_false), MFRP_RNA).is_err());
-        assert!(validate_rtl(Some(&include_introns_false), SFRP).is_err());
-        assert!(validate_rtl(Some(&include_introns_false), ThreePrimeV3CS1).is_ok()); // to aggr with RTL
+        assert!(validate_rtl(Some(&include_introns_false), &MFRP_RNA.def()).is_err());
+        assert!(validate_rtl(Some(&include_introns_false), &SFRP.def()).is_err());
+        assert!(validate_rtl(Some(&include_introns_false), &ThreePrimeV3CS1.def()).is_ok()); // to aggr with RTL
 
         let samples = MultiConfigCsv {
-            samples: Some(SamplesCsv(vec![SampleRow::from_probe_barcode_id("BC001")])),
+            samples: Some(SamplesCsv {
+                rows: vec![SampleRow::from_probe_barcode_id("BC001")],
+                multiplexing_type: BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL),
+                sample_barcode_column_name: SampleBarcodeColumn::ProbeBarcodeIds,
+            }),
             ..gex_with_probe_set
         };
-        assert!(validate_rtl(Some(&samples), MFRP_RNA).is_ok());
-        assert!(validate_rtl(Some(&samples), SFRP).is_err());
-        assert!(validate_rtl(Some(&samples), ThreePrimeV3CS1).is_err());
+        assert!(validate_rtl(Some(&samples), &MFRP_RNA.def()).is_ok());
+        assert!(validate_rtl(Some(&samples), &SFRP.def()).is_err());
+        assert!(validate_rtl(Some(&samples), &ThreePrimeV3CS1.def()).is_err());
     }
 
     macro_rules! err_snapshot {
@@ -985,14 +1055,14 @@ mod tests {
         lanes: Option<Vec<usize>>,
         sample_names: Vec<&str>,
     ) -> DetectChemistryStageInputs {
+        let mut builder =
+            SampleDefBuilder::new(FastqMode::ILMN_BCL2FASTQ, fastq_path.as_ref().to_path_buf())
+                .sample_names(sample_names);
+        if let Some(lanes) = lanes {
+            builder = builder.lanes(lanes);
+        }
         DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                lanes,
-                read_path: fastq_path.as_ref().to_path_buf(),
-                sample_names: Some(sample_names.into_iter().map(String::from).collect()),
-                ..SampleDef::default()
-            }],
+            sample_def: vec![builder.build()],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..DetectChemistryStageInputs::default()
         }
@@ -1145,13 +1215,14 @@ mod tests {
         let args = DetectChemistryStageInputs {
             chemistry_specs: specs_input_gex(ChemistryName::Custom),
             custom_chemistry_defs: HashMap::from_iter([(LibraryType::Gex, def.clone())]),
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             ..Default::default()
         };
         let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
@@ -1178,22 +1249,20 @@ mod tests {
             .collect(),
             custom_chemistry_defs: HashMap::from_iter([(LibraryType::Antibody, def.clone())]),
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
                         .into(),
-                    sample_names: Some(vec!["CR-300-01".into()]),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .library_type(LibraryType::Antibody)
+                .build(),
             ],
             ..Default::default()
         };
@@ -1222,13 +1291,14 @@ mod tests {
             let args = DetectChemistryStageInputs {
                 chemistry_specs: specs_input_gex(ChemistryName::Custom),
                 custom_chemistry_defs: HashMap::from_iter([(LibraryType::Gex, custom_def)]),
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-300-01".into()]),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                    )
+                    .sample_names(vec!["CR-300-01"])
+                    .build(),
+                ],
                 ..Default::default()
             };
             let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
@@ -1245,13 +1315,14 @@ mod tests {
     #[test]
     fn test_incorrect_chemistry_spec() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(ChemistryName::ThreePrimeV2),
             ..Default::default()
         };
@@ -1265,13 +1336,14 @@ mod tests {
     #[test]
     fn test_correct_chemistry_spec() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(ChemistryName::ThreePrimeV3PolyA),
             ..Default::default()
         };
@@ -1286,13 +1358,14 @@ mod tests {
     #[test]
     fn test_auto_chemistry_spec_3pv3() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..Default::default()
         };
@@ -1308,12 +1381,14 @@ mod tests {
     fn test_correct_chemistry_spec_3pv3ht() {
         // should detect ThreePrimeV3HT when SCPV3HT is specified
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/HT_chemistry".into(),
-                sample_names: Some(vec!["1107522".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/HT_chemistry".into(),
+                )
+                .sample_names(vec!["1107522"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(ChemistryName::ThreePrimeV3HTPolyA),
             ..Default::default()
         };
@@ -1329,12 +1404,14 @@ mod tests {
     fn test_auto_chemistry_spec_ht() {
         // should detect ThreePrimeV3PolyA when HT fastqs are run
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/HT_chemistry".into(),
-                sample_names: Some(vec!["1107522".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/HT_chemistry".into(),
+                )
+                .sample_names(vec!["1107522"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..Default::default()
         };
@@ -1354,21 +1431,14 @@ mod tests {
             stage: DetectChemistry,
             args: DetectChemistryStageInputs {
                 sample_def: vec![
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                            .into(),
-                        sample_names: Some(vec!["CR-300-01".into()]),
-                        ..Default::default()
-                    },
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-22".into()]),
-                        ..Default::default()
-                    },
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into()
+                    ).sample_names(vec!["CR-300-01"]).build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k".into()
+                    ).sample_names(vec!["CR-CUSTOM-22"]).build(),
                 ],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
@@ -1380,13 +1450,14 @@ mod tests {
     #[test]
     fn test_cycle_failure() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::BCL_PROCESSOR,
-                read_path: "../dui_tests/test_resources/cellranger-count/cycle_failure_bc_v3"
-                    .into(),
-                sample_indices: Some(vec!["SI-P2-D3".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::BCL_PROCESSOR,
+                    "../dui_tests/test_resources/cellranger-count/cycle_failure_bc_v3".into(),
+                )
+                .sample_indices(vec!["SI-P2-D3"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..Default::default()
         };
@@ -1401,12 +1472,14 @@ mod tests {
     #[test]
     fn test_vdj_pe() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into(),
-                sample_names: Some(vec!["vdj_v1_hs_pbmc3_t".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into(),
+                )
+                .sample_names(vec!["vdj_v1_hs_pbmc3_t"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Vdj),
             ..Default::default()
         };
@@ -1418,13 +1491,14 @@ mod tests {
     #[test]
     fn test_vdj_r2() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_mm_pbmc4_b_26x91"
-                    .into(),
-                sample_names: Some(vec!["vdj_v1_mm_pbmc4_b_26x91".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_mm_pbmc4_b_26x91".into(),
+                )
+                .sample_names(vec!["vdj_v1_mm_pbmc4_b_26x91"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Vdj),
             ..Default::default()
         };
@@ -1436,16 +1510,16 @@ mod tests {
     #[test]
     fn test_ab_only_3pv3() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path:
-                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                        .into(),
-                sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                lanes: Some(vec![4]),
-                library_type: Some(LibraryType::Antibody),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody".into()
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Antibody)
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_20180601.csv".into()),
             ..Default::default()
@@ -1461,16 +1535,16 @@ mod tests {
     #[test]
     fn test_ab_short_only_3pv3() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path:
-                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody_len24"
-                        .into(),
-                sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                lanes: Some(vec![4]),
-                library_type: Some(LibraryType::Antibody),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody_len24".into()
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Antibody)
+                .build(),
+                ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_len24_20210721.csv".into()),
             ..Default::default()
@@ -1486,15 +1560,16 @@ mod tests {
     #[test]
     fn test_ab_only_5p() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_antibody"
-                    .into(),
-                sample_names: Some(vec!["vdj_v1_hs_pbmc2_antibody".into()]),
-                lanes: Some(vec![1]),
-                library_type: Some(LibraryType::Antibody),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                   "../dui_tests/test_resources/cellranger-count/vdj_v1_hs_pbmc2_antibody".into()
+                )
+                .sample_names(vec!["vdj_v1_hs_pbmc2_antibody"])
+                .lanes(vec![1])
+                .library_type(LibraryType::Antibody)
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_20180601.csv".into()),
             ..Default::default()
@@ -1510,26 +1585,14 @@ mod tests {
     #[test]
     fn test_ab_and_gex_3pv3() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_gex".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+            sample_def: vec![SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody".into(),
+            ).sample_names(vec!["pbmc_1k_protein_v3_antibody"]).lanes(vec![4]).library_type(LibraryType::Antibody).build(),
+            SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
+            ).sample_names(vec!["pbmc_1k_protein_v3_gex"]).lanes(vec![4]).library_type(LibraryType::Gex).build(),
             ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_20180601.csv".into()),
@@ -1553,25 +1616,22 @@ mod tests {
     fn test_ab_short_and_gex_3pv3() {
         let args = DetectChemistryStageInputs {
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody_len24"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_gex".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody_len24".into(),
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Antibody)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_gex"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_len24_20210721.csv".into()),
@@ -1595,25 +1655,23 @@ mod tests {
     fn test_ab_too_short_and_gex_3pv3() {
         let args = DetectChemistryStageInputs {
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
-                            .into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_antibody".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
-                    sample_names: Some(vec!["pbmc_1k_protein_v3_gex".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_antibody"
+                        .into(),
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_antibody"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Antibody)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/pbmc_1k_protein_v3_gex".into(),
+                )
+                .sample_names(vec!["pbmc_1k_protein_v3_gex"])
+                .lanes(vec![4])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some(
@@ -1628,23 +1686,20 @@ mod tests {
     fn test_crispr_and_gex_3pv3() {
         let args = DetectChemistryStageInputs {
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_crispr"
-                            .into(),
-                    sample_names: Some(vec!["K562_5k_crispr_v3_crispr".into()]),
-                    library_type: Some(LibraryType::Crispr),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_gex"
-                        .into(),
-                    sample_names: Some(vec!["K562_5k_crispr_v3_gex".into()]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_crispr".into(),
+                )
+                .sample_names(vec!["K562_5k_crispr_v3_crispr"])
+                .library_type(LibraryType::Crispr)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_gex".into(),
+                )
+                .sample_names(vec!["K562_5k_crispr_v3_gex"])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some(
@@ -1670,23 +1725,20 @@ mod tests {
     fn test_crispr_too_short_and_gex_3pv3() {
         let args = DetectChemistryStageInputs {
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_crispr"
-                            .into(),
-                    sample_names: Some(vec!["K562_5k_crispr_v3_crispr".into()]),
-                    library_type: Some(LibraryType::Crispr),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_gex"
-                        .into(),
-                    sample_names: Some(vec!["K562_5k_crispr_v3_gex".into()]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_crispr".into(),
+                )
+                .sample_names(vec!["K562_5k_crispr_v3_crispr"])
+                .library_type(LibraryType::Crispr)
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/K562_5k_crispr_v3_gex".into(),
+                )
+                .sample_names(vec!["K562_5k_crispr_v3_gex"])
+                .library_type(LibraryType::Gex)
+                .build(),
             ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             feature_reference: Some(
@@ -1700,13 +1752,14 @@ mod tests {
     #[test]
     fn test_sc3pv1() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-02_SC3pv1_15k"
-                    .into(),
-                sample_names: Some(vec!["test_sample".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-02_SC3pv1_15k".into(),
+                )
+                .sample_names(vec!["test_sample"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..Default::default()
         };
@@ -1722,21 +1775,18 @@ mod tests {
     fn test_mixed_chemistries_3pv1_3pv2() {
         let args = DetectChemistryStageInputs {
             sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
-                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-02_SC3pv1_15k"
-                            .into(),
-                    sample_names: Some(vec!["test_sample".into()]),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-120-01".into()]),
-                    ..Default::default()
-                },
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-02_SC3pv1_15k".into(),
+                )
+                .sample_names(vec!["test_sample"])
+                .build(),
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k".into(),
+                )
+                .sample_names(vec!["CR-120-01"])
+                .build(),
             ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..Default::default()
@@ -1751,12 +1801,10 @@ mod tests {
             description: "The input data does not match any of the whitelists.",
             stage: DetectChemistry,
             args: DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/no_barcode_div_v3".into(),
-                    sample_names: Some(vec!["test_sample".into()]),
-                    ..SampleDef::default()
-                }],
+                sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/no_barcode_div_v3".into(),
+                ).sample_names(vec!["test_sample"]).build()],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
             },
@@ -1771,12 +1819,10 @@ mod tests {
             description: "In the input data, Read 1 is only 24 bases & Read 2 is only 30 bases.",
             stage: DetectChemistry,
             args: DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/reads_too_short_v2".into(),
-                    sample_names: Some(vec!["CR-120-01".into()]),
-                    ..SampleDef::default()
-                }],
+                sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/reads_too_short_v2".into()
+                ).sample_names(vec!["CR-120-01"]).build()],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
             },
@@ -1787,12 +1833,14 @@ mod tests {
     #[test]
     fn test_vdj_pe_with_r1_r2_length() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into(),
-                sample_names: Some(vec!["vdj_v1_hs_pbmc3_t".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-vdj/vdj_v1_hs_pbmc3_t".into(),
+                )
+                .sample_names(vec!["vdj_v1_hs_pbmc3_t"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Vdj),
             r1_length: Some(26),
             r2_length: Some(91),
@@ -1806,13 +1854,14 @@ mod tests {
     #[test]
     fn test_r1_too_short_3pv3() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             r1_length: Some(25),
             ..Default::default()
@@ -1827,13 +1876,12 @@ mod tests {
             description: "User inputs an r2-length that is too small.",
             stage: DetectChemistry,
             args: DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-300-01".into()]),
-                    ..Default::default()
-                }],
+                sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build()],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 r2_length: Some(14),
                 ..Default::default()
@@ -1849,14 +1897,10 @@ mod tests {
             description: "Sample def contains an r1-length that is too small.",
             stage: DetectChemistry,
             args: DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-300-01".into()]),
-                    r1_length: Some(25), // Trimmed too much in sample_def
-                    ..Default::default()
-                }],
+                sample_def: vec![SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                ).sample_names(vec!["CR-300-01"]).r1_length(25).build()],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
             },
@@ -1867,13 +1911,14 @@ mod tests {
     #[test]
     fn test_r1_r2_okay_3pv3() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             r1_length: Some(26),
             r2_length: Some(75),
@@ -1890,12 +1935,14 @@ mod tests {
     #[test]
     fn test_few_reads_explicit_chem() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/sc3pv2_5k".into(),
-                sample_names: Some(vec!["tinygex".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/sc3pv2_5k".into(),
+                )
+                .sample_names(vec!["tinygex"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(ChemistryName::ThreePrimeV2),
             ..Default::default()
         };
@@ -1912,14 +1959,11 @@ mod tests {
     // if the input is from count or config is missing [samples] section.
     fn test_rtl_singleplex_probe_bc_mixture_auto_chem() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path:
-                    "../dui_tests/test_resources/cellranger-count/RTL_single_sample_probe_bcs_mixture"
-                        .into(),
-                sample_names: Some(vec!["test_sample".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/RTL_single_sample_probe_bcs_mixture"
+                    .into(),
+            ).sample_names(vec!["test_sample"]).build()],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             ..Default::default()
         };
@@ -1930,15 +1974,14 @@ mod tests {
     // When refined SFRP chemistry is specified, check for probe bc mixtures is skipped
     fn test_rtl_singleplex_probe_bc_mixture_explicit_chem() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path:
-                    "../dui_tests/test_resources/cellranger-count/RTL_single_sample_probe_bcs_mixture"
-                        .into(),
-                sample_names: Some(vec!["test_sample".into()]),
-                library_type: Some(LibraryType::Gex),
-                ..Default::default()
-            }],
+            sample_def: vec![SampleDefBuilder::new(
+                FastqMode::ILMN_BCL2FASTQ,
+                "../dui_tests/test_resources/cellranger-count/RTL_single_sample_probe_bcs_mixture"
+                    .into(),
+            )
+            .sample_names(vec!["test_sample"])
+            .library_type(LibraryType::Gex)
+            .build()],
             chemistry_specs: specs_input_gex(ChemistryName::SFRP),
             ..Default::default()
         };
@@ -1959,13 +2002,14 @@ mod tests {
         multi_config_csv.as_file().write_all(multi_config).unwrap();
 
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(ChemistryName::SFRP),
             multi_config: Some(MultiConfigCsvFile::from(multi_config_csv.path())),
             ..Default::default()
@@ -1976,13 +2020,14 @@ mod tests {
     #[test]
     fn test_overhang_chemistry() {
         let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k"
-                    .into(),
-                sample_names: Some(vec!["CR-300-01".into()]),
-                ..Default::default()
-            }],
+            sample_def: vec![
+                SampleDefBuilder::new(
+                    FastqMode::ILMN_BCL2FASTQ,
+                    "../dui_tests/test_resources/cellranger-count/CR-300-01_SC3pv3_15k".into(),
+                )
+                .sample_names(vec!["CR-300-01"])
+                .build(),
+            ],
             chemistry_specs: specs_input_gex(AutoChemistryName::Count),
             multi_config: Some(
                 "../dui_tests/test_resources/cellranger-multi/overhang_3pv3.csv".into(),
@@ -1996,6 +2041,101 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_auto_chemistry_spec_sc5pv3_sbx() {
+        let args = DetectChemistryStageInputs {
+            sample_def: vec![
+                SampleDefBuilder::new(FastqMode::SBX, "test/fastq/sbx/sbx_fiveprime_frag".into())
+                    .build(),
+            ],
+            chemistry_specs: specs_input_gex(AutoChemistryName::Count),
+            ..Default::default()
+        };
+        let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
+        let chem = outs.chemistry_defs.primary();
+        assert_eq!(chem.name, ChemistryName::FivePrimeR2V3);
+        assert_eq!(
+            outs.library_trimmers[&LibraryType::Gex],
+            trimmer_for_chemistry(
+                chem,
+                LibraryType::Gex,
+                layouts::FIVE_PRIME_GEX,
+                &FastqMode::SBX.adapter_trimming_parameters(None).unwrap()
+            )
+            .unwrap()
+            .unwrap()
+        );
+        assert!(!outs.is_antibody_only);
+    }
+
+    #[test]
+    fn test_auto_chemistry_spec_sc3pv4_sbx() {
+        let args = DetectChemistryStageInputs {
+            sample_def: vec![
+                SampleDefBuilder::new(FastqMode::SBX, "test/fastq/sbx/sbx_threeprime_frag".into())
+                    .build(),
+            ],
+            chemistry_specs: specs_input_gex(AutoChemistryName::Count),
+            ..Default::default()
+        };
+        let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
+        let chem = outs.chemistry_defs.primary();
+        assert_eq!(chem.name, ChemistryName::ThreePrimeV4PolyA);
+        assert_eq!(
+            outs.library_trimmers[&LibraryType::Gex],
+            trimmer_for_chemistry(
+                chem,
+                LibraryType::Gex,
+                layouts::FIVE_PRIME_GEX,
+                &FastqMode::SBX.adapter_trimming_parameters(None).unwrap()
+            )
+            .unwrap()
+            .unwrap()
+        );
+        assert!(!outs.is_antibody_only);
+    }
+
+    #[test]
+    fn test_auto_chemistry_spec_flex_sbx() {
+        let multi_config = b"\
+            [gene-expression]\n\
+            ref,/ref\n\
+            probe-set,foobar.csv\n\
+            create-bam,false\n\
+            [libraries]\n\
+            fastq_id,fastqs,feature_types\n\
+            rtl,/fastqs,Gene Expression\n\
+            [samples]\n\
+            sample_id,probe_barcode_ids
+            test,A-A01
+            ";
+        let multi_config_csv = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+        multi_config_csv.as_file().write_all(multi_config).unwrap();
+        let args = DetectChemistryStageInputs {
+            sample_def: vec![
+                SampleDefBuilder::new(FastqMode::SBX, "test/fastq/sbx/sbx_flex_gex".into()).build(),
+            ],
+            chemistry_specs: specs_input_gex(AutoChemistryName::Count),
+            multi_config: Some(MultiConfigCsvFile::from(multi_config_csv.path())),
+            ..Default::default()
+        };
+        let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
+        let chem = outs.chemistry_defs.primary();
+        assert_eq!(chem.name, ChemistryName::Flex_v2_R1);
+        assert_eq!(
+            outs.library_trimmers[&LibraryType::Gex],
+            trimmer_for_chemistry(
+                chem,
+                LibraryType::Gex,
+                layouts::FLEX_GEX,
+                &FastqMode::SBX.adapter_trimming_parameters(None).unwrap()
+            )
+            .unwrap()
+            .unwrap()
+        );
+        assert!(!outs.is_antibody_only);
+    }
+
     #[cfg(feature = "slow_tests")]
     mod tests_requiring_alignment {
         use super::*;
@@ -2007,13 +2147,14 @@ mod tests {
         #[test]
         fn test_auto_chemistry_spec_3pv2() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k"
-                        .into(),
-                    sample_names: Some(vec!["CR-120-01".into()]),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k".into(),
+                    )
+                    .sample_names(vec!["CR-120-01"])
+                    .build(),
+                ],
                 reference_path: Some(refdata_path("GRCh38")),
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
@@ -2029,14 +2170,15 @@ mod tests {
         #[test]
         fn test_auto_chemistry_spec_5p_r2() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
                         "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
                             .into(),
-                    sample_names: Some(vec!["CR-CUSTOM-22".into()]),
-                    ..Default::default()
-                }],
+                    )
+                    .sample_names(vec!["CR-CUSTOM-22"])
+                    .build(),
+                ],
                 reference_path: Some(refdata_path("GRCh38")),
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
@@ -2052,14 +2194,15 @@ mod tests {
         #[test]
         fn test_5p_auto_chemistry_spec_5p_r2() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
                         "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
                             .into(),
-                    sample_names: Some(vec!["CR-CUSTOM-22".into()]),
-                    ..Default::default()
-                }],
+                    )
+                    .sample_names(vec!["CR-CUSTOM-22"])
+                    .build(),
+                ],
                 reference_path: Some(refdata_path("GRCh38")),
                 chemistry_specs: specs_input_gex(AutoChemistryName::FivePrime),
                 ..Default::default()
@@ -2075,14 +2218,15 @@ mod tests {
         #[test]
         fn test_auto_chemistry_spec_5p_pe() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path:
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
                         "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
                             .into(),
-                    sample_names: Some(vec!["CR-CUSTOM-17".into()]),
-                    ..Default::default()
-                }],
+                    )
+                    .sample_names(vec!["CR-CUSTOM-17"])
+                    .build(),
+                ],
                 reference_path: Some(refdata_path("hg19_and_mm10-3.0.0")),
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
@@ -2099,22 +2243,20 @@ mod tests {
         fn test_unsupported_auto_chemistry_spec_5p_r2_and_pe() {
             let args = DetectChemistryStageInputs {
                 sample_def: vec![
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-22".into()]),
-                        ..Default::default()
-                    },
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-17".into()]),
-                        ..Default::default()
-                    },
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
+                            .into(),
+                    )
+                    .sample_names(vec!["CR-CUSTOM-22"])
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
+                            .into(),
+                    )
+                    .sample_names(vec!["CR-CUSTOM-17"])
+                    .build(),
                 ],
                 reference_path: Some(refdata_path("hg19_and_mm10-3.0.0")),
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
@@ -2131,22 +2273,20 @@ mod tests {
         fn test_unsupported_auto_chemistry_spec_5p_pe_and_r2() {
             let args = DetectChemistryStageInputs {
                 sample_def: vec![
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-17".into()]),
-                        ..Default::default()
-                    },
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-22".into()]),
-                        ..Default::default()
-                    },
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
+                            .into(),
+                    )
+                    .sample_names(vec!["CR-CUSTOM-17"])
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
+                            .into(),
+                    )
+                    .sample_names(vec!["CR-CUSTOM-22"])
+                    .build(),
                 ],
                 reference_path: Some(refdata_path("hg19_and_mm10-3.0.0")),
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
@@ -2162,26 +2302,29 @@ mod tests {
         #[test]
         fn test_ab_and_gex_5p() {
             let args = DetectChemistryStageInputs {
-            sample_def: vec![SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: sere_path("vdj_nextgem_hs_pbmc3_5gex_protein/vdj_nextgem_hs_pbmc3_5gex_protein_antibody"),
-                sample_names: Some(vec!["vdj_nextgem_hs_pbmc3_5gex_protein_antibody".into()]),
-                lanes: Some(vec![1]),
-                library_type: Some(LibraryType::Antibody),
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        sere_path("vdj_nextgem_hs_pbmc3_5gex_protein/vdj_nextgem_hs_pbmc3_5gex_protein_antibody"),
+                    )
+                    .sample_names(vec!["vdj_nextgem_hs_pbmc3_5gex_protein_antibody"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Antibody)
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        sere_path("vdj_nextgem_hs_pbmc3_5gex_protein/vdj_nextgem_hs_pbmc3_5gex_protein_gex"),
+                    )
+                    .sample_names(vec!["vdj_nextgem_hs_pbmc3_5gex_protein_gex"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
+                chemistry_specs: specs_input_gex(AutoChemistryName::Count),
+                reference_path: Some(refdata_path("GRCh38")),
+                feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_20180601.csv".into()),
                 ..Default::default()
-            }, SampleDef {
-                fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                read_path: sere_path("vdj_nextgem_hs_pbmc3_5gex_protein/vdj_nextgem_hs_pbmc3_5gex_protein_gex"),
-                sample_names: Some(vec!["vdj_nextgem_hs_pbmc3_5gex_protein_gex".into()]),
-                lanes: Some(vec![1]),
-                library_type: Some(LibraryType::Gex),
-                ..Default::default()
-            }],
-            chemistry_specs: specs_input_gex(AutoChemistryName::Count),
-            reference_path: Some(refdata_path("GRCh38")),
-            feature_reference: Some("../dui_tests/test_resources/reference/feature/Biolegend_x22_TotalSeqB_14Ab_Isotype_Controls_20180601.csv".into()),
-            ..Default::default()
-        };
+            };
             let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
             assert_eq!(
                 outs.chemistry_defs.primary().name,
@@ -2193,29 +2336,29 @@ mod tests {
         #[test]
         fn test_gex_and_ab_sfrp() {
             let args = DetectChemistryStageInputs {
-            sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1247954_1270332_frp_gex_and_ab_fastqs"),
-                    sample_names: Some(vec!["1247954_GEX".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1247954_1270332_frp_gex_and_ab_fastqs"),
-                    sample_names: Some(vec!["1247954_AB".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                }
-            ],
-            multi_config: Some("../dui_tests/test_resources/cellranger-multi/1247954_1270332_rtl_sfrp_gex_and_ab.csv".into()),
-            chemistry_specs: specs_input_gex(AutoChemistryName::Count),
-            feature_reference: Some(testdata_path("cellranger/multi/feature_refs/BioLegend_x22_TotalSeqB_Human_PBMC_20210114.csv").into()),
-            ..Default::default()
-        };
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1247954_1270332_frp_gex_and_ab_fastqs"),
+                    )
+                    .sample_names(vec!["1247954_GEX"])
+                    .lanes(vec![4])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1247954_1270332_frp_gex_and_ab_fastqs"),
+                    )
+                    .sample_names(vec!["1247954_AB"])
+                    .lanes(vec![4])
+                    .library_type(LibraryType::Antibody)
+                    .build()
+                ],
+                multi_config: Some("../dui_tests/test_resources/cellranger-multi/1247954_1270332_rtl_sfrp_gex_and_ab.csv".into()),
+                chemistry_specs: specs_input_gex(AutoChemistryName::Count),
+                feature_reference: Some(testdata_path("cellranger/multi/feature_refs/BioLegend_x22_TotalSeqB_Human_PBMC_20210114.csv").into()),
+                ..Default::default()
+            };
             let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
             assert_eq!(outs.chemistry_defs.primary().name, ChemistryName::SFRP);
             assert!(!outs.is_antibody_only);
@@ -2224,14 +2367,16 @@ mod tests {
         #[test]
         fn test_gex_only_sfrp() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1245033_sfrp_fastqs"),
-                    sample_names: Some(vec!["CTACTGAATT".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1245033_sfrp_fastqs"),
+                    )
+                    .sample_names(vec!["CTACTGAATT"])
+                    .lanes(vec![4])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1245033_sfrp.csv".into(),
                 ),
@@ -2245,14 +2390,16 @@ mod tests {
         #[test]
         fn test_gex_only_mfrp() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1216790_1245489_mfrp_fastqs"),
-                    sample_names: Some(vec!["AATTTCGGGT".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1216790_1245489_mfrp_fastqs"),
+                    )
+                    .sample_names(vec!["AATTTCGGGT"])
+                    .lanes(vec![4])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1216790_1245489.csv".into(),
                 ),
@@ -2266,14 +2413,16 @@ mod tests {
         #[test]
         fn test_mfrp_r1() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/mfrp_r1_50_90"),
-                    sample_names: Some(vec!["tiny_gex".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/mfrp_r1_50_90"),
+                    )
+                    .sample_names(vec!["tiny_gex"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1320608_mfrp_r1_50_90.csv".into(),
                 ),
@@ -2290,14 +2439,16 @@ mod tests {
         #[test]
         fn test_ab_only_mfrp() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1461767_mfrp_gex_ab/ab"),
-                    sample_names: Some(vec!["tiny_ab".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1461767_mfrp_gex_ab/ab"),
+                    )
+                    .sample_names(vec!["tiny_ab"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1461767_mfrp_ab_only.csv".into(),
                 ),
@@ -2311,14 +2462,16 @@ mod tests {
         #[test]
         fn test_ab_only_mfrp_r1() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1464930_mfrp_r1_gex_ab/ab"),
-                    sample_names: Some(vec!["tiny_ab".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1464930_mfrp_r1_gex_ab/ab"),
+                    )
+                    .sample_names(vec!["tiny_ab"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1464930_mfrp_r1_ab_only.csv"
                         .into(),
@@ -2336,30 +2489,30 @@ mod tests {
         #[test]
         fn test_per_lib_chem_mfrp() {
             let args = DetectChemistryStageInputs{
-            sample_def: vec![
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1548572/tiny_ab"),
-                    r1_length: Some(28),
-                    sample_names: Some(vec!["tiny_ab".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Antibody),
-                    ..Default::default()
-                },
-                SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1548572/tiny_gex"),
-                    sample_names: Some(vec!["tiny_gex".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }
-            ],
-            multi_config: Some("../dui_tests/test_resources/cellranger-multi/1548572_mfrp_r1_ab_r2pos50.csv".into()),
-            feature_reference: Some("../dui_tests/test_resources/reference/feature/PTG_Multipro_Human_Immune_Intracellular_Antibodies_PROT002.csv".into()),
-            chemistry_specs: specs_input_gex(AutoChemistryName::Count),
-            ..Default::default()
-        };
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1548572/tiny_ab"),
+                    )
+                    .r1_length(28)
+                    .sample_names(vec!["tiny_ab"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Antibody)
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1548572/tiny_gex"),
+                    )
+                    .sample_names(vec!["tiny_gex"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
+                multi_config: Some("../dui_tests/test_resources/cellranger-multi/1548572_mfrp_r1_ab_r2pos50.csv".into()),
+                feature_reference: Some("../dui_tests/test_resources/reference/feature/PTG_Multipro_Human_Immune_Intracellular_Antibodies_PROT002.csv".into()),
+                chemistry_specs: specs_input_gex(AutoChemistryName::Count),
+                ..Default::default()
+            };
             let outs = DetectChemistry.test_run_tmpdir(args).unwrap();
             assert_eq!(
                 outs.chemistry_defs[&LibraryType::Gex].name,
@@ -2374,16 +2527,16 @@ mod tests {
         #[test]
         fn test_ab_only_sfrp() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path(
-                        "fastqs/cellranger/multi/1247954_1270332_frp_ab_fastqs/ab",
-                    ),
-                    sample_names: Some(vec!["ab".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1247954_1270332_frp_ab_fastqs/ab"),
+                    )
+                    .sample_names(vec!["ab"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1247954_sfrp_ab_only.csv".into(),
                 ),
@@ -2402,13 +2555,14 @@ mod tests {
                 cannot be distinguished from 5'.",
                 stage: DetectChemistry,
                 args: DetectChemistryStageInputs {
-                    sample_def: vec![SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path: "../dui_tests/test_resources/cellranger-count/few_aligned_reads_v2/"
-                            .into(),
-                        sample_names: Some(vec!["test_sample".into()]),
-                        ..Default::default()
-                    }],
+                    sample_def: vec![
+                        SampleDefBuilder::new(
+                            FastqMode::ILMN_BCL2FASTQ,
+                            "../dui_tests/test_resources/cellranger-count/few_aligned_reads_v2/".into(),
+                        )
+                        .sample_names(vec!["test_sample"])
+                        .build(),
+                    ],
                     reference_path: Some(refdata_path("GRCh38")),
                     chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                     ..Default::default()
@@ -2421,69 +2575,65 @@ mod tests {
         fn test_mixed_chemistries_3pv2_5p_r2() {
             let args = DetectChemistryStageInputs {
                 sample_def: vec![
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-120-01".into()]),
-                        ..Default::default()
-                    },
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-22".into()]),
-                        ..Default::default()
-                    },
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k".into(),
+                    )
+                    .sample_names(vec!["CR-120-01"])
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-22_SC5pr2_15k"
+                            .into(),
+                    )
+                    .sample_names(vec!["CR-CUSTOM-22"])
+                    .build(),
                 ],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 reference_path: Some(refdata_path("GRCh38")),
                 ..Default::default()
             };
-            err_snapshot!(args)
+            err_snapshot!(args);
         }
 
         #[test]
         fn test_mixed_chemistries_3pv2_5p_pe() {
             let args = DetectChemistryStageInputs {
                 sample_def: vec![
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-120-01".into()]),
-                        ..Default::default()
-                    },
-                    SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        read_path:
-                            "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
-                                .into(),
-                        sample_names: Some(vec!["CR-CUSTOM-17".into()]),
-                        ..Default::default()
-                    },
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-120-01_SC3pv2_15k".into(),
+                    )
+                    .sample_names(vec!["CR-120-01"])
+                    .build(),
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        "../dui_tests/test_resources/cellranger-count/CR-CUSTOM-17_SC5p-PE_15k"
+                            .into(),
+                    )
+                    .sample_names(vec!["CR-CUSTOM-17"])
+                    .build(),
                 ],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 reference_path: Some(refdata_path("GRCh38")),
                 ..Default::default()
             };
-            err_snapshot!(args)
+            err_snapshot!(args);
         }
 
         #[test]
         fn test_5pr2v3() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1523899_gex_5pr2v3"),
-                    sample_names: Some(vec!["tiny_gex".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1523899_gex_5pr2v3"),
+                    )
+                    .sample_names(vec!["tiny_gex"])
+                    .lanes(vec![4])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1523899_gex_5pr2v3.csv".into(),
                 ),
@@ -2500,14 +2650,16 @@ mod tests {
         #[test]
         fn test_5pr2ohv3() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1523899_gex_5pr2v3"),
-                    sample_names: Some(vec!["tiny_gex".into()]),
-                    lanes: Some(vec![4]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1523899_gex_5pr2v3"),
+                    )
+                    .sample_names(vec!["tiny_gex"])
+                    .lanes(vec![4])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 multi_config: Some(
                     "../dui_tests/test_resources/cellranger-multi/1523899_gex_5pr2ohv3.csv".into(),
                 ),
@@ -2524,14 +2676,16 @@ mod tests {
         #[test]
         fn test_3pv4() {
             let args = DetectChemistryStageInputs {
-                sample_def: vec![SampleDef {
-                    fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                    read_path: testdata_path("fastqs/cellranger/multi/1561255_gex/tiny_gex"),
-                    sample_names: Some(vec!["gex".into()]),
-                    lanes: Some(vec![1]),
-                    library_type: Some(LibraryType::Gex),
-                    ..Default::default()
-                }],
+                sample_def: vec![
+                    SampleDefBuilder::new(
+                        FastqMode::ILMN_BCL2FASTQ,
+                        testdata_path("fastqs/cellranger/multi/1561255_gex/tiny_gex"),
+                    )
+                    .sample_names(vec!["gex"])
+                    .lanes(vec![1])
+                    .library_type(LibraryType::Gex)
+                    .build(),
+                ],
                 chemistry_specs: specs_input_gex(AutoChemistryName::Count),
                 ..Default::default()
             };

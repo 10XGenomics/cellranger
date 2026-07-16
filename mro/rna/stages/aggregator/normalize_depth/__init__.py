@@ -8,7 +8,7 @@ import array
 import copy
 import json
 from collections import OrderedDict, defaultdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import martian
 import numpy as np
@@ -25,6 +25,9 @@ from cellranger.fast_utils import count_usable_reads
 from cellranger.logperf import LogPerf
 from cellranger.matrix import CountMatrix
 from cellranger.molecule_counter import BarcodeInfo, MoleculeCounter
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage NORMALIZE_DEPTH(
@@ -49,10 +52,49 @@ stage NORMALIZE_DEPTH(
     out h5         raw_matrix_h5,
     out h5         filtered_matrix_h5,
 ) using (
-    mem_gb = 4,
+    mem_gb   = 5,
     volatile = strict,
 )
 """
+
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """NORMALIZE_DEPTH stage inputs."""
+
+    gem_group_index: dict  # TODO: be more specific with the type here
+    molecules: mro_filetypes.h5
+    normalization_mode: str
+    gem_group_barcode_ranges: dict[str, list[int]]
+    targeted_depth_factor: float
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """NORMALIZE_DEPTH stage outputs."""
+
+    raw_matrices_h5: list[mro_filetypes.h5]
+    raw_nnz: int
+    filtered_matrices_h5: list[mro_filetypes.h5]
+    filtered_nnz: int
+    summary: mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):
+    """NORMALIZE_DEPTH chunk inputs."""
+
+    frac_reads_kept: list[float]
+    num_cells: list[int]
+    chunk_start: int
+    chunk_len: int
+    reads_per_library: mro_filetypes.json
+
+
+class ChunkOutputs(StageOutputs):
+    """NORMALIZE_DEPTH chunk outputs."""
+
+    chunk_summary: mro_filetypes.json
+    raw_matrix_h5: mro_filetypes.h5
+    filtered_matrix_h5: mro_filetypes.h5
+
 
 TARGETED_READ_PAIRS_METRIC = "targeted_read_pairs"
 NUM_MOLECULE_INFO_ENTRIES_PER_CHUNK_RUST = 400000000
@@ -88,18 +130,18 @@ def _adjust_frac_kept(
 def any_incorrect_usable_read_pairs(mc: MoleculeCounter) -> bool:
     """Return whether the metric usable_read_pairs is incorrect for any library.
 
-    Return whether feature_read_pairs exceeds usable_read_pairs for any library.
+    Return whether usable_read_pairs exceeds feature_read_pairs for any library.
     CR7.0 and CR7.1 incorrectly set usable_read_pairs equal to feature_read_pairs for MFRP.
     """
     return any(
-        feature_read_pairs >= usable_read_pairs
+        usable_read_pairs >= feature_read_pairs
         for feature_read_pairs, usable_read_pairs in zip(
             mc.get_transcriptomic_read_pairs_per_library(), mc.get_usable_read_pairs_per_library()
         )
     )
 
 
-def split(args):
+def split(args: StageInputs):
     # default to downsampling by mapped reads
     downsample = args.normalization_mode != cr_constants.NORM_MODE_NONE
     reads_per_library = None
@@ -125,7 +167,7 @@ def split(args):
             except ValueError:
                 # likely an aggr of WGS+Targeted libraries. Cannot fetch usable targeted reads from all of them,
                 # instead calculate that separately for each library by iterating over the molecule info file
-                print("Re-calculating on_target_usable_read_pairs")
+                print("Re-calculating on_target_usable_read_pairs", flush=True)
                 usable_reads_per_library = count_usable_reads(args.molecules)
                 for library, on_target_usable_read_pairs in usable_reads_per_library.items():
                     usable_reads[library] = on_target_usable_read_pairs
@@ -136,9 +178,13 @@ def split(args):
 
         cells = mc.get_num_filtered_barcodes_for_libraries(np.arange(0, len(library_info)))
 
-        print(f"Libraries: {library_info}")
-        print(f"Usable reads: {usable_reads}")
-        print(f"Cells: {cells}")
+        print(
+            f"Libraries: {library_info}",
+            f"Usable reads: {usable_reads}",
+            f"Cells: {cells}",
+            sep="\n",
+            flush=True,
+        )
 
         assert len(library_info) == len(usable_reads)
         usable_reads = np.array(usable_reads, dtype=np.float64)
@@ -195,10 +241,10 @@ def split(args):
                 num_barcodes, chunk_len, scale=1.0
             )
 
-            barcodes_mem_gib = round(160 * num_barcodes / 1024**3, 1)
+            barcodes_mem_gib = round(190 * num_barcodes / 1024**3, 1)
 
             # bytes per molecule = 30.07 + 21.47 = 51.54
-            # bytes per barcode = 107.37 + 160 = 267.37
+            # bytes per barcode = 107.37 + 190 = 297.37
             mem_gib = 2 + matrix_mem_gib + mol_mem_gib + barcodes_mem_gib
             print(
                 f"chunk={len(chunks)},{chunk_len=},{num_barcodes=},{mol_mem_gib=},{matrix_mem_gib=},{barcodes_mem_gib=},{mem_gib=}"
@@ -207,11 +253,10 @@ def split(args):
             chunks.append(
                 {
                     "frac_reads_kept": list(frac_reads_kept),
-                    "num_cells": [int(x) for x in cells],
+                    "num_cells": cells.tolist(),
                     "chunk_start": chunk_start,
                     "chunk_len": chunk_len,
                     "reads_per_library": reads_per_library,
-                    # Request enough for two copies
                     "__mem_gb": mem_gib,
                 }
             )
@@ -385,7 +430,7 @@ def _get_barcode_idxs(gem_groups, gem_group_barcode_ranges):
 
 
 def _update_metrics(
-    args,
+    args: ChunkInputs,
     frac_reads_kept: np.ndarray,
     mc: MoleculeCounter,
     library_info: list[dict[str, Any]],
@@ -478,7 +523,7 @@ def _update_metrics(
     return raw_umi_matrix, barcode_seqs, read_summary
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     np.random.seed(0)
 
     LogPerf.mem()
@@ -528,11 +573,16 @@ def main(args, outs):
             tk_safe_json.dump_numpy(summary, f, indent=4, sort_keys=True)
 
     # Don't write MEX from chunks.
-    outs.raw_matrices_mex = None
-    outs.filtered_matrices_mex = None
+    outs.raw_matrices_mex = None  # FIXME: These outs do not exist
+    outs.filtered_matrices_mex = None  # FIXME: These outs do not exist
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     IS_SPATIAL = MoleculeCounter.open(args.molecules, "r").is_spatial_data()
 
     # Pass through the matrix chunks and nnz counts

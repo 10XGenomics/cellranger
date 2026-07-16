@@ -36,6 +36,7 @@ type MetricConfig struct {
 	Rlimit      *RlimitValue       `json:"rlimit,omitempty"`
 	Flag        string             `json:"flag,omitempty"`
 	MroFlag     string             `json:"mro_flag,omitempty"`
+	Env         string             `json:"env,omitempty"`
 	RecentCount string             `json:"recent_count,omitempty"`
 }
 

@@ -2,8 +2,9 @@
 use crate::config::csv::CsvParser;
 use crate::config::parse::{Parse, ParseCtx};
 use crate::config::scsv::{Section, Span, XtraData, plain_csv};
-use crate::config::{Ident, MultiConfigCsv, multiconst, samplesconst};
-use anyhow::{Context, Result, anyhow, bail};
+use crate::config::{Ident, MultiConfigCsv, SampleBarcodeColumn, multiconst};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use cr_types::{BarcodeMultiplexingType, CellLevel};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use metric::{TxHashMap, TxHashSet};
@@ -258,18 +259,18 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                 )
             },
         )?;
-        let (sample_map, sample_barcode_id) = match (
-            samples.has_cmo_ids(),
-            samples.has_hashtag_ids(),
-        ) {
-            (true, false) => (samples.get_cmo_sample_map(), samplesconst::CMO_IDS),
-            (false, true) => (samples.get_hashtag_sample_map(), samplesconst::HASHTAG_IDS),
-            (_, _) => bail!(
+        let sample_barcode_id = samples.sample_barcode_column_name.as_str();
+        let sample_map = match samples.multiplexing_type {
+            BarcodeMultiplexingType::CellLevel(CellLevel::CMO) => samples.get_cmo_sample_map(),
+            BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag) => {
+                samples.get_hashtag_sample_map()
+            }
+            _ => bail!(
                 "[{}] barcode-sample-assignment requires samples definition in [{}] to use the mutually exclusive {} or {}",
                 multiconst::GENE_EXPRESSION,
                 multiconst::SAMPLES,
-                samplesconst::CMO_IDS,
-                samplesconst::HASHTAG_IDS
+                SampleBarcodeColumn::CmoIds.as_str(),
+                SampleBarcodeColumn::HashtagIds.as_str()
             ),
         };
         let samples: TxHashSet<_> = sample_map.values().cloned().collect();
@@ -286,8 +287,7 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                 |_| Ok(None),
                 |si| {
                     si.parse::<Ident>(ctx.with_col(SAMPLE_ID))
-                        .map(String::from)
-                        .map(Some)
+                        .map(|x| Some(String::from(x)))
                 },
             )?;
 
@@ -295,8 +295,7 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                 |_| Ok(None),
                 |si| {
                     si.parse::<Ident>(ctx.with_col(ASSIGNMENT))
-                        .map(String::from)
-                        .map(Some)
+                        .map(|x| Some(String::from(x)))
                 },
             )?;
 
@@ -308,14 +307,11 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                         "multiplet" => SampleAssignment::Multiplet,
                         "unassigned" => SampleAssignment::Unassigned,
                         _ => {
-                            if !samples.contains(&sample_id) {
-                                bail!(
-                                    "invalid {} on row {}, sample {} not found in [samples]",
-                                    SAMPLE_ID,
-                                    row + 1,
-                                    sample_id
-                                );
-                            }
+                            ensure!(
+                                samples.contains(&sample_id),
+                                "invalid {SAMPLE_ID} on row {}, sample {sample_id} not found in [samples]",
+                                1 + row,
+                            );
                             SampleAssignment::Sample(sample_id)
                         }
                     }
@@ -329,18 +325,12 @@ impl<'a> TryFrom<(&Section<'a, String>, &MultiConfigCsv)> for SampleAssignmentCs
                         _ => {
                             let sample_id = sample_map
                                 .get(&assignment)
-                                .ok_or_else(
-                                    #[cold]
-                                    || {
-                                        anyhow!(
-                                            "invalid {} on row {}, {} {} not found in [samples]",
-                                            ASSIGNMENT,
-                                            row + 1,
-                                            sample_barcode_id,
-                                            assignment
-                                        )
-                                    },
-                                )?
+                                .ok_or_else(|| {
+                                    anyhow!(
+                                        "invalid {ASSIGNMENT} on row {}, {sample_barcode_id} {assignment} not found in [samples]",
+                                        1 + row,
+                                    )
+                                })?
                                 .clone();
                             SampleAssignment::SampleTag(sample_id, assignment)
                         }

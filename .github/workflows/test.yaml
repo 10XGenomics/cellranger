@@ -1,0 +1,28 @@
+name: Test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  git:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@v7
+      - name: Fetch history to identify new blobs
+        run: >
+          git fetch --unshallow --no-tags --no-recurse-submodules 
+          --no-write-fetch-head --filter=blob:none origin HEAD
+      - name: Check Git requirements
+        uses: 10XGenomics/git-hygiene-check@main
+        with:
+          max_text_disk_size: 200000
+          max_binary_size: 32768
+          author_domain: none
+          ignore_emails: info@10xgenomics.com

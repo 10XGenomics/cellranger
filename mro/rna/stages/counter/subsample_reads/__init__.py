@@ -2,10 +2,13 @@
 #
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 #
+"""Subsample reads for sequencing saturation analysis."""
+
 from __future__ import annotations
 
 import gzip
 import pickle
+from typing import TYPE_CHECKING
 
 import martian
 
@@ -14,6 +17,10 @@ import cellranger.molecule_counter as cr_mc
 import cellranger.subsample as cr_ss
 import tenkit.safe_json as tk_safe_json
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    from cellranger.mro_types.structs import SubsamplingDef
 
 __MRO__ = """
 stage SUBSAMPLE_READS(
@@ -34,7 +41,35 @@ stage SUBSAMPLE_READS(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUBSAMPLE_READS stage inputs."""
+
+    molecule_info: mro_filetypes.h5
+    filtered_barcodes: mro_filetypes.csv
+    target_mode: None | str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUBSAMPLE_READS stage outputs."""
+
+    summary: mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """SUBSAMPLE_READS chunk inputs."""
+
+    chunk_start: int
+    chunk_len: int
+    subsample_info: list[SubsamplingDef]
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """SUBSAMPLE_READS chunk outputs."""
+
+    metrics: mro_filetypes.pickle_gz
+
+
+def split(args: StageInputs):
     # construct a range of subsampling depths and write out metadata
     if args.target_mode not in cr_ss.SUBSAMPLE_TARGET_MODES:
         martian.exit(f"target mode must be one of {cr_ss.SUBSAMPLE_TARGET_MODES}")
@@ -72,7 +107,7 @@ def split(args):
     }
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     if args.target_mode is None:
         feature_indices = None
     else:
@@ -105,7 +140,12 @@ def main(args, outs):
         pickle.dump(data, outfile, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     # Merge tallies
     metrics = [chunk.metrics for chunk in chunk_outs]
     data = cr_ss.join_metrics(metrics)

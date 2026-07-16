@@ -127,7 +127,7 @@ pub(super) fn tag_read_counts(
     singlets_path: String,
     non_singlets_path: String,
     multiplexing_method: String,
-) -> PyResult<(Vec<String>, Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>)> {
+) -> (Vec<String>, Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>) {
     // Calculates metrics for the COMPUTE_EXTRA_MULTIPLEXING_METRICS stage
     // Given a molecule info file, it will go through and for each tag CMO or Hashtag count how many reads are
     // 1 - In "singlet" barcodes
@@ -214,11 +214,11 @@ pub(super) fn tag_read_counts(
     iterator.for_each(|x| {
         cnt_consumer.consume_umicount(x);
     });
-    Ok((
+    (
         cnt_consumer.tag_names,
         cnt_consumer.singlet_counts,
         cnt_consumer.multiplet_counts,
         cnt_consumer.cell_associated_counts,
         cnt_consumer.total_counts,
-    ))
+    )
 }

@@ -31,11 +31,17 @@ COMMON_COLUMNS = [
     "umap_x",
     "umap_y",
     "barcode",
-    "coarse_cell_type",
     "cell_type_wrapped",
     "fine_cell_type",
 ]
 alt.data_transformers.disable_max_rows()
+
+
+def analysis_has_clustering(analysis: str) -> bool:
+    """Check if the cluster purity can be calculated based on the presence of clustering data in the analysis.h5."""
+    analysis_h5_path = os.path.join(analysis, "analysis.h5")
+    with h5py.File(analysis_h5_path, "r") as analysis_h5:
+        return "/clustering/_gene_expression_graphclust/clusters" in analysis_h5
 
 
 def get_cas_cluster_purity(cell_types: str, analysis: str) -> dict:
@@ -154,13 +160,18 @@ def get_df_from_cloupe_projection(cloupe_projection: str) -> pd.DataFrame:
     return cloupe_projection_df
 
 
-def get_cell_types_df(cell_types: str, analysis=None):
+def get_cell_types_df(
+    cell_types: str,
+    coarse_cell_type: str = COARSE_CELL_TYPES_KEY,
+    analysis=None,
+) -> pd.DataFrame:
     """Process cell type information and optionally merge it with analysis data.
 
     Args:
         cell_types (str): Path to the CSV file containing cell type information.
         analysis (optional): Path to the analysis directory.
             If provided, the cell type information is merged based on the 'barcode' column.
+        coarse_cell_type (str): The column name for coarse cell types in the cell types data.
 
     Returns:
         cell_types (pd.DataFrame): Processed DataFrame containing cell type information.
@@ -173,7 +184,7 @@ def get_cell_types_df(cell_types: str, analysis=None):
         cell_types = pd.merge(cluster_df, cell_types, on="barcode", how="left")
     cell_types = cell_types[[col for col in cell_types.columns if not col.endswith("distance")]]
     cell_types = cell_types.dropna()
-    cell_types["cell_type_wrapped"] = cell_types["coarse_cell_type"].apply(
+    cell_types["cell_type_wrapped"] = cell_types[coarse_cell_type].apply(
         lambda x: "|".join(textwrap.wrap(x, width=15))
     )
     return cell_types
@@ -274,13 +285,15 @@ def cell_type_bar_chart(
     return chart
 
 
-def prepare_cell_types_data(cell_types: str, analysis: str, cloupe_projection: str) -> pd.DataFrame:
+def prepare_cell_types_data(
+    cell_types: str, analysis: str, cloupe_projection: str, coarse_cell_type: str
+) -> pd.DataFrame:
     """Prepare and process the cell types DataFrame for plotting."""
-    if analysis:
-        cluster_df = get_df_from_analysis(analysis, get_umap_coords=True)
     if cloupe_projection:
         cluster_df = get_df_from_cloupe_projection(cloupe_projection)
-    cell_types = get_cell_types_df(cell_types)
+    elif analysis and analysis_has_clustering(analysis):
+        cluster_df = get_df_from_analysis(analysis, get_umap_coords=True)
+    cell_types = get_cell_types_df(cell_types, coarse_cell_type=coarse_cell_type)
     cell_types = pd.merge(cluster_df, cell_types, on="barcode", how="left")
     cell_types = cell_types.dropna()
     if len(cell_types) > gex_constants.MAX_WEBSHIM_BCS_DIM:
@@ -337,44 +350,29 @@ def cell_type_umap(
     analysis: str,
     cloupe_projection: str,
     configure_legend: bool,
+    fine_cell_type: str,
+    coarse_cell_type: str,
     return_chart: bool = False,
 ) -> dict:
     """Generate a UMAP scatter plot colored by cell annotation cell types."""
-    cell_types = prepare_cell_types_data(cell_types, analysis, cloupe_projection)
-    col_names = cell_types.columns
-    has_summary_score = "summary_score" in col_names
+    cell_types = prepare_cell_types_data(
+        cell_types, analysis, cloupe_projection, coarse_cell_type=coarse_cell_type
+    )
+
     spot_size = interpolate_spot_size(len(cell_types))
     highlight = alt.selection_point(fields=["cell_type_wrapped"], bind="legend")
     tool_tip = [
-        alt.Tooltip("coarse_cell_type", title="Cell Type"),
-        alt.Tooltip("fine_cell_type", title="Sub-type"),
+        alt.Tooltip(coarse_cell_type, title="Cell Type"),
+        alt.Tooltip(fine_cell_type, title="Sub-type"),
     ]
-    conditional_columns = []  # Additional columns may be added
+    conditional_columns = [coarse_cell_type]
 
     if not cloupe_projection:
         conditional_columns.append("clusters")
         tool_tip.append(alt.Tooltip("clusters", title="Cluster"))
 
-    # Account for presence of summary score
-    if has_summary_score:
-        conditional_columns.append("summary_score")
-        tool_tip.append(
-            alt.Tooltip("summary_score", title="Summary Score"),
-        )
-        lower_slider = alt.binding_range(
-            min=0, max=1.01, step=0.01, name="Lower Quality Score Cutoff "
-        )
-        upper_slider = alt.binding_range(
-            min=0, max=1, step=0.01, name="Upper Quality Score Cutoff "
-        )
-        lower_cutoff = alt.param(name="LowerCutoff", value=0, bind=lower_slider)
-        upper_cutoff = alt.param(name="UpperCutoff", value=1, bind=upper_slider)
-        pd_predicate = (alt.datum.summary_score >= lower_cutoff) & (
-            alt.datum.summary_score <= upper_cutoff
-        )
-        combined_predicate = highlight & pd_predicate
     color_encoding = alt.condition(
-        combined_predicate if has_summary_score else highlight,
+        highlight,
         alt.Color(
             "cell_type_wrapped:N",
             scale=alt.Scale(scheme="tableau20"),
@@ -394,7 +392,7 @@ def cell_type_umap(
         color_encoding,
         return_chart,
         highlight,
-        additional_params=[lower_cutoff, upper_cutoff] if has_summary_score else None,
+        additional_params=None,
         configure_legend=configure_legend,
     )
 
@@ -423,7 +421,7 @@ def spatial_cell_types_plot(
             If return_chart is True, returns the chart object; otherwise, returns the JSON representation of the chart.
     """
     # Make the tissue positions with cell type calls
-    cell_types = get_cell_types_df(cell_types, analysis)
+    cell_types = get_cell_types_df(cell_types, analysis=analysis)
 
     with open(scale_factors) as f:
         scale_factor_dict = json.load(f)

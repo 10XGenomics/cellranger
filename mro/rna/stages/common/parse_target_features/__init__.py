@@ -6,10 +6,12 @@ indices of target genes within the feature reference, panel metadata, and boolea
 flags for disabling targeting-related stages downstream.
 """
 
+from __future__ import annotations
 
 import json
 import shutil
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
 import martian
 
@@ -18,23 +20,21 @@ import cellranger.reference as cr_reference
 from cellranger.reference_hash import compute_hash_of_file
 from cellranger.targeted import simple_utils, targeted_constants
 
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage PARSE_TARGET_FEATURES(
     in  string   target_set_name,
     in  csv      target_set,
-    in  path     reference_path,
     in  json     gene_index,
     in  bool     filter_probes,
-    in  bool     no_bam,
-    in  bool     is_pd,
     in  bool     is_antibody_only,
-    out fa       bait_fasta,
     out csv      target_panel,
     out csv      probe_set,
     out csv      target_panel_or_probe_set,
     out csv      target_gene_indices,
     out bool     disable_targeted,
-    out bool     no_bam,
     out string   target_set_name,
     out string   targeting_method,
     out tps.json target_panel_summary,
@@ -45,24 +45,43 @@ stage PARSE_TARGET_FEATURES(
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """PARSE_TARGET_FEATURES stage inputs."""
+
+    target_set_name: str
+    target_set: None | mro_filetypes.csv
+    gene_index: None | mro_filetypes.json
+    filter_probes: bool
+    is_antibody_only: bool
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """PARSE_TARGET_FEATURES stage outputs."""
+
+    target_panel: None | mro_filetypes.csv
+    probe_set: None | mro_filetypes.csv
+    target_panel_or_probe_set: None | mro_filetypes.csv
+    target_gene_indices: None | mro_filetypes.csv
+    disable_targeted: bool
+    target_set_name: str
+    targeting_method: str
+    target_panel_summary: mro_filetypes.tps_json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """PARSE_TARGET_FEATURES chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """PARSE_TARGET_FEATURES chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
 
     if args.target_set is None or args.target_set == "" or args.is_antibody_only:
         # Sample is not targeted
-        ## Set relevant flags
-        outs.no_bam = args.no_bam
+        martian.clear(outs)
         outs.disable_targeted = True
-
-        ## These will all be null if not targeted data.
-        ## (Also, don't rely on deprecated martian behavior that initializes paths)
-        outs.target_set_name = None
-        outs.targeting_method = None
-        outs.target_panel = None
-        outs.probe_set = None
-        outs.target_panel_or_probe_set = None
-        outs.target_gene_indices = None
-        outs.bait_fasta = None
-        outs.target_panel_summary = None
     else:
         # Sample is targeted, gather basic info first
         target_set_name = args.target_set_name
@@ -77,7 +96,7 @@ def main(args, outs):
             gene_name_to_id = {gene.name: gene.id for gene in gene_index.genes}
 
         ## parse target set
-        (target_set_metadata, target_gene_ids, bait_sequences) = simple_utils.parse_target_csv(
+        (target_set_metadata, target_gene_ids, _) = simple_utils.parse_target_csv(
             target_set_fn, gene_index, gene_name_to_id, args.filter_probes
         )
 
@@ -103,7 +122,6 @@ def main(args, outs):
             cr_csv_io.write_target_features_csv(outs.target_gene_indices, target_gene_indices)
 
         # Set up outs
-        outs.no_bam = args.no_bam
         outs.disable_targeted = False
         outs.target_set_name = target_set_name
         outs.targeting_method = targeting_method
@@ -112,10 +130,6 @@ def main(args, outs):
             outs.target_panel = martian.make_path("target_panel.csv")
             outs.probe_set = None
             outs.target_panel_or_probe_set = outs.target_panel
-            # The stages CALCULATE_TARGETED_METRICS_PD and TARGETED_WEBSUMMARY_PD
-            # in the pipeline _TARGETED_ANALYZER_PD require a BAM file.
-            if args.is_pd:
-                outs.no_bam = False
         elif targeting_method == targeted_constants.TARGETING_METHOD_TL:
             outs.target_panel = None
             outs.probe_set = martian.make_path("probe_set.csv")
@@ -123,12 +137,8 @@ def main(args, outs):
         else:
             raise Exception(f"Unexpected targeting_method: {targeting_method}")
 
-        ## pass through target panel file
-        ## (FIXME: after moving target_set to top-level arg this isn't needed)
+        ## Copy the probe set CSV to the top-level analysis outs/.
         shutil.copyfile(target_set_fn, outs.target_panel_or_probe_set)
-
-        ## Write the bait sequence FASTA file
-        simple_utils.write_bait_fasta(outs.bait_fasta, bait_sequences)
 
         ## Pass along some details about the target panel file in summary file
         target_panel_hash = compute_hash_of_file(target_set_fn)

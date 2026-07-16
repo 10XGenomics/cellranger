@@ -7,13 +7,12 @@ use crate::align_metrics::{
     BarcodeKind, BarcodeMetrics, GenomeMapping, LibFeatThenBarcodeOrder, MULTI_GENOME,
     MappingRegion,
 };
-use crate::types::FeatureReferenceFormat;
 use crate::utils::estimate_mem::barcode_mem_gib;
 use anyhow::{Result, bail};
 use cr_h5::count_matrix::write_barcodes_column;
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
-use cr_types::{BarcodeIndexOutput, GenomeName, H5File, LibraryType};
+use cr_types::{BarcodeIndexOutput, FeatureReferenceFormat, GenomeName, H5File, LibraryType};
 use itertools::zip_eq;
 use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};

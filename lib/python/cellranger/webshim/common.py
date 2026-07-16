@@ -758,12 +758,14 @@ def plot_preprocess(analyses):
     return analyses
 
 
-def load_sample_data(sample_properties, sample_data_paths, projections: Sequence[Projection]):
-    return SampleData(sample_properties, sample_data_paths, plot_preprocess, projections)
+def load_sample_data(sample_properties, sample_data_paths, *, projections: Sequence[Projection]):
+    return SampleData(
+        sample_properties, sample_data_paths, plot_preprocess, projections=projections
+    )
 
 
-def plot_tsne(chart, sample_properties, sample_data):
-    """Plot cells in t-SNE space, colored by clustering label."""
+def plot_umap(chart, sample_properties, sample_data):
+    """Plot cells in UMAP space, colored by clustering label."""
     analysis = sample_data.get_analysis(SingleGenomeAnalysis)
     if analysis is None:
         return None
@@ -776,8 +778,8 @@ def plot_tsne(chart, sample_properties, sample_data):
         key = get_projection_key(rna_library.ANTIBODY_LIBRARY_TYPE, 2)
 
     args = [
-        analysis.get_tsne(key=key).transformed_tsne_matrix,
-        ws_gex_constants.TSNE_CLUSTER_DESCRIPTION,
+        analysis.get_umap(key=key).transformed_umap_matrix,
+        ws_gex_constants.UMAP_CLUSTER_DESCRIPTION,
         1,
         2,
     ]
@@ -882,7 +884,7 @@ def plot_dimensions_color(chart, transformed_matrix, values, description, vmin, 
     return chart
 
 
-def plot_tsne_totalcounts(chart, sample_properties, sample_data):
+def plot_umap_totalcounts(chart, sample_properties, sample_data):
     """Plot cells colored by total counts."""
     analysis = sample_data.get_analysis(SingleGenomeAnalysis)
     if not analysis:
@@ -899,13 +901,13 @@ def plot_tsne_totalcounts(chart, sample_properties, sample_data):
 
     matrix = analysis.matrix.select_features_by_type(library_type)
     reads_per_bc = matrix.get_counts_per_bc()
-    vmin, vmax = np.percentile(reads_per_bc, ws_gex_constants.TSNE_TOTALCOUNTS_PRCT_CLIP)
+    vmin, vmax = np.percentile(reads_per_bc, ws_gex_constants.UMAP_TOTALCOUNTS_PRCT_CLIP)
 
     return plot_dimensions_color(
         chart,
-        analysis.get_tsne(key=key).transformed_tsne_matrix,
+        analysis.get_umap(key=key).transformed_umap_matrix,
         reads_per_bc,
-        ws_gex_constants.TSNE_TOTALCOUNTS_DESCRIPTION,
+        ws_gex_constants.UMAP_TOTALCOUNTS_DESCRIPTION,
         vmin,
         vmax,
         1,

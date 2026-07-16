@@ -137,6 +137,18 @@ SPATIAL_MEDIAN_GENE_PLOT_HELP = {
     TITLE_KEY: "Median Genes per Spot",
 }
 
+MEDIAN_UMI_PLOT_HELP = {
+    "helpText": "This plot shows the Median UMIs per Cell as a function of downsampled sequencing depth in mean reads per cell, up to the observed sequencing depth. "
+    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point.",
+    "title": "Median UMIs per Cell",
+}
+
+SPATIAL_MEDIAN_UMI_PLOT_HELP = {
+    HELP_TEXT_KEY: "This plot shows the Median UMIs per Spot as a function of downsampled sequencing depth in mean reads per spot, up to the observed sequencing depth. "
+    "The slope of the curve near the endpoint can be interpreted as an upper bound to the benefit to be gained from increasing the sequencing depth beyond this point.",
+    TITLE_KEY: "Median UMIs per Spot",
+}
+
 SPATIAL_HD_MEAN_GENE_PLOT_HELP_JSON_STRING = (
     f'"{HELP_TEXT_KEY}": "This plot shows the Mean Genes '
     "per {bin_size} µm bin as a function of downsampled sequencing depth in mean reads per {bin_size} µm bin, up to the observed sequencing depth. "
@@ -507,10 +519,33 @@ def reads_per_umi_plot(sample_data):
     return reads_vs_umis_plot
 
 
-def median_gene_plot(sample_data, sample_properties, species_list):
+def _median_counts_plot(sample_data, sample_properties, species_list, metric_type):
     # pylint: disable=missing-function-docstring
     unit = "Cell" if sample_properties.is_spatial is False else "Spot"
     is_targeted = sample_data.is_targeted() and sample_data.targeting_method == TARGETING_METHOD_HC
+
+    # Configure based on metric type
+    if metric_type == "gene":
+        metric_suffix = "subsampled_filtered_bcs_median_unique_genes_detected"
+        y_label = "Genes"
+        plot_key = "median_gene_plot"
+        help_text = (
+            MEDIAN_GENE_PLOT_HELP
+            if not sample_properties.is_spatial
+            else SPATIAL_MEDIAN_GENE_PLOT_HELP
+        )
+    elif metric_type == "umi":
+        metric_suffix = "subsampled_filtered_bcs_median_counts"
+        y_label = "UMI Counts"
+        plot_key = "median_umi_plot"
+        help_text = (
+            MEDIAN_UMI_PLOT_HELP
+            if not sample_properties.is_spatial
+            else SPATIAL_MEDIAN_UMI_PLOT_HELP
+        )
+    else:
+        return None
+
     chart = {
         "config": pltly.PLOT_CONFIG,
         "layout": {
@@ -521,7 +556,9 @@ def median_gene_plot(sample_data, sample_properties, species_list):
                 "fixedrange": False,
             },
             "yaxis": {
-                "title": "Median {}Genes per {}".format("Targeted " if is_targeted else "", unit),
+                "title": "Median {}{} per {}".format(
+                    "Targeted " if is_targeted else "", y_label, unit
+                ),
                 "fixedrange": False,
             },
         },
@@ -532,7 +569,7 @@ def median_gene_plot(sample_data, sample_properties, species_list):
         chart,
         sample_properties,
         sample_data,
-        metric_suffix="subsampled_filtered_bcs_median_unique_genes_detected",
+        metric_suffix=metric_suffix,
         references=species_list,
         is_targeted=is_targeted,
         show_targeted_only=True,
@@ -543,17 +580,21 @@ def median_gene_plot(sample_data, sample_properties, species_list):
         if is_targeted:
             plot = _add_targeting_line_colors(plot)
         return {
-            "median_gene_plot": {
+            plot_key: {
                 "plot": plot,
-                "help": (
-                    MEDIAN_GENE_PLOT_HELP
-                    if sample_properties.is_spatial is False
-                    else SPATIAL_MEDIAN_GENE_PLOT_HELP
-                ),
+                "help": help_text,
             }
         }
     else:
         return None
+
+
+def median_gene_plot(sample_data, sample_properties, species_list):
+    return _median_counts_plot(sample_data, sample_properties, species_list, "gene")
+
+
+def median_umi_plot(sample_data, sample_properties, species_list):
+    return _median_counts_plot(sample_data, sample_properties, species_list, "umi")
 
 
 def _add_targeting_line_colors(plot):

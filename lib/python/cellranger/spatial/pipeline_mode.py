@@ -24,6 +24,7 @@ class SlideType(str, Enum):
     VISIUM = "Visium-Slide"
     XL = "XL-Slide"
     VISIUM_HD = "Visium-HD-Slide"
+    VISIUM_HD_XL = "Visium-HD-XL-Slide"
 
 
 class PipelineMode(NamedTuple):
@@ -60,8 +61,11 @@ class PipelineMode(NamedTuple):
     def is_visium_hd(self) -> bool:
         return self.slide == SlideType.VISIUM_HD
 
+    def is_visium_hd_xl(self) -> bool:
+        return self.slide == SlideType.VISIUM_HD_XL
+
     def is_hd(self) -> bool:
-        return self.is_visium_hd()
+        return self.is_visium_hd() or self.is_visium_hd_xl()
 
     def is_hd_with_fiducials(self) -> bool:
-        return self.is_visium_hd_with_fiducials()
+        return self.is_visium_hd_with_fiducials() or self.is_visium_hd_xl()

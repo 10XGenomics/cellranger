@@ -74,15 +74,12 @@ impl RefData {
         self.segtype[i] == b'C'
     }
 
-    pub fn from_fasta(path: impl AsRef<Path>) -> Result<Self> {
-        Self::from_fasta_impl(path.as_ref(), None)
+    pub fn from_fasta(path: &Path) -> Result<Self> {
+        Self::from_fasta_impl(path, None)
     }
 
-    pub fn from_fasta_with_filter(
-        path: impl AsRef<Path>,
-        ids_to_use: &HashSet<i32>,
-    ) -> Result<Self> {
-        Self::from_fasta_impl(path.as_ref(), Some(ids_to_use))
+    pub fn from_fasta_with_filter(path: &Path, ids_to_use: &HashSet<i32>) -> Result<Self> {
+        Self::from_fasta_impl(path, Some(ids_to_use))
     }
 
     fn from_fasta_impl(path: &Path, ids_to_use: Option<&HashSet<i32>>) -> Result<Self> {

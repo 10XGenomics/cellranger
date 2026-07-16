@@ -7,6 +7,8 @@
 Identify which cells express which protospacers above background.
 """
 
+from __future__ import annotations
+
 import csv
 import json
 import math
@@ -15,6 +17,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from functools import reduce
 from statistics import median, pstdev
+from typing import TYPE_CHECKING
 
 import martian
 
@@ -22,6 +25,16 @@ import cellranger.rna.library as rna_library
 from cellranger.feature.feature_assigner import GuideAssigner
 from cellranger.feature.utils import write_json_from_dict
 from cellranger.matrix import CountMatrix
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
+# Target guides per chunk. Guides are assigned independently and the histogram-EM fit is
+# cell-count independent, so we chunk purely by guide count. At 10k, all current panels except the
+# ~75k-guide case run in a single chunk (~tens of seconds): the summed-walltime cost is dominated
+# by the per-chunk full-matrix load, so minimizing chunk count minimizes total work. Larger panels
+# still split (e.g. 75k guides -> 8 chunks), bounding per-chunk wall time.
+GUIDES_PER_CHUNK = 10_000
 
 __MRO__ = """
 stage CALL_PROTOSPACERS(
@@ -45,22 +58,60 @@ stage CALL_PROTOSPACERS(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_PROTOSPACERS stage inputs."""
+
+    filtered_feature_counts_matrix: mro_filetypes.h5
+    min_crispr_umi_threshold: int
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_PROTOSPACERS stage outputs."""
+
+    protospacer_calls_summary: mro_filetypes.csv
+    protospacer_calls_per_cell: mro_filetypes.csv
+    protospacer_call_metrics_json: mro_filetypes.json
+    cells_per_protospacer: mro_filetypes.json
+    protospacer_umi_thresholds_json: mro_filetypes.json
+    protospacer_umi_thresholds_csv: mro_filetypes.csv
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CALL_PROTOSPACERS chunk inputs."""
+
+    chunk_start: int
+    chunk_end: int
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """CALL_PROTOSPACERS chunk outputs."""
+
+    chunk_cells_per_protospacer: mro_filetypes.json
+    chunk_protospacer_umi_thresholds: mro_filetypes.json
+
+
+def split(args: StageInputs):
     num_crispr_features = CountMatrix.load_feature_ref_from_h5_file(
         args.filtered_feature_counts_matrix
     ).get_count_of_feature_type(rna_library.CRISPR_LIBRARY_TYPE)
     _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(
         args.filtered_feature_counts_matrix
     )
-    mem_gib = 1 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1)
+    # get_mem_gb_from_matrix_dim already over-estimates the loaded CRISPR matrix vs observed peak
+    # (~0.7x of the estimate at case1/case2), so the matrix term alone already exceeds peak; keep a
+    # small +0.5 cushion for the calling algorithm's working set and a 1 GiB floor.
+    mem_gib = max(1.0, 0.5 + CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=1))
     print(f"{num_crispr_features=},{num_barcodes=},{nnz=},{mem_gib=}")
 
     if num_barcodes == 0:
         return {"chunks": []}
 
-    num_chunks = min(
-        100, num_crispr_features, math.ceil(max(num_crispr_features / 100, num_barcodes / 10_000))
-    )
+    # Chunk by guide count only. The previous num_barcodes/10_000 term was a relic of the
+    # per-cell sklearn GMM (cell-count bound); the histogram-EM caller is cell-count independent,
+    # so that term only multiplied the fixed per-chunk full-matrix load. Output is unchanged:
+    # chunks partition the feature range in order and the join merges them in order, so per-guide
+    # results and their ordering are identical regardless of chunk count.
+    num_chunks = min(100, max(1, math.ceil(num_crispr_features / GUIDES_PER_CHUNK)))
     num_features_per_chunk = math.ceil(num_crispr_features / num_chunks)
     return {
         "chunks": [
@@ -75,7 +126,7 @@ def split(args):
     }
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     filtered_feature_counts_matrix = (
         CountMatrix.load_h5_file(args.filtered_feature_counts_matrix)
         .select_features_by_type(rna_library.CRISPR_LIBRARY_TYPE)
@@ -90,7 +141,7 @@ def main(args, outs):
     guide_assigner.assignments = guide_assigner.get_feature_assignments()
     write_json_from_dict(guide_assigner.get_cells_per_feature(), outs.chunk_cells_per_protospacer)
     write_json_from_dict(
-        guide_assigner.compute_assignment_metadata().umi_thresholds,
+        guide_assigner.compute_umi_thresholds(),
         outs.chunk_protospacer_umi_thresholds,
     )
 
@@ -110,7 +161,12 @@ def get_counts_for_features(
     return (matrix.m[matrix.feature_id_to_int(x.encode()), barcode_index] for x in features)
 
 
-def join(args, outs, _chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     matrix = CountMatrix.load_h5_file(args.filtered_feature_counts_matrix).select_features_by_type(
         rna_library.CRISPR_LIBRARY_TYPE
     )

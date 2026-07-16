@@ -7,7 +7,7 @@ use crate::types::{EmbeddingResult, EmbeddingType, H5File, ReductionType};
 use anyhow::Result;
 use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::get_barcodes_between;
-use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use ndarray::Array2;
 use serde::{Deserialize, Serialize};
@@ -114,7 +114,7 @@ impl MartianStage for UmapStage {
         let (num_bcs, _) = proj.dim();
 
         let metric = match args.metric.as_deref() {
-            Some("correlation") | Some("pearson") | None => DistanceType::pearson(),
+            Some("correlation" | "pearson") | None => DistanceType::pearson(),
             Some("cosine") => DistanceType::cosine(),
             Some("euclidean") => DistanceType::euclidean(),
             Some(metric) => unimplemented!("unsupported metric: {}", metric),

@@ -2,11 +2,12 @@
 #![expect(missing_docs)]
 
 use crate::read::{AnnotationInfo, ReadAnnotations, RecordAnnotation};
+use bytes::Bytes;
 use cr_types::probe_set::ProbeSetReference;
 use cr_types::reference::feature_reference::FeatureReference;
 use cr_types::rna_read::RnaChunk;
 use cr_types::types::UmiCount;
-use rand::Rng;
+use rand::RngExt;
 use rand::rngs::SmallRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -102,10 +103,39 @@ fn determine_low_support_umigenes(
     low_support_umigenes
 }
 
+/// A composite read ID, consisting of two parts:
+/// 1. the full data array backing a given read; if we have read IDs in the
+///    read data, that will be up-front, and serve to deduplicate/uniquely
+///    identify the reads.
+/// 2. a locally-unique numeric read index, assigned by some enumeration. This
+///    is a fall-back mechanism for the case where we threw out read IDs, to
+///    cover the rare edge case that we happen to have two or more reads whose
+///    backing data is identical (same sequence and quality scores). This is
+///    unlikely but possible.
+// NOTE: the field order here matters, to ensure we compare by data first and
+// only fall back to the numeric index in the case of two reads with identical
+// content.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub struct ReadId {
+    /// The backing data for the read.
+    data: Bytes,
+    /// Locally-unique numeric identifier.
+    index: usize,
+}
+
+impl ReadId {
+    fn from_annotations(annotation: &ReadAnnotations) -> Self {
+        Self {
+            data: annotation.read.readpair().data(),
+            index: annotation.index,
+        }
+    }
+}
+
 #[derive(PartialEq, PartialOrd, Eq, Ord, Clone)]
 pub struct UmiSelectKey {
     utype: UmiType,
-    qname: Vec<u8>,
+    read_id: ReadId,
 }
 
 pub struct DupBuilder {
@@ -128,16 +158,13 @@ impl DupBuilder {
             if let Some(gene) = annotation.conf_mapped_feature(feature_reference) {
                 let key = (annotation.umi_info.seq, gene);
                 *self.umigene_counts.entry(key).or_insert(0) += 1;
-                let header = annotation.read.header().to_vec(); // TODO: Use a buffer to avoid repeated allocations
-                let ann_key = match annotation.is_conf_mapped_unique_txomic() {
-                    true => UmiSelectKey {
-                        utype: UmiType::Txomic,
-                        qname: header,
+                let ann_key = UmiSelectKey {
+                    utype: if annotation.is_conf_mapped_unique_txomic() {
+                        UmiType::Txomic
+                    } else {
+                        UmiType::NonTxomic
                     },
-                    false => UmiSelectKey {
-                        utype: UmiType::NonTxomic,
-                        qname: header,
-                    },
+                    read_id: ReadId::from_annotations(annotation),
                 };
 
                 let min_key = match self.umigene_min_key.remove(&key) {
@@ -285,15 +312,15 @@ impl BarcodeDupMarker {
         let corrected_key = (corrected_umi, raw_key.1);
         let is_low_support_umi = self.low_support_umigenes.contains(&corrected_key);
 
-        let is_min_qname = match self.umigene_min_key.get(&corrected_key) {
-            Some(min_key) => annotation.read.header() == min_key.qname.as_slice(),
+        let is_min_read = match self.umigene_min_key.get(&corrected_key) {
+            Some(min_key) => ReadId::from_annotations(annotation) == min_key.read_id,
             None => unreachable!(),
         };
 
         let read_count = self.umigene_counts[&corrected_key];
 
         let sampling_factor = rng.random_bool(barcode_subsample_rate);
-        let is_umi_count = !is_low_support_umi && is_min_qname && sampling_factor;
+        let is_umi_count = !is_low_support_umi && is_min_read && sampling_factor;
         let umi_count = if is_umi_count {
             let umi_type = match annotation.is_conf_mapped_unique_txomic() {
                 true => UmiType::Txomic,
@@ -364,12 +391,39 @@ mod test {
     fn test_umi_type() {
         let key1 = UmiSelectKey {
             utype: UmiType::Txomic,
-            qname: vec![1_u8],
+            read_id: ReadId {
+                data: Bytes::from_owner(vec![0_u8]),
+                index: 0,
+            },
         };
         let key2 = UmiSelectKey {
             utype: UmiType::NonTxomic,
-            qname: vec![0_u8],
+            read_id: ReadId {
+                data: Bytes::from_owner(vec![0_u8]),
+                index: 0,
+            },
         };
+        // Prefer transcriptomic over not.
         assert!(key1 < key2);
+
+        let key3 = UmiSelectKey {
+            utype: UmiType::Txomic,
+            read_id: ReadId {
+                data: Bytes::from_owner(vec![1_u8]),
+                index: 0,
+            },
+        };
+        // Sort by data.
+        assert!(key1 < key3);
+
+        // Fall back to numeric index if data is identical.
+        let key4 = UmiSelectKey {
+            utype: UmiType::Txomic,
+            read_id: ReadId {
+                data: Bytes::from_owner(vec![0_u8]),
+                index: 1,
+            },
+        };
+        assert!(key1 < key4);
     }
 }

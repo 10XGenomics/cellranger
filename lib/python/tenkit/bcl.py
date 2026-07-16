@@ -35,6 +35,7 @@ class Bcl2FastqVersion(Enum):
 class IlluminaSequencer(Enum):
     iSeq = auto()
     MiSeq = auto()
+    MiSeqi100 = auto()
     HiSeq = auto()
     NextSeq = auto()
     NovaSeq = auto()
@@ -103,7 +104,7 @@ class RTAVersionInformation:
         self._determine_rc_i2()
 
         # Sequencers prior to the NovaSeq X have a RTA Version, those after don't.
-        if self.sequencer == IlluminaSequencer.NovaSeqX:
+        if self.sequencer in (IlluminaSequencer.NovaSeqX, IlluminaSequencer.MiSeqi100):
             self.rta_version = None
         else:
             # Can we run bcl2fastq 2, or do we need to use the old version?
@@ -135,6 +136,8 @@ class RTAVersionInformation:
         """Returns the sequencer we've inferred from the [r|R]unParameters.xml file."""
         if self.application.count("NextSeq") > 0:
             return IlluminaSequencer.NextSeq
+        elif self.application.count("MiSeqi100") > 0:
+            return IlluminaSequencer.MiSeqi100
         elif self.application.count("MiSeq") > 0:
             return IlluminaSequencer.MiSeq
         # Note that NovaSeqX seems to use <Application>control-software</Application> and so this
@@ -172,6 +175,8 @@ class RTAVersionInformation:
             self.rc_i2 = True
         elif sequencer == IlluminaSequencer.MiSeq:
             self.rc_i2 = False
+        elif sequencer == IlluminaSequencer.MiSeqi100:
+            self.rc_i2 = True
         # according to https://support.illumina.com/content/dam/illumina-support/documents/documentation/system_documentation/miseq/indexed-sequencing-overview-guide-15057455-03.pdf
         # NovaSeq follows MiSeq/HiSeq 2500 workflow for I5 index; this is effectively
         # a noop thanks to rc_i2 being False by default but let's make it explicit
@@ -286,7 +291,7 @@ class RTAVersionInformation:
         else:
             v2x, v2y = [int(v2_part) for v2_part in v2.split(b".")][0:2]
 
-        not_novaseq_x = self.sequencer != IlluminaSequencer.NovaSeqX
+        not_novaseq_x = self.rta_version is not None
         # The NovaSeq X does not have a RTAVersion to go with it
         if not_novaseq_x:
             x, y, z = [int(xi) for xi in self.rta_version.split(".")][0:3]
@@ -436,6 +441,28 @@ class ReadInfo(TypedDict):
     read_name: str
     index_read: bool
     original_read_name: str
+
+
+def load_tile_ids(run_info_xml: str) -> list[str] | None:
+    """Get the tile IDs from the Illumina RunInfo.xml file.
+
+    Newer instruments (NovaSeq, NovaSeq X+) list tiles explicitly in a
+    TileSet/Tiles element.  Older instruments (MiSeq, NextSeq) only provide
+    FlowcellLayout attributes and do not support bcl-convert's --tiles
+    filtering, so we return None for those.
+    """
+    tree = etree.parse(run_info_xml)
+    layout = tree.getroot().find("Run").find("FlowcellLayout")
+
+    tileset = layout.find("TileSet")
+    if tileset is not None:
+        tile_nodes = tileset.find("Tiles").findall("Tile")
+        # Tile text is split by lane ID and tile ID with an underscore
+        tile_ids = sorted({node.text.split("_")[1] for node in tile_nodes})
+        return tile_ids
+
+    # Older instruments don't support bcl-convert tile filtering
+    return None
 
 
 def load_run_info(run_info_xml: str) -> tuple[list[ReadInfo], str | None]:

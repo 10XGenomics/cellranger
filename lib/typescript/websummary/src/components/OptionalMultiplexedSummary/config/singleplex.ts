@@ -46,6 +46,7 @@ const sequencingQuality: MetricTableConfig = {
     "Library",
     "fastq_id",
     "number_of_reads",
+    "unprocessed_reads",
     "q30_barcode",
     "q30_umi",
     "q30_read1",
@@ -74,6 +75,7 @@ const vdjSequencingQuality: MetricTableConfig = {
     "Library",
     "fastq_id",
     "number_of_reads",
+    "unprocessed_reads",
     "q30_barcode",
     "q30_umi",
     "q30_read1",
@@ -162,6 +164,7 @@ export const SinglePlexConfig = {
     },
     libraryQuality: libraryQuality,
     sequencing: sequencingQuality,
+    readTrimmingQuality: MultiplexLibraryConfig.GEX.readTrimmingQuality,
     gdna_metrics: gdnaMetricsTable,
   },
   VDJ_B: {
@@ -314,6 +317,7 @@ export const SinglePlexConfig = {
       ],
     },
     libraryQuality: libraryQuality,
+    readTrimmingQuality: MultiplexLibraryConfig.GEX.readTrimmingQuality,
     sequencingQuality: sequencingQuality,
   },
   AG: {
@@ -336,6 +340,7 @@ export const SinglePlexConfig = {
       entries: copyConfigs(MultiplexSampleConfig.AG.hero, "Cells"),
     },
     libraryQuality: libraryQuality,
+    readTrimmingQuality: MultiplexLibraryConfig.GEX.readTrimmingQuality,
     sequencingQuality: sequencingQuality,
   },
   CRISPR: {
@@ -362,6 +367,7 @@ export const SinglePlexConfig = {
       ],
     },
     libraryQuality: libraryQuality,
+    readTrimmingQuality: MultiplexLibraryConfig.GEX.readTrimmingQuality,
     sequencingQuality: sequencingQuality,
   },
   Custom: {
@@ -378,6 +384,7 @@ export const SinglePlexConfig = {
       ],
     },
     libraryQuality: libraryQuality,
+    readTrimmingQuality: MultiplexLibraryConfig.GEX.readTrimmingQuality,
     sequencingQuality: sequencingQuality,
   },
 };

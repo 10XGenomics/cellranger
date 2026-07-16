@@ -1,20 +1,22 @@
 //! Crate for dealing with UMI related types and functionalities.
-#![expect(missing_docs)]
+#![deny(missing_docs)]
 
 use fastq_set::squality::SQualityGen;
 use fastq_set::sseq::{HammingIterOpt, SSeqGen, SSeqOneHammingIter};
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 mod info;
-mod translation;
 
 pub use info::UmiInfo;
-pub use translation::SplintToUmiTranslator;
 
+/// The maximum length of a UMI.
 pub const MAX_UMI_LENGTH: usize = 16;
+
+/// UMI sequence.
 pub type UmiSeq = SSeqGen<MAX_UMI_LENGTH>;
+
+/// UMI quality sequence.
 pub type UmiQual = SQualityGen<MAX_UMI_LENGTH>;
 
 /// A container for a read UMI sequence. Can hold upto 16 bases
@@ -33,38 +35,43 @@ impl From<UmiSeq> for Umi {
 }
 
 impl Umi {
+    /// Create a new UMI from a byte slice.
     pub fn new(sequence: &[u8]) -> Umi {
         Umi {
             sequence: UmiSeq::from_bytes(sequence),
         }
     }
 
+    /// Create a new UMI from a byte slice without checking validity.
     pub fn new_unchecked(sequence: &[u8]) -> Umi {
         Umi {
             sequence: UmiSeq::from_bytes_unchecked(sequence),
         }
     }
 
+    /// Return the UMI sequence as a byte slice.
     pub fn sequence(&self) -> &[u8] {
         self.sequence.seq()
     }
 
+    /// Return the UMI sequence as a byte slice.
     pub fn seq(&self) -> &[u8] {
         self.sequence.seq()
     }
 
+    /// Return the UMI sequence as a `UmiSeq`.
     pub fn sseq(self) -> UmiSeq {
         self.sequence
     }
 
-    // No N's and not a homopolymer
-    pub fn is_valid(self) -> bool {
-        let seq = self.sequence.seq();
-        let is_homopolymer = seq.iter().tuple_windows().all(|(a, b)| a == b);
-        let has_n = seq.iter().any(|&s| s == b'N' || s == b'n');
-        !(is_homopolymer || has_n)
+    /// Return true if the UMI is valid.
+    ///
+    /// The qual scores are required to determine this.
+    pub fn is_valid(self, qual: &UmiQual) -> bool {
+        is_valid(&self.sequence, qual)
     }
 
+    /// Create an iterator over UMIs one Hamming distance away from this one.
     pub fn one_hamming_iter(self, opt: HammingIterOpt) -> UmiOneHammingIter {
         UmiOneHammingIter {
             inner: self.sequence.one_hamming_iter(opt),
@@ -72,9 +79,24 @@ impl Umi {
     }
 }
 
+/// Return true if the provided sequence and qual are a valid UMI.
+///
+/// A valid UMI has no Ns, is not a homopolymer, and has no bases with a qual
+/// score less than a minimum threshold.
+pub fn is_valid(seq: &UmiSeq, qual: &UmiQual) -> bool {
+    let has_n = seq.has_n();
+    let is_homopolymer = seq.is_homopolymer();
+
+    const UMI_MIN_QV: u8 = 10;
+    let low_min_qual = qual.min_qual() < UMI_MIN_QV;
+    !(has_n || is_homopolymer || low_min_qual)
+}
+
+/// An iterator over UMIs one Hamming distance away from a given UMI.
 pub struct UmiOneHammingIter {
     inner: SSeqOneHammingIter<MAX_UMI_LENGTH>,
 }
+
 impl Iterator for UmiOneHammingIter {
     type Item = Umi;
 
@@ -104,8 +126,10 @@ impl Display for Umi {
 /// used to represent other molecule properties, like sense/anti-sense etc.
 #[derive(Clone, Copy, Default, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum UmiType {
+    /// Transcriptomic: exonic and consistent with splice junctions
     #[default]
     Txomic,
+    /// Non-transcriptomic
     NonTxomic,
 }
 

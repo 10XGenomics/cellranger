@@ -1,0 +1,9 @@
+id,name,read,pattern,sequence,feature_type
+HashMaxA,HashMaxA,R2,5P(BC),CAGGAGAGGAGAGAT,Antibody Capture
+HashMaxB,HashMaxB,R2,5P(BC),CTCTAACTAGCTAGC,Antibody Capture
+HashMaxC,HashMaxC,R2,5P(BC),CGGTGGAACCGCAAG,Antibody Capture
+HashMaxD,HashMaxD,R2,5P(BC),AAGCGGACTGTACGT,Antibody Capture
+HashMaxE,HashMaxE,R2,5P(BC),GGATAATAATTCAGA,Antibody Capture
+HashMaxF,HashMaxF,R2,5P(BC),TGAGATAATAGCAGG,Antibody Capture
+HashMaxG,HashMaxG,R2,5P(BC),ACGCACAGATACTCG,Antibody Capture
+HashMaxH,HashMaxH,R2,5P(BC),TAGGCAATCTACCTA,Antibody Capture

@@ -1,7 +1,7 @@
 #![expect(missing_docs)]
 use crate::bam_tags::{
     EXTRA_FLAGS_TAG, ExtraFlags, FEATURE_IDS_TAG, PROC_BC_SEQ_TAG, PROC_UMI_SEQ_TAG,
-    RAW_BARCODE_SEQ_TAG, RAW_UMI_SEQ_TAG,
+    RAW_BARCODE_SEQ_TAG, RAW_UMI_SEQ_TAG, SPATIAL_BC_TAG,
 };
 use crate::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_GIB};
 use barcode::{Barcode, BarcodeContent};
@@ -78,7 +78,7 @@ impl AuxExt for Aux<'_> {
 
 pub trait CrRecord {
     fn raw_barcode(&self) -> Option<BarcodeContent>;
-    fn processed_barcode(&self) -> Option<Barcode>;
+    fn processed_barcode(&self, is_visium_hd: bool) -> Option<Barcode>;
 
     fn raw_umi(&self) -> Option<UmiSeq>;
     fn processed_umi(&self) -> Option<UmiSeq>;
@@ -99,12 +99,17 @@ impl CrRecord for Record {
             .ok()
     }
 
-    fn processed_barcode(&self) -> Option<Barcode> {
-        self.aux(PROC_BC_SEQ_TAG)
-            .map(|x| Barcode::from_bytes(x.str_bytes()).unwrap())
-            .ok()
+    fn processed_barcode(&self, is_visium_hd: bool) -> Option<Barcode> {
+        if is_visium_hd {
+            self.aux(SPATIAL_BC_TAG)
+                .map(|x| Barcode::from_bytes(x.str_bytes()).unwrap())
+                .ok()
+        } else {
+            self.aux(PROC_BC_SEQ_TAG)
+                .map(|x| Barcode::from_bytes(x.str_bytes()).unwrap())
+                .ok()
+        }
     }
-
     fn raw_umi(&self) -> Option<UmiSeq> {
         self.aux(RAW_UMI_SEQ_TAG)
             .map(|x| UmiSeq::from_bytes(x.str_bytes()))
@@ -123,9 +128,10 @@ impl CrRecord for Record {
 
     /// Get an alignment record's extra flags
     fn cr_extra_flags(&self) -> ExtraFlags {
-        self.aux(EXTRA_FLAGS_TAG).map_or(Default::default(), |x| {
-            ExtraFlags::from_bits_truncate(x.integer() as u32)
-        })
+        self.aux(EXTRA_FLAGS_TAG).map_or_else(
+            |_| ExtraFlags::default(),
+            |x| ExtraFlags::from_bits_truncate(x.integer() as u32),
+        )
     }
 
     /// Return true if a read should be considered for PCR-duplicate marking
@@ -137,13 +143,6 @@ impl CrRecord for Record {
             || extra_flags.intersects(ExtraFlags::CONF_MAPPED);
         is_primary_alignment && is_conf_mapped
     }
-}
-
-pub fn get_read_gene_ids(record: &Record) -> Option<Vec<String>> {
-    record
-        .aux(RAW_UMI_SEQ_TAG)
-        .map(|x| x.str().split(';').map(String::from).collect())
-        .ok()
 }
 
 /// Marker trait to sort BAM records by their position, used for ShardIO

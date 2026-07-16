@@ -12,7 +12,6 @@ from typing import Self
 import martian
 
 from cellranger.chemistry import (
-    CHEMISTRY_SC3P_LT,
     ChemistryDef,
     ChemistryDefs,
     get_primary_chemistry_def,
@@ -129,7 +128,8 @@ class CountSampleProperties(SampleProperties):
     cmdline: str | None
     itk_error_string: str | None
     grabcut_failed: bool
-    cell_annotation_viable_but_not_requested: bool
+    cloud_cell_annotation_viable_but_not_requested: bool
+    skip_cell_annotation: bool
 
     # pylint: disable=too-many-locals
     def __init__(
@@ -157,7 +157,8 @@ class CountSampleProperties(SampleProperties):
         cmdline=None,
         itk_error_string=None,
         grabcut_failed=False,
-        cell_annotation_viable_but_not_requested=False,
+        cloud_cell_annotation_viable_but_not_requested=False,
+        skip_cell_annotation=False,
     ):
         super().__init__(sample_id, sample_desc, version_from_git=version_from_git)
         self.genomes = genomes
@@ -179,15 +180,14 @@ class CountSampleProperties(SampleProperties):
         self.cmdline = cmdline
         self.itk_error_string = itk_error_string
         self.grabcut_failed = grabcut_failed
-        self.cell_annotation_viable_but_not_requested = cell_annotation_viable_but_not_requested
+        self.cloud_cell_annotation_viable_but_not_requested = (
+            cloud_cell_annotation_viable_but_not_requested
+        )
+        self.skip_cell_annotation = skip_cell_annotation
 
     @property
     def is_targeted(self):
         return self.target_set is not None
-
-    @property
-    def is_lt(self):
-        return False
 
 
 class ExtendedCountSampleProperties(CountSampleProperties):
@@ -229,7 +229,8 @@ class ExtendedCountSampleProperties(CountSampleProperties):
         itk_error_string=None,
         grabcut_failed=False,
         segmentation_metrics=None,
-        cell_annotation_viable_but_not_requested=False,
+        cloud_cell_annotation_viable_but_not_requested=False,
+        skip_cell_annotation=False,
     ):
         super().__init__(
             sample_id,
@@ -254,11 +255,16 @@ class ExtendedCountSampleProperties(CountSampleProperties):
             cmdline=cmdline,
             itk_error_string=itk_error_string,
             grabcut_failed=grabcut_failed,
+            cloud_cell_annotation_viable_but_not_requested=cloud_cell_annotation_viable_but_not_requested,
+            skip_cell_annotation=skip_cell_annotation,
         )
         self.reference_path = reference_path
         self.chemistry_defs = chemistry_defs
         self.disable_ab_aggregate_detection = disable_ab_aggregate_detection
-        self.cell_annotation_viable_but_not_requested = cell_annotation_viable_but_not_requested
+        self.cloud_cell_annotation_viable_but_not_requested = (
+            cloud_cell_annotation_viable_but_not_requested
+        )
+        self.skip_cell_annotation = skip_cell_annotation
         if cytassist_run_metrics:
             self.cytassist_run_properties = CytassistRunProperties.from_json(cytassist_run_metrics)
         else:
@@ -271,11 +277,6 @@ class ExtendedCountSampleProperties(CountSampleProperties):
     def chemistry_description(self) -> str:
         """Return the chemistry description of the primary chemistry."""
         return get_primary_chemistry_def(self.chemistry_defs)["description"]
-
-    @property
-    def is_lt(self) -> bool:
-        """Return whether any chemistry is low throughput."""
-        return CHEMISTRY_SC3P_LT in self.chemistry_defs.values()
 
 
 class AggrCountSampleProperties(CountSampleProperties):
@@ -293,6 +294,7 @@ class AggrCountSampleProperties(CountSampleProperties):
         target_panel_summary=None,
         feature_ref_path=None,
         version_from_git=False,
+        cloud_cell_annotation_viable_but_not_requested=False,
     ):
         super().__init__(
             sample_id,
@@ -303,6 +305,7 @@ class AggrCountSampleProperties(CountSampleProperties):
             target_set=target_set,
             target_panel_summary=target_panel_summary,
             feature_ref_path=feature_ref_path,
+            cloud_cell_annotation_viable_but_not_requested=cloud_cell_annotation_viable_but_not_requested,
         )
         self.agg_batches = agg_batches
 
@@ -344,12 +347,14 @@ class SampleDataPaths:  # pylint: disable=too-many-instance-attributes
         vdj_clonotype_summary_path=None,
         vdj_cell_barcodes_path=None,
         vdj_all_contig_annotations_csv_path=None,
+        filtered_matrix_h5_path=None,
     ):
         assert filtered_barcodes_path is None or vdj_cell_barcodes_path is None
         self.summary_path = summary_path
         self.barcode_summary_path = barcode_summary_path
         self.analysis_path = analysis_path
         self.filtered_barcodes_path = filtered_barcodes_path
+        self.filtered_matrix_h5_path = filtered_matrix_h5_path
         self.feature_metrics_path = feature_metrics_path
         self.antibody_histograms_path = antibody_histograms_path
         self.antibody_treemap_path = antibody_treemap_path

@@ -2,11 +2,12 @@
 # Copyright (c) 2022 10X Genomics, Inc. All rights reserved.
 #
 """Functions for the stage code BUILD_SAMPLE_OUTS and BUILD _SAMPLE_OUTS_PD."""
-from cellranger.cr_io import hard_link
+from cellranger.cr_io import hard_link, recursive_hard_link_dict
 
 
 def build_sample_outs(args, outs):
     """Builds the sample outs for code that is shared between PD and CS."""
+    # TODO: type this method by defining a common input and output type for BUILD_SAMPLE_OUTS and BUILD_SAMPLE_OUTS_PD
     sample_outs = {}
     sample_outs["analysis"] = hard_link(args.rna_analysis)
     sample_outs["crispr_analysis"] = hard_link(args.crispr_analysis)
@@ -17,11 +18,9 @@ def build_sample_outs(args, outs):
     sample_outs["vdj_t"] = args.vdj_t_outs
     sample_outs["web_summary"] = hard_link(args.web_summary)
 
-    sample_outs["cell_types"] = (
-        {key: hard_link(filename) for key, filename in args.cell_types.items()}
-        if args.cell_types is not None
-        else None
-    )
+    sample_outs["cell_types"] = recursive_hard_link_dict(args.cell_types)
+    if sample_outs["cell_types"] and isinstance(sample_outs["cell_types"].get("cell_types"), dict):
+        sample_outs["cell_types"] = sample_outs["cell_types"].get("cell_types")
 
     sample_outs.update(
         (

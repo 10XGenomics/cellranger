@@ -23,8 +23,3 @@ def load_rust_deps():
             "@cellranger//lib/rust:toml",
         ],
     )
-    cargo_repository(
-        name = "pseudoaligner_cargo_dependencies",
-        lockfile = "@com_github_10XGenomics_rust_pseudoaligner//:Cargo.lock",
-        srcs = ["@com_github_10XGenomics_rust_pseudoaligner//:Cargo.toml"],
-    )

@@ -80,11 +80,6 @@ pub fn validate_chemistry(s: &str) -> Result<ChemistryParam> {
     {
         return Ok(chem);
     }
-    if matches!(chem, AutoOrRefined(Refined(ThreePrimeV3LT))) {
-        bail!(
-            "The chemistry SC3Pv3LT (Single Cell 3'v3 LT) is no longer supported. To analyze this data, use Cell Ranger 7.2 or earlier."
-        );
-    }
     bail!(parse_err());
 }
 
@@ -101,6 +96,5 @@ mod tests {
             );
         }
         assert!(validate_chemistry("SCVDJ").is_err());
-        assert!(validate_chemistry("SC3Pv3LT").is_err());
     }
 }

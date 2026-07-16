@@ -43,7 +43,7 @@ impl MappingStats {
     pub(crate) fn compatible_chemistries(&self) -> TxHashSet<ChemistryName> {
         use ChemistryName::{
             FivePrimeHT, FivePrimePE, FivePrimePEV3, FivePrimeR2, ThreePrimeV2, ThreePrimeV3CS1,
-            ThreePrimeV3HTCS1, ThreePrimeV3HTPolyA, ThreePrimeV3LT, ThreePrimeV3PolyA,
+            ThreePrimeV3HTCS1, ThreePrimeV3HTPolyA, ThreePrimeV3PolyA,
         };
         if (self.conf_mapped_reads < MIN_CONF_MAPPED_READS as i64)
             || ((self.conf_mapped_reads as f64)
@@ -55,7 +55,6 @@ impl MappingStats {
                 ThreePrimeV2,
                 ThreePrimeV3PolyA,
                 ThreePrimeV3CS1,
-                ThreePrimeV3LT,
                 ThreePrimeV3HTPolyA,
                 ThreePrimeV3HTCS1
             ]
@@ -94,9 +93,6 @@ impl ChemistryFilter for ReadMappingFilter {
         unit: &DetectChemistryUnit,
         reads: &[ReadPair],
     ) -> Result<DetectChemistryCandidates, DetectChemistryErrors> {
-        if !unit.library_type.is_gex() {
-            return Ok(candidates.clone());
-        }
         let stats = self.map_reads(reads);
         println!("{stats:#?}");
         let compatible_with_stats = stats.compatible_chemistries();
@@ -147,13 +143,13 @@ impl ReadMappingFilter {
         let mut mapping_stats = MappingStats::default();
         for read_pair in read_pairs {
             // do not crash if R2 doesn't exist (SC5P-R1)
-            if read_pair.get(WhichRead::R2, ReadPart::Header).is_none() {
+            if read_pair.get(WhichRead::R2, ReadPart::Seq).is_none() {
                 continue;
             }
             // this will fail to handle SC5P-R1 data, but that has to be explicitly
             // set via the command-line
             let read_recs = self.aligner.align_read(
-                read_pair.get(WhichRead::R2, ReadPart::Header).unwrap(),
+                read_pair.id().unwrap_or(b""),
                 read_pair.get(WhichRead::R2, ReadPart::Seq).unwrap(),
                 read_pair.get(WhichRead::R2, ReadPart::Qual).unwrap(),
             );

@@ -1,7 +1,8 @@
 #![expect(missing_docs)]
+
 use super::{
     AntigenSpecificityRow, FunctionalMapRow, Library, MultiConfigCsv, ProbeBarcodeIterationMode,
-    SampleRow, create_feature_config, multiconst,
+    SampleBarcodeColumn, SampleRow, create_feature_config, multiconst,
 };
 use crate::cmo_set::load_default_cmo_set;
 use crate::config::{ChemistrySet, PROBE_BARCODE_ID_GROUPING, get_default_overhang_set, libsconst};
@@ -12,11 +13,14 @@ use barcode::whitelist::{
 use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryDef, ChemistryName};
 use cr_types::reference::feature_extraction::FeatureExtractor;
 use cr_types::reference::feature_reference::{BeamMode, FeatureConfig, FeatureReference};
-use cr_types::{ERROR_CODE_INFO, FeatureBarcodeType, LibraryType, VdjChainType};
+use cr_types::{
+    BarcodeMultiplexingType, CellLevel, ERROR_CODE_INFO, FeatureBarcodeType, LibraryType,
+    ReadLevel, SequencingPlatform, VdjChainType,
+};
 use fastq_set::WhichRead;
 use itertools::Itertools;
-use metric::{TxHashMap, TxHashSet};
-use std::collections::HashSet;
+use metric::{TxHashMap, TxHashSet, set};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::BufReader;
@@ -41,7 +45,8 @@ impl Display for SectionCtx {
 pub fn check_duplicate_libraries(libs: &[Library]) -> Result<()> {
     if libs.is_empty() {
         bail!(
-            "[{}] is empty, no libraries provided! Please specify 1 or more libraries.",
+            "TXRNGR10070: [{}] is empty, no libraries provided! Please specify 1 or more \
+             libraries. {ERROR_CODE_INFO}",
             multiconst::LIBRARIES
         );
     }
@@ -49,7 +54,8 @@ pub fn check_duplicate_libraries(libs: &[Library]) -> Result<()> {
         for j in (i + 1)..libs.len() {
             if libs[i].overlaps(&libs[j]) {
                 bail!(
-                    "[{}] has overlapping library definitions between rows {} and {}",
+                    "TXRNGR10071: [{}] has overlapping library definitions between rows {} and \
+                     {}. {ERROR_CODE_INFO}",
                     multiconst::LIBRARIES,
                     i + 1,
                     j + 1
@@ -128,6 +134,8 @@ Refer to the "Specifying Input FASTQs" page at https://support.10xgenomics.com/ 
 
 /// Ensure that the library types are compatible with RTL.
 pub fn check_libraries_rtl(cfg: &MultiConfigCsv) -> Result<()> {
+    use LibraryType::GeneExpression;
+
     let (supported, unsupported): (Vec<_>, Vec<_>) = cfg
         .libraries
         .library_types()
@@ -136,22 +144,26 @@ pub fn check_libraries_rtl(cfg: &MultiConfigCsv) -> Result<()> {
         .partition(|&library_type| {
             matches!(
                 library_type,
-                LibraryType::Gex | LibraryType::Antibody | LibraryType::Crispr
+                LibraryType::Gex
+                    | LibraryType::Antibody
+                    | LibraryType::Crispr
+                    | LibraryType::Custom
             )
         });
     ensure!(
         unsupported.is_empty(),
-        "These library types are not compatible with Flex: {}",
+        "TXRNGR10072: These library types are not compatible with Flex: {}. {ERROR_CODE_INFO}",
         unsupported.iter().format(", ")
     );
-    if supported.contains(&LibraryType::Crispr) {
-        ensure!(
-            supported.contains(&LibraryType::Gex),
-            "{} libraries must be paired with a {} library",
-            LibraryType::Crispr,
-            LibraryType::Gex
-        );
-    }
+
+    let supported: TxHashSet<LibraryType> = supported.into_iter().collect();
+    let requires_gex = set![LibraryType::Crispr, LibraryType::Custom];
+    let mut missing_gex = supported.intersection(&requires_gex).peekable();
+    ensure!(
+        missing_gex.peek().is_none() || supported.contains(&LibraryType::Gex),
+        "TXRNGR10073: A {} library must be paired with a {GeneExpression} library. {ERROR_CODE_INFO}",
+        missing_gex.sorted().format(", ")
+    );
     Ok(())
 }
 
@@ -161,50 +173,49 @@ pub fn check_libraries(
     is_pd: bool,
     hostname: &str,
 ) -> Result<()> {
-    use Library::{Bcl2Fastq, BclProcessor};
-
-    for lib in &cfg.libraries.0 {
-        let fastq_path = match &lib {
-            Bcl2Fastq { fastqs, .. } => fastqs,
-            BclProcessor { fastq_path, .. } => fastq_path,
-        };
-        if !fastq_path.is_absolute() {
+    for lib in &cfg.libraries.libs {
+        // check read_path exists, is a folder, is not empty, and sample indices are valid
+        if !lib.read_path.is_absolute() {
             bail!(
-                "Specified FASTQ folder must be an absolute path: {}",
-                fastq_path.display(),
+                "TXRNGR10074: Specified sequencing data folder must be an absolute path: {}. \
+                 {ERROR_CODE_INFO}",
+                lib.read_path.display(),
             );
         }
-        if !fastq_path.exists() {
+        if !lib.read_path.exists() {
             bail!(
-                "On machine: {}, specified FASTQ folder does not exist: {}",
+                "TXRNGR10075: On machine: {}, specified sequencing data folder does not exist: \
+                 {}. {ERROR_CODE_INFO}",
                 hostname,
-                fastq_path.display(),
+                lib.read_path.display(),
             );
         }
-        if !fastq_path.is_dir() {
+        if !lib.read_path.is_dir() {
             bail!(
-                "Specified FASTQ directory is not a directory: {}",
-                fastq_path.display(),
+                "TXRNGR10076: Specified sequencing data directory is not a directory: {}. \
+                 {ERROR_CODE_INFO}",
+                lib.read_path.display(),
             );
         }
 
         ensure!(
-            std::fs::read_dir(fastq_path)
+            std::fs::read_dir(&lib.read_path)
                 .with_context(|| {
                     format!(
-                        "On machine: {}, permissions forbid opening specified FASTQ directory: {}",
+                        "On machine: {}, permissions forbid opening specified sequencing data \
+                         directory: {}",
                         hostname,
-                        fastq_path.display()
+                        lib.read_path.display()
                     )
                 })?
                 .next()
                 .is_some(),
-            "Specified FASTQ directory is empty: {}",
-            fastq_path.display(),
+            "TXRNGR10077: Specified sequencing data directory is empty: {}. {ERROR_CODE_INFO}",
+            lib.read_path.display(),
         );
 
         // Make sure out reference actually contains this feature barcode type.
-        if let Some(feature_type) = lib.library_type().feature_barcode_type()
+        if let Some(feature_type) = lib.feature_type.feature_barcode_type()
             && let Some(fref) = &fref
         {
             ensure!(
@@ -217,18 +228,13 @@ pub fn check_libraries(
         }
 
         // traditionally, no error is thrown if feature reference is not provided
-
-        match lib.to_sample_def() {
-            Err(_) => bail!("{MULTI_HELP}"),
-            Ok(sdef) => sdef.check_fastqs(MULTI_HELP)?,
-        }
-        // check fastq_path exists, is a folder, is not empty, and sample indices are valid
+        lib.to_sample_def().check_input_reads(MULTI_HELP)?;
 
         ensure!(
-            lib.chemistry() != Some(AutoOrRefinedChemistry::Custom) || is_pd,
-            "Unknown chemistry {} in library {}.",
+            lib.chemistry != Some(AutoOrRefinedChemistry::Custom) || is_pd,
+            "TXRNGR10078: Unknown chemistry {} in library {}. {ERROR_CODE_INFO}",
             ChemistryName::Custom,
-            lib.physical_library_id(),
+            lib.physical_library_id,
         );
     }
 
@@ -253,17 +259,18 @@ pub fn check_libraries(
             != [LibraryType::FeatureBarcodes(
                 FeatureBarcodeType::Multiplexing
             )],
-        "Only Multiplexing Capture feature libraries were provided. \
-         Please provide additional non-Multiplexing Capture libraries."
+        "TXRNGR10079: Only Multiplexing Capture feature libraries were provided. Please provide \
+         additional non-Multiplexing Capture libraries. {ERROR_CODE_INFO}"
     );
 
-    if cfg.is_rtl() && !is_pd {
+    if cfg.is_rtl() {
         check_libraries_rtl(cfg)?;
     }
     if cfg.libraries.has_multiplexing() && cfg.libraries.has_vdj() {
         ensure!(
             is_pd,
-            "The combination of VDJ libraries and Multiplexing Capture libraries is not supported."
+            "TXRNGR10080: The combination of VDJ libraries and Multiplexing Capture libraries is \
+             not supported. {ERROR_CODE_INFO}"
         );
     }
 
@@ -273,23 +280,23 @@ pub fn check_libraries(
 pub fn check_samples(
     cfg: &MultiConfigCsv,
     fref: Option<Arc<FeatureReference>>,
-    is_pd: bool,
+    custom_chemistry_defs: &HashMap<LibraryType, ChemistryDef>,
 ) -> Result<()> {
     let Some(samples) = &cfg.samples else {
         return Ok(());
     };
     // Validate sample names against reserved words
     let sample_names: TxHashSet<_> = samples
-        .0
+        .rows
         .iter()
         .map(|sample| sample.sample_id.clone())
         .collect();
     let invalid_sample_names = test_reserved_words(&sample_names);
     ensure!(
         invalid_sample_names.is_empty(),
-        "Invalid sample_ids ('{}') provided, please ensure you are not using the reserved words \
-        'blank', 'multiplet', or 'unassigned'.",
-        invalid_sample_names.join("', '")
+        "TXRNGR10081: Invalid sample_ids ('{}') provided, please ensure you are not using the \
+         reserved words 'blank', 'multiplet', or 'unassigned'. {ERROR_CODE_INFO}",
+        invalid_sample_names.into_iter().format("', '")
     );
 
     // Validate CMO IDs
@@ -300,49 +307,50 @@ pub fn check_samples(
     let invalid_multiplexing_ids = test_reserved_words(&multiplexing_ids);
     ensure!(
         invalid_multiplexing_ids.is_empty(),
-        "Invalid cmo_ids ('{}') provided, please ensure you are not using the reserved words \
-        'blank', 'multiplet', or 'unassigned'.",
-        invalid_multiplexing_ids.join("', '")
+        "TXRNGR10082: Invalid cmo_ids ('{}') provided, please ensure you are not using the \
+         reserved words 'blank', 'multiplet', or 'unassigned'. {ERROR_CODE_INFO}",
+        invalid_multiplexing_ids.into_iter().format("', '")
     );
 
-    for sample in &samples.0 {
+    for sample in &samples.rows {
         let invalid_result = get_invalid_id_entries(
             &multiplexing_ids,
             sample.cmo_ids.iter().flatten().map(String::as_str),
             true,
         );
-        if !invalid_result.invalid_ids.is_empty() {
-            let mut err_msg = format!(
-                "Unknown cmo_ids ('{}') provided for sample '{}', please ensure you are either \
-                 using valid 10x CMO IDs or are providing the correct [gene-expression] cmo-set.",
-                invalid_result.invalid_ids.join("', '"),
-                sample.sample_id,
-            );
-
-            err_msg = format!(
-                "{err_msg}\n\nValid IDs are currently:\n{}",
-                multiplexing_ids.iter().sorted().join("\n")
-            );
-
-            if !invalid_result.possible_typos.is_empty() {
-                err_msg = format!(
-                    "{err_msg}\n\n\
-                     Did you perhaps mean any of the following? (Input -> Intended Value)?\n{}",
-                    invalid_result
-                        .possible_typos
-                        .iter()
-                        .map(|z| format!("{} -> {}\n", z.0, z.1.join(" or ")))
-                        .join("\n")
-                );
+        ensure!(
+            invalid_result.invalid_ids.is_empty(),
+            "TXRNGR10083: Unknown cmo_ids ('{cmo_ids}') provided for sample '{sample_id}', \
+             please ensure you are either using valid 10x CMO IDs or are providing the correct \
+             [gene-expression] cmo-set.\n\
+             Valid IDs are currently:\n\
+             {valid_ids}\n\
+             {suggestions}\
+             {ERROR_CODE_INFO}",
+            cmo_ids = invalid_result.invalid_ids.into_iter().format("', '"),
+            sample_id = sample.sample_id,
+            valid_ids = multiplexing_ids.iter().sorted().format("\n"),
+            suggestions = if invalid_result.possible_typos.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Did you perhaps mean any of the following? (Input -> Intended Value)?\n{}\n",
+                    invalid_result.possible_typos.iter().format_with(
+                        "\n",
+                        |(input, intended), fmt| fmt(&format_args!(
+                            "{input} -> {}",
+                            intended.iter().format(" or ")
+                        ))
+                    )
+                )
             }
-            bail!(err_msg);
-        }
+        );
     }
 
     // Validate HASHTAG IDs
-    if samples.has_hashtag_ids() {
+    if samples.multiplexing_type == BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag) {
         let hashtag_ids: TxHashSet<String> = samples
-            .0
+            .rows
             .iter()
             .filter_map(|s| s.sample_barcode_ids(ProbeBarcodeIterationMode::All))
             .flatten()
@@ -351,12 +359,12 @@ pub fn check_samples(
         let invalid_hashtag_ids = test_reserved_words(&hashtag_ids);
         ensure!(
             invalid_hashtag_ids.is_empty(),
-            "Invalid hashtag_ids ('{}') provided, please ensure you are not using the reserved words \
-            'blank', 'multiplet', or 'unassigned'.",
-            invalid_hashtag_ids.join("', '")
+            "TXRNGR10084: Invalid hashtag_ids ('{}') provided, please ensure you are not using \
+             the reserved words 'blank', 'multiplet', or 'unassigned'. {ERROR_CODE_INFO}",
+            invalid_hashtag_ids.into_iter().format("', '")
         );
         let antibody_ids = fref.map_or_else(TxHashSet::default, |x| x.antibody_ids());
-        for sample in &samples.0 {
+        for sample in &samples.rows {
             let invalid_result = get_invalid_id_entries(
                 &antibody_ids,
                 sample.hashtag_ids.iter().flatten().map(String::as_str),
@@ -364,16 +372,17 @@ pub fn check_samples(
             );
             ensure!(
                 invalid_result.invalid_ids.is_empty(),
-                "Unknown hashtag_ids ('{}') provided for sample '{}', please ensure that you are using \
-                IDs that correspond to a valid Antibody Capture feature.",
-                invalid_result.invalid_ids.join("', '"),
+                "TXRNGR10085: Unknown hashtag_ids ('{}') provided for sample '{}', please ensure \
+                 that you are using IDs that correspond to a valid Antibody Capture feature. \
+                 {ERROR_CODE_INFO}",
+                invalid_result.invalid_ids.into_iter().format("', '"),
                 sample.sample_id
             );
         }
     }
 
     // Validate probe barcode IDs
-    if samples.has_probe_barcode_ids() && !is_pd {
+    if samples.multiplexing_type == BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL) {
         let probe_barcode_whitelist_ids: Vec<BarcodeId> = cfg
             .chemistry_specs()?
             .into_iter()
@@ -381,27 +390,43 @@ pub fn check_samples(
                 match spec {
                     AutoOrRefinedChemistry::Refined(chem) => vec![chem],
                     AutoOrRefinedChemistry::Auto(_) => {
-                        vec![
-                            ChemistrySet::Mfrp
-                                .chemistry_for_library_type(library_type)
-                                // Unclear if this should never fail at this point in validation,
-                                // so just use a default in case we have an invalid library type combination.
-                                .unwrap_or(ChemistryName::MFRP_RNA),
-                            ChemistryName::Flex_v2_R1,
-                        ]
+                        if library_type == LibraryType::Custom {
+                            vec![
+                                ChemistryName::MFRP_Ab,
+                                ChemistryName::MFRP_CRISPR,
+                                ChemistryName::Flex_v2_R1,
+                            ]
+                        } else {
+                            vec![
+                                ChemistrySet::Mfrp
+                                    .chemistry_for_library_type(library_type)
+                                    // Unclear if this should never fail at this point in validation,
+                                    // so just use a default in case we have an invalid library type combination.
+                                    .unwrap_or(ChemistryName::MFRP_RNA),
+                                ChemistryName::Flex_v2_R1,
+                            ]
+                        }
                     }
                 }
+                .into_iter()
+                .map(move |chem| (library_type, chem))
             })
-            .map(|chem| {
-                ChemistryDef::named(chem)
-                    .barcode_whitelist_source()?
-                    .probe()
-                    .get_ids()
+            .map(|(library_type, chem)| {
+                let named_chemistry;
+                if chem == ChemistryName::Custom {
+                    &custom_chemistry_defs[&library_type]
+                } else {
+                    named_chemistry = ChemistryDef::named(chem);
+                    &named_chemistry
+                }
+                .barcode_whitelist_source()?
+                .probe()
+                .get_ids()
             })
             .flatten_ok()
             .try_collect()?;
 
-        for sample in &samples.0 {
+        for sample in &samples.rows {
             {
                 let valid_options: TxHashSet<_> = probe_barcode_whitelist_ids
                     .iter()
@@ -416,9 +441,10 @@ pub fn check_samples(
                 );
                 ensure!(
                     invalid_result.invalid_ids.is_empty(),
-                    "Unknown probe_barcode_ids ('{}') provided for sample '{}', please ensure you \
-                     are using IDs from the following list of valid 10x probe barcode IDs: {}",
-                    invalid_result.invalid_ids.join("', '"),
+                    "TXRNGR10086: Unknown probe_barcode_ids ('{}') provided for sample '{}', \
+                     please ensure you are using IDs from the following list of valid 10x probe \
+                     barcode IDs: {}. {ERROR_CODE_INFO}",
+                    invalid_result.invalid_ids.into_iter().format("', '"),
                     sample.sample_id,
                     probe_barcode_whitelist_ids
                         .into_iter()
@@ -437,11 +463,12 @@ pub fn check_samples(
                     cfg.libraries.has_gene_expression(),
                     cfg.libraries.has_antibody_capture(),
                     cfg.libraries.has_crispr_guide_capture(),
+                    cfg.libraries.has_custom_capture(),
                 )
                 .with_context(|| {
                     format!(
                         "Invalid probe_barcode_ids grouping ('{}') provided for sample '{}'",
-                        grouping.join(PROBE_BARCODE_ID_GROUPING),
+                        grouping.into_iter().format(PROBE_BARCODE_ID_GROUPING),
                         sample.sample_id
                     )
                 })?;
@@ -450,13 +477,13 @@ pub fn check_samples(
     }
 
     // Validate OH IDs
-    if samples.has_overhang_ids() {
+    if samples.multiplexing_type == BarcodeMultiplexingType::ReadLevel(ReadLevel::OH) {
         let default_overhang_ids: TxHashSet<String> = get_default_overhang_set()
             .iter()
             .map(ToString::to_string)
             .collect();
 
-        for sample in &samples.0 {
+        for sample in &samples.rows {
             let invalid_result = get_invalid_id_entries(
                 &default_overhang_ids,
                 sample
@@ -465,10 +492,10 @@ pub fn check_samples(
                 true,
             );
             ensure!(
-                // allow invalid overhang IDs for PD-samples only
-                invalid_result.invalid_ids.is_empty() || is_pd,
-                "Unknown overhang_ids ('{}') provided for sample '{}'.",
-                invalid_result.invalid_ids.iter().join("', '"),
+                invalid_result.invalid_ids.is_empty(),
+                "TXRNGR10087: Unknown overhang_ids ('{}') provided for sample '{}'. \
+                 {ERROR_CODE_INFO}",
+                invalid_result.invalid_ids.into_iter().format("', '"),
                 sample.sample_id
             );
         }
@@ -481,7 +508,8 @@ fn check_probe_barcode_id_grouping(
     barcode_ids: &[&str],
     has_gex_lib: bool,
     has_ab_lib: bool,
-    has_cr_lib: bool,
+    has_crispr_lib: bool,
+    has_custom_lib: bool,
 ) -> Result<()> {
     use RTLMultiplexingBarcodeType::{Antibody, Crispr, Gene};
 
@@ -495,43 +523,58 @@ fn check_probe_barcode_id_grouping(
     }
 
     let barcode_types: Vec<_> = barcode_types.into_iter().flatten().collect();
-    match (has_gex_lib, has_ab_lib, has_cr_lib) {
-        (false, false, false) => Ok(()),
-        (true, false, false) => match_one(&barcode_types, Gene),
-        (false, true, false) => match_one(&barcode_types, Antibody),
-        (true, true, false) => match_two(&barcode_types, Antibody),
-        (true, false, true) => match_two(&barcode_types, Crispr),
-        (true, true, true) => match barcode_types.as_slice() {
+    let err = match (has_gex_lib, has_ab_lib, has_crispr_lib, has_custom_lib) {
+        (false, false, false, false) => None,
+        (true, false, false, false) => match_one(&barcode_types, Gene),
+        (false, true, false, false) => match_one(&barcode_types, Antibody),
+        (true, true, false, false) => match_two(&barcode_types, Antibody),
+        (true, false, true, false) => match_two(&barcode_types, Crispr),
+        (true, true, true, false) => match barcode_types.as_slice() {
             // Can match one, two, or three.
             // Order should always be RTL+AB+CR
-            [] => bail!("no barcode ID provided"),
-            [Gene] | [Gene, Antibody] | [Gene, Crispr] | [Gene, Antibody, Crispr] => Ok(()),
-            [other_type] => bail!("expected a {Gene} barcode ID, not {other_type}"),
-            anything_else => bail!(
-                "expected either a single {Gene} barcode ID, \
-                 or a pair of {Gene} + {Antibody} or {Gene} + {Crispr} barcode IDs, \
-                 or a triple of {Gene} + {Antibody} + {Crispr} barcode IDs, not {}",
-                anything_else.iter().join(" + "),
-            ),
+            [] => Some("no barcode ID provided".to_string()),
+            [Gene] | [Gene, Antibody | Crispr] | [Gene, Antibody, Crispr] => None,
+            [other_type] => Some(format!("expected a {Gene} barcode ID, not {other_type}")),
+            anything_else => Some(format!(
+                "expected either a single {Gene} barcode ID, or a pair of {Gene} + \
+                 {Antibody} or {Gene} + {Crispr} barcode IDs, or a triple of {Gene} + \
+                 {Antibody} + {Crispr} barcode IDs, not {}",
+                anything_else.iter().format(" + "),
+            )),
         },
+        (true, _, _, true) => {
+            if barcode_types.contains(&Gene) {
+                None
+            } else {
+                Some(format!(
+                    "expected at least a {Gene} barcode ID, not {}",
+                    barcode_types.iter().format(" + "),
+                ))
+            }
+        }
         // We should be validating this case somewhere upstack.
-        (false, _, true) => panic!("CRISPR library present without GEX"),
+        (false, _, true, false) => panic!("CRISPR library present without GEX"),
+        (false, _, _, true) => panic!("Custom library present without GEX"),
+    };
+    if let Some(err) = err {
+        bail!("TXRNGR10088: {err}: {ERROR_CODE_INFO}");
     }
+    Ok(())
 }
 
 /// Match a single barcode of the provided type.
 fn match_one(
     barcode_types: &[RTLMultiplexingBarcodeType],
     expected: RTLMultiplexingBarcodeType,
-) -> Result<()> {
+) -> Option<String> {
     match barcode_types {
-        [] => bail!("no barcode ID provided"),
-        [one] if *one == expected => Ok(()),
-        [other_type] => bail!("expected {expected} barcode ID, not {other_type}"),
-        too_many => bail!(
+        [] => Some("no barcode ID provided}".to_string()),
+        &[one] if one == expected => None,
+        [other_type] => Some(format!("expected {expected} barcode ID, not {other_type}")),
+        too_many => Some(format!(
             "expected a single {expected} barcode ID, not {}",
-            too_many.iter().join(" + "),
-        ),
+            too_many.iter().format(" + "),
+        )),
     }
 }
 
@@ -539,28 +582,28 @@ fn match_one(
 fn match_two(
     barcode_types: &[RTLMultiplexingBarcodeType],
     expected: RTLMultiplexingBarcodeType,
-) -> Result<()> {
+) -> Option<String> {
     use RTLMultiplexingBarcodeType::Gene;
     match barcode_types {
-        [] => bail!("no barcode ID provided"),
-        [Gene] => Ok(()),
-        [other_type] => bail!("expected a {Gene} barcode ID, not {other_type}"),
-        [Gene, other] if *other == expected => Ok(()),
-
-        [other, Gene] if *other == expected => bail!(
-            "when pairing {Gene} and {expected} barcode IDs, \
-             provide the {Gene} barcode ID first"
-        ),
-        anything_else => bail!(
-            "expected either a {Gene} barcode ID or a pair of \
-             {Gene} + {expected} barcode IDs, not {}",
-            anything_else.iter().join(" + "),
-        ),
+        [] => Some("no barcode ID provided".to_string()),
+        [Gene] => None,
+        [other_type] => Some(format!("expected a {Gene} barcode ID, not {other_type}")),
+        &[Gene, other] if other == expected => None,
+        &[other, Gene] if other == expected => Some(format!(
+            "when pairing {Gene} and {expected} barcode IDs, provide the {Gene} barcode ID first"
+        )),
+        anything_else => Some(format!(
+            "expected either a {Gene} barcode ID or a pair of {Gene} + {expected} barcode IDs, not {}",
+            anything_else.iter().format(" + "),
+        )),
     }
 }
 
-/// Validate the [samples] section, check for re-used cmo_ids or probe_barcode_ids.
-pub fn check_duplicate_sample_barcode_ids(samples: &[SampleRow]) -> Result<()> {
+/// Validate the [samples] section, check for re-used sample barcode IDs.
+pub fn check_duplicate_sample_barcode_ids(
+    samples: &[SampleRow],
+    sample_barcode_column_name: SampleBarcodeColumn,
+) -> Result<()> {
     // Check for duplicate sample barcode IDs.
     // doing this here instead of when building the MultiConfigCsv,
     // during which we try to construct a CrMultiGraph and enforce
@@ -572,8 +615,9 @@ pub fn check_duplicate_sample_barcode_ids(samples: &[SampleRow]) -> Result<()> {
             for sample_barcode_id in sample_barcode_ids {
                 if let Some(orig) = used.insert(sample_barcode_id, sample) {
                     bail!(
-                        "Re-used {} ('{}') provided for sample '{}' (already provided for sample '{}').",
-                        sample.sample_barcode_ids_column_name(),
+                        "TXRNGR10098: Re-used {} ('{}') provided for sample '{}' (already \
+                         provided for sample '{}'). {ERROR_CODE_INFO}",
+                        sample_barcode_column_name.as_str(),
                         sample_barcode_id,
                         sample.sample_id,
                         orig.sample_id
@@ -600,38 +644,12 @@ fn check_unique<'a, T: 'static + Eq + Display>(
     for v in vals {
         ensure!(
             !seen_values.contains(&v),
-            "In the [{section}] section, there are two different entries with {field} = '{v}'. \
-             Please give each entry a unique value in the {field} column. If a sample was tagged \
-             with multiple CMOs, these values should be entered as pipe-separated entries in the \
-             config file (e.g. CMO1|CMO2).",
+            "TXRNGR10099: In the [{section}] section, there are two different entries with \
+             {field} = '{v}'. Please give each entry a unique value in the {field} column. If a \
+             sample was tagged with multiple CMOs, these values should be entered as \
+             pipe-separated entries in the config file (e.g. CMO1|CMO2). {ERROR_CODE_INFO}",
         );
         seen_values.push(v);
-    }
-    Ok(())
-}
-
-pub fn check_gem_wells(libs: &[Library]) -> Result<()> {
-    assert!(!libs.is_empty());
-    let gem_wells: Vec<_> = libs
-        .iter()
-        .map(|x| x.gem_well().0)
-        .sorted()
-        .dedup()
-        .collect();
-    ensure!(
-        gem_wells[0] == 1,
-        "[{}] gem_well numbering must start at 1",
-        multiconst::LIBRARIES
-    );
-
-    for (i, gw) in gem_wells.into_iter().enumerate() {
-        let expected = i as u16 + 1;
-        ensure!(
-            gw == expected,
-            "[{}] gem_wells must be numbered contiguously starting from 1, missing gem_well: {}",
-            multiconst::LIBRARIES,
-            expected
-        );
     }
     Ok(())
 }
@@ -642,21 +660,18 @@ pub fn check_physical_library_ids(libs: &[Library]) -> Result<()> {
     let mut mapping = TxHashMap::default();
     let mut num_vdj_auto_libs = 0;
     for (i, lib) in libs.iter().enumerate() {
-        if lib.library_type() == LibraryType::VdjAuto {
+        if lib.feature_type == LibraryType::VdjAuto {
             num_vdj_auto_libs += 1;
             continue;
         }
-        if let Some((j, pli)) = mapping.insert(
-            (lib.library_type(), lib.gem_well()),
-            (i, lib.physical_library_id()),
-        ) {
+        if let Some((j, pli)) = mapping.insert(lib.feature_type, (i, &lib.physical_library_id)) {
             ensure!(
-                pli == lib.physical_library_id(),
-                "[{LIBRARIES}] invalid physical_library_id on row {row0}: '{library0}'. \
-                 This feature_type '{library_type}' has already been given a physical_library_id: \
-                 '{library1}' on row {row1}",
-                library_type = lib.library_type(),
-                library0 = lib.physical_library_id(),
+                pli == &lib.physical_library_id,
+                "TXRNGR10100: [{LIBRARIES}] invalid physical_library_id on row {row0}: \
+                 '{library0}'. This feature_type '{library_type}' has already been given a \
+                 physical_library_id: '{library1}' on row {row1}. {ERROR_CODE_INFO}",
+                library_type = lib.feature_type,
+                library0 = lib.physical_library_id,
                 library1 = pli,
                 row0 = i + 2,
                 row1 = j + 2
@@ -665,8 +680,8 @@ pub fn check_physical_library_ids(libs: &[Library]) -> Result<()> {
     }
     ensure!(
         num_vdj_auto_libs <= 3,
-        "[{LIBRARIES}] invalid physical_library_id(s): found {num_vdj_auto_libs} VDJ libraries, \
-         but we expect at most 3 VDJ libraries",
+        "TXRNGR10101: [{LIBRARIES}] invalid physical_library_id(s): found {num_vdj_auto_libs} \
+         VDJ libraries, but we expect at most 3 VDJ libraries. {ERROR_CODE_INFO}",
     );
     Ok(())
 }
@@ -692,7 +707,9 @@ pub fn check_gex_reference<D: Display>(
         let path = &ref_path.join(file);
         if check_file(ref_ctx, path).is_err() {
             bail!(
-                "Your {ref_ctx} does not contain the expected files, or they are not readable. Please check your reference folder on {hostname}."
+                "TXRNGR10102: Your {ref_ctx} does not contain the expected files, or they are \
+                 not readable. Please check your reference folder on {hostname}. \
+                 {ERROR_CODE_INFO}"
             );
         }
     }
@@ -701,7 +718,9 @@ pub fn check_gex_reference<D: Display>(
         && check_file(ref_ctx, &ref_path.join("genes/genes.gtf.gz")).is_err()
     {
         bail!(
-            "Your {} is missing gene annotations that should be present at {}/genes/genes.gtf[.gz], or they are not readable. Please check your reference folder on {}.",
+            "TXRNGR10103: Your {} is missing gene annotations that should be present at \
+             {}/genes/genes.gtf[.gz], or they are not readable. Please check your reference \
+             folder on {}. {ERROR_CODE_INFO}",
             ref_ctx,
             ref_path.display(),
             hostname,
@@ -711,7 +730,10 @@ pub fn check_gex_reference<D: Display>(
     for file in GEX_STAR_FILES {
         let path = &ref_path.join(file);
         if check_file(ref_ctx, path).is_err() {
-            bail!("Your {ref_ctx} does not appear to be indexed. Please run `mkref`");
+            bail!(
+                "TXRNGR10104: Your {ref_ctx} does not appear to be indexed. Please run `mkref`. \
+                 {ERROR_CODE_INFO}"
+            );
         }
     }
 
@@ -726,7 +748,8 @@ pub fn check_feature_reference<D: Display>(
 ) -> Result<Arc<FeatureReference>> {
     if check_file(ref_ctx, ref_path).is_err() {
         bail!(
-            "Your {} is either missing or not readable from {}: {}",
+            "TXRNGR10105: Your {} is either missing or not readable from {}: {}. \
+             {ERROR_CODE_INFO}",
             ref_ctx,
             hostname,
             ref_path.display(),
@@ -807,7 +830,8 @@ fn check_cmo_set<D: Display>(
         fref.feature_defs
             .iter()
             .all(|x| x.feature_type.is_multiplexing()),
-        "All CMO set definitions must be of feature_type 'Multiplexing Capture'"
+        "TXRNGR10106: All CMO set definitions must be of feature_type 'Multiplexing Capture'. \
+         {ERROR_CODE_INFO}"
     );
     Ok(fref)
 }
@@ -820,7 +844,8 @@ pub fn check_vdj_reference<D: Display>(
     let path = ref_path.join("fasta/regions.fa");
     if check_file(ref_ctx, &path).is_err() {
         bail!(
-            "Your {} does not contain the expected file ({}), or they are not readable. Please check your reference folder on {}.",
+            "TXRNGR10107: Your {} does not contain the expected file ({}), or they are not \
+             readable. Please check your reference folder on {}. {ERROR_CODE_INFO}",
             ref_ctx,
             path.display(),
             hostname,
@@ -837,7 +862,35 @@ pub fn check_vdj_reference<D: Display>(
     Ok(vdj_ref)
 }
 
-pub fn check_library_combinations(libraries: &[Library]) -> Result<()> {
+/// Validates compatibility of sequencing platform and library type.
+pub fn check_platform_restrictions(libraries: &[Library]) -> Result<()> {
+    let mut gex_platforms = set![];
+    for lib in libraries {
+        if matches!(
+            lib.platform,
+            SequencingPlatform::OxfordNanopore | SequencingPlatform::PacBio
+        ) {
+            ensure!(
+                lib.is_gex(),
+                "TXRNGR10108: [{}] Only Gene Expression libraries are supported with ONT or \
+                 PacBio platforms. {ERROR_CODE_INFO}",
+                multiconst::LIBRARIES,
+            );
+        }
+        if lib.is_gex() {
+            gex_platforms.insert(lib.platform);
+        }
+    }
+    ensure!(
+        gex_platforms.len() <= 1,
+        "TXRNGR10109: [{}] All Gene Expression libraries must use the same sequencing platform. \
+         {ERROR_CODE_INFO}",
+        multiconst::LIBRARIES
+    );
+    Ok(())
+}
+
+pub(super) fn check_library_combinations(libraries: &[Library]) -> Result<()> {
     let mut has_vdj = false;
     let mut has_antigen = false;
     let mut has_gex = false;
@@ -848,25 +901,28 @@ pub fn check_library_combinations(libraries: &[Library]) -> Result<()> {
         has_antigen |= lib.is_antigen();
         has_gex |= lib.is_gex();
         has_crispr |= lib.is_crispr();
-        if let Some(vdj_chain_type) = lib.library_type().vdj_chain_type() {
+        if let Some(vdj_chain_type) = lib.feature_type.vdj_chain_type() {
             uniq_vdj_features.insert(vdj_chain_type);
         }
     }
     if has_antigen && !(has_gex && has_vdj) {
         bail!(
-            "[{}] Antigen Capture library requires paired VDJ and Gene Expression libraries.",
+            "TXRNGR10110: [{}] Antigen Capture library requires paired VDJ and Gene Expression \
+             libraries. {ERROR_CODE_INFO}",
             multiconst::LIBRARIES
         );
     }
     if has_antigen && uniq_vdj_features.len() > 1 {
         bail!(
-            "[{}] Antigen Capture library cannot be accompanied by more than one VDJ feature type.",
+            "TXRNGR10111: [{}] Antigen Capture library cannot be accompanied by more than one \
+             VDJ feature type. {ERROR_CODE_INFO}",
             multiconst::LIBRARIES
         );
     }
     if has_antigen && has_crispr {
         bail!(
-            "[{}] The combination of Antigen Capture and CRISPR libraries is not supported.",
+            "TXRNGR10112: [{}] The combination of Antigen Capture and CRISPR libraries is not \
+             supported. {ERROR_CODE_INFO}",
             multiconst::LIBRARIES
         );
     }
@@ -880,7 +936,7 @@ pub fn check_library_chemistries(libraries: &[Library]) -> Result<()> {
     use libsconst::CHEMISTRY;
     use multiconst::LIBRARIES;
 
-    let chems: Vec<_> = libraries.iter().filter_map(Library::chemistry).collect();
+    let chems: Vec<_> = libraries.iter().filter_map(|l| l.chemistry).collect();
 
     // All None is valid.
     if chems.is_empty() {
@@ -894,14 +950,16 @@ pub fn check_library_chemistries(libraries: &[Library]) -> Result<()> {
         .collect();
     ensure!(
         auto_chems.is_empty(),
-        "[{LIBRARIES}] Specifying auto chemistries at the library level is not supported: ({}).",
+        "TXRNGR10113: [{LIBRARIES}] Specifying auto chemistries at the library level is not \
+         supported: ({}). {ERROR_CODE_INFO}",
         auto_chems.iter().format(", ")
     );
 
     // Ensure that if they provided one, they provided all.
     ensure!(
         chems.len() == libraries.len(),
-        "[{LIBRARIES}] A chemistry name must be provided for all libraries or none."
+        "TXRNGR10114: [{LIBRARIES}] A chemistry name must be provided for all libraries or \
+         none. {ERROR_CODE_INFO}"
     );
 
     // Ensure that everything is a flex chemistry.
@@ -911,27 +969,28 @@ pub fn check_library_chemistries(libraries: &[Library]) -> Result<()> {
         .collect();
     ensure!(
         non_flex_chems.is_empty(),
-        "[{LIBRARIES}] Only Flex assays may specify chemistry at the per-library level; \
-         invalid chemistries: {}",
+        "TXRNGR10115: [{LIBRARIES}] Only Flex assays may specify chemistry at the per-library \
+         level; invalid chemistries: {}. {ERROR_CODE_INFO}",
         non_flex_chems.iter().unique().format(", "),
     );
 
     // Ensure that we have the same chemistry if multiple libraries are of the same type.
     for (lib_type, libs) in libraries
         .iter()
-        .into_group_map_by(|lib| lib.library_type())
+        .into_group_map_by(|lib| lib.feature_type)
         .into_iter()
         .sorted_by_key(|(lib_type, _libs)| *lib_type)
     {
         let unique_chems: Vec<_> = libs
             .into_iter()
-            .filter_map(Library::chemistry)
+            .filter_map(|l| l.chemistry)
             .unique()
             .collect();
         ensure!(
             unique_chems.len() <= 1,
-            "[{LIBRARIES}] Conflicting {CHEMISTRY} for {lib_type} libraries ({chems}); \
-             manual chemistry must be the same for all libraries of the same type.",
+            "TXRNGR10116: [{LIBRARIES}] Conflicting {CHEMISTRY} for {lib_type} libraries \
+             ({chems}); manual chemistry must be the same for all libraries of the same type. \
+             {ERROR_CODE_INFO}",
             chems = unique_chems.iter().format(", ")
         );
 
@@ -940,7 +999,8 @@ pub fn check_library_chemistries(libraries: &[Library]) -> Result<()> {
             let chem = chem.refined().unwrap();
             ensure!(
                 chem.compatible_with_library_type(lib_type),
-                "[{LIBRARIES}] The {CHEMISTRY} {chem} is not valid for the feature type {lib_type}",
+                "TXRNGR10117: [{LIBRARIES}] The {CHEMISTRY} {chem} is not valid for the feature \
+                 type {lib_type}. {ERROR_CODE_INFO}",
             );
         }
     }
@@ -952,7 +1012,10 @@ pub fn check_antigen_specificity(controls: &[AntigenSpecificityRow]) -> Result<(
     for control in controls {
         // If the set did have this value present, insert returns false
         if !control_ids.insert(&control.control_id) {
-            bail!("Duplicate {} 'control_id'!", control.control_id);
+            bail!(
+                "TXRNGR10118: Duplicate {} 'control_id'! {ERROR_CODE_INFO}",
+                control.control_id
+            );
         }
     }
 
@@ -963,15 +1026,17 @@ pub fn check_antigen_specificity(controls: &[AntigenSpecificityRow]) -> Result<(
     if alleles.is_empty() {
         ensure!(
             controls.len() < 2,
-            "More than one value for 'control_id' specified without 'mhc_allele' information. \
-             For BCR Antigen Capture experiments only a single control is valid, \
-             for TCR Antigen Capture both 'control_id' and 'mhc_allele' are required."
+            "TXRNGR10119: More than one value for 'control_id' specified without 'mhc_allele' \
+             information. For BCR Antigen Capture experiments only a single control is valid, \
+             for TCR Antigen Capture both 'control_id' and 'mhc_allele' are required. \
+             {ERROR_CODE_INFO}"
         );
     } else {
         ensure!(
             alleles.len() == controls.len(),
-            "For TCR Antigen Capture experiments values in both 'control_id' and 'mhc_allele' \
-             are required and only a single 'control_id' can be specified for an 'mhc_allele'."
+            "TXRNGR10120: For TCR Antigen Capture experiments values in both 'control_id' and \
+             'mhc_allele' are required and only a single 'control_id' can be specified for an \
+             'mhc_allele'. {ERROR_CODE_INFO}"
         );
     }
     Ok(())
@@ -983,13 +1048,17 @@ pub fn check_feature_functional_map(func_map_rows: &[FunctionalMapRow]) -> Resul
     for row in func_map_rows {
         if !seen_functional_names.insert(&row.functional_name) {
             bail!(
-                "Duplicate {} 'functional_name' in [feature-functional-map] section!",
+                "TXRNGR10121: Duplicate {} 'functional_name' in [feature-functional-map] \
+                 section! {ERROR_CODE_INFO}",
                 row.functional_name
             );
         }
         for feature_id in &row.feature_ids {
             if !seen_feature_ids.insert(feature_id) {
-                bail!("Duplicate {feature_id} 'feature_id' in [feature-functional-map] section!");
+                bail!(
+                    "TXRNGR10122: Duplicate {feature_id} 'feature_id' in \
+                     [feature-functional-map] section! {ERROR_CODE_INFO}"
+                );
             }
         }
     }
@@ -1001,7 +1070,7 @@ pub fn check_file<D: Display>(ctx: D, path: &Path) -> Result<()> {
         return Ok(());
     }
     bail!(
-        "{} is not readable, please check file permissions: {}",
+        "TXRNGR10123: {} is not readable, please check file permissions: {}. {ERROR_CODE_INFO}",
         ctx,
         path.display()
     )
@@ -1085,8 +1154,9 @@ impl CmoSetAction {
         if !is_pd {
             ensure!(
                 num_multiplexing_tags <= MAX_MULTIPLEXING_TAGS,
-                "More than the maximum number of supported multiplexing tags \
-                 ({num_multiplexing_tags} > {MAX_MULTIPLEXING_TAGS}) have been provided.",
+                "TXRNGR10124: More than the maximum number of supported multiplexing tags \
+                 ({num_multiplexing_tags} > {MAX_MULTIPLEXING_TAGS}) have been provided. \
+                 {ERROR_CODE_INFO}",
             );
         }
 
@@ -1095,16 +1165,24 @@ impl CmoSetAction {
                 continue;
             }
             if fdef.id.is_empty() {
-                bail!("Multiplexing Capture feature id field cannot be empty.");
+                bail!(
+                    "TXRNGR10125: Multiplexing Capture feature id field cannot be empty. \
+                     {ERROR_CODE_INFO}"
+                );
             } else if let Some(pos) = fdef.id.find('*') {
                 bail!(
-                    r"Multiplexing Capture feature id field contains illegal character at position {}: '{}'
-Multiplexing Capture feature ids may only ASCII characters, and must not use whitespace, asterisk, slash, quote or comma characters.",
+                    "TXRNGR10126: Multiplexing Capture feature id field contains illegal \
+                     character at position {}: '{}'\nMultiplexing Capture feature ids may only \
+                     ASCII characters, and must not use whitespace, asterisk, slash, quote or \
+                     comma characters. {ERROR_CODE_INFO}",
                     pos + 1,
                     fdef.id,
                 );
             } else if fdef.name.is_empty() {
-                bail!("Multiplexing Capture feature name field cannot be empty.");
+                bail!(
+                    "TXRNGR10127: Multiplexing Capture feature name field cannot be empty. \
+                     {ERROR_CODE_INFO}"
+                );
             }
         }
         Ok((feature_ref, tenx_cmos))
@@ -1141,9 +1219,10 @@ pub fn validate_cmo_set(
         let cmos = get_cmos(cmo_set.as_ref());
         if fref.symmetric_difference(&cmos).count() > 0 {
             bail!(
-                "Multiplexing Capture feature definitions provided in both the [feature] \
-                 reference-path and [gene-expression] cmo-set. You must put your complete list of \
-                 Multiplexing Capture feature definitions in only one of these feature references."
+                "TXRNGR10128: Multiplexing Capture feature definitions provided in both the \
+                 [feature] reference-path and [gene-expression] cmo-set. You must put your \
+                 complete list of Multiplexing Capture feature definitions in only one of these \
+                 feature references. {ERROR_CODE_INFO}"
             );
         }
         Ok(CmoSetAction::InFeatureRef(feature_ref.unwrap()))
@@ -1160,46 +1239,149 @@ pub fn validate_cmo_set(
 
 #[cfg(test)]
 mod test {
-    use crate::config::preflight::check_probe_barcode_id_grouping;
+    use super::*;
+    use crate::config::scsv::XtraData;
+    use crate::config::tests::assert_contains;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_check_probe_barcode_id_grouping() {
         let should_be_ok = vec![
-            (vec!["BC001"], (true, false, false)),
-            (vec!["AB001"], (false, true, false)),
-            (vec!["BC025"], (false, true, false)), // pre-AB way of specifying
-            (vec!["BC001"], (true, true, false)),
-            (vec!["BC001", "AB001"], (true, true, false)),
-            (vec!["BC001", "CR001"], (true, false, true)),
-            (vec!["BC001", "AB001", "CR001"], (true, true, true)),
+            (vec!["BC001"], (true, false, false, false)),
+            (vec!["AB001"], (false, true, false, false)),
+            (vec!["BC025"], (false, true, false, false)), // pre-AB way of specifying
+            (vec!["BC001"], (true, true, false, false)),
+            (vec!["BC001", "AB001"], (true, true, false, false)),
+            (vec!["BC001", "CR001"], (true, false, true, false)),
+            (vec!["BC001", "AB001", "CR001"], (true, true, true, false)),
+            (vec!["BC001"], (true, false, false, true)),
+            (vec!["BC001", "AB001"], (true, false, false, true)),
+            (vec!["BC001", "CR001"], (true, false, false, true)),
+            (vec!["BC001", "AB001", "CR001"], (true, false, true, true)),
         ];
-        for (bcs, (has_gex, has_ab, has_cr)) in should_be_ok {
-            assert!(check_probe_barcode_id_grouping(&bcs, has_gex, has_ab, has_cr).is_ok());
+        for (bcs, (has_gex, has_ab, has_cr, has_custom)) in should_be_ok {
+            assert!(
+                check_probe_barcode_id_grouping(&bcs, has_gex, has_ab, has_cr, has_custom).is_ok()
+            );
         }
 
         let should_fail = vec![
-            (vec![], (false, true, false)),
-            (vec![], (true, false, false)),
-            (vec![], (true, true, false)),
-            (vec!["BC001"], (false, true, false)),
-            (vec!["AB001"], (true, false, false)),
-            (vec!["BC025"], (true, false, false)), // pre-AB way of specifying
-            (vec!["AB001"], (true, true, false)),  // only provided a AB barcode
-            (vec!["CR001"], (true, false, true)),  // only provided a CR barcode
-            (vec!["AB001"], (true, false, true)),  // wrong type
-            (vec!["AB001", "BC001"], (true, true, false)), // wrong order
-            (vec!["CR001", "BC001"], (true, false, true)), // wrong order
-            (vec!["BC001", "CR001"], (true, true, false)), // wrong type
-            (vec!["BC001", "AB001", "BC002"], (true, true, false)), // too many
-            (vec!["BC001", "AB001", "BC002"], (true, false, true)), // too many
-            (vec!["BC001", "CR001", "AB002"], (true, true, true)), // wrong order
-            (vec!["BC001", "AB001", "BC002"], (true, true, true)), // wrong type
+            (vec![], (false, true, false, false)),
+            (vec![], (true, false, false, false)),
+            (vec![], (true, true, false, false)),
+            (vec!["BC001"], (false, true, false, false)),
+            (vec!["AB001"], (true, false, false, false)),
+            (vec!["BC025"], (true, false, false, false)), // pre-AB way of specifying
+            (vec!["AB001"], (true, true, false, false)),  // only provided a AB barcode
+            (vec!["CR001"], (true, false, true, false)),  // only provided a CR barcode
+            (vec!["AB001"], (true, false, false, true)),  // only provided a AB barcode
+            (vec!["CR001"], (true, false, false, true)),  // only provided a CR barcode
+            (vec!["AB001"], (true, false, true, false)),  // wrong type
+            (vec!["AB001", "BC001"], (true, true, false, false)), // wrong order
+            (vec!["CR001", "BC001"], (true, false, true, false)), // wrong order
+            (vec!["BC001", "CR001"], (true, true, false, false)), // wrong type
+            (vec!["BC001", "AB001", "BC002"], (true, true, false, false)), // too many
+            (vec!["BC001", "AB001", "BC002"], (true, false, true, false)), // too many
+            (vec!["BC001", "CR001", "AB002"], (true, true, true, false)), // wrong order
+            (vec!["BC001", "AB001", "BC002"], (true, true, true, false)), // wrong type
         ];
-        for (bcs, (has_gex, has_ab, has_cr)) in should_fail {
+        for (bcs, (has_gex, has_ab, has_cr, has_custom)) in should_fail {
             assert!(
-                check_probe_barcode_id_grouping(&bcs, has_gex, has_ab, has_cr).is_err(),
+                check_probe_barcode_id_grouping(&bcs, has_gex, has_ab, has_cr, has_custom).is_err(),
                 "grouping didn't fail: {bcs:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_build_feature_reference_with_cmos() {
+        let feature_ref = r"id,name,read,pattern,sequence,feature_type
+TotalSeqB_Hashtag_1,TotalB_HashTag_1,R2,^NNNNNNNNNN(BC)NNNNNNNNN,GTCAACTCTTTAGCG,FEATURETEST
+TotalSeqB_Hashtag_2,TotalB_HashTag_2,R2,^NNNNNNNNNN(BC)NNNNNNNNN,TGATGGCCTATTGGG,FEATURETEST
+TotalSeqB_Hashtag_3,TotalB_HashTag_3,R2,^NNNNNNNNNN(BC)NNNNNNNNN,TTCCGCCTCTCTTTG,FEATURETEST
+TotalSeqB_Hashtag_4,TotalB_HashTag_4,R2,^NNNNNNNNNN(BC)NNNNNNNNN,AGTAAGTTCAGCGTA,FEATURETEST";
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "{feature_ref}").unwrap();
+
+        let contents = format!(
+            r"
+            [gene-expression]
+            ref,/ref
+            create-bam,false
+
+            [feature]
+            ref,{feature_ref_csv}
+
+            [libraries]
+            fastq_path,sample_indices,lanes,physical_library_id,feature_types
+            /fastq_path,A,1,1,Gene Expression
+            /fastq_path,C,1,2,Multiplexing Capture
+
+            [samples]
+            sample_id,cmo_ids,description
+            Samp1,TotalB_HashTag_1,Samp1
+            Samp2,TotalB_HashTag_2,Samp2
+            Samp3,TotalB_HashTag_3,Samp3
+            Samp4,TotalB_HashTag_4,Samp4",
+            feature_ref_csv = temp_file.path().display()
+        );
+
+        let cfg = MultiConfigCsv::from_reader(contents.as_bytes(), XtraData::new("tests")).unwrap();
+        let (feature_reference, _tenx_cmos) =
+            build_feature_reference_with_cmos(&cfg, true, "HOSTNAME").unwrap();
+
+        assert_contains(
+            &check_samples(&cfg, feature_reference, &HashMap::new())
+                .unwrap_err()
+                .to_string(),
+            "\
+            Unknown cmo_ids ('TotalB_HashTag_1') provided for sample 'Samp1', \
+            please ensure you are either using valid 10x CMO IDs or are \
+            providing the correct [gene-expression] cmo-set.\n\
+            Valid IDs are currently:\n\
+            TotalSeqB_Hashtag_1\n\
+            TotalSeqB_Hashtag_2\n\
+            TotalSeqB_Hashtag_3\n\
+            TotalSeqB_Hashtag_4\n\
+            Did you perhaps mean any of the following? (Input -> Intended Value)?\n\
+            TotalB_HashTag_1 -> TotalSeqB_Hashtag_1",
+        );
+    }
+
+    #[test]
+    fn test_check_samples_custom_chemistry_flex_v2_barcodes() {
+        let contents = r"
+            [gene-expression]
+            probe-set,/probe-set.csv
+            chemistry,custom
+            create-bam,false
+
+            [libraries]
+            fastq_id,fastqs,feature_types
+            gex,/path/to/fastqs,Gene Expression
+
+            [samples]
+            sample_id,sample_barcode_ids
+            Sample1,A-A01
+            Sample2,BC001
+            ";
+        let cfg = MultiConfigCsv::from_reader(contents.as_bytes(), XtraData::new("tests")).unwrap();
+        let err = check_samples(
+            &cfg,
+            None,
+            &[(
+                LibraryType::GeneExpression,
+                ChemistryDef::named(ChemistryName::Flex_v2_R1),
+            )]
+            .into_iter()
+            .collect(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert_contains(
+            &err,
+            "Unknown probe_barcode_ids ('BC001') provided for sample 'Sample2'",
+        );
     }
 }

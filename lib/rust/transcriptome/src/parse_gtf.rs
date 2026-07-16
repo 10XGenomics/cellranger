@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow, bail, ensure};
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_until, take_while, take_while1};
 use nom::character::complete::{char, digit1};
-use nom::combinator::{all_consuming, map_res, opt};
+use nom::combinator::{all_consuming, map, map_res, opt};
 use nom::error::{ErrorKind, ParseError};
 use nom::sequence::{delimited, pair, separated_pair, terminated, tuple};
 use nom::{self, IResult};
@@ -75,8 +75,17 @@ pub fn parse_gtf_line(line: &[u8]) -> IResult<&[u8], Record<'_>> {
         char('\t'),
         gtf_attributes, // attributes
     ));
-
-    let v = map_res(gtf_line, convert_to_record);
+    let v = map(gtf_line, |x| Record {
+        seqname: x.0,
+        source: x.2,
+        feature_type: x.4,
+        start: x.6,
+        end: x.8,
+        score: x.10,
+        strand: x.12,
+        frame: x.14,
+        attributes: x.16,
+    });
     all_consuming(v)(line)
 }
 
@@ -116,11 +125,6 @@ fn parse_u64(input: &[u8]) -> IResult<&[u8], u64> {
     map_res(digit1, u64_from_str)(input)
 }
 
-/// return None unconditionally
-fn empty_f64_option(_: &[u8]) -> Result<Option<f64>, ParseFloatError> {
-    Ok(None)
-}
-
 /// convert ascii byte from
 fn f64_option(input: &[u8]) -> Result<Option<f64>, ParseFloatError> {
     f64::from_str(str::from_utf8(input).unwrap()).map(Some)
@@ -130,7 +134,7 @@ fn f64_option(input: &[u8]) -> Result<Option<f64>, ParseFloatError> {
 /// will return None, otherwise Some(f64).
 fn score(input: &[u8]) -> IResult<&[u8], Option<f64>> {
     alt((
-        map_res(tag("."), empty_f64_option),
+        map(tag("."), |_| None),
         map_res(nom::number::complete::recognize_float, f64_option),
     ))(input)
 }
@@ -178,43 +182,6 @@ fn gtf_attributes(input: &[u8]) -> IResult<&[u8], AttrVec<'_>> {
         ),
         opt(pair(opt(tag(";")), take_while(|c| c == b' '))),
     )(input)
-}
-
-/// raw fields of a GTF line, separated by tab characters
-/// this is used transiently and will be converted to a
-/// `Record<'a>`.
-type RecInnerSep<'a> = (
-    &'a [u8],
-    char,
-    &'a [u8],
-    char,
-    &'a [u8],
-    char,
-    u64,
-    char,
-    u64,
-    char,
-    Option<f64>,
-    char,
-    &'a [u8],
-    char,
-    &'a [u8],
-    char,
-    AttrVec<'a>,
-);
-
-fn convert_to_record(inp: RecInnerSep<'_>) -> Result<Record<'_>, ParseFloatError> {
-    Ok(Record {
-        seqname: inp.0,
-        source: inp.2,
-        feature_type: inp.4,
-        start: inp.6,
-        end: inp.8,
-        score: inp.10,
-        strand: inp.12,
-        frame: inp.14,
-        attributes: inp.16,
-    })
 }
 
 /// Replacement for `separated_list` in nom, that returns items in a `SamllVec`

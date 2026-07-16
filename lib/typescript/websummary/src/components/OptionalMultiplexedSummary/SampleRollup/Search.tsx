@@ -22,12 +22,12 @@ export function Search({
         padding: "16px",
       }}
     >
-      <h2 style={{ marginTop: 0 }}>Search</h2>
+      <h2 style={{ marginTop: 0 }}>Search Samples</h2>
       <InputGroup className="search-box">
         <Form.Control
-          aria-label="Sample ID"
+          aria-label="Sample/Barcode ID"
           onChange={onChange}
-          placeholder="Search for a Sample ID"
+          placeholder="Use | to separate multiple terms"
         />
       </InputGroup>
     </div>

@@ -5,6 +5,7 @@
 use crate::core::barcode_fate::BarcodeFate;
 use crate::core::defs::{CloneInfo, EncloneControl, ExactClonotype};
 use crate::core::enclone_structs::{BarcodeFates, CandidateClonotype};
+use itertools::zip_eq;
 use std::cmp::max;
 use vector_utils::{erase_if, next_diff1_5, reverse_sort};
 
@@ -221,8 +222,6 @@ pub(crate) fn filter_umi(
                 let ex = &exact_clonotypes[x.clonotype_index];
                 ncells += ex.ncells();
             }
-            let mut nbads = 0;
-
             let mut z = Vec::<(Vec<u8>, usize, usize, usize, usize)>::new();
             let mut to_delete = Vec::<Vec<bool>>::new();
             for j in 0..cc.len() {
@@ -256,19 +255,20 @@ pub(crate) fn filter_umi(
                 }
                 j = k;
             }
-            for j in 0..cc.len() {
-                let x: &CloneInfo = &info[cc[j] as usize];
-                let ex = &mut exact_clonotypes[x.clonotype_index];
-                for l in 0..ex.ncells() {
-                    if to_delete[j][l] {
-                        nbads += 1;
-                    }
-                }
-            }
 
+            let nbads: usize = zip_eq(&cc, to_delete)
+                .map(|(&cc_x, to_delete_x)| {
+                    assert_eq!(
+                        to_delete_x.len(),
+                        exact_clonotypes[info[cc_x as usize].clonotype_index].ncells()
+                    );
+                    to_delete_x.into_iter().filter(|&x| x).count()
+                })
+                .sum();
             if nbads == 0 {
                 return Some(cc);
             }
+
             let p = 0.1;
             let bound = 0.01;
 
@@ -316,9 +316,11 @@ pub(crate) fn filter_umi(
             for j in 0..cc.len() {
                 let x: &CloneInfo = &info[cc[j] as usize];
                 let ex = &mut exact_clonotypes[x.clonotype_index];
-                for l in 0..ex.ncells() {
-                    if to_delete[j][l] {
-                        nbads += 1;
+                for &deleted in to_delete[j].iter().take(ex.ncells()) {
+                    if deleted {
+                        // TODO: Why is this assignment unused?
+                        // #[expect(unused_assignments)]
+                        // nbads += 1;
                     }
                 }
 

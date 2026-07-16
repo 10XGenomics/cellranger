@@ -1,10 +1,10 @@
 //! Detection of probe barcode pairing between gene expression and feature barcoding.
 #![deny(missing_docs)]
-use super::chemistry_filter::DetectChemistryUnit;
 use crate::barcode_overlap::{
     FRPGemBarcodeOverlapRow, GelBeadBarcodesPerProbeBarcode, ProbeBarcodeGelBeadGrouper,
     calculate_frp_gem_barcode_overlap,
 };
+use crate::detect_chemistry::chemistry_filter::UnitsPerLibrary;
 use anyhow::Result;
 use barcode::whitelist::{
     BarcodeId, RTLMultiplexingBarcodeType, categorize_rtl_multiplexing_barcode_id,
@@ -12,7 +12,7 @@ use barcode::whitelist::{
 use barcode::{BarcodeConstruct, BcSegSeq, WhitelistSource};
 use cr_types::LibraryType;
 use cr_types::chemistry::ChemistryDefs;
-use fastq_set::read_pair::{ReadPair, ReadPart};
+use fastq_set::read_pair::ReadPart;
 use itertools::Itertools;
 use metric::TxHashMap;
 use multi::config::MultiConfigCsv;
@@ -36,7 +36,7 @@ pub type BestPairs = Vec<(BarcodeId, BarcodeId)>;
 /// Return the overlap matrix and the best pairings.
 pub fn detect_probe_barcode_pairing(
     chemistry_defs: &ChemistryDefs,
-    units: &[(DetectChemistryUnit, Vec<ReadPair>)],
+    units: &UnitsPerLibrary,
 ) -> Result<(Vec<FRPGemBarcodeOverlapRow>, BestPairs)> {
     let whitelist_sources: HashMap<_, _> = chemistry_defs
         .iter()
@@ -58,25 +58,27 @@ pub fn detect_probe_barcode_pairing(
         })
         .try_collect()?;
 
-    let barcodes_iter = units.iter().flat_map(|(unit, reads)| {
-        let bc_range = chemistry_defs[&unit.library_type].barcode_range();
-        let whitelist = whitelists[&unit.library_type].as_ref();
+    let barcodes_iter = units.iter().flat_map(|(lib_type, units)| {
+        units.iter().flat_map(|(_unit, reads)| {
+            let bc_range = chemistry_defs[lib_type].barcode_range();
+            let whitelist = whitelists[lib_type].as_ref();
 
-        reads
-            .iter()
-            .filter_map(move |read| {
-                bc_range.map_option(|range| read.get_range(range, ReadPart::Seq))
-            })
-            .map(|seqs| seqs.map(BcSegSeq::from_bytes))
-            .filter_map(move |seqs| {
-                seqs.zip(whitelist).map_option(|(seq, whitelist)| {
-                    whitelist.match_to_whitelist_allow_one_n(seq, false)
+            reads
+                .iter()
+                .filter_map(move |read| {
+                    bc_range.map_option(|range| read.get_range(range, ReadPart::Seq))
                 })
-            })
-            .map(|barcode_components| match barcode_components {
-                BarcodeConstruct::GelBeadAndProbe(x) => x,
-                _ => unreachable!("unexpected {barcode_components:?}"),
-            })
+                .map(|seqs| seqs.map(BcSegSeq::from_bytes))
+                .filter_map(move |seqs| {
+                    seqs.zip(whitelist).map_option(|(seq, whitelist)| {
+                        whitelist.match_to_whitelist_allow_one_n(seq, false)
+                    })
+                })
+                .map(|barcode_components| match barcode_components {
+                    BarcodeConstruct::GelBeadAndProbe(x) => x,
+                    _ => unreachable!("unexpected {barcode_components:?}"),
+                })
+        })
     });
     let mut gel_bead_barcodes_per_probe_barcode =
         ProbeBarcodeGelBeadGrouper::group_all(barcodes_iter, &probe_barcode_seq_to_id);
@@ -94,7 +96,7 @@ pub fn detect_probe_barcode_pairing(
 fn flatten_probe_barcode_seq_to_id(
     whitelist_sources: &HashMap<&LibraryType, BarcodeConstruct<WhitelistSource>>,
 ) -> Result<TxHashMap<BcSegSeq, BarcodeId>> {
-    let mut seq_to_id: TxHashMap<_, _> = Default::default();
+    let mut seq_to_id: TxHashMap<_, _> = HashMap::default();
     for whitelist_source in whitelist_sources
         .values()
         .map(|whitelist_source| whitelist_source.as_ref().probe())
@@ -113,7 +115,10 @@ fn flatten_probe_barcode_seq_to_id(
 
 /// Filter the mapping from probe barcode to gel bead barcodes.
 /// Ignore all probe barcodes seen in only a tiny fraction of GEMs.
-fn filter_gel_bead_barcodes_per_probe_barcode(mapping: &mut GelBeadBarcodesPerProbeBarcode) {
+fn filter_gel_bead_barcodes_per_probe_barcode<T>(mapping: &mut GelBeadBarcodesPerProbeBarcode<T>)
+where
+    T: Eq + std::hash::Hash + Copy,
+{
     let total_gel_beads = mapping
         .values()
         .flatten()

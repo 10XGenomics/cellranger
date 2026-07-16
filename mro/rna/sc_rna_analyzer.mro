@@ -25,18 +25,19 @@ pipeline SC_RNA_ANALYZER(
     )
 
     call PREPROCESS_MATRIX(
-        matrix_h5       = self.analyzer_inputs.filtered_matrices_h5,
-        random_seed     = self.analyzer_inputs.random_seed,
-        use_genes       = self.analyzer_inputs.use_genes,
-        exclude_genes   = self.analyzer_inputs.exclude_genes,
-        use_bcs         = self.analyzer_inputs.use_bcs,
-        num_bcs         = self.analyzer_inputs.num_analysis_bcs,
-        force_cells     = self.analyzer_inputs.force_cells,
-        is_visium_hd    = self.analyzer_inputs.is_visium_hd,
-        is_pd           = self.analyzer_inputs.is_pd,
-        get_peak_matrix = false,
-        enable_tsne     = self.analyzer_inputs.enable_tsne,
-        *               = ANALYZER_PREFLIGHT,
+        matrix_h5              = self.analyzer_inputs.filtered_matrices_h5,
+        random_seed            = self.analyzer_inputs.random_seed,
+        use_genes              = self.analyzer_inputs.use_genes,
+        exclude_genes          = self.analyzer_inputs.exclude_genes,
+        use_bcs                = self.analyzer_inputs.use_bcs,
+        num_bcs                = self.analyzer_inputs.num_analysis_bcs,
+        force_cells            = self.analyzer_inputs.force_cells,
+        is_visium_hd           = self.analyzer_inputs.is_visium_hd,
+        is_pd                  = self.analyzer_inputs.is_pd,
+        get_peak_matrix        = false,
+        enable_tsne            = self.analyzer_inputs.enable_tsne,
+        is_standalone_pca_ppln = false,
+        *                      = ANALYZER_PREFLIGHT,
     ) using (
         volatile = true,
     )
@@ -208,6 +209,7 @@ pipeline SC_RNA_ANALYZER(
         is_spatial         = self.analyzer_inputs.is_spatial,
         multi_graph        = null,
         sample_id          = null,
+        is_visium_hd       = self.analyzer_inputs.is_visium_hd,
     ) using (
         disabled = PREPROCESS_MATRIX.skip_antibody_analysis,
     )
@@ -219,6 +221,7 @@ pipeline SC_RNA_ANALYZER(
         is_spatial         = self.analyzer_inputs.is_spatial,
         multi_graph        = null,
         sample_id          = null,
+        is_visium_hd       = self.analyzer_inputs.is_visium_hd,
     ) using (
         disabled = PREPROCESS_MATRIX.skip_antigen_analysis,
     )
@@ -234,5 +237,72 @@ pipeline SC_RNA_ANALYZER(
             skip_tsne:        PREPROCESS_MATRIX.skip_tsne,
             summary:          SUMMARIZE_ANALYSIS.summary,
         },
+    )
+}
+
+pipeline GET_PCA_EMBEDDINGS(
+    in  h5   feature_barcode_matrix,
+    out path analysis,
+    out h5   preprocessed_matrix,
+)
+{
+    call PREPROCESS_MATRIX(
+        matrix_h5                 = self.feature_barcode_matrix,
+        random_seed               = null,
+        use_genes                 = null,
+        exclude_genes             = null,
+        use_bcs                   = null,
+        num_bcs                   = null,
+        force_cells               = null,
+        get_peak_matrix           = false,
+        skip                      = false,
+        is_visium_hd              = false,
+        is_pd                     = false,
+        is_antibody_only          = false,
+        disable_run_pca           = false,
+        disable_correct_chemistry_batch = true,
+        skip_multigenome_analysis = true,
+        enable_tsne               = false,
+        is_standalone_pca_ppln    = true,
+    ) using (
+        volatile = true,
+    )
+
+    call RUN_PCA_NG as RUN_PCA(
+        matrix_h5            = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        num_pca_genes        = null,
+        num_principal_comps  = null,
+        is_spatial           = true,
+        pca_map              = null,
+        fixed_point_base     = null,
+        fixed_point_exponent = null,
+    ) using (
+        volatile = true,
+    )
+
+    call SUMMARIZE_ANALYSIS(
+        matrix_h5                     = PREPROCESS_MATRIX.preprocessed_matrix_h5,
+        pca_h5                        = RUN_PCA.pca_h5,
+        clustering_h5                 = null,
+        diffexp_h5                    = null,
+        tsne_h5                       = null,
+        umap_h5                       = null,
+        pca_csv                       = RUN_PCA.pca_csv,
+        clustering_csv                = null,
+        diffexp_csv                   = null,
+        tsne_csv                      = null,
+        umap_csv                      = null,
+        multi_genome_summary          = null,
+        multi_genome_csv              = null,
+        multi_genome_json             = null,
+        is_multi_genome               = PREPROCESS_MATRIX.is_multi_genome,
+        chemistry_batch_correction    = null,
+        batch_score_before_correction = null,
+        batch_score_after_correction  = null,
+    )
+
+    return (
+        analysis            = SUMMARIZE_ANALYSIS.analysis,
+        preprocessed_matrix = PREPROCESS_MATRIX.preprocessed_matrix_h5,
     )
 }

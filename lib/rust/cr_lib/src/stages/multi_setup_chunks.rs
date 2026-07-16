@@ -7,9 +7,12 @@ use cr_types::LibraryType;
 use cr_types::chemistry::ChemistryDefs;
 use cr_types::rna_read::RnaChunk;
 use cr_types::sample_def::SampleDef;
+use fastq_set::long_read_adapter_trimmer::TrimmerConfig;
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeWrite;
+use martian_filetypes::json_file::JsonFile;
 use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -18,12 +21,13 @@ pub struct MultiSetupChunksStageInputs {
     pub sample_id: String,
     pub sample_def: Vec<SampleDef>,
     pub chemistry_defs: ChemistryDefs,
+    pub library_trimmers: TxHashMap<LibraryType, TrimmerConfig>,
     pub default_library_type: Option<LibraryType>,
 }
 
-#[derive(Clone, Serialize, Deserialize, MartianStruct, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, MartianStruct)]
 pub struct MultiSetupChunksStageOutputs {
-    pub chunks: Vec<RnaChunk>,
+    pub chunks: JsonFile<Vec<RnaChunk>>,
     /// Gel Bead barcode whitelist(s) or the spot barcode in Visium
     pub barcode_whitelists: Vec<String>,
     pub visium_hd_slide_name: Option<String>,
@@ -36,11 +40,7 @@ pub struct MultiSetupChunks;
 impl MartianMain for MultiSetupChunks {
     type StageInputs = MultiSetupChunksStageInputs;
     type StageOutputs = MultiSetupChunksStageOutputs; // Use `MartianVoid` if empty
-    fn main(
-        &self,
-        mut args: Self::StageInputs,
-        _rover: MartianRover,
-    ) -> Result<Self::StageOutputs> {
+    fn main(&self, mut args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         // Make sure that the gem groups in sample def is either all null or all some
         ensure!(
             args.sample_def.iter().all(|def| def.gem_group.is_some())
@@ -86,6 +86,7 @@ impl MartianMain for MultiSetupChunks {
                 RnaChunk::new(
                     &args.chemistry_defs[&library_type],
                     sample_def,
+                    args.library_trimmers.get(&library_type).cloned(),
                     default_library_type,
                     fastqs,
                     &args.sample_id,
@@ -99,9 +100,13 @@ impl MartianMain for MultiSetupChunks {
             .chemistry_defs
             .values()
             .filter_map(|x| {
-                x.barcode_whitelist_spec()
-                    .option_gel_bead()
-                    .and_then(WhitelistSpec::whitelist_name)
+                if x.name == cr_types::chemistry::ChemistryName::CombinatorialMultiplexingV1 {
+                    None
+                } else {
+                    x.barcode_whitelist_spec()
+                        .option_gel_bead()
+                        .and_then(WhitelistSpec::whitelist_name)
+                }
             })
             .unique()
             .map(String::from)
@@ -120,8 +125,10 @@ impl MartianMain for MultiSetupChunks {
             .unwrap()
             .map(String::from);
 
+        let chunks_file: JsonFile<Vec<RnaChunk>> = rover.make_path("chunks");
+        chunks_file.write(&chunks)?;
         Ok(MultiSetupChunksStageOutputs {
-            chunks,
+            chunks: chunks_file,
             barcode_whitelists,
             visium_hd_slide_name,
         })

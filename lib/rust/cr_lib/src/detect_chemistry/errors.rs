@@ -5,7 +5,7 @@ use super::mapping_filter::MappingStats;
 use crate::detect_chemistry::chemistry_filter::DetectChemistryCandidates;
 use barcode::whitelist::BarcodeId;
 use cr_types::ERROR_CODE_INFO;
-use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryDef, ChemistryName};
+use cr_types::chemistry::{AutoOrRefinedChemistry, ChemistryDef, ChemistryDefs, ChemistryName};
 use cr_types::reference::feature_reference::FeatureType;
 use fastq_set::WhichRead;
 use itertools::{Itertools, multizip};
@@ -29,12 +29,14 @@ pub(crate) enum DetectChemistryErrors {
     NotEnoughWhitelistMatch {
         frac_matches: TxHashMap<ChemistryName, f64>,
         unit: Box<DetectChemistryUnit>,
+        is_spatial: bool,
     },
     ConflictingChemistries {
         units: Vec<DetectChemistryUnit>,
         per_unit_chems: Vec<DetectChemistryCandidates>,
         context: &'static str,
     },
+    PerLibraryConflictingChemistries(ChemistryDefs),
     NotEnoughMapping {
         stats: MappingStats,
         unit: Box<DetectChemistryUnit>,
@@ -83,18 +85,22 @@ impl fmt::Display for DetectChemistryErrors {
                 "The chemistry name '{input}' is not allowed in this pipeline. Allowed values:\n{}",
                 allowed.iter().format("\n")
             ),
-            NotEnoughWhitelistMatch { frac_matches, unit } => {
+            NotEnoughWhitelistMatch {
+                frac_matches,
+                unit,
+                is_spatial,
+            } => {
                 if frac_matches.len() == 1 {
                     let chem = *frac_matches.keys().next().unwrap();
                     let chem_def = ChemistryDef::named(chem);
                     let matches_percent = 100.0 * frac_matches[&chem];
-                    if chem.is_spatial() {
+                    if *is_spatial {
                         format!(
                             "The input data has a very low rate of barcodes ({matches_percent:.1}%) that match the selected \
                             slide type.\nPlease check that your input data and slide serial number or chosen \
                             slide version are correct.\nInput: {unit}"
                         )
-                    } else if chem.is_vdj() {
+                    } else if chem.is_vdj() || chem == ChemistryName::CombinatorialMultiplexingV1 {
                         format!(
                             "In the input data, an extremely low rate of correct barcodes was observed for this \
                             chemistry ({matches_percent:.1}%).\nPlease check your input data. Note: manual chemistry detection \
@@ -153,6 +159,15 @@ impl fmt::Display for DetectChemistryErrors {
                     ))
                     .format("\n -")
             ),
+            PerLibraryConflictingChemistries(per_lib_chems) => {
+                format!(
+                    "We detected conflicting chemistries for different input libraries:\n{}",
+                    per_lib_chems
+                        .iter()
+                        .map(|(lib_type, chem)| format!("{lib_type}: {}", chem.name))
+                        .format("\n")
+                )
+            }
             NotEnoughMapping { stats, unit, chems } => format!(
                 "TXRNGR10003: Unable to distinguish between [{chems}] chemistries based on the R2 \
                  read mapping for {unit}.\n\

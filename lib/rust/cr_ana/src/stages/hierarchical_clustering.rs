@@ -9,7 +9,7 @@ use cr_types::FeatureBarcodeType;
 use cr_types::reference::feature_reference::FeatureType;
 use hclust::{ClusterDirection, DistanceMetric, HierarchicalCluster, LinkageMethod};
 use hdf5_io::matrix::read_adaptive_csr_matrix;
-use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
@@ -54,7 +54,8 @@ impl MartianStage for HierarchicalClusteringStage {
         args: Self::StageInputs,
         _rover: MartianRover,
     ) -> Result<StageDef<Self::ChunkInputs>> {
-        let mem_gib = (6.0 + h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()) as isize;
+        // regression estimate (very tight fit): -0.33 + 1.20 * mem_gib_from_nnz
+        let mem_gib = (6.0 + 1.2 * h5::estimate_mem_gib_from_nnz(&args.matrix_h5)?.ceil()) as isize;
         let feature_types = h5::matrix_feature_types(&args.matrix_h5)?;
 
         Ok(ACTIVE_FEATURE_TYPES

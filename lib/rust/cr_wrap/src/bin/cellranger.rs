@@ -7,6 +7,7 @@ use cr_types::cell_annotation::CellAnnotationModel;
 use cr_types::sample_def::SampleDef;
 use cr_types::types::FileOrBytes;
 use cr_types::{LibraryType, TargetingMethod};
+use cr_wrap::annotate::AnnotateMro;
 use cr_wrap::chemistry_arg::validate_chemistry;
 use cr_wrap::create_bam_arg::CreateBam;
 use cr_wrap::env::{Initialize, get_version};
@@ -100,7 +101,7 @@ enum SubCommand {
     #[clap(name = "aggr")]
     Aggr(Aggr),
 
-    /// Annotate cell-types from outputs of a CellRanger run.
+    /// Annotate cell-types from outputs of a Cell Ranger run.
     #[clap(name = "annotate")]
     Annotate(Annotate),
 
@@ -108,7 +109,7 @@ enum SubCommand {
     #[clap(name = "reanalyze")]
     Reanalyze(Reanalyze),
 
-    /// Prepare a reference for use with CellRanger VDJ.
+    /// Prepare a reference for use with Cell Ranger VDJ.
     ///
     /// Build a Cell Ranger V(D)J-compatible reference folder from:
     /// 1. A user-supplied genome FASTA and gene GTF files.
@@ -125,7 +126,7 @@ enum SubCommand {
 
     /// Run Illumina demultiplexer on sample sheets that contain 10x-specific
     /// sample index sets.
-    #[clap(name = "mkfastq")]
+    #[clap(name = "mkfastq", hide = true)]
     Mkfastq(AllArgs),
 
     /// Execute the 'count' pipeline on a small test dataset
@@ -192,6 +193,15 @@ struct Count {
     #[clap(flatten)]
     create_bam: CreateBam,
 
+    /// Enable t-SNE projection
+    #[clap(
+        long = "enable-tsne",
+        default_value = "false",
+        value_name = "true|false",
+        hide = true
+    )]
+    enable_tsne: Option<bool>,
+
     /// Disable secondary analysis, e.g. clustering. Optional.
     #[clap(long = "nosecondary")]
     no_secondary_analysis: bool,
@@ -217,7 +227,6 @@ struct Count {
     /// autodetection, 'threeprime' for Single Cell 3',
     /// 'fiveprime' for  Single Cell 5', 'SC3Pv1' or
     /// 'SC3Pv2' or 'SC3Pv3' or 'SC3Pv4' for Single Cell 3' v1/v2/v3/v4,
-    /// 'SC3Pv3LT' for Single Cell 3' v3 LT,
     /// 'SC3Pv3HT' for Single Cell 3' v3 HT,
     /// 'SC5P-PE' or 'SC5P-PE-v3' or 'SC5P-R2' or 'SC5P-R2-v3' for Single Cell 5',
     /// paired-end/R2-only, 'SC-FB' for Single Cell
@@ -249,6 +258,14 @@ struct Count {
     #[clap(long = "cell-annotation-model", value_name = "MODEL")]
     cell_annotation_model: Option<CellAnnotationModel>,
 
+    /// Disable cell type annotation
+    #[clap(
+        long = "disable-cell-annotation",
+        value_name = "true|false",
+        default_value = "false"
+    )]
+    skip_cell_annotation: bool,
+
     /// Enable or disable antibody and antigen aggregate filtering during cell calling.
     #[clap(long, value_name = "true|false", default_value = "true", hide = true)]
     filter_aggregates: Option<bool>,
@@ -274,7 +291,7 @@ struct Count {
 impl Count {
     pub fn to_mro_args(&self) -> Result<CountCsMro> {
         let c = self.clone();
-        let mut tenx_cloud_token_path = c.tenx_cloud_token_path;
+        let mut tenx_cloud_token_path = c.tenx_cloud_token_path.clone();
 
         // probe-set argument allowed in PD but bail with error message for command-line
         ensure!(
@@ -282,6 +299,14 @@ impl Count {
             "--probe-set argument not supported by cellranger count. \
              Please use cellranger multi for all Flex samples."
         );
+
+        // Validate that --disable-cell-annotation is not used with conflicting options
+        if c.skip_cell_annotation {
+            ensure!(
+                c.cell_annotation_model.is_none() && c.tenx_cloud_token_path.is_none(),
+                "When using --disable-cell-annotation do not provide --cell-annotation-model or --tenx-cloud-token-path."
+            );
+        }
 
         let mut sample_defs = Vec::new();
         if let Some(ref libraries) = c.libraries {
@@ -309,9 +334,20 @@ impl Count {
             if let Ok(default_token_path) = cloud_utils::default_token_path() {
                 tenx_cloud_token_path = Some(default_token_path);
             } else {
-                eprintln!("{}", cloud_utils::CELL_ANNOTATION_HOMEDIR_MSG);
+                eprintln!("{}", cloud_utils::cell_annotation_homedir_msg());
             }
         }
+
+        let cell_annotation_model = if c.cell_annotation_model.is_none()
+            && !c.skip_cell_annotation
+            && c.tenx_cloud_token_path.is_none()
+        {
+            None
+        } else {
+            c.cell_annotation_model
+                .as_ref()
+                .and_then(CellAnnotationModel::to_pipeline_inputs)
+        };
 
         Ok(CountCsMro {
             sample_id: c.id,
@@ -321,6 +357,7 @@ impl Count {
             sample_desc: c.description,
             reference_path: c.transcriptome,
             recovered_cells: c.expect_cells,
+            enable_tsne: c.enable_tsne.unwrap(),
             no_bam: !c.create_bam.validated()?,
             no_secondary_analysis: c.no_secondary_analysis,
             force_cells: c.force_cells.map(|fc| fc.0),
@@ -337,11 +374,8 @@ impl Count {
             disable_ab_aggregate_detection: !c.filter_aggregates.unwrap_or(true),
             min_crispr_umi_threshold: c.min_crispr_umi_threshold,
             tenx_cloud_token_path,
-            skip_cell_annotation: c.cell_annotation_model.is_none(),
-            cell_annotation_model: c
-                .cell_annotation_model
-                .as_ref()
-                .and_then(CellAnnotationModel::to_pipeline_inputs),
+            skip_cell_annotation: c.skip_cell_annotation,
+            cell_annotation_model,
         })
     }
 }
@@ -354,6 +388,7 @@ struct CountCsMro {
     sample_desc: String,
     reference_path: Option<CliPath>,
     recovered_cells: Option<usize>,
+    enable_tsne: bool,
     no_bam: bool,
     no_secondary_analysis: bool,
     force_cells: Option<usize>,
@@ -509,7 +544,8 @@ struct Aggr {
     #[clap(
         long = "enable-tsne",
         default_value = "false",
-        value_name = "true|false"
+        value_name = "true|false",
+        hide = true
     )]
     enable_tsne: Option<bool>,
 
@@ -573,29 +609,18 @@ struct Annotate {
     mrp: MrpArgs,
 }
 
-#[derive(Serialize)]
-struct AnnotateMro {
-    sample_id: String,
-    sample_desc: String,
-    tenx_cloud_token_path: Option<String>,
-    cell_annotation_model: Option<String>,
-    sample_cloupe: Option<CliPath>,
-    cas_track_name: Option<String>,
-    filtered_matrix: CliPath,
-}
-
 impl Annotate {
     // set the default token path if necessary
-    fn with_default_cas_token(&self) -> Result<AnnotateMro> {
+    fn with_default_cas_token(&self) -> AnnotateMro {
         let mut a = self.clone();
         if self.tenx_cloud_token_path.is_none() {
             if let Ok(tenx_cloud_token_path) = cloud_utils::default_token_path() {
                 a.tenx_cloud_token_path = Some(tenx_cloud_token_path);
             } else {
-                eprintln!("{}", cloud_utils::CELL_ANNOTATION_HOMEDIR_MSG);
+                eprintln!("{}", cloud_utils::cell_annotation_homedir_msg());
             }
         }
-        Ok(AnnotateMro {
+        AnnotateMro {
             sample_id: a.sample_id,
             sample_desc: a.sample_desc,
             tenx_cloud_token_path: a.tenx_cloud_token_path,
@@ -606,7 +631,9 @@ impl Annotate {
             sample_cloupe: a.sample_cloupe,
             cas_track_name: a.cas_track_name,
             filtered_matrix: a.filtered_matrix,
-        })
+            pipestance_type: "CELLRANGER_ANNOTATE_CS".to_string(),
+            aggregate_and_annotate: false,
+        }
     }
 }
 
@@ -661,6 +688,15 @@ struct Reanalyze {
     /// Force pipeline to use this number of cells, bypassing cell calling algorithm. [MINIMUM: 10]
     #[clap(long = "force-cells", value_name = "NUM")]
     force_cells: Option<ForceCells>,
+
+    /// Enable t-SNE projection
+    #[clap(
+        long = "enable-tsne",
+        default_value = "false",
+        value_name = "true|false",
+        hide = true
+    )]
+    enable_tsne: Option<bool>,
 
     /// Do not execute the pipeline.
     /// Generate a pipeline invocation (.mro) file and stop.
@@ -798,6 +834,7 @@ impl Testrun {
             sample_desc: t.description.unwrap_or_default(),
             reference_path,
             recovered_cells: None,
+            enable_tsne: false,
             no_bam: false,
             no_secondary_analysis: false,
             force_cells: None,
@@ -906,7 +943,7 @@ If you want to proceed with a feature barcode reference, but no feature barcode 
         }
 
         SubCommand::Annotate(annotate) => {
-            let acopy = annotate.with_default_cas_token()?;
+            let acopy = annotate.with_default_cas_token();
             let mro = make_mro(
                 "CELLRANGER_ANNOTATE_CS",
                 &acopy,
@@ -923,7 +960,6 @@ If you want to proceed with a feature barcode reference, but no feature barcode 
 
         SubCommand::Reanalyze(ra) => {
             // Custom validation
-
             let mro = make_mro("SC_RNA_REANALYZER_CS", &ra, "rna/sc_rna_reanalyzer_cs.mro")?;
             execute(&ra.sample_id, &mro, &ra.mrp, ra.dry, &mut telemetry)
         }

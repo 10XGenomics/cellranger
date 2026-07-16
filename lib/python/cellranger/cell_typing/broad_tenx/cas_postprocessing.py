@@ -35,7 +35,7 @@ TARGET_NODE_MAP_KEY = "target_node_name"
 
 # file to get the cell annotation display map from
 CAS_DISPLAY_MAP_BASE_DIRECTORY = Path(__file__).parent / "display_map"
-CAS_DISPLAY_MAP_FILENAME = "celltype_display_mapping_v8.json"
+CAS_DISPLAY_MAP_FILENAME = "celltype_display_mapping_v9.json"
 CAS_DISPLAY_MAP_PATH = CAS_DISPLAY_MAP_BASE_DIRECTORY / CAS_DISPLAY_MAP_FILENAME
 
 # Keys of metrics JSON

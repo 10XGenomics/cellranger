@@ -17,7 +17,7 @@ mod io_utils;
 mod short_string;
 pub mod whitelist;
 
-use BarcodeConstruct::{GelBeadAndProbe, GelBeadOnly, Segmented};
+use BarcodeConstruct::{GelBeadAndProbe, GelBeadOnly, SegmentedGelBeadAndSample, SpatialSegmented};
 use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use binned::{SquareBinIndex, SquareBinRowOrColumnIndex};
@@ -38,7 +38,7 @@ pub use whitelist::{Whitelist, WhitelistSource, WhitelistSpec};
 pub const MAX_BARCODE_LENGTH: usize = 43;
 
 /// The maximum length of each segment of the barcode we support. The
-/// barcode segment on the gel bead determines the maximum length of 16
+/// barcode segment on the gel bead determines the maximum length of 22
 pub const MAX_BARCODE_SEGMENT_LENGTH: usize = 22;
 pub const BARCODE_GG_SUFFIX_LENGTH: usize = 2; // Support "-1" to "-9" suffix.
 
@@ -129,6 +129,9 @@ pub struct Barcode {
 impl Barcode {
     pub fn is_valid(self) -> bool {
         self.valid
+    }
+    pub fn is_spatial(self) -> bool {
+        matches!(self.content, BarcodeContent::SpatialIndex(_))
     }
     pub fn from_bytes(seq_gg: &[u8]) -> Result<Self> {
         std::str::from_utf8(seq_gg)?.parse()
@@ -332,6 +335,119 @@ impl BarcodeSegmentState {
             }
             s => panic!("Cannot transition from state {s:?}"),
         }
+    }
+}
+
+/* ---------------------------------------------------------------------------------------------- */
+/// A container to store objects associated with a segmented gel bead barcode and a probe barcode.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SegmentedGelBeadAndSampleConstruct<G> {
+    pub gel_bead_segments: [G; 3],
+    pub sample_barcode: G,
+}
+
+impl<G: Metric> Metric for SegmentedGelBeadAndSampleConstruct<G> {
+    fn merge(&mut self, other: Self) {
+        for (segment, other_segment) in self
+            .gel_bead_segments
+            .iter_mut()
+            .zip(other.gel_bead_segments)
+        {
+            segment.merge(other_segment);
+        }
+        self.sample_barcode.merge(other.sample_barcode);
+    }
+}
+
+impl<G> SegmentedGelBeadAndSampleConstruct<G> {
+    fn as_ref(&self) -> SegmentedGelBeadAndSampleConstruct<&G> {
+        let [s1, s2, s3] = &self.gel_bead_segments;
+        SegmentedGelBeadAndSampleConstruct {
+            gel_bead_segments: [s1, s2, s3],
+            sample_barcode: &self.sample_barcode,
+        }
+    }
+
+    fn as_mut_ref(&mut self) -> SegmentedGelBeadAndSampleConstruct<&mut G> {
+        let [s1, s2, s3] = &mut self.gel_bead_segments;
+        SegmentedGelBeadAndSampleConstruct {
+            gel_bead_segments: [s1, s2, s3],
+            sample_barcode: &mut self.sample_barcode,
+        }
+    }
+
+    pub fn map<F, K>(self, mut f: F) -> SegmentedGelBeadAndSampleConstruct<K>
+    where
+        F: FnMut(G) -> K + Copy,
+    {
+        SegmentedGelBeadAndSampleConstruct {
+            gel_bead_segments: self.gel_bead_segments.map(f),
+            sample_barcode: f(self.sample_barcode),
+        }
+    }
+
+    pub fn map_result<F, K>(self, mut f: F) -> Result<SegmentedGelBeadAndSampleConstruct<K>>
+    where
+        F: FnMut(G) -> Result<K>,
+    {
+        let [s1, s2, s3] = self.gel_bead_segments;
+        Ok(SegmentedGelBeadAndSampleConstruct {
+            gel_bead_segments: [f(s1)?, f(s2)?, f(s3)?],
+            sample_barcode: f(self.sample_barcode)?,
+        })
+    }
+
+    pub fn zip<K>(
+        self,
+        other: SegmentedGelBeadAndSampleConstruct<K>,
+    ) -> SegmentedGelBeadAndSampleConstruct<(G, K)> {
+        let [s1, s2, s3] = self.gel_bead_segments;
+        let [o1, o2, o3] = other.gel_bead_segments;
+        SegmentedGelBeadAndSampleConstruct {
+            gel_bead_segments: [(s1, o1), (s2, o2), (s3, o3)],
+            sample_barcode: (self.sample_barcode, other.sample_barcode),
+        }
+    }
+}
+
+impl<G> IntoIterator for SegmentedGelBeadAndSampleConstruct<G> {
+    type Item = G;
+    type IntoIter = iter::Chain<std::array::IntoIter<G, 3>, iter::Once<G>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIterator::into_iter(self.gel_bead_segments).chain(iter::once(self.sample_barcode))
+    }
+}
+
+impl<T, U> SegmentedGelBeadAndSampleConstruct<(T, U)> {
+    fn unzip(
+        self,
+    ) -> (
+        SegmentedGelBeadAndSampleConstruct<T>,
+        SegmentedGelBeadAndSampleConstruct<U>,
+    ) {
+        let [(s1t, s1u), (s2t, s2u), (s3t, s3u)] = self.gel_bead_segments;
+        let (probe_t, probe_u) = self.sample_barcode;
+        (
+            SegmentedGelBeadAndSampleConstruct {
+                gel_bead_segments: [s1t, s2t, s3t],
+                sample_barcode: probe_t,
+            },
+            SegmentedGelBeadAndSampleConstruct {
+                gel_bead_segments: [s1u, s2u, s3u],
+                sample_barcode: probe_u,
+            },
+        )
+    }
+}
+
+impl<G: JsonReport> JsonReport for SegmentedGelBeadAndSampleConstruct<G> {
+    fn to_json_reporter(&self) -> JsonReporter {
+        let [s1, s2, s3] = &self.gel_bead_segments;
+        s1.to_json_reporter().add_prefix("gel_bead_segment1")
+            + s2.to_json_reporter().add_prefix("gel_bead_segment2")
+            + s3.to_json_reporter().add_prefix("gel_bead_segment3")
+            + self.sample_barcode.to_json_reporter().add_prefix("probe")
     }
 }
 
@@ -574,12 +690,19 @@ impl<J: JsonReport> JsonReport for Segments<J> {
 pub enum BarcodeConstruct<G> {
     GelBeadOnly(G),
     GelBeadAndProbe(GelBeadAndProbeConstruct<G>),
-    Segmented(Segments<G>),
+    SpatialSegmented(Segments<G>),
+    SegmentedGelBeadAndSample(SegmentedGelBeadAndSampleConstruct<G>),
 }
 
 impl<G> BarcodeConstruct<G> {
     pub fn new_gel_bead_and_probe(gel_bead: G, probe: G) -> Self {
         GelBeadAndProbe(GelBeadAndProbeConstruct { gel_bead, probe })
+    }
+    pub fn new_segmented_gel_bead_and_sample(gel_bead_segments: [G; 3], sample_barcode: G) -> Self {
+        SegmentedGelBeadAndSample(SegmentedGelBeadAndSampleConstruct {
+            gel_bead_segments,
+            sample_barcode,
+        })
     }
 
     pub fn map_result<F, K>(self, mut f: F) -> Result<BarcodeConstruct<K>>
@@ -589,7 +712,8 @@ impl<G> BarcodeConstruct<G> {
         Ok(match self {
             GelBeadOnly(g) => GelBeadOnly(f(g)?),
             GelBeadAndProbe(x) => GelBeadAndProbe(x.map_result(f)?),
-            Segmented(t) => Segmented(t.map_result(f)?),
+            SpatialSegmented(t) => SpatialSegmented(t.map_result(f)?),
+            SegmentedGelBeadAndSample(x) => SegmentedGelBeadAndSample(x.map_result(f)?),
         })
     }
 
@@ -607,7 +731,8 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(g) => GelBeadOnly(f(g)),
             GelBeadAndProbe(x) => GelBeadAndProbe(x.map(f)),
-            Segmented(t) => Segmented(t.map(f)),
+            SpatialSegmented(t) => SpatialSegmented(t.map(f)),
+            SegmentedGelBeadAndSample(x) => SegmentedGelBeadAndSample(x.map(f)),
         }
     }
 
@@ -616,7 +741,8 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(g) => xs.push(g),
             GelBeadAndProbe(x) => xs.extend(x),
-            Segmented(x) => xs.extend(x),
+            SpatialSegmented(x) => xs.extend(x),
+            SegmentedGelBeadAndSample(x) => xs.extend(x),
         }
         xs
     }
@@ -633,7 +759,10 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(g) => Some(g),
             GelBeadAndProbe(x) => Some(x.gel_bead),
-            Segmented(_) => None,
+            SpatialSegmented(_) => None,
+            SegmentedGelBeadAndSample(_x) => {
+                panic!("cannot extract a unique gel bead construct component")
+            }
         }
     }
 
@@ -645,7 +774,8 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(_) => None,
             GelBeadAndProbe(g) => Some(g.probe),
-            Segmented(_) => None,
+            SpatialSegmented(_) => None,
+            SegmentedGelBeadAndSample(x) => Some(x.sample_barcode),
         }
     }
 
@@ -660,7 +790,8 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(_) => None,
             GelBeadAndProbe(_) => None,
-            Segmented(s) => Some(s),
+            SpatialSegmented(s) => Some(s),
+            SegmentedGelBeadAndSample(_x) => None,
         }
     }
 
@@ -672,7 +803,8 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(g) => GelBeadOnly(g),
             GelBeadAndProbe(x) => GelBeadAndProbe(x.as_ref()),
-            Segmented(t) => Segmented(t.as_ref()),
+            SpatialSegmented(t) => SpatialSegmented(t.as_ref()),
+            SegmentedGelBeadAndSample(x) => SegmentedGelBeadAndSample(x.as_ref()),
         }
     }
 
@@ -680,7 +812,8 @@ impl<G> BarcodeConstruct<G> {
         match self {
             GelBeadOnly(g) => GelBeadOnly(g),
             GelBeadAndProbe(x) => GelBeadAndProbe(x.as_mut_ref()),
-            Segmented(t) => Segmented(t.as_mut_ref()),
+            SpatialSegmented(t) => SpatialSegmented(t.as_mut_ref()),
+            SegmentedGelBeadAndSample(x) => SegmentedGelBeadAndSample(x.as_mut_ref()),
         }
     }
 
@@ -688,7 +821,10 @@ impl<G> BarcodeConstruct<G> {
         match (self, other) {
             (GelBeadOnly(g1), GelBeadOnly(g2)) => GelBeadOnly((g1, g2)),
             (GelBeadAndProbe(x1), GelBeadAndProbe(x2)) => GelBeadAndProbe(x1.zip(x2)),
-            (Segmented(t1), Segmented(t2)) => Segmented(t1.zip(t2)),
+            (SpatialSegmented(t1), SpatialSegmented(t2)) => SpatialSegmented(t1.zip(t2)),
+            (SegmentedGelBeadAndSample(x1), SegmentedGelBeadAndSample(x2)) => {
+                SegmentedGelBeadAndSample(x1.zip(x2))
+            }
             _ => unreachable!("Cannot zip incompatible BarcodeConstruct"),
         }
     }
@@ -703,9 +839,13 @@ impl<T, U> BarcodeConstruct<(T, U)> {
                 let (t, u) = x.unzip();
                 (GelBeadAndProbe(t), GelBeadAndProbe(u))
             }
-            Segmented(x) => {
+            SpatialSegmented(x) => {
                 let (t, u) = x.unzip();
-                (Segmented(t), Segmented(u))
+                (SpatialSegmented(t), SpatialSegmented(u))
+            }
+            SegmentedGelBeadAndSample(x) => {
+                let (t, u) = x.unzip();
+                (SegmentedGelBeadAndSample(t), SegmentedGelBeadAndSample(u))
             }
         }
     }
@@ -738,7 +878,7 @@ impl<G: IntoIterator<Item = T>, T> BarcodeConstruct<G> {
 
 /// A thin wrapper around Option<BarcodeConstruct> to implement traits like
 /// Metric and JsonReport
-#[derive(Copy, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Default, Serialize, Deserialize)]
 pub struct BarcodeConstructMetric<M> {
     inner: Option<BarcodeConstruct<M>>,
 }
@@ -773,7 +913,10 @@ impl<M: Metric> Metric for BarcodeConstructMetric<M> {
                 Some(construct) => match (construct, other_inner) {
                     (GelBeadOnly(x), GelBeadOnly(other)) => x.merge(other),
                     (GelBeadAndProbe(x), GelBeadAndProbe(other)) => x.merge(other),
-                    (Segmented(x), Segmented(other)) => x.merge(other),
+                    (SpatialSegmented(x), SpatialSegmented(other)) => x.merge(other),
+                    (SegmentedGelBeadAndSample(x), SegmentedGelBeadAndSample(other)) => {
+                        x.merge(other);
+                    }
                     (_, _) => unreachable!("Cannot merge incompatible BarcodeConstruct"),
                 },
                 None => {
@@ -789,7 +932,8 @@ impl<M: JsonReport> JsonReport for BarcodeConstructMetric<M> {
         match self.inner.as_ref() {
             Some(GelBeadOnly(_g)) => JsonReporter::default(),
             Some(GelBeadAndProbe(g)) => g.to_json_reporter(),
-            Some(Segmented(g)) => g.to_json_reporter(),
+            Some(SpatialSegmented(g)) => g.to_json_reporter(),
+            Some(SegmentedGelBeadAndSample(g)) => g.to_json_reporter(),
             None => JsonReporter::default(),
         }
     }
@@ -892,6 +1036,11 @@ impl SegmentedBarcode {
             gem_group,
             segments,
         }
+    }
+    pub fn is_spatial(self) -> bool {
+        self.segments
+            .iter()
+            .all(|seg| matches!(seg.content, BarcodeSegmentContent::SpatialIndex(_, _)))
     }
 
     pub fn gel_bead_only(
@@ -1156,7 +1305,7 @@ mod tests {
 
         let barcode = Barcode::from(SegmentedBarcode {
             gem_group: 1,
-            segments: Segmented(Segments {
+            segments: SpatialSegmented(Segments {
                 segment1: BarcodeSegment {
                     state: BarcodeSegmentState::ValidBeforeCorrection,
                     content: spatial_segment(b"ACAGTCATGTCCAAAT", 2),
@@ -1175,7 +1324,7 @@ mod tests {
 
         let barcode = Barcode::from(SegmentedBarcode {
             gem_group: 1,
-            segments: Segmented(Segments {
+            segments: SpatialSegmented(Segments {
                 segment1: BarcodeSegment::with_sequence(
                     b"ACAGTCATGTCCAAAT",
                     BarcodeSegmentState::Invalid,

@@ -1,6 +1,16 @@
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 """Generate aggr web summary from the individual json data."""
 
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+import martian
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage BUILD_ANTIGEN_AGGR_WEB_SUMMARY(
     in  json antigen_histograms_json,
@@ -11,14 +21,30 @@ stage BUILD_ANTIGEN_AGGR_WEB_SUMMARY(
 )
 """
 
-import json
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """BUILD_ANTIGEN_AGGR_WEB_SUMMARY stage inputs."""
+
+    antigen_histograms_json: mro_filetypes.json | None
+    antigen_treemap_json: mro_filetypes.json | None
+    clonotype_clustermap_json: mro_filetypes.json | None
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """BUILD_ANTIGEN_AGGR_WEB_SUMMARY stage outputs."""
+
+    antigen_tab: mro_filetypes.json | None
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
 
 ANTIGEN_HISTOGRAM = "antigen_histogram_plot"
 ANTIGEN_TREEMAP = "antigen_treemap_plot"
 ANTIGEN_CLONOTYPE_CLUSTERMAP = "clonotype_clustermap"
 
 
-def main(args, outs):
+def main(args: StageInputs, outs: StageOutputs):
     antigen_tab = {}
 
     if args.antigen_histograms_json is not None:

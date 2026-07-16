@@ -6,7 +6,7 @@ use crate::stages::parse_multi_config::VdjGenInputs;
 use anyhow::Result;
 use cr_types::{
     BarcodeMultiplexingType, CellLevel, CrMultiGraph, LibraryType, MetricsFile, ReadLevel,
-    SampleAssignment,
+    SampleAssignment, SequencingPlatform,
 };
 use cr_websummary::multi::metrics::{
     ActiveConditions, CountAndPercentTransformer, MetricsProcessor, load_metrics_etl_special,
@@ -22,6 +22,7 @@ use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::{JsonFile, JsonFormat};
 use martian_filetypes::{FileTypeRead, FileTypeWrite};
 use metric::TxHashMap;
+use multi::config::{MultiConfigCsv, MultiConfigCsvFile};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -102,6 +103,7 @@ pub struct BuildPerSampleVdjWsContentsStageInputs {
     pub per_sample_vdj_ws_json: HashMap<SampleAssignment, JsonFile<Value>>, // Web summary JSON from cellranger vdj pipeline
     pub filter_metrics: HashMap<SampleAssignment, Option<JsonFile<Value>>>,
     pub multi_graph: JsonFile<CrMultiGraph>,
+    pub multi_config: MultiConfigCsvFile,
     pub vdj_cells_per_tag_json: Option<JsonFile<HashMap<String, usize>>>,
     pub clonotype_info_json: HashMap<SampleAssignment, Option<JsonFile<ClonotypeInfo>>>,
 }
@@ -145,10 +147,11 @@ fn build_metrics_per_tag(
     active_conditions: &ActiveConditions,
     alert_context: &AlertContext,
     section: Section,
+    multi_config: &MultiConfigCsv,
     multi_graph: &CrMultiGraph,
     vdj_cells_per_tag: Option<&JsonFile<HashMap<String, usize>>>,
 ) -> Result<Vec<JsonMetricSummary>> {
-    let special_metrics_group = match multi_graph.barcode_multiplexing_type() {
+    let special_metrics_group = match multi_config.barcode_multiplexing_type() {
         Some(BarcodeMultiplexingType::CellLevel(CellLevel::Hashtag)) => {
             "vdj_library_metrics_per_hashtag_id"
         }
@@ -270,30 +273,39 @@ impl MartianStage for BuildPerSampleVdjWsContents {
         };
 
         let multi_graph = args.multi_graph.read()?;
-
+        let multi_config = args.multi_config.read()?;
         let section = match args.receptor {
             VdjReceptor::TR => Section::VdjT,
             VdjReceptor::TRGD => Section::VdjTGd,
             VdjReceptor::IG => Section::VdjB,
         };
 
+        // Look up the sequencing platform for this library type from the multi config.
+        let platform = multi_config
+            .libraries
+            .libs
+            .iter()
+            .find(|lib| lib.feature_type == LibraryType::VdjAuto)
+            .map(|lib| lib.platform);
+
         let active_conditions = ActiveConditions {
             section,
             vdj_receptor: Some(args.receptor),
-            is_multiplexed: multi_graph.barcode_multiplexing_type().is_some(),
-            is_cell_multiplexed: multi_graph.is_cell_level_multiplexed(),
-            is_read_multiplexed: multi_graph.is_read_level_multiplexed(),
+            is_multiplexed: multi_config.is_multiplexed(),
+            is_cell_multiplexed: multi_config.is_cell_multiplexed(),
+            is_read_multiplexed: multi_config.is_read_multiplexed(),
             is_rtl: false,          //FIXME CELLRANGER-8444
             has_gdna: false,        //FIXME CELLRANGER-8444
             include_introns: false, //FIXME CELLRANGER-8444
             has_vdj_reference: vdj_reference.is_some(),
+            has_q30_scores: platform != Some(SequencingPlatform::Sbx),
         };
 
         let alert_context = AlertContext {
             is_rtl: active_conditions.is_rtl,
             is_arc_chemistry: false,
-            library_types: multi_graph.library_types().collect(),
-            multiplexing_method: multi_graph.barcode_multiplexing_type(),
+            library_types: multi_config.library_types().collect(),
+            multiplexing_method: multi_config.barcode_multiplexing_type(),
             is_fiveprime: false, // FIXME CELLRANGER-8444
             include_introns: active_conditions.include_introns,
             no_preflight: false, // FIXME CELLRANGER-8444
@@ -313,6 +325,7 @@ impl MartianStage for BuildPerSampleVdjWsContents {
             &active_conditions,
             &alert_context,
             section,
+            &multi_config,
             &multi_graph,
             args.vdj_cells_per_tag_json.as_ref(),
         )?);
@@ -326,6 +339,13 @@ impl MartianStage for BuildPerSampleVdjWsContents {
         {
             lib_metrics_out.extend(special_metrics_proc.process_group(
                 "sequencing_metrics",
+                section,
+                &active_conditions,
+                &alert_context,
+                &seq_metrics,
+            )?);
+            lib_metrics_out.extend(special_metrics_proc.process_group(
+                "sequencing_metrics_q30",
                 section,
                 &active_conditions,
                 &alert_context,

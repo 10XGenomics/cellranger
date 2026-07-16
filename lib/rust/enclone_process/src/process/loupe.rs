@@ -134,10 +134,10 @@ pub(crate) fn make_loupe_clonotype(
     for cx in 0..cols {
         let mut m0 = 0;
         let mut u0 = 0;
-        for z in 0..mat[cx].len() {
-            if mat[cx][z].is_some() {
+        for (z, &val) in mat[cx].iter().enumerate() {
+            if let Some(m) = val {
                 u0 = z;
-                m0 = mat[cx][z].unwrap();
+                m0 = m;
                 break;
             }
         }

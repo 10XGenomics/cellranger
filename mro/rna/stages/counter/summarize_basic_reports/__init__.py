@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import h5py
+import martian
 
 import cellranger.report as cr_report
 import cellranger.rna.library as rna_library
@@ -16,6 +19,10 @@ import cellranger.utils as cr_utils
 from cellranger.cell_calling_helpers import CellCallingParam, get_recovered_cells
 from cellranger.fast_utils import FilteredBarcodes
 from cellranger.matrix import CountMatrix
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage SUMMARIZE_BASIC_REPORTS(
@@ -27,8 +34,8 @@ stage SUMMARIZE_BASIC_REPORTS(
     in  h5               barcode_summary,
     in  CellCallingParam recovered_cells,
     in  json[]           summary_jsons,
-    in  tps.json         target_panel_summary,
     in  bool             sample_bcs_only,
+    in  tps.json         target_panel_summary,
     out json             summary,
     src py               "stages/counter/summarize_basic_reports",
 ) split (
@@ -38,12 +45,41 @@ stage SUMMARIZE_BASIC_REPORTS(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_BASIC_REPORTS stage inputs."""
+
+    sample: str
+    matrices_h5: mro_filetypes.h5
+    filtered_barcodes: mro_filetypes.csv
+    per_barcode_metrics: mro_filetypes.csv
+    matrix_computer_summary: mro_filetypes.json
+    barcode_summary: mro_filetypes.h5
+    recovered_cells: mro_structs.CellCallingParam
+    summary_jsons: list[mro_filetypes.json]
+    sample_bcs_only: bool
+    target_panel_summary: None | mro_filetypes.tps_json
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_BASIC_REPORTS stage outputs."""
+
+    summary: mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_BASIC_REPORTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_BASIC_REPORTS chunk outputs."""
+
+
+def split(args: StageInputs):
     _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(args.matrices_h5)
     matrix_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=0.7)
     with h5py.File(args.barcode_summary) as f:
         len_barcode_summary = len(f["bc_sequence"])
-    barcode_summary_gib = round(272 * len_barcode_summary / 1024**3, 1)
+    barcode_summary_gib = round(550 * len_barcode_summary / 1024**3, 1)
     mem_gib = 3 + matrix_gib + barcode_summary_gib
     print(
         f"{len_barcode_summary=},{num_barcodes=},{nnz=},{matrix_gib=},{barcode_summary_gib=},{mem_gib=}"
@@ -51,13 +87,18 @@ def split(args):
     return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     if args.target_panel_summary is not None:
         args.summary_jsons.append(args.target_panel_summary)
     raw_matrix = CountMatrix.load_h5_file(args.matrices_h5)
     genomes = raw_matrix.get_genomes()
     filtered_barcodes = FilteredBarcodes(args.filtered_barcodes)
-    genome_filtered_bcs = {
+    genome_filtered_bcs: dict[str, set[bytes]] = {
         genome: set(barcodes or ())
         for genome, barcodes in (
             dict.fromkeys(genomes) | filtered_barcodes.per_genome_barcodes()

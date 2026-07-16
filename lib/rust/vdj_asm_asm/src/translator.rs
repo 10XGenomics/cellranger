@@ -169,7 +169,7 @@ pub(super) fn correct_umis(
             read.correct_umi(other.seq());
         }
     }
-    rna_reads.sort_by(|r1, r2| (r1.umi(), r1.header()).cmp(&(r2.umi(), r2.header())));
+    rna_reads.sort_by(|r1, r2| (r1.umi(), r1.id()).cmp(&(r2.umi(), r2.id())));
     let read_data = make_read_data(rna_reads, 8, chemistry_def);
 
     let mut umi_sorted_reads = UmiSortedReads::default();
@@ -212,10 +212,8 @@ fn augmented_fastq_header(read: &RnaRead) -> Vec<u8> {
     const PROCESSED_BARCODE_TAG: &[u8] = b"CB";
     const SEP: &[u8] = b"|||";
 
-    let header = read.header().to_vec();
-    let mut iter = header.split(|&m| m == b' ');
     let mut header_augment: Vec<u8> = Vec::new();
-    header_augment.extend(iter.next().unwrap());
+    header_augment.extend(read.id().expect("missing read ID"));
 
     header_augment.extend(SEP);
     header_augment.extend(SAMPLE_INDEX_TAG);
@@ -245,8 +243,6 @@ fn augmented_fastq_header(read: &RnaRead) -> Vec<u8> {
     header_augment.extend(PROCESSED_BARCODE_TAG);
     header_augment.extend(SEP);
     header_augment.extend(read.barcode().to_string().as_bytes());
-    header_augment.push(b' ');
-    header_augment.extend(iter.collect::<Vec<_>>().join(&b' '));
 
     header_augment
 }

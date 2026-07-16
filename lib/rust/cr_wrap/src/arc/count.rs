@@ -8,6 +8,7 @@ use crate::mrp_args::MrpArgs;
 use crate::utils::{CliPath, validate_id};
 use anyhow::{Result, bail, ensure};
 use clap::{self, Parser, value_parser};
+use cloud_utils;
 use cr_types::LibraryType;
 use cr_types::sample_def::SampleDef;
 use ordered_float::NotNan;
@@ -66,9 +67,19 @@ pub struct CountArgs {
     #[clap(long, value_name = "PATH")]
     tenx_cloud_token_path: Option<CliPath>,
 
-    /// Cell annotation model to use. Valid model names can be viewed by running `cellranger-arc cloud annotation models` or on the 10x Genomics Support site. If "auto", uses the default model for the species. If not provided, does not run cell annotation
+    /// Cell annotation model to use. Valid model names can be viewed by running `cellranger-arc cloud annotation models` or on the 10x Genomics Support site.
+    /// If this option is omitted or set to "auto", uses the default model for the species. If a cloud token is not available or the --disable-cell-annotation flag is used, cloud cell annotation will not be performed.
+    /// For local models, no cell-annotation-model is necessary
     #[clap(long, value_name = "MODEL")]
     cell_annotation_model: Option<String>,
+
+    /// Disable cell type annotation
+    #[clap(
+        long = "disable-cell-annotation",
+        value_name = "true|false",
+        default_value = "false"
+    )]
+    skip_cell_annotation: bool,
 
     /// Hidden option: Whether to check for barcode compatibility between libraries. [default: true]
     #[clap(
@@ -124,6 +135,15 @@ impl CountArgs {
         use LibraryType::{Atac, GeneExpression};
 
         let c = self.clone();
+
+        // Validate that --disable-cell-annotation is not used with conflicting options
+        if c.skip_cell_annotation {
+            ensure!(
+                c.cell_annotation_model.is_none() && c.tenx_cloud_token_path.is_none(),
+                "When using --disable-cell-annotation do not provide --cell-annotation-model or --tenx-cloud-token-path."
+            );
+        }
+
         let mut sample_defs = Vec::new();
 
         // parse the libraries.csv & convert it into a set of SampleDefs.
@@ -161,6 +181,21 @@ impl CountArgs {
             "Invalid libraries file: missing `Gene Expression` FASTQ files"
         );
 
+        // if the token path is not supplied, default to the value expected by
+        // cellranger-arc cloud auth setup, which is $HOME/.config/txg/credentials
+        let mut tenx_cloud_token_path = c.tenx_cloud_token_path.clone();
+        if tenx_cloud_token_path.is_none() && !c.skip_cell_annotation {
+            match cloud_utils::default_token_path() {
+                Ok(default_token_path) => {
+                    tenx_cloud_token_path =
+                        Some(CliPath::from(std::path::PathBuf::from(default_token_path)));
+                }
+                Err(_) => {
+                    eprintln!("{}", cloud_utils::cell_annotation_homedir_msg());
+                }
+            }
+        }
+
         Ok(CountMro {
             sample_id: c.id.clone(),
             sample_desc: c.description.unwrap_or(c.id),
@@ -179,9 +214,9 @@ impl CountArgs {
             no_secondary_analysis: c.no_secondary_analysis,
             rna_r1_length: c.rna_r1_length,
             rna_r2_length: c.rna_r2_length,
-            tenx_cloud_token_path: c.tenx_cloud_token_path.clone(),
+            tenx_cloud_token_path,
             cell_annotation_model: c.cell_annotation_model.clone(),
-            skip_cell_annotation: c.cell_annotation_model.is_none(),
+            skip_cell_annotation: c.skip_cell_annotation,
         })
     }
 }

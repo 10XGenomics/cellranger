@@ -7,11 +7,10 @@ use barcode::Barcode;
 use bio::alignment::Alignment;
 use bio::alignment::pairwise::banded::Aligner;
 use bio::io::fasta;
-use counter::Counter;
 use cr_types::{BamContigInfo, BarcodeIndex};
 use itertools::Itertools;
 use log::{debug, warn};
-use metric::{TxHashMap, TxHashSet};
+use metric::{Histogram, SimpleHistogram, TxHashMap, TxHashSet};
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{IndexedReader as BamReader, Read as BamRead, Record as BamRecord};
 use rust_htslib::bcf::{Read as BcfRead, Reader as BcfReader, Record as BcfRecord};
@@ -19,8 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::{max, min};
 use std::fmt::{Debug, Display};
 use std::fs::File;
-use std::io::BufWriter;
-use std::io::prelude::*;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::str;
 use std::str::FromStr;
@@ -88,12 +86,13 @@ pub struct Snp {
 }
 
 /// Represents an allele.
-#[derive(Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Default, Ord, Clone, PartialOrd)]
 pub enum AlleleType {
     /// Indicates a reference allele.
     Ref,
     /// Indicates an alternative allele.
     Alt,
+    #[default]
     /// Indicates an unknown allele.
     Unknown,
 }
@@ -149,7 +148,7 @@ impl Default for VartrixSettings {
 #[derive(Default, Serialize, Deserialize, Debug)]
 pub struct VcfMetrics {
     /// Alignment use status statistics.
-    pub aln_use_counter: Counter<AlignmentUseStatus>,
+    pub aln_use_counter: SimpleHistogram<AlignmentUseStatus>,
     /// The record in invalid data.
     pub has_invalid_chars: bool,
     /// The record has multiple alleles.
@@ -157,7 +156,7 @@ pub struct VcfMetrics {
 }
 
 /// Alignment use status
-#[derive(Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Hash, Eq, PartialEq, Serialize, Deserialize, Ord, Clone, PartialOrd)]
 pub enum AlignmentUseStatus {
     /// Alignment used to compute allele counts.
     Useful,
@@ -234,7 +233,7 @@ pub struct CellBarcodeCalls {
     /// The index of the cell barcode
     pub cb_idx: CellBarcodeIdx,
     /// The allele counts for the cell barcode
-    pub allele_counts: Counter<AlleleType>,
+    pub allele_counts: SimpleHistogram<AlleleType>,
 }
 
 /// Parse VCF records and return an iterator of SNP records.
@@ -524,16 +523,17 @@ fn evaluate_alns(
     haps: &VariantHaps<'_>,
     cb_index: &BarcodeIndex,
     settings: &VartrixSettings,
-) -> (Counter<AlignmentUseStatus>, Vec<Scores>) {
+) -> (SimpleHistogram<AlignmentUseStatus>, Vec<Scores>) {
     // loop over all alignments in the region of interest
     // if the alignments are useful (aligned over this region)
     // perform Smith-Waterman against both haplotypes
     // and report the scores
 
     debug!("Evaluating record {}", haps.locus);
-    let (scores, use_counter): (Vec<_>, Counter<_>) = bam_records
+    let (scores, alignment_use_statuses): (Vec<_>, Vec<_>) = bam_records
         .map(|rec| compute_alignment_scores(rec, cb_index, settings, haps))
         .collect();
+    let use_counter = SimpleHistogram::from_iter_owned(alignment_use_statuses);
     // filter out the None scores and turn them into a Vec<Scores>
     let scores: Vec<Scores> = scores
         .into_iter()
@@ -680,16 +680,16 @@ fn parse_scores(scores: &[Scores], use_umi: bool) -> Vec<CellBarcodeCalls> {
 
 fn count_alleles_not_using_umi<'a>(
     cell_scores: impl Iterator<Item = &'a Scores>,
-) -> Counter<AlleleType> {
+) -> SimpleHistogram<AlleleType> {
     // Map of CB to Score objects. This is basically trivial in the non-UMI case
-    cell_scores
-        .filter_map(|score| evaluate_scores(score.ref_score, score.alt_score))
-        .collect()
+    SimpleHistogram::from_iter_owned(
+        cell_scores.filter_map(|score| evaluate_scores(score.ref_score, score.alt_score)),
+    )
 }
 
 fn count_alleles_using_umi<'a>(
     cell_scores: impl Iterator<Item = &'a Scores>,
-) -> Counter<AlleleType> {
+) -> SimpleHistogram<AlleleType> {
     // Map of UMI to Score objects; keep track of all Scores for a given CB/UMI pair
     let parsed_scores: TxHashMap<_, Vec<_>> = cell_scores
         .filter_map(|score| {
@@ -701,25 +701,22 @@ fn count_alleles_using_umi<'a>(
             acc
         });
     // collapse each UMI into a consensus value
-    parsed_scores
-        .into_values()
-        .map(|alleles| {
-            let counts: Counter<_> = alleles.iter().collect();
-            let denom = counts.values().sum::<usize>();
-            assert!(denom > 0);
-            let denom = denom as f64;
-            let ref_frac = counts[&AlleleType::Ref] as f64 / denom;
-            let alt_frac = counts[&AlleleType::Alt] as f64 / denom;
-            if (ref_frac < INTRA_UMI_CONS_THRESHOLD) && (alt_frac < INTRA_UMI_CONS_THRESHOLD) {
-                AlleleType::Unknown
-            } else if alt_frac >= INTRA_UMI_CONS_THRESHOLD {
-                AlleleType::Alt
-            } else {
-                assert!(ref_frac >= INTRA_UMI_CONS_THRESHOLD);
-                AlleleType::Ref
-            }
-        })
-        .collect()
+    SimpleHistogram::from_iter_owned(parsed_scores.into_values().map(|alleles| {
+        let counts: SimpleHistogram<_> = alleles.iter().collect();
+        let denom = counts.total_count();
+        assert!(denom > 0);
+        let denom = denom as f64;
+        let ref_frac = counts.get(&AlleleType::Ref) as f64 / denom;
+        let alt_frac = counts.get(&AlleleType::Alt) as f64 / denom;
+        if (ref_frac < INTRA_UMI_CONS_THRESHOLD) && (alt_frac < INTRA_UMI_CONS_THRESHOLD) {
+            AlleleType::Unknown
+        } else if alt_frac >= INTRA_UMI_CONS_THRESHOLD {
+            AlleleType::Alt
+        } else {
+            assert!(ref_frac >= INTRA_UMI_CONS_THRESHOLD);
+            AlleleType::Ref
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -733,7 +730,7 @@ mod tests {
 ACGTACGTACGT
 ";
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         // this ensures insta knows where to find its snap tests
         let cwd = std::env::current_dir().unwrap();
@@ -793,13 +790,12 @@ ACGTACGTACGT
         ];
 
         let act_allele_counts = count_alleles_not_using_umi(scores.iter());
-        let exp_allele_counts: Counter<_> = vec![
-            (AlleleType::Ref, 2),
-            (AlleleType::Alt, 1),
-            (AlleleType::Unknown, 1),
-        ]
-        .into_iter()
-        .collect();
+        let exp_allele_counts = SimpleHistogram::from_iter_owned(vec![
+            AlleleType::Ref,
+            AlleleType::Ref,
+            AlleleType::Alt,
+            AlleleType::Unknown,
+        ]);
         assert_eq!(act_allele_counts, exp_allele_counts);
     }
 
@@ -925,13 +921,13 @@ ACGTACGTACGT
         }
 
         let act_allele_counts = count_alleles_using_umi(scores.iter());
-        let exp_allele_counts: Counter<_> = vec![
-            (AlleleType::Ref, 1),
-            (AlleleType::Alt, 1),
-            (AlleleType::Unknown, 3),
-        ]
-        .into_iter()
-        .collect();
+        let exp_allele_counts = SimpleHistogram::from_iter_owned(vec![
+            AlleleType::Ref,
+            AlleleType::Alt,
+            AlleleType::Unknown,
+            AlleleType::Unknown,
+            AlleleType::Unknown,
+        ]);
         assert_eq!(act_allele_counts, exp_allele_counts);
     }
 

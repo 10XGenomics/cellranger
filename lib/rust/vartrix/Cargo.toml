@@ -8,9 +8,6 @@ path = '../barcode'
 [dependencies.bio]
 workspace = true
 
-[dependencies.counter]
-workspace = true
-
 [dependencies.cr_types]
 path = '../cr_types'
 

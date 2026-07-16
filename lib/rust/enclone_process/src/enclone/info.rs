@@ -217,9 +217,9 @@ pub(crate) fn build_info(
             let shares = &exact_clonotype.share;
             let mut placed = false;
             let mut res = Result {
-                clone_info: Default::default(),
+                clone_info: Vec::default(),
                 exact_clonotype: updated_exact_clonotype,
-                fate: Default::default(),
+                fate: Vec::default(),
             };
             for i1 in 0..shares.len() {
                 if shares[i1].left {

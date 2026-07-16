@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use std::iter::IntoIterator;
 
 /// Randomly choose a sample of k items from a list containing n items,

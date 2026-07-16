@@ -24,7 +24,7 @@ use itertools::Itertools;
 use kmer_lookup::{make_kmer_lookup_20_single, match_12};
 use std::cmp::max;
 use std::collections::HashMap;
-use std::io::prelude::*;
+use std::io::Write;
 use std::iter::zip;
 use std::mem::swap;
 use std::str::FromStr;

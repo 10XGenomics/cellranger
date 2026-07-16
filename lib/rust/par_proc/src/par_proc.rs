@@ -2,8 +2,9 @@
 
 use anyhow::{Result, anyhow};
 use core::iter::IntoIterator;
+use cr_types::in_flight::{InFlightPool, Reservation};
 use cr_types::spill_vec::SpillVec;
-use crossbeam_channel::{Receiver, bounded};
+use crossbeam_channel::unbounded;
 use crossbeam_utils::thread::{Scope, ScopedJoinHandle};
 use itertools::Itertools;
 use martian_filetypes::LazyFileTypeIO;
@@ -25,26 +26,8 @@ pub trait Proc {
     fn process(&mut self, item: Self::Item) -> Result<(), Self::Err>;
 }
 
-// Given a receiver (`rec`) that can receive items of type `T` through a channel
-// and a `processor` that knows how to process an item of type `T`, this function
-// processes all the items that the receiver can receive.
-fn process<P: Proc<Item = T, Err = E>, T: Send, E>(
-    mut processor: P,
-    rec: Receiver<T>,
-) -> Result<P, E> {
-    loop {
-        let item = rec.recv(); // Block the thread until the next item is received.
-        match item {
-            Ok(item) => processor.process(item)?, // We received an item, process it.
-            Err(_) => break,                      // The channel is disconnected
-        }
-    }
-
-    Ok(processor)
-}
-
 /// The maximum number of items to hold in memory before spilling to disk.
-pub const MAX_ITEMS_IN_MEM: usize = 500_000;
+pub const MAX_ITEMS_IN_MEM: usize = 1 << 19;
 
 #[allow(clippy::type_complexity)]
 fn start_processors<'a, 'b, P, T, K>(
@@ -63,19 +46,23 @@ where
     // associated with the key after grouping.
     <P as Proc>::Item: Send,
 {
-    // allow a little bit of read-ahead
-    // Create a channel that can hold at most 2 messages at a time
-    let (send, recv) = bounded(2);
+    let (send, recv) = unbounded();
 
     // Make one thread dedicated to each processor object
     let mut handles = Vec::with_capacity(processors.len());
-    for processor in processors {
+    for mut processor in processors {
         // Each thread gets a copy of the receiver
         let recv = recv.clone();
         // All that this thread does is repeatedly look for any new items in the
         // receive channel and process any item it receives until the channel is
         // disconnected.
-        let thread = scope.spawn(move |_| process(processor, recv));
+        let thread = scope.spawn(move |_| {
+            for item in recv {
+                processor.process(item)?;
+            }
+
+            Ok(processor)
+        });
         handles.push(thread);
     }
     (send, handles)
@@ -117,20 +104,22 @@ where
     S: LazyFileTypeIO<T> + Send + Sync,
     // The values are ordered by the key `K'
     K: 'static + Eq + Send + Sync + Clone + ToString,
-    P: 'static + Send + Proc<Item = (K, SpillVec<T, S>), Err = anyhow::Error>,
+    P: 'static + Send + Proc<Item = (K, Reservation<SpillVec<T, S>>), Err = anyhow::Error>,
     // The first element of (K, Vec<T>) is the key and the second element are the items
     // associated with the key after grouping.
     <P as Proc>::Item: Send,
     F: Fn(&T) -> K,
     I: IntoIterator<Item = Result<T>>,
 {
+    // Bound max number of items in flight to the max size of the spill vec.
+    let max_items_in_flight = MAX_ITEMS_IN_MEM;
     // Create a scope where the processor threads will run
     // Note that scoped threads are a mechanism to guarantee to the compiler that spawned
     // threads will be joined before the scope ends, thereby allowing the threads to borrow
     // variables in the stack
     let r = crossbeam_utils::thread::scope(move |s| -> Result<Vec<P>> {
         let (send, handles) = start_processors(processors, s);
-
+        let pool = InFlightPool::new();
         for (key, group_iter) in &iterable
             .into_iter()
             .chunk_by(move |item_result: &Result<T>| {
@@ -145,7 +134,9 @@ where
             for item in group_iter {
                 spill_vec.push(item?)?;
             }
-            let send_res = send.send((key, spill_vec));
+            let item_count = spill_vec.len_in_mem();
+            let reservation = pool.acquire(spill_vec, item_count, max_items_in_flight)?;
+            let send_res = send.send((key, reservation));
             // stop sending if all the recievers have hung up
             // go down and get the Error/panic from the dead
             // worker
@@ -188,19 +179,24 @@ where
     T: 'static + Send + Sync, // Type returned by the iterable, wrapped in a result.
     // The values are ordered by the key `K'
     K: 'static + Eq + Send + Sync + Clone,
-    P: 'static + Send + Proc<Item = (K, Vec<T>), Err = anyhow::Error>,
+    P: 'static + Send + Proc<Item = (K, Reservation<Vec<T>>), Err = anyhow::Error>,
     // The first element of (K, Vec<T>) is the key and the second element are the items
     // associated with the key after grouping.
     <P as Proc>::Item: Send,
     F: Fn(&T) -> &K,
     I: IntoIterator<Item = Result<T>>,
 {
+    // Allow each processor to have a full buffer plus one additional buffer
+    // ready to feed the next available worker.
+    let max_items_in_flight = max_items * (processors.len() + 1);
+
     // Create a scope where the processor threads will run
     // Note that scoped threads are a mechanism to guarantee to the compiler that spawned
     // threads will be joined before the scope ends, thereby allowing the threads to borrow
     // variables in the stack
     let r = crossbeam_utils::thread::scope(move |s| -> Result<Vec<P>> {
         let (send, handles) = start_processors(processors, s);
+        let pool = InFlightPool::new();
 
         for (key, group_iter) in &iterable
             .into_iter()
@@ -219,7 +215,9 @@ where
                 .chunk_by(|&(i, _)| i / max_items)
             {
                 let items: Vec<T> = piece.map(|(_, item)| item).collect();
-                let send_res = send.send((key.clone(), items));
+                let item_count = items.len();
+                let reservation = pool.acquire(items, item_count, max_items_in_flight)?;
+                let send_res = send.send((key.clone(), reservation));
                 // stop sending if all the recievers have hung up
                 // go down and get the Error/panic from the dead
                 // worker
@@ -254,6 +252,7 @@ fn decipher_panic(p: Box<dyn Any + 'static + Send>) -> String {
 #[cfg(test)]
 mod proc_tests {
     use super::*;
+    use cr_types::in_flight::TryIntoIterator;
     use martian_filetypes::bin_file::BincodeFile;
     use quickcheck::{Arbitrary, Gen};
     use serde::{Deserialize, Serialize};
@@ -317,7 +316,7 @@ mod proc_tests {
         BincodeFile<Vec<T>>: LazyFileTypeIO<T>,
     {
         #[allow(clippy::type_complexity)]
-        items: Vec<(K, SpillVec<T, BincodeFile<Vec<T>>>)>,
+        items: Vec<(K, Reservation<SpillVec<T, BincodeFile<Vec<T>>>>)>,
         phantom: PhantomData<K>,
     }
 
@@ -337,7 +336,7 @@ mod proc_tests {
     where
         BincodeFile<Vec<T>>: LazyFileTypeIO<T>,
     {
-        type Item = (K, SpillVec<T, BincodeFile<Vec<T>>>);
+        type Item = (K, Reservation<SpillVec<T, BincodeFile<Vec<T>>>>);
         type Err = anyhow::Error;
 
         fn process(&mut self, item: Self::Item) -> Result<()> {
@@ -397,8 +396,8 @@ mod proc_tests {
         let mut all_items = Vec::new();
 
         for p in r {
-            for (k, items) in p.items {
-                for i in items.iter()? {
+            for (k, reservation) in p.items {
+                for i in reservation.try_into_iter()? {
                     let i = i?;
                     assert_eq!(k, i.d);
                     all_items.push(i);
@@ -441,7 +440,7 @@ mod proc_tests {
     struct ProcErr;
 
     impl Proc for ProcErr {
-        type Item = (usize, SpillVec<usize, BincodeFile<Vec<usize>>>);
+        type Item = (usize, Reservation<SpillVec<usize, BincodeFile<Vec<usize>>>>);
         type Err = anyhow::Error;
 
         fn process(&mut self, _item: Self::Item) -> Result<()> {

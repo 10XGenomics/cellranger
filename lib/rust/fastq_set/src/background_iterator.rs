@@ -1,54 +1,75 @@
 #![deny(missing_docs)]
 
+use itertools::Itertools;
 use std::sync::mpsc::{Receiver, sync_channel};
-use std::thread::{JoinHandle, spawn};
+use std::thread::{JoinHandle, Scope, ScopedJoinHandle, spawn};
 
-/// Execute an iterator on a worker thread, which can work ahead a configurable number of items.
-pub struct BackgroundIterator<T> {
-    rx: Receiver<Option<T>>,
-    done: bool,
-    handle: Option<JoinHandle<()>>,
+/// Abstract over scoped or regular thread join handles.
+enum AnyJoinHandle<'scope> {
+    Regular(JoinHandle<()>),
+    Scoped(ScopedJoinHandle<'scope, ()>),
 }
 
-impl<T> BackgroundIterator<T> {
+impl<'scope> AnyJoinHandle<'scope> {
+    /// Join on this handle. If the thread panicked, return Err with the
+    /// panic message.
+    fn join(self) -> Result<(), String> {
+        let Err(e) = (match self {
+            Self::Regular(h) => h.join(),
+            Self::Scoped(h) => h.join(),
+        }) else {
+            return Ok(());
+        };
+        // need to do a little dance here to get the panic message
+        let msg = match e.downcast_ref::<&'static str>() {
+            Some(s) => (*s).to_string(),
+            None => match e.downcast_ref::<String>() {
+                Some(s) => s.clone(),
+                None => "unknown panic on BackgroundIterator worker thread".to_string(),
+            },
+        };
+        Err(msg)
+    }
+}
+
+/// Execute an iterator on a worker thread.
+///
+/// The worker will buffer a finite number of processed items, then send that
+/// buffer on for further processing.
+///
+/// To unpack the items one by one, just call .flatten() on the output.
+pub struct BackgroundIterator<'scope, T> {
+    rx: Receiver<Option<Vec<T>>>,
+    done: bool,
+    handle: Option<AnyJoinHandle<'scope>>,
+}
+
+impl<'scope, T> BackgroundIterator<'scope, T> {
     // Join on the producer thread dies, and propagate the panic
     fn join_and_propagate_panic(&mut self) {
         match self.handle.take().unwrap().join() {
             Ok(()) => (),
-            Err(e) => {
+            Err(msg) => {
                 // sender panicked - we will re-panic the panic.
-                // need to do a little dance here to get the panic message
-                let msg = match e.downcast_ref::<&'static str>() {
-                    Some(s) => (*s).to_string(),
-                    None => match e.downcast_ref::<String>() {
-                        Some(s) => s.clone(),
-                        None => "unknown panic on BackgroundIterator worker thread".to_string(),
-                    },
-                };
                 panic!("{}", msg);
             }
         }
     }
 }
 
-impl<T: Send> Iterator for BackgroundIterator<T> {
-    type Item = T;
+impl<'scope, T: Send + 'static> Iterator for BackgroundIterator<'scope, T> {
+    type Item = Vec<T>;
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<Vec<T>> {
         if self.done {
             return None;
         }
 
         match self.rx.recv() {
             Ok(Some(v)) => Some(v),
-            Ok(None) => {
-                self.done = true;
-                self.join_and_propagate_panic();
-                None
-            }
-            // if the producer thread dies, then the sender thread must have panicked
-            // propagate the panic, otherwise we will silently continue with likely incomplete results
-            Err(_) => {
+            Ok(None) | Err(_) => {
+                // if the producer thread dies, then the sender thread must have panicked
+                // propagate the panic, otherwise we will silently continue with likely incomplete results
                 self.done = true;
                 self.join_and_propagate_panic();
                 None
@@ -57,18 +78,21 @@ impl<T: Send> Iterator for BackgroundIterator<T> {
     }
 }
 
-impl<T: 'static + Send> BackgroundIterator<T> {
+impl<'scope, T: 'static + Send> BackgroundIterator<'scope, T> {
     /// Iterate through `itr` on a newly created thread, and send items back to the returned
     /// `BackgroundIterator` for consumption on the calling thread. The worker thread will
-    /// continue to produce elements until it is `max_read_ahead` items ahead of the consumer iterator.
+    /// buffer max_read_ahead items before sending to the consuming thread.
+    /// The worker will pre-buffer at most one buffer.
     pub fn new<I: 'static + Send + Iterator<Item = T>>(
         itr: I,
         max_read_ahead: usize,
-    ) -> BackgroundIterator<T> {
-        let (tx, rx) = sync_channel::<Option<T>>(max_read_ahead);
+    ) -> BackgroundIterator<'scope, T> {
+        let (tx, rx) = sync_channel::<Option<Vec<T>>>(1);
         let handle = spawn(move || {
-            for item in itr {
-                if tx.send(Some(item)).is_err() {
+            for chunk in &itr.chunks(max_read_ahead) {
+                let mut buf = Vec::with_capacity(max_read_ahead);
+                buf.extend(chunk);
+                if tx.send(Some(buf)).is_err() {
                     return;
                 };
             }
@@ -78,15 +102,93 @@ impl<T: 'static + Send> BackgroundIterator<T> {
 
         BackgroundIterator {
             rx,
-            handle: Some(handle),
+            handle: Some(AnyJoinHandle::Regular(handle)),
             done: false,
         }
+    }
+}
+impl<'scope, T: 'static + Send> BackgroundIterator<'scope, T> {
+    /// Iterate through `itr` on a scoped thread, and send items back to the returned
+    /// `BackgroundIterator` for consumption on the calling thread. The worker thread will
+    /// buffer max_read_ahead items before sending to the consuming thread.
+    /// The worker will pre-buffer at most one buffer.
+    pub fn new_scoped<I: 'scope + Send + Iterator<Item = T>>(
+        scope: &'scope Scope<'scope, '_>,
+        itr: I,
+        max_read_ahead: usize,
+    ) -> BackgroundIterator<'scope, T> {
+        let (tx, rx) = sync_channel::<Option<Vec<T>>>(1);
+        let handle = scope.spawn(move || {
+            for chunk in &itr.chunks(max_read_ahead) {
+                let mut buf = Vec::with_capacity(max_read_ahead);
+                buf.extend(chunk);
+                if tx.send(Some(buf)).is_err() {
+                    return;
+                };
+            }
+
+            tx.send(None).unwrap();
+        });
+
+        BackgroundIterator {
+            rx,
+            handle: Some(AnyJoinHandle::Scoped(handle)),
+            done: false,
+        }
+    }
+}
+
+/// Extension trait to allow backgrounding any iterator.
+pub trait BackgroundIteratorExt<I, T>
+where
+    I: Iterator<Item = T> + Send + 'static,
+    T: Send + 'static,
+{
+    /// Run this iter on a background thread, accumulating buffers of results.
+    fn background(self, buffer_size: usize) -> BackgroundIterator<'static, T>;
+}
+
+/// Extension trait to allow backgrounding any iterator on a scoped thread.
+pub trait BackgroundIteratorScopedExt<'scope, I, T>
+where
+    I: Iterator<Item = T> + Send + 'scope,
+    T: Send + 'static,
+{
+    /// Run this iter on a scoped thread, accumulating buffers of results.
+    fn background_scoped(
+        self,
+        scope: &'scope Scope<'scope, '_>,
+        buffer_size: usize,
+    ) -> BackgroundIterator<'scope, T>;
+}
+
+impl<I, T> BackgroundIteratorExt<I, T> for I
+where
+    I: Iterator<Item = T> + Send + 'static,
+    T: Send + 'static,
+{
+    fn background(self, buffer_size: usize) -> BackgroundIterator<'static, T> {
+        BackgroundIterator::new(self, buffer_size)
+    }
+}
+impl<'scope, I, T> BackgroundIteratorScopedExt<'scope, I, T> for I
+where
+    I: Iterator<Item = T> + Send + 'scope,
+    T: Send + 'static,
+{
+    fn background_scoped(
+        self,
+        scope: &'scope Scope<'scope, '_>,
+        buffer_size: usize,
+    ) -> BackgroundIterator<'scope, T> {
+        BackgroundIterator::new_scoped(scope, self, buffer_size)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     #[should_panic]
@@ -101,7 +203,7 @@ mod test {
         let bg_iter = BackgroundIterator::new(iter, 5);
 
         let mut sum = 0;
-        for v in bg_iter {
+        for v in bg_iter.flatten() {
             sum += v;
         }
         println!("sum :{sum}");
@@ -116,7 +218,7 @@ mod test {
         let bg_iter = BackgroundIterator::new(iter, 5);
 
         let mut sum = 0;
-        for v in bg_iter {
+        for v in bg_iter.flatten() {
             sum += v;
         }
 
@@ -135,13 +237,13 @@ mod test {
         // make sure we get all the items
 
         let mut n_read = 0;
-        for v in bg_iter {
+        for v in bg_iter.flatten() {
             assert_eq!(v, n_read * n_read);
             n_read += 1;
 
             // make sure the reader goes slowly
             if n_read % 50_000 == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
 

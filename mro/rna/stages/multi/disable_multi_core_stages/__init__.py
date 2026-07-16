@@ -3,26 +3,55 @@
 #
 """A helper stage to disable stages in SC_MULTI_CORE."""
 
+from __future__ import annotations
+
 import martian
 
 __MRO__ = """
 stage DISABLE_MULTI_CORE_STAGES(
-    in  bool is_pd,
-    in  bool disable_gex,
-    in  bool disable_multi_count,
-    in  bool disable_count,
-    in  bool no_secondary_analysis,
-    in  bool skip_cell_annotation,
-    out bool disable_sample_cas_celltyping,
-    out bool disable_library_cas_celltyping,
-    src py   "stages/multi/disable_multi_core_stages",
+    in  bool     is_pd,
+    in  bool     disable_gex,
+    in  bool     disable_multi_count,
+    in  bool     disable_count,
+    in  bool     no_secondary_analysis,
+    in  bool     skip_cell_annotation,
+    out bool     disable_sample_cas_celltyping,
+    out bool     disable_library_cas_celltyping,
+    src py       "stages/multi/disable_multi_core_stages",
 ) using (
     volatile = strict,
 )
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """DISABLE_MULTI_CORE_STAGES stage inputs."""
+
+    is_pd: bool
+    disable_gex: bool
+    disable_multi_count: bool
+    disable_count: bool
+    no_secondary_analysis: bool
+    skip_cell_annotation: bool
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """DISABLE_MULTI_CORE_STAGES stage outputs."""
+
+    disable_sample_cas_celltyping: bool
+    disable_library_cas_celltyping: bool
+    cell_annotation_model_families: list[str]
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """DISABLE_MULTI_CORE_STAGES chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """DISABLE_MULTI_CORE_STAGES chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
     disable_cell_typing_totally = (
         bool(args.disable_gex)
         or bool(args.no_secondary_analysis)

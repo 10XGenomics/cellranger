@@ -55,7 +55,7 @@ impl MultiGraph {
                         .iter()
                         .filter_map(|f| match f {
                             Fingerprint::Tagged { tag_name, .. } => Some(tag_name.clone()),
-                            Fingerprint::Untagged { .. } => None,
+                            Fingerprint::Untagged => None,
                         })
                         .collect(),
                 )
@@ -101,11 +101,16 @@ impl MultiGraph {
             == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::OH))
     }
 
+    /// Return true if this data is using CMX multiplexing.
+    pub fn is_cmx_multiplexed(&self) -> bool {
+        self.0.barcode_multiplexing_type()
+            == Some(BarcodeMultiplexingType::ReadLevel(ReadLevel::CMX))
+    }
+
     /// Return the multiplexing type as String. Returns None if not multiplexed.
-    pub fn get_barcode_multiplexing_type(&self) -> PyResult<Option<String>> {
-        Ok(self
-            .0
+    pub fn get_barcode_multiplexing_type(&self) -> Option<String> {
+        self.0
             .barcode_multiplexing_type()
-            .map(|x| x.as_str().to_string()))
+            .map(|x| x.as_str().to_string())
     }
 }

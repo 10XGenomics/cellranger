@@ -4,9 +4,12 @@
 #
 
 
+from __future__ import annotations
+
 import copy
 import json
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
 import martian
 
@@ -14,19 +17,45 @@ import cellranger.constants as cr_constants
 import cellranger.rna.library as rna_library
 from cellranger.molecule_counter import get_library_info
 
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage SETUP_SAMPLES(
     in  map[] sample_defs,
     out map   gem_group_index,
-    out json  gem_group_index_json,
     out map[] libraries,
+    out json  gem_group_index_json,
     out bool  chemistry_batch_correction,
+    out bool  disable_crispr_aggr,
     src py    "stages/aggregator/setup_samples",
+) using (
+    volatile = strict,
 )
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SETUP_SAMPLES stage inputs."""
+
+    sample_defs: None | list[dict]  # TODO: be more specific with the type here
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SETUP_SAMPLES stage outputs."""
+
+    gem_group_index: dict  # TODO: be more specific with the type here
+    gem_group_index_json: mro_filetypes.json
+    libraries: list[dict]  # TODO: be more specific with the type here
+    chemistry_batch_correction: bool
+    disable_crispr_aggr: bool
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
+
+
+def main(args: StageInputs, outs: StageOutputs):
     new_gg = 0
     gg_index = {}
     libraries = []
@@ -100,7 +129,7 @@ def main(args, outs):
     outs.gem_group_index = gg_index
     outs.chemistry_batch_correction = chemistry_batch_correction
 
-    outs.target_gene_ids_csv = None
+    outs.target_gene_ids_csv = None  # FIXME: This out does not exist
     outs.disable_crispr_aggr = disable_crispr
 
     # Write the "gem group index" (a legacy structure) for Loupe

@@ -22,8 +22,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::str::{self, FromStr};
 use std::string::String;
-use strum::Display;
-use strum::IntoEnumIterator;
+use strum::{Display, IntoEnumIterator};
 use transcriptome::{Gene, Transcriptome};
 
 pub const REQUIRED_FEATURE_TAGS: &[&str] = &[
@@ -152,7 +151,13 @@ impl TargetSet {
 pub enum FeatureType {
     Gene,
     Barcode(FeatureBarcodeType),
-    ProteinExpression, // used by Xenium for in situ protein expression
+    ProteinExpression,       // used by Xenium for in situ protein expression
+    NegativeControlProbe,    // used by Xenium
+    NegativeControlCodeword, // used by Xenium
+    UnassignedCodeword,      // used by Xenium
+    GenomicControl,          // used by Xenium
+    DeprecatedCodeword,      // used by Xenium
+    Unknown,                 // used by Xenium
     Peaks,
 }
 
@@ -170,6 +175,12 @@ impl FeatureType {
     const GENE_EXP: &'static str = "Gene Expression";
     const PROTEIN_EXP: &'static str = "Protein Expression";
     const PEAKS: &'static str = "Peaks";
+    const NEGATIVE_CONTROL_PROBE: &'static str = "Negative Control Probe";
+    const NEGATIVE_CONTROL_CODEWORD: &'static str = "Negative Control Codeword";
+    const UNASSIGNED_CODEWORD: &'static str = "Unassigned Codeword";
+    const GENOMIC_CONTROL: &'static str = "Genomic Control";
+    const DEPRECATED_CODEWORD: &'static str = "Deprecated Codeword";
+    const UNKNOWN: &'static str = "Unknown";
 
     /// Return the string representation of this feature type.
     pub fn as_str(&self) -> &'static str {
@@ -178,12 +189,24 @@ impl FeatureType {
             Self::Barcode(x) => x.as_str(),
             Self::ProteinExpression => Self::PROTEIN_EXP,
             Self::Peaks => Self::PEAKS,
+            Self::NegativeControlProbe => Self::NEGATIVE_CONTROL_PROBE,
+            Self::NegativeControlCodeword => Self::NEGATIVE_CONTROL_CODEWORD,
+            Self::UnassignedCodeword => Self::UNASSIGNED_CODEWORD,
+            Self::GenomicControl => Self::GENOMIC_CONTROL,
+            Self::DeprecatedCodeword => Self::DEPRECATED_CODEWORD,
+            Self::Unknown => Self::UNKNOWN,
         }
     }
 
     const GENE_EXP_SNAKE_CASE: &'static str = "gene_expression";
     const PROTEIN_EXP_SNAKE_CASE: &'static str = "protein_expression";
     const PEAKS_SNAKE_CASE: &'static str = "peaks";
+    const NEGATIVE_CONTROL_PROBE_SNAKE_CASE: &'static str = "negative_control_probe";
+    const NEGATIVE_CONTROL_CODEWORD_SNAKE_CASE: &'static str = "negative_control_codeword";
+    const UNASSIGNED_CODEWORD_SNAKE_CASE: &'static str = "unassigned_codeword";
+    const GENOMIC_CONTROL_SNAKE_CASE: &'static str = "genomic_control";
+    const DEPRECATED_CODEWORD_SNAKE_CASE: &'static str = "deprecated_codeword";
+    const UNKNOWN_SNAKE_CASE: &'static str = "unknown";
 
     /// Return a snake_case representation of this feature type.
     pub fn as_snake_case(&self) -> &'static str {
@@ -192,6 +215,12 @@ impl FeatureType {
             Self::Barcode(bc) => bc.as_snake_case(),
             Self::ProteinExpression => Self::PROTEIN_EXP_SNAKE_CASE,
             Self::Peaks => Self::PEAKS_SNAKE_CASE,
+            Self::NegativeControlProbe => Self::NEGATIVE_CONTROL_PROBE_SNAKE_CASE,
+            Self::NegativeControlCodeword => Self::NEGATIVE_CONTROL_CODEWORD_SNAKE_CASE,
+            Self::UnassignedCodeword => Self::UNASSIGNED_CODEWORD_SNAKE_CASE,
+            Self::GenomicControl => Self::GENOMIC_CONTROL_SNAKE_CASE,
+            Self::DeprecatedCodeword => Self::DEPRECATED_CODEWORD_SNAKE_CASE,
+            Self::Unknown => Self::UNKNOWN_SNAKE_CASE,
         }
     }
 
@@ -201,6 +230,12 @@ impl FeatureType {
             Self::GENE_EXP_SNAKE_CASE => Self::Gene,
             Self::PROTEIN_EXP_SNAKE_CASE => Self::ProteinExpression,
             Self::PEAKS_SNAKE_CASE => Self::Peaks,
+            Self::NEGATIVE_CONTROL_PROBE_SNAKE_CASE => Self::NegativeControlProbe,
+            Self::NEGATIVE_CONTROL_CODEWORD_SNAKE_CASE => Self::NegativeControlCodeword,
+            Self::UNASSIGNED_CODEWORD_SNAKE_CASE => Self::UnassignedCodeword,
+            Self::GENOMIC_CONTROL_SNAKE_CASE => Self::GenomicControl,
+            Self::DEPRECATED_CODEWORD_SNAKE_CASE => Self::DeprecatedCodeword,
+            Self::UNKNOWN_SNAKE_CASE => Self::Unknown,
             _ => FeatureType::Barcode(FeatureBarcodeType::from_snake_case(s)?),
         })
     }
@@ -220,6 +255,12 @@ impl FromStr for FeatureType {
             Self::GENE_EXP => Self::Gene,
             Self::PROTEIN_EXP => Self::ProteinExpression,
             Self::PEAKS => Self::Peaks,
+            Self::NEGATIVE_CONTROL_PROBE => Self::NegativeControlProbe,
+            Self::NEGATIVE_CONTROL_CODEWORD => Self::NegativeControlCodeword,
+            Self::UNASSIGNED_CODEWORD => Self::UnassignedCodeword,
+            Self::GENOMIC_CONTROL => Self::GenomicControl,
+            Self::DEPRECATED_CODEWORD => Self::DeprecatedCodeword,
+            Self::UNKNOWN => Self::Unknown,
             _ => Self::Barcode(FeatureBarcodeType::from_str(s)?),
         })
     }
@@ -231,9 +272,15 @@ impl From<FeatureType> for LibraryType {
             FeatureType::Gene => LibraryType::Gex,
             FeatureType::Barcode(ft) => LibraryType::FeatureBarcodes(ft),
             FeatureType::Peaks => LibraryType::Atac,
-            FeatureType::ProteinExpression => {
+            FeatureType::ProteinExpression
+            | FeatureType::NegativeControlProbe
+            | FeatureType::NegativeControlCodeword
+            | FeatureType::UnassignedCodeword
+            | FeatureType::GenomicControl
+            | FeatureType::DeprecatedCodeword
+            | FeatureType::Unknown => {
                 unimplemented!(
-                    "Protein Expression can't be converted to a LibraryType; the concept of library is not valid here."
+                    "This feature type can't be converted to a LibraryType; the concept of library is not valid here."
                 )
             }
         }
@@ -247,9 +294,15 @@ impl AsMetricPrefix for FeatureType {
             Self::Gene => None,
             Self::Peaks => None,
             Self::Barcode(ft) => ft.as_metric_prefix(),
-            Self::ProteinExpression => {
+            Self::ProteinExpression
+            | Self::NegativeControlProbe
+            | Self::NegativeControlCodeword
+            | Self::UnassignedCodeword
+            | Self::GenomicControl
+            | Self::DeprecatedCodeword
+            | Self::Unknown => {
                 unimplemented!(
-                    "Protein Expression can't be converted to a metric prefix as there should be no metrics computed based on it here."
+                    "This feature type can't be converted to a metric prefix as there should be no metrics computed based on it here."
                 )
             }
         }
@@ -472,6 +525,11 @@ impl FeatureReference {
     /// Return the number of features.
     pub fn num_features(&self) -> usize {
         self.feature_defs.len()
+    }
+
+    /// Return the number of features for each feature type.
+    pub fn num_features_per_type(&self) -> HashMap<FeatureType, usize> {
+        self.feature_defs.iter().counts_by(|feat| feat.feature_type)
     }
 
     /// Create a new feature reference from a CSV file.
@@ -837,7 +895,7 @@ impl FeatureReference {
             && let Some(functional_map) = &feature_config.functional_map
         {
             for feature_id in functional_map.keys() {
-                feature_ids_in_functional_map.insert(feature_id.to_string());
+                feature_ids_in_functional_map.insert(feature_id.clone());
             }
         }
         if !feature_ids_in_functional_map.is_subset(&all_feature_ids) {
@@ -1114,7 +1172,7 @@ mod tests {
     use std::slice;
 
     // initialize insta test harness
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init() {
         // this ensures insta knows where to find its snap tests
         let cwd = std::env::current_dir().unwrap();
@@ -1138,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_genome_from_feature_id() -> Result<()> {
+    fn test_get_genome_from_feature_id() {
         let x = GenomeName::from("X");
         let ab = GenomeName::from("A_B");
         assert_eq!(get_genome_from_feature_id("A_B_C", slice::from_ref(&x)), &x);
@@ -1154,7 +1212,6 @@ mod tests {
             get_genome_from_feature_id("DEPRECATED_A_B_C", &[x.clone(), ab.clone()]),
             &ab
         );
-        Ok(())
     }
 
     #[test]

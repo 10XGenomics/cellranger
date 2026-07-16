@@ -11,7 +11,8 @@ from __future__ import annotations
 import itertools
 import json
 import os
-from collections.abc import MutableMapping
+from collections import Counter
+from collections.abc import Iterable, Mapping, MutableMapping
 from doctest import testmod
 from functools import cmp_to_key
 from typing import TYPE_CHECKING, NamedTuple
@@ -33,7 +34,7 @@ NUM_UMIS = "num_umis"
 CELL_BARCODE = "cell_barcode"
 
 
-class CellsPerFeature(MutableMapping):
+class CellsPerFeature(MutableMapping[bytes, list[bytes]]):
     """A class to hold the cells per feature.
 
     Basically a dictionary like:
@@ -115,39 +116,27 @@ class CellsPerFeature(MutableMapping):
         return os.path.getsize(filename) * 3.25 * 1.2 / 1024**3
 
     @staticmethod
-    def from_dictionary(data: dict[str | bytes, list[str | bytes]]) -> CellsPerFeature:
-        """Loads from a dictionary.
+    def from_dictionary(data: Mapping[bytes | str, Iterable[bytes | str]]) -> CellsPerFeature:
+        """Create a CellsPerFeature object from a dictionary."""
+        cells_per_feature = CellsPerFeature()
+        data_bytes = {
+            ensure_binary(tag): [ensure_binary(bc) for bc in barcodes]
+            for tag, barcodes in data.items()
+        }
+        cells_per_feature._data = data_bytes  # pylint: disable=protected-access
+        return cells_per_feature
 
-        Args:
-            data (Dict[str|bytes,List[str|bytes]]): [TODO]
-
-        Returns:
-            CallsPerFeature: object with str->bytes
-        """
-        return_value = CellsPerFeature()
-
-        for k, v in data.items():
-            k = ensure_binary(k)
-            v = [ensure_binary(x) for x in v]
-            return_value[k] = v
-        return return_value
-
-    def get_multiplets(self):
+    def get_multiplets(self) -> set[bytes]:
         """Returns barcodes that occur under multiple keys in the dictionary.
 
         Returns:
             multiplets: set of bytes representing multiplet barcodes
         """
-        multiplets = set()  # set(bytes)
-        seen_bcs = set()  # set(bytes)
-        for tag in self:
-            for bc in self[tag]:
-                if bc in seen_bcs:
-                    # barcode was seen in another sample or fingerprint
-                    multiplets.add(bc)
-                seen_bcs.add(bc)
-
-        return multiplets
+        return {
+            barcode
+            for barcode, count in Counter(itertools.chain.from_iterable(self.values())).items()
+            if count >= 2
+        }
 
     def get_set_of_unique_bcs(self):
         """Get a list of all the unique barcodes from all assigned features.
@@ -158,7 +147,7 @@ class CellsPerFeature(MutableMapping):
         return set(itertools.chain.from_iterable(self._data.values()))
 
 
-class SampleBarcodes(CellsPerFeature):  # pylint: disable=too-many-ancestors
+class SampleBarcodes(CellsPerFeature):
     """A class to hold the barcodes per sample.
 
     Acts as a dictionary like:
@@ -170,6 +159,21 @@ class SampleBarcodes(CellsPerFeature):  # pylint: disable=too-many-ancestors
     We want the contents to be bytes, following convention.
     We are just renaming CellsPerFeature because it does exactly what we need.
     """
+
+    @staticmethod
+    def from_dictionary(data: Mapping[bytes | str, Iterable[bytes | str]]) -> SampleBarcodes:
+        """Create a SampleBarcodes object from a dictionary."""
+        data_bytes = CellsPerFeature.from_dictionary(data)._data  # pylint: disable=protected-access
+        sample_barcodes = SampleBarcodes()
+        sample_barcodes._data = data_bytes  # pylint: disable=protected-access
+        return sample_barcodes
+
+    @staticmethod
+    def load_from_file(filename: str | bytes | None) -> SampleBarcodes:
+        data = CellsPerFeature.load_from_file(filename)._data  # pylint: disable=protected-access
+        sample_barcodes = SampleBarcodes()
+        sample_barcodes._data = data  # pylint: disable=protected-access
+        return sample_barcodes
 
     def get_multiplets(self):
         """Override the parent class' get_multiplets.

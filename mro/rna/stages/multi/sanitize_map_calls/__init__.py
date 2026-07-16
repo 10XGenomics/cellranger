@@ -4,8 +4,17 @@
 #
 """A helper stage to pipe through map called stages to sidestep martian issue."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import martian
+
 import cellranger.cr_io as cr_io
 from cellranger.fast_utils import MultiGraph
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage SANITIZE_MAP_CALLS(
@@ -36,6 +45,45 @@ stage SANITIZE_MAP_CALLS(
 ) retain (
     metrics_summary,
 """
+
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SANITIZE_MAP_CALLS stage inputs."""
+
+    multi_graph: None | mro_filetypes.json
+    in_crispr_analysis: None | dict[str, None | mro_filetypes.path]
+    in_rna_analysis: None | dict[str, None | mro_filetypes.path]
+    in_cloupe_file: None | dict[str, None | mro_filetypes.cloupe]
+    in_metrics_summary: None | dict[str, None | mro_filetypes.json]
+    in_sample_projection_plots: None | dict[str, None | mro_filetypes.json]
+    in_sample_barcode_rank_plots: None | dict[str, None | mro_filetypes.json]
+    in_sample_treemap_plots: None | dict[str, None | mro_filetypes.json]
+    in_vdj_t_analyzer: None | dict[str, Any]
+    in_vdj_t_gd_analyzer: None | dict[str, Any]
+    in_vdj_b_analyzer: None | dict[str, Any]
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SANITIZE_MAP_CALLS stage outputs."""
+
+    crispr_analysis: None | dict[str, None | mro_filetypes.path]
+    rna_analysis: None | dict[str, None | mro_filetypes.path]
+    cloupe_file: None | dict[str, None | mro_filetypes.cloupe]
+    metrics_summary: None | dict[str, None | mro_filetypes.json]
+    sample_projection_plots: None | dict[str, None | mro_filetypes.json]
+    sample_barcode_rank_plots: None | dict[str, None | mro_filetypes.json]
+    sample_treemap_plots: None | dict[str, None | mro_filetypes.json]
+    vdj_t_analyzer: None | dict[str, Any]
+    vdj_t_gd_analyzer: None | dict[str, Any]
+    vdj_b_analyzer: None | dict[str, Any]
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """SANITIZE_MAP_CALLS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """SANITIZE_MAP_CALLS chunk outputs."""
 
 
 # pylint: disable=too-few-public-methods,too-many-instance-attributes
@@ -121,7 +169,7 @@ class VDJ_ANALYZER:
         self.report = VdjReport().__dict__
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     outs.rna_analysis = cr_io.recursive_hard_link_dict(args.in_rna_analysis)
     outs.crispr_analysis = cr_io.recursive_hard_link_dict(args.in_crispr_analysis)
     outs.cloupe_file = cr_io.recursive_hard_link_dict(args.in_cloupe_file)

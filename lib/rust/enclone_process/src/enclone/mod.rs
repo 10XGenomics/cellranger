@@ -37,7 +37,7 @@ pub(crate) trait BarcodeFilter<T> {
                 continue;
             };
             for (dataset_id, barcode) in self.fate_keys(item) {
-                fate[dataset_id].insert(barcode.to_string(), *reason);
+                fate[dataset_id].insert(barcode.clone(), *reason);
             }
         }
         erase_if_iter(items, filter_result.iter().map(Option::is_some));

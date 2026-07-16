@@ -12,38 +12,25 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-import scipy.sparse
 
 import cellranger.analysis.clustering as cr_clustering
 import cellranger.analysis.constants as analysis_constants
 import cellranger.analysis.io as analysis_io
 from cellranger.analysis.analysis_types import DifferentialExpression
-from cellranger.fast_utils import (  # pylint: disable=no-name-in-module, invalid-name
-    compute_sseq_params_o3,
-    sseq_differential_expression_o3,
-)
+from cellranger.fast_utils import compute_sseq_params_o3, sseq_differential_expression_o3
 
 if TYPE_CHECKING:
-    import scipy.stats
+    import scipy.sparse
+
+    from cellranger.fast_utils import SSeqParamsO3
+    from cellranger.matrix import CountMatrix
 
 SSEQ_ZETA_QUANTILE = 0.995
 
 
-def estimate_size_factors(x: scipy.sparse.csc_matrix) -> np.ndarray[int, np.dtype[np.float64]]:
-    """Estimate size factors (related to cell RNA content and GEM-to-GEM technical variance).
-
-    Args:
-      x: Sparse matrix (csc) of counts (feature x cell)
-
-    Returns:
-      Array of floats, one per cell.
-    """
-    counts_per_cell = np.squeeze(np.asarray(x.sum(axis=0)))
-    size_factors = counts_per_cell.astype(np.float64) / np.median(counts_per_cell)
-    return size_factors
-
-
-def compute_sseq_params(x: scipy.sparse.csc_matrix, zeta_quantile=SSEQ_ZETA_QUANTILE):
+def compute_sseq_params(
+    x: scipy.sparse.csc_matrix, zeta_quantile: float = SSEQ_ZETA_QUANTILE
+) -> SSeqParamsO3:
     """Compute global parameters for the sSeq differential expression method.
 
     The key parameters are the shrunken feature-wise dispersions.
@@ -66,22 +53,16 @@ def compute_sseq_params(x: scipy.sparse.csc_matrix, zeta_quantile=SSEQ_ZETA_QUAN
     return compute_sseq_params_o3(x, zeta_quantile)
 
 
-def get_local_sseq_params(x: scipy.sparse.csc_matrix, group_a, group_b):
-    """Compute locally-distinguishing sseq parameters.
-
-    For perturbation vs control analysis for CRISPR
-    and meta sample comparison within an aggregated matrix.
-    """
-    print("...Computing params for this comparison...")
-    sys.stdout.flush()
-    both_conditions = np.concatenate([group_a, group_b])
-    matrix_groups: scipy.sparse.csc_matrix = x[:, both_conditions]
-    return get_local_sseq_params_from_presubset_matrix(matrix_groups, len(group_a), len(group_b))
-
-
 def get_local_sseq_params_from_presubset_matrix(
-    matrix_groups: scipy.sparse.csc_matrix, len_group_a, len_group_b
-):
+    matrix_groups: scipy.sparse.csc_matrix,
+    len_group_a: int,
+    len_group_b: int,
+) -> tuple[
+    SSeqParamsO3,
+    np.ndarray[tuple[int], np.dtype[np.int_]],
+    np.ndarray[tuple[int], np.dtype[np.int_]],
+    scipy.sparse.csc_matrix,
+]:
     """Get SSEQ Params.
 
     If matrix has already been subset down to concatenation of group A and B, use this method to avoid making another
@@ -90,32 +71,45 @@ def get_local_sseq_params_from_presubset_matrix(
     if not matrix_groups.has_sorted_indices:
         matrix_groups = matrix_groups.sorted_indices()
     nbc = len_group_a + len_group_b
+    assert matrix_groups.shape is not None
     assert matrix_groups.shape[1] == nbc, "Bad Argument Passed!"
-    new_group_a = np.fromiter(range(len_group_a), dtype=int, count=len_group_a)
-    new_group_b = np.fromiter(range(len_group_a, nbc), dtype=int, count=nbc - len_group_a)
+    new_group_a: np.ndarray[tuple[int], np.dtype[np.int_]] = np.fromiter(
+        range(len_group_a), dtype=int, count=len_group_a
+    )
+    new_group_b: np.ndarray[tuple[int], np.dtype[np.int_]] = np.fromiter(
+        range(len_group_a, nbc), dtype=int, count=nbc - len_group_a
+    )
     return compute_sseq_params(matrix_groups), new_group_a, new_group_b, matrix_groups
 
 
-def adjust_pvalue_bh(p):
+def adjust_pvalue_bh(p: np.ndarray[tuple[int], np.dtype[np.float64]]):
     """Multiple testing correction of p-values using the Benjamini-Hochberg procedure."""
-    descending = np.argsort(p)[::-1]
+    descending: np.ndarray[tuple[int], np.dtype[np.intp]] = np.argsort(p)[::-1]
     # q = p * N / k where p = p-value, N = # tests, k = p-value rank
     scale = float(len(p)) / np.arange(len(p), 0, -1)
-    # pylint: disable=no-member
+
     qual = np.minimum(1, np.minimum.accumulate(scale * p[descending]))
 
     # Return to original order
     return qual[np.argsort(descending)]
 
 
-def sseq_differential_expression(x, cond_a, cond_b, sseq_params, big_count=900, threads=1):
+def sseq_differential_expression(
+    x: scipy.sparse.csc_matrix,
+    cond_a: np.ndarray[tuple[int], np.dtype[np.int_]],
+    cond_b: np.ndarray[tuple[int], np.dtype[np.int_]],
+    sseq_params: SSeqParamsO3,
+    *,
+    big_count: int = 900,
+    threads: int = 1,
+) -> pd.DataFrame:
     """Run sSeq pairwise differential expression test.
 
     Args:
       x: Sparse matrix (csc) of counts (feature x cell)
       cond_a (np.array(int)): Indices of cells in group A
       cond_b (np.array(int)): Indices of cells in group B
-      sseq_params (dict): Precomputed global parameters
+      sseq_params (SSeqParamsO3): Precomputed global parameters
       big_count (int): Use asymptotic approximation if both counts > this
       threads (int): How many threads to use.
 
@@ -147,10 +141,10 @@ def sseq_differential_expression(x, cond_a, cond_b, sseq_params, big_count=900, 
 
 
 def run_differential_expression(
-    matrix,
-    clusters: np.ndarray[Any, np.dtype[np.integer]],
-    sseq_params: dict[str, Any] | None = None,
-):
+    matrix: CountMatrix,
+    clusters: np.ndarray[Any, np.dtype[np.int_]],
+    sseq_params: SSeqParamsO3 | None = None,
+) -> DifferentialExpression:
     """Compute differential expression for each cluster vs all other cells.
 
     Args:
@@ -185,12 +179,12 @@ def run_differential_expression(
 
 
 def save_differential_expression_csv(
-    clustering_key,
-    de,  # pylint: disable=invalid-name
-    matrix,
-    base_dir,
+    clustering_key: str | None,
+    de: DifferentialExpression,  # pylint: disable=invalid-name
+    matrix: CountMatrix,
+    base_dir: str,
     cluster_names=None,
-    file_name="differential_expression",
+    file_name: str = "differential_expression",
     cell_types=None,
 ):
     """Write diffexp results to CSV."""
@@ -230,8 +224,11 @@ def save_differential_expression_csv(
 
 
 def save_differential_expression_csv_from_features(
-    clustering_key, de, diff_expression_prefixes, base_dir  # pylint: disable=invalid-name
-):
+    clustering_key: str,
+    de: DifferentialExpression,
+    diff_expression_prefixes,
+    base_dir: str,
+) -> None:
     """Write diffexp results to CSV."""
     out_dir = os.path.join(base_dir, clustering_key)
     os.makedirs(out_dir, exist_ok=True)

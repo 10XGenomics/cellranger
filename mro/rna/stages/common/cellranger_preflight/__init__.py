@@ -2,17 +2,27 @@
 #
 # Copyright (c) 2019 10X Genomics, Inc. All rights reserved.
 #
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import martian
 
 import cellranger.csv_utils as cr_csv_utils
 import cellranger.preflight as cr_preflight
 from cellranger.feature_ref import FeatureDefException
+from cellranger.sample_def import SampleDef
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage CELLRANGER_PREFLIGHT(
     in  bool             full_check,
     in  string           chemistry,
-    in  map[]            sample_def,
+    in  SampleDef[]      sample_def,
     in  csv              target_set,
     in  path             reference_path,
     in  csv              feature_reference,
@@ -29,11 +39,41 @@ stage CELLRANGER_PREFLIGHT(
 """
 
 
-def run_preflight_checks(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CELLRANGER_PREFLIGHT stage inputs."""
+
+    full_check: bool
+    chemistry: str
+    sample_def: list[mro_structs.SampleDef]
+    target_set: mro_filetypes.csv
+    reference_path: mro_filetypes.path
+    feature_reference: mro_filetypes.csv
+    recovered_cells: mro_structs.CellCallingParam
+    force_cells: mro_structs.CellCallingParam
+    r1_length: int
+    r2_length: int
+    targeting_method: str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CELLRANGER_PREFLIGHT stage outputs."""
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CELLRANGER_PREFLIGHT chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """CELLRANGER_PREFLIGHT chunk outputs."""
+
+
+def run_preflight_checks(args: ChunkInputs):
     cr_preflight.check_os()
 
+    sdefs = [SampleDef.from_dict(sdef) for sdef in args.sample_def]
+
     cr_preflight.check_sample_info(
-        args.sample_def, args.reference_path, args.full_check, args.feature_reference
+        sdefs, args.reference_path, args.full_check, args.feature_reference
     )
 
     cr_preflight.check_common_preflights(
@@ -45,7 +85,7 @@ def run_preflight_checks(args):
         args.force_cells,
     )
 
-    cr_preflight.check_feature_preflights(args.sample_def, args.feature_reference)
+    cr_preflight.check_feature_preflights(sdefs, args.feature_reference)
     cr_preflight.check_targeting_preflights(
         args.target_set,
         args.reference_path,
@@ -56,7 +96,7 @@ def run_preflight_checks(args):
     )
 
 
-def main(args, outs):
+def main(args: ChunkInputs, _outs: ChunkOutputs):
     try:
         run_preflight_checks(args)
     except (

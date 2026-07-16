@@ -5,7 +5,6 @@ use crate::{BamFile, env};
 use anyhow::{Result, bail};
 use barcode::Barcode;
 use cr_bam::bam::{BamPosSort, estimate_memory_for_range_gib};
-use cr_types::chemistry::ChemistryName;
 use cr_types::rna_read::{RnaChunk, make_library_info};
 use cr_types::types::{SampleAssignment, SampleBarcodes};
 use cr_types::{
@@ -14,6 +13,8 @@ use cr_types::{
 use itertools::Itertools;
 use martian::prelude::*;
 use martian_derive::{MartianStruct, make_mro};
+use martian_filetypes::FileTypeRead;
+use martian_filetypes::json_file::JsonFile;
 use metric::TxHashMap;
 use rust_htslib::bam::header::HeaderRecord;
 use rust_htslib::bam::record::Aux;
@@ -111,7 +112,7 @@ pub struct WritePosBam;
 pub struct StageInputs {
     pub bam_header: Option<SamHeaderFile>,
     pub alignments: Vec<AlignShardFile>,
-    pub read_chunks: Vec<RnaChunk>,
+    pub read_chunks: JsonFile<Vec<RnaChunk>>,
     pub target_set_name: Option<String>,
     pub sample_barcodes: Option<SampleBarcodesFile>,
     pub slide_serial_capture_area: Option<String>,
@@ -167,8 +168,7 @@ fn attach_read_group_tags<'a>(
 fn attach_bamtofastq_comments(header: &mut Header, read_chunks: &[RnaChunk]) {
     let Some(bamtofastq_header_comments) = read_chunks
         .iter()
-        .filter(|x| x.chemistry.name != ChemistryName::Custom)
-        .map(|x| x.chemistry.name.bamtofastq_headers())
+        .filter_map(RnaChunk::bamtofastq_headers)
         .unique()
         .at_most_one()
         .unwrap()
@@ -290,11 +290,12 @@ impl MartianStage for WritePosBam {
     ) -> Result<Self::ChunkOutputs> {
         let sample_barcodes = SampleBarcodes::read_from_json(args.sample_barcodes.as_ref())?;
         let barcode_to_sample = BarcodeToSample::construct(&sample_barcodes);
+        let read_chunks = args.read_chunks.read()?;
 
         // Read in the header text & initialize the BAM file with it.
         let header = make_bam_header(
             args.bam_header.as_deref(),
-            &args.read_chunks,
+            &read_chunks,
             args.target_set_name.as_deref(),
             chunk_args.write_header,
             args.slide_serial_capture_area,
@@ -351,10 +352,11 @@ impl MartianStage for WritePosBam {
         chunk_outs: Vec<Self::ChunkOutputs>,
         rover: MartianRover,
     ) -> Result<Self::StageOutputs> {
+        let read_chunks = args.read_chunks.read()?;
         //Determine the time of BAM index needed
         let header: Header = make_bam_header(
             args.bam_header.as_deref(),
-            &args.read_chunks,
+            &read_chunks,
             args.target_set_name.as_deref(),
             false,
             args.slide_serial_capture_area,
@@ -422,17 +424,20 @@ mod tests {
     use super::*;
     use crate::testing::correctness::check_bam_file_correctness;
     use cr_types::LibraryType;
-    use cr_types::chemistry::ChemistryDef;
+    use cr_types::chemistry::{ChemistryDef, ChemistryName};
+    use cr_types::sample_def::FastqMode;
     use cr_types::types::SampleAssignment::{Assigned, Unassigned};
-    use fastq_set::read_pair_iter::InputFastqs;
+    use fastq_set::read_pair_iter::FastqSet;
+    use std::path::PathBuf;
 
-    fn get_test_chunk() -> RnaChunk {
-        use cr_types::sample_def::SampleDef;
-        RnaChunk::new(
+    fn get_test_chunks_data() -> Vec<RnaChunk> {
+        use cr_types::sample_def::SampleDefBuilder;
+        let mut chunk0 = RnaChunk::new(
             &ChemistryDef::named(ChemistryName::FivePrimePE),
-            &SampleDef::default(),
+            &SampleDefBuilder::new(FastqMode::BCL_PROCESSOR, PathBuf::new()).build(),
+            None,
             LibraryType::Gex,
-            InputFastqs {
+            FastqSet {
                 r1: String::default(),
                 r2: None,
                 i1: None,
@@ -443,13 +448,24 @@ mod tests {
             0,
             0,
         )
-        .expect("test setup failed")
+        .expect("test setup failed");
+        let mut chunk1 = chunk0.clone();
+        chunk0.read_group = "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:1".to_string();
+        chunk1.read_group = "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:2".to_string();
+        vec![chunk0, chunk1]
+    }
+
+    fn get_test_chunks_file(dir: &Path) -> JsonFile<Vec<RnaChunk>> {
+        use martian_filetypes::FileTypeWrite;
+        let file = JsonFile::<Vec<RnaChunk>>::from(dir.join("read_chunks.json"));
+        file.write(&get_test_chunks_data()).unwrap();
+        file
     }
 
     #[test]
     #[should_panic]
     fn test_fail_bam_comparison() {
-        let chunk = get_test_chunk();
+        let chunks_dir = tempfile::tempdir().unwrap();
         let args = StageInputs {
             bam_header: Some(SamHeaderFile::from(
                 "test/multi/write_bam_multi/test1/bam_header.sam",
@@ -457,16 +473,7 @@ mod tests {
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
-            read_chunks: vec![
-                RnaChunk {
-                    read_group: "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:1".to_string(),
-                    ..chunk.clone()
-                },
-                RnaChunk {
-                    read_group: "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:2".to_string(),
-                    ..chunk
-                },
-            ],
+            read_chunks: get_test_chunks_file(chunks_dir.path()),
             target_set_name: None,
             sample_barcodes: None,
             slide_serial_capture_area: None,
@@ -482,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_single_sample() {
-        let chunk = get_test_chunk();
+        let tmp_dir = tempfile::tempdir().unwrap();
         let args = StageInputs {
             bam_header: Some(SamHeaderFile::from(
                 "test/multi/write_bam_multi/test1/bam_header.sam",
@@ -490,22 +497,12 @@ mod tests {
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
-            read_chunks: vec![
-                RnaChunk {
-                    read_group: "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:1".to_string(),
-                    ..chunk.clone()
-                },
-                RnaChunk {
-                    read_group: "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:2".to_string(),
-                    ..chunk
-                },
-            ],
+            read_chunks: get_test_chunks_file(tmp_dir.path()),
             target_set_name: None,
             sample_barcodes: None,
             slide_serial_capture_area: None,
         };
 
-        let tmp_dir = tempfile::tempdir().unwrap();
         let outs = WritePosBam.test_run(&tmp_dir, args).unwrap();
         check_bam_file_correctness(
             &outs.pos_sorted_bam.unwrap().bam_file,
@@ -516,8 +513,7 @@ mod tests {
 
     #[test]
     fn test_multiple_sample() {
-        let chunk = get_test_chunk();
-
+        let tmp_dir = tempfile::tempdir().unwrap();
         let args = StageInputs {
             bam_header: Some(SamHeaderFile::from(
                 "test/multi/write_bam_multi/test1/bam_header.sam",
@@ -525,22 +521,12 @@ mod tests {
             alignments: vec![AlignShardFile::from(
                 "test/multi/write_bam_multi/test1/pos_sorted.asf",
             )],
-            read_chunks: vec![
-                RnaChunk {
-                    read_group: "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:1".to_string(),
-                    ..chunk.clone()
-                },
-                RnaChunk {
-                    read_group: "dev_pbmc1k_5p_micro_42172:0:1:H2NV3DMXX:2".to_string(),
-                    ..chunk
-                },
-            ],
+            read_chunks: get_test_chunks_file(tmp_dir.path()),
             target_set_name: None,
             sample_barcodes: Some("test/multi/write_bam_multi/test1/sample_barcodes.json".into()),
             slide_serial_capture_area: None,
         };
 
-        let tmp_dir = tempfile::tempdir().unwrap();
         let outs = WritePosBam.test_run(&tmp_dir, args).unwrap();
         check_bam_file_correctness(
             &outs

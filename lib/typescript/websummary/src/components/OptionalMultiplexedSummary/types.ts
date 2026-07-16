@@ -90,7 +90,7 @@ export type SampleWebSummary = {
   multiplexing_barcode_ids: string[];
   antibody_tab?: TabData;
   antigen_tab?: TabData;
-  cell_annotation_tab?: TabData;
+  cell_annotation_tabs?: TabData[];
   crispr_tab?: TabData;
   custom_feature_tab?: TabData;
   gex_tab?: TabData;

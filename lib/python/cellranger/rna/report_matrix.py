@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from functools import reduce
+from typing import TYPE_CHECKING
 
 import h5py as h5
 import numpy as np
@@ -21,13 +22,19 @@ import cellranger.utils as cr_utils
 import tenkit.stats as tk_stats
 from cellranger import csv_utils
 
+if TYPE_CHECKING:
+    from collections.abc import Collection, Mapping
+    from typing import Any
 
-def _get_total_reads(summary, library_type):
+    from cellranger.matrix import CountMatrix, CountMatrixView
+
+
+def _get_total_reads(summary: Mapping, library_type: str) -> int:
     prefix = rna_library.get_library_type_metric_prefix(library_type)
     return int(summary.get(prefix + "total_read_pairs", 0))
 
 
-def _get_conf_mapped_reads(summary, genomes, library_type):
+def _get_conf_mapped_reads(summary: Mapping, genomes: Collection[str], library_type: str) -> float:
     prefix = rna_library.get_library_type_metric_prefix(library_type)
     conf_mapped_metrics = [
         prefix
@@ -45,7 +52,10 @@ def _get_conf_mapped_reads(summary, genomes, library_type):
     return sum(float(summary.get(metric, 0)) * float(total_reads) for metric in conf_mapped_metrics)
 
 
-def _get_barcode_summary_h5_indices(summary_h5: h5.File, barcodes: list[bytes]):
+def _get_barcode_summary_h5_indices(
+    summary_h5: h5.File,
+    barcodes: Collection[bytes],
+) -> np.ndarray[tuple[int], np.dtype[np.intp]]:
     """Get the indices into a barcode summary HDF5 file for the given barcodes.
 
     Does NOT preserve order of the barcodes argument.
@@ -65,29 +75,29 @@ def _get_barcode_summary_h5_indices(summary_h5: h5.File, barcodes: list[bytes]):
 
 
 MIN_COUNTS_PER_BARCODE = 2
-MATRIX_REPORT_READ_TYPES = [
+MATRIX_REPORT_READ_TYPES = (
     cr_constants.CONF_MAPPED_BC_READ_TYPE,
     cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE,
-]
-MATRIX_USE_MATRIX_FOR_READ_TYPE = [cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE]
+)
+MATRIX_USE_MATRIX_FOR_READ_TYPE = (cr_constants.CONF_MAPPED_DEDUPED_READ_TYPE,)
 
 
 def _report_genome_agnostic_metrics(
-    ftype,
-    matrix,
-    barcode_summary_h5,
-    recovered_cells,
-    sample_bc_indices: list[int] | None,
+    ftype: str,
+    matrix: CountMatrix | CountMatrixView,
+    barcode_summary_h5: h5.File,
+    recovered_cells: int | None,
+    sample_bc_indices: np.ndarray[tuple[int], np.dtype[np.intp]] | None,
     cell_bcs_union: set[bytes],
     matrix_cell_bc_indices: list[int],
-    bc_summary_cell_bc_indices: list[int],
-    total_reads,
-    gex_reads_per_barcode,
-    total_conf_mapped_reads,
-    library_prefix,
-):
+    bc_summary_cell_bc_indices: list[int] | np.ndarray[tuple[int], np.dtype[np.intp]],
+    total_reads: int,
+    gex_reads_per_barcode: Mapping[bytes, int] | None,
+    total_conf_mapped_reads: float,
+    library_prefix: str,
+) -> dict[str, Any]:
     """Report metrics that are computed across all barcodes and all genomes."""
-    d = {}
+    d: dict[str, Any] = {}
 
     matrix = matrix.view()
 
@@ -117,6 +127,7 @@ def _report_genome_agnostic_metrics(
     d["reads_per_cell"] = mean_reads_per_cell
 
     if ftype == rna_library.GENE_EXPRESSION_LIBRARY_TYPE:
+        assert gex_reads_per_barcode is not None
         assert isinstance(next(iter(gex_reads_per_barcode.keys())), bytes)
         # Report mean reads in cell per cell across all genomes.
         n_filtered_reads = sum(
@@ -259,15 +270,15 @@ def _report_genome_agnostic_metrics(
 
 
 def _report(
-    matrix: cr_matrix.CountMatrixView,
+    matrix: CountMatrixView,
     genome: str,
     barcode_summary_h5: h5.File,
     matrix_cell_bc_indices: list[int],
-    bc_summary_cell_bc_indices: list[int],
-    sample_bc_indices: list[int] | None,
+    bc_summary_cell_bc_indices: list[int] | np.ndarray[tuple[int], np.dtype[np.intp]],
+    sample_bc_indices: list[int] | np.ndarray[tuple[int], np.dtype[np.intp]] | None,
     library_prefix: str,
-):
-    d = {}
+) -> dict[str, Any]:
+    d: dict[str, Any] = {}
     matrix = matrix.view()
 
     filtered_mat = matrix.select_barcodes(matrix_cell_bc_indices)
@@ -391,13 +402,13 @@ def load_per_barcode_metrics(per_barcode_metrics_path: str | bytes) -> dict[byte
 
 
 def report_genomes(
-    matrix: cr_matrix.CountMatrix,
-    reads_summary,
+    matrix: CountMatrix,
+    reads_summary: Mapping,
     barcode_summary_h5_path: bytes | str,
     per_barcode_metrics_path: bytes | str,
-    recovered_cells,
-    sample_bc_seqs,
-    cell_bc_seqs,
+    recovered_cells: int | None,
+    sample_bc_seqs: np.ndarray[tuple[int], np.dtype[np.bytes_]] | None,
+    cell_bc_seqs: dict[str, set[bytes]],
 ):
     """Report on all genomes in this matrix."""
     barcode_summary_h5 = h5.File(ensure_binary(barcode_summary_h5_path), "r")
@@ -471,6 +482,12 @@ def report_genomes(
                 for key, value in genome_summary.items():
                     key = "_".join([genome, key])
                     m[key] = value
+
+            # Compute genome-agnostic median/mean UMI per cell across all genomes
+            if len(cell_bcs_union_indices) > 0:
+                counts_per_bc = submatrix.select_barcodes(cell_bcs_union_indices).sum(axis=0)
+                m["filtered_bcs_median_counts"] = float(np.median(counts_per_bc))
+                m["filtered_bcs_mean_counts"] = float(np.mean(counts_per_bc))
         else:
             # This feature has no genomes
             genome_summary = _report(

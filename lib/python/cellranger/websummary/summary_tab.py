@@ -21,7 +21,6 @@ import cellranger.websummary.plotly_tools as pltly
 from cellranger.feature.throughputs import (
     HT_THROUGHPUT,
     INCONSISTENT_THROUGHPUT_METRIC,
-    LT_THROUGHPUT,
     MT_THROUGHPUT,
     THROUGHPUT_INFERRED_METRIC,
 )
@@ -461,6 +460,7 @@ def _get_chemistry_description(
             "Visium V4 Slide": "v2",
             "Visium V5 Slide": "v2",
             "Visium HD v1": "v1",
+            "Visium HD RCXL1": "v1",
         }.get(chemistry_description)
         assay_base = {"Visium HD v1": "HD probe-based"}.get(chemistry_description, "Probe-based")
         assay = f"{assay_base} {assay_version}" if assay_version else assay_base
@@ -472,6 +472,8 @@ def _get_chemistry_description(
     sanitised_chemistry_description = {
         "Visium HD v1": "Visium HD H1 Slide",
         "Visium HD v1 - 3'": "Visium HD H1 Slide",
+        "Visium HD v1 - 11mm": "Visium HD H2 Slide",
+        "Visium HD v1 - 3' 11mm": "Visium HD H2 Slide",
     }.get(chemistry_description, chemistry_description)
     return f"{sanitised_chemistry_description} - {assay}"
 
@@ -481,7 +483,6 @@ def _add_throughput_to_chemistry(chemistry_desc: str, sample_data: SampleData) -
 
     chemistry_with_throughput = chemistry_desc
     if throughput_inferred == HT_THROUGHPUT and chemistry_desc[-2:] not in [
-        LT_THROUGHPUT,
         MT_THROUGHPUT,
         HT_THROUGHPUT,
     ]:
@@ -655,6 +656,7 @@ def pipeline_info_table(  # noqa: PLR0912, pylint: disable=too-many-statements,t
     # add filter_probes mode description to the Sample table
     if sample_data.targeting_method == TARGETING_METHOD_TL:
         rows.append(["Filter Probes", "Off" if sample_properties.filter_probes is False else "On"])
+    # TODO: Handle skip_cell_annotation input
 
     # add cytassist metadata
     if (

@@ -3,6 +3,7 @@ use super::probe_set_reference::TargetSetFile;
 use crate::GenomeName;
 use crate::probe_set::ProbeSetReferenceMetadata;
 use anyhow::{Context, Result, ensure};
+use digest_io::IoWrapper;
 use itertools::Itertools;
 use martian::MartianFileType;
 use martian_derive::MartianStruct;
@@ -192,12 +193,12 @@ impl JsonReport for ReferenceInfo {
 /// Compute the SHA1 checksum of the file at the provided path.
 /// Return an error if the computed checksum doesn't match the expected value.
 fn sha1_checksum_file(path: &Path, expected: &str) -> Result<()> {
-    let mut hasher = Sha1::new();
+    let mut hasher = IoWrapper(Sha1::new());
     std::io::copy(
         &mut File::open(path).with_context(|| path.display().to_string())?,
         &mut hasher,
     )?;
-    let computed = format!("{:x}", hasher.finalize());
+    let computed = format!("{:02x}", hasher.0.finalize().iter().format(""));
     ensure!(
         expected == computed,
         ChecksumMismatch {

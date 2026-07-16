@@ -103,7 +103,7 @@ fn top_shared_cdr3(
         rows.push(Reverse(VdjAggrSharedCdr3Row {
             num_categories: per_cat_hist.len(),
             num_cells: per_cat_hist.raw_counts().map(|c| *c as usize).sum(),
-            cdr3_aa: cdr3_aa.to_string(),
+            cdr3_aa: cdr3_aa.clone(),
         }));
         while rows.len() > TOP_N {
             rows.pop();

@@ -1,7 +1,7 @@
 #![deny(missing_docs)]
 use anyhow::Result;
-use barcode::BcSegSeq;
 use barcode::whitelist::BarcodeId;
+use barcode::{BcSegSeq, BcSeq};
 use cr_h5::count_matrix::{BarcodeWithGemGroup, CountMatrix, CountMatrixStreaming};
 use cr_types::reference::feature_reference::FeatureType;
 use itertools::{Itertools, process_results};
@@ -9,22 +9,40 @@ use metric::TxHashMap;
 use std::collections::HashMap;
 use std::ops::Range;
 
+/// Trait for barcode types that can be constructed from bytes.
+pub trait BarcodeFromBytes: Eq + std::hash::Hash + std::fmt::Display {
+    /// Construct a barcode from a byte slice.
+    fn from_bytes(bytes: &[u8]) -> Self;
+}
+
+impl BarcodeFromBytes for BcSeq {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        BcSeq::from_bytes(bytes)
+    }
+}
+
+impl BarcodeFromBytes for BcSegSeq {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        BcSegSeq::from_bytes(bytes)
+    }
+}
+
 /// Return the ID of this read-level multiplexing sequence.
-pub fn map_multiplexing_seq_to_id(
+pub fn map_multiplexing_seq_to_id<T: BarcodeFromBytes>(
     barcode: &BarcodeWithGemGroup,
-    seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
+    seq_to_id_map: &TxHashMap<T, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
 ) -> BarcodeId {
-    let seq = &BcSegSeq::from_bytes(&barcode.as_bytes()[multiplexing_seq_range.clone()]);
+    let seq = T::from_bytes(&barcode.as_bytes()[multiplexing_seq_range.clone()]);
     *seq_to_id_map
-        .get(seq)
+        .get(&seq)
         .unwrap_or_else(|| panic!("barcode not found: {seq}"))
 }
 
 /// Return the valid barcodes for each read-level multiplexing identifier
-pub fn get_barcodes_per_multiplexing_identifier(
+pub fn get_barcodes_per_multiplexing_identifier<T: BarcodeFromBytes>(
     matrix: &CountMatrixStreaming,
-    seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
+    seq_to_id_map: &TxHashMap<T, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
 ) -> TxHashMap<BarcodeId, Vec<String>> {
     matrix
@@ -44,9 +62,9 @@ pub fn get_barcodes_per_multiplexing_identifier(
 
 /// Return the number of UMIs for each read-level multiplexing identifier
 /// for all feature types.
-pub fn get_umi_per_multiplexing_identifier(
+pub fn get_umi_per_multiplexing_identifier<T: BarcodeFromBytes>(
     matrix: &CountMatrixStreaming,
-    seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
+    seq_to_id_map: &TxHashMap<T, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
 ) -> Result<HashMap<FeatureType, TxHashMap<BarcodeId, i64>>> {
     process_results(matrix.counts()?, |counts| {
@@ -75,9 +93,9 @@ pub fn get_umi_per_multiplexing_identifier(
 
 /// Return the number of UMIs for each read-level multiplexing identifier
 /// for the specified feature type.
-pub fn get_umi_per_multiplexing_identifier_for_feature_type(
+pub fn get_umi_per_multiplexing_identifier_for_feature_type<T: BarcodeFromBytes>(
     matrix: &CountMatrixStreaming,
-    seq_to_id_map: &TxHashMap<BcSegSeq, BarcodeId>,
+    seq_to_id_map: &TxHashMap<T, BarcodeId>,
     multiplexing_seq_range: &Range<usize>,
     feature_type: FeatureType,
 ) -> Result<TxHashMap<BarcodeId, i64>> {

@@ -12,6 +12,7 @@ import cellranger.webshim.common as cr_webshim
 import cellranger.webshim.constants.shared as shared
 from cellranger.vdj.clonotype import extract_clonotype_id_from_name
 from cellranger.webshim.constants.shared import CELLRANGER_COMMAND_NAME, PIPELINE_VDJ
+from cellranger.websummary.cell_barcode_dataset import build_cell_barcode_dataset
 from cellranger.websummary.metrics import VDJMetricAnnotations
 from cellranger.websummary.react_components import WebSummaryData
 from cellranger.websummary.react_summarize import write_html_file
@@ -515,6 +516,10 @@ def vdj_web_summary_json(metadata, sample_properties, sample_data):
     web_sum_data = WebSummaryData(sample_properties, CELLRANGER_COMMAND_NAME, PIPELINE_VDJ)
     vdj_summary_tab(web_sum_data, metadata, sample_properties, sample_data)
     vdj_analysis_tab(web_sum_data, sample_properties, sample_data)
+    if sample_data.cell_barcodes is not None:
+        web_sum_data.cell_barcodes = build_cell_barcode_dataset(
+            sample_data.cell_barcodes, sample_properties.sample_id
+        )
     return web_sum_data
 
 

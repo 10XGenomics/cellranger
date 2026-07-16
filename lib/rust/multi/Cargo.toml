@@ -20,9 +20,6 @@ path = '../fastq_set'
 [dependencies.itertools]
 workspace = true
 
-[dependencies.lazy_static]
-workspace = true
-
 [dependencies.libc]
 workspace = true
 
@@ -80,7 +77,3 @@ edition = '2024'
 name = 'multi'
 publish = false
 version = '0.1.0'
-
-[package.metadata]
-[package.metadata.cargo-machete]
-ignored = ['martian', 'strum']

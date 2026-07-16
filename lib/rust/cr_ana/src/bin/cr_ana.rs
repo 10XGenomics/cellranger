@@ -24,6 +24,7 @@ fn main() -> Result<()> {
     let args: Args = Args::parse();
 
     let (stage_registry, mro_registry) = martian_stages![
+        cr_ana::stages::assign_low_umi_cells::AssignLowUmiCells,
         cr_ana::stages::diff_exp_stage::DiffExpStage,
         cr_ana::stages::graph_clustering::GraphClusteringStage,
         cr_ana::stages::hierarchical_clustering::HierarchicalClusteringStage,

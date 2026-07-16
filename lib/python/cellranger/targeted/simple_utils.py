@@ -283,10 +283,10 @@ def load_target_csv_metadata(filename: str, descriptive_name: str) -> dict[str, 
         dict (str, str): dictionary mapping metadata keys to values
     """
     metadata = {}
-    for row in open(filename):  # TODO need to make this parsing more robust...
+    for row in open(filename):
         row = row.strip()
         if row.startswith("#"):
-            k_v_pair = row.strip("#").split("=")
+            k_v_pair = row.removeprefix("#").rstrip(" ,").split("=", 1)
             if len(k_v_pair) != 2:
                 raise cr_csv_utils.CSVParseException(
                     f'Invalid metadata format detected in {descriptive_name} file: "{row}". Must follow "#field=value" format.'

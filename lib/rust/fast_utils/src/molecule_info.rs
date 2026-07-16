@@ -61,7 +61,7 @@ pub(super) fn count_reads_and_reads_in_cells(
     mol_info_path: String,
     library_idxs: Vec<LibraryIdxType>,
     cell_barcodes: Vec<BarcodeIdxType>,
-) -> PyResult<(usize, usize)> {
+) -> (usize, usize) {
     let mut reporter = TotalReadsCounter {
         total_reads: 0,
         total_reads_in_cells: 0,
@@ -75,7 +75,7 @@ pub(super) fn count_reads_and_reads_in_cells(
         reporter.observe_umi(&umi);
     }
 
-    Ok((reporter.total_reads, reporter.total_reads_in_cells))
+    (reporter.total_reads, reporter.total_reads_in_cells)
 }
 
 /// Count on-target usable reads for each library. GEX reads must be on-target.
@@ -129,18 +129,18 @@ pub(super) fn get_num_umis_per_barcode(
     mol_info_path: String,
     library_idxs: Vec<LibraryIdxType>,
     target_feature_indices: Vec<FeatureIdxType>,
-) -> PyResult<Vec<usize>> {
+) -> Vec<usize> {
     let cur_path = Path::new(&mol_info_path);
     let filter = LibraryAndFeatureIdxFilter {
         library_idxs,
         feature_idxs: target_feature_indices.into_iter().collect(),
     };
-    let counts = MoleculeInfoIterator::new(cur_path)
+
+    MoleculeInfoIterator::new(cur_path)
         .expect("Could not open molecule info")
         .filter_map(|x| filter.passes_filter(&x).then_some(x.barcode_idx))
         .dedup_with_count()
         .map(|(count, _)| count)
         .sorted()
-        .collect();
-    Ok(counts)
+        .collect()
 }

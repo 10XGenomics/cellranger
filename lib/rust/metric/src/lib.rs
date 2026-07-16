@@ -36,6 +36,7 @@ pub use crate::percent_metric::PercentMetric;
 pub struct TxHasher;
 
 impl TxHasher {
+    // Return a new `RandomState` that is initialized with a constant seed, not random.
     fn random_state() -> ahash::RandomState {
         ahash::RandomState::with_seeds(0, 0, 0, 0)
     }

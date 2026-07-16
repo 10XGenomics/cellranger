@@ -19,7 +19,6 @@ pipeline _ASSIGN_TAGS(
     in  h5                 molecule_info,
     in  BarcodeAssignments force_sample_barcodes,
     in  json               multi_graph,
-    in  int                gem_well,
     in  float              min_assignment_confidence,
     in  string             inferred_throughput,
     in  json               inferred_throughputs,
@@ -27,7 +26,7 @@ pipeline _ASSIGN_TAGS(
 )
 {
     call MULTIPLEXING_METHOD(
-        * = self,
+        multi_graph = self.multi_graph,
     )
 
     call CALL_TAGS_MARGINAL(
@@ -50,25 +49,17 @@ pipeline _ASSIGN_TAGS(
         disabled = MULTIPLEXING_METHOD.multiplexing_is_not_cmo_or_hashtag,
     )
 
-    call CALL_TAGS_RTL(
+    call CALL_TAGS_READ_LEVEL(
         filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
         *                          = self,
     ) using (
-        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_rtl,
-    )
-
-    call CALL_TAGS_OH(
-        filtered_feature_bc_matrix = self.filtered_feature_counts_matrix,
-        *                          = self,
-    ) using (
-        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_oh,
+        disabled = MULTIPLEXING_METHOD.multiplexing_is_not_read_level,
     )
 
     call DETERMINE_SAMPLE_ASSIGNMENTS(
         barcodes_per_tag     = [
             CALL_TAGS_JIBES.cells_per_tag,
-            CALL_TAGS_RTL.barcodes_per_tag,
-            CALL_TAGS_OH.barcodes_per_tag,
+            CALL_TAGS_READ_LEVEL.barcodes_per_tag,
         ],
         non_singlet_barcodes = CALL_TAGS_JIBES.non_singlet_barcodes,
         *                    = self,
@@ -86,8 +77,7 @@ pipeline _ASSIGN_TAGS(
     call MERGE_METRICS(
         summaries = [
             CALL_TAGS_JIBES.tag_call_metrics,
-            CALL_TAGS_RTL.summary,
-            CALL_TAGS_OH.summary,
+            CALL_TAGS_READ_LEVEL.summary,
             DETERMINE_SAMPLE_ASSIGNMENTS.summary,
             COMPUTE_EXTRA_MULTIPLEXING_METRICS.summary,
         ],
@@ -98,7 +88,7 @@ pipeline _ASSIGN_TAGS(
             assignment_confidence_table:   CALL_TAGS_JIBES.assignment_confidence_table,
             cells_per_tag:                 DETERMINE_SAMPLE_ASSIGNMENTS.cells_per_tag,
             force_sample_barcodes:         self.force_sample_barcodes,
-            frp_gem_barcode_overlap:       CALL_TAGS_RTL.frp_gem_barcode_overlap,
+            frp_gem_barcode_overlap:       CALL_TAGS_READ_LEVEL.frp_gem_barcode_overlap,
             gem_well_inferred_throughputs: self.inferred_throughputs,
             jibes_model_summary:           CALL_TAGS_JIBES.jibes_model_summary,
             jibes_parameters:              CALL_TAGS_JIBES.jibes_parameters,

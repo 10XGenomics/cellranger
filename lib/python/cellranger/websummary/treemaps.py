@@ -43,7 +43,7 @@ def make_treemap_help(is_antibody: bool, is_spatial: bool) -> dict:
 
 
 # pylint: disable=too-many-locals
-def make_antibody_treemap_plot(ab_matrix, lib_type, subset_features, is_spatial=True):
+def make_antibody_treemap_plot(ab_matrix, lib_type, subset_features, *, is_spatial=True):
     """Create a "TreeMap" plot from an antibody or antigen filtered matrix.
 
     Args:
@@ -62,10 +62,12 @@ def make_antibody_treemap_plot(ab_matrix, lib_type, subset_features, is_spatial=
     ## The Feature Name label in the box will use the feature ref "id"
     antibody_label = [feature.id.decode("utf-8") for feature in ab_matrix.feature_ref.feature_defs]
     tags = [feature.tags for feature in ab_matrix.feature_ref.feature_defs]
+
     ## Calculate the fraction total umi for each feature and convert them to strings with parentheses for plotting
     ab_frac_values = ab_matrix.get_frac_counts_per_feature()
     ab_percent_strings = [f"{x:.2%}" for x in ab_frac_values]
     ab_percent_strings = list(map("({})".format, ab_percent_strings))
+
     ## generate secondary name labels for spatial samples
     ### Check if there is a gene_symbol or secondary_name in the feature def tag dict
     has_secondary_name = any("gene_symbol" in d for d in tags) or any(
@@ -77,6 +79,7 @@ def make_antibody_treemap_plot(ab_matrix, lib_type, subset_features, is_spatial=
         secondary_names = [tag[key] for tag in tags for key in keys if key in tag]
     else:
         secondary_names = None
+
     ## Make the label for the box
     antibody_label = list(map(" ".join, zip(antibody_label, ab_percent_strings)))
     ## Calculate the number of tissue/cell associated barcodes per feature
@@ -85,16 +88,26 @@ def make_antibody_treemap_plot(ab_matrix, lib_type, subset_features, is_spatial=
     # Subset Features
     ## build an index based on the minimum number UMIs
     ab_index = np.where(np.array(ab_matrix.get_counts_per_feature()) >= subset_features)[0]
+
     ## Based on a minimum number of UMIs subset all lists to features that comply with that minimum
     ab_frac_values = np.array(ab_frac_values)[ab_index].tolist()
     antibody_label = np.array(antibody_label)[ab_index].tolist()
-    ab_percent_strings = np.array(ab_percent_strings)[ab_index].tolist()
     barcodes_per_feature = np.array(barcodes_per_feature)[ab_index].tolist()
     if has_secondary_name:
         secondary_names = np.array(secondary_names)[ab_index].tolist()
 
-    # Hover Lables
-    ## Create the lables and hover lables for the plots depending on the type of assay it is
+    # Keep only top 120 features
+    if len(ab_frac_values) > 120:
+        sort_indices = np.argsort(ab_frac_values)[::-1]
+        top_indices = sort_indices[:120]
+        ab_frac_values = np.array(ab_frac_values)[top_indices].tolist()
+        antibody_label = np.array(antibody_label)[top_indices].tolist()
+        barcodes_per_feature = np.array(barcodes_per_feature)[top_indices].tolist()
+        if has_secondary_name:
+            secondary_names = np.array(secondary_names)[top_indices].tolist()
+
+    # Hover Labels
+    ## Create the labels and hover labels for the plots depending on the type of assay it is
     if is_spatial:
         cell_or_tissue = "Tissue"
         barcodes_or_cells = " barcodes"

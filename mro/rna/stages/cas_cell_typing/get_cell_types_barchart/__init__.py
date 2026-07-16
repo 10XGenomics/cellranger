@@ -15,7 +15,7 @@ from cellranger.altair_utils import chart_to_json
 from cellranger.cell_typing.broad_tenx.cas_postprocessing import LOW_UMI_BARCODE_KEY
 from cellranger.cell_typing.common_cell_typing import (
     BARCODE_KEY,
-    COARSE_CELL_TYPES_KEY,
+    DISPLAY_MAP_KEY,
     FINE_CELL_TYPES_KEY,
 )
 
@@ -34,7 +34,6 @@ stage GET_CELL_TYPES_BARCHART(
 NUM_BARCODES_KEY = "num_barcodes"
 NUM_BC_IN_COARSE_CELL_TYPE_KEY = "num_bc_in_coarse_cell_type"
 FRACTION_OF_COARSE_CELL_TYPE_KEY = "fraction_of_coarse_cell_type"
-TITLE_COARSE_CELL_TYPE_KEY = f"title_{COARSE_CELL_TYPES_KEY}"
 
 # Hyperparameters of figure
 CELL_TYPE_WIDTH_IN_LEGEND = 50
@@ -44,7 +43,7 @@ MIN_FRACTION_TO_LIST = 0.000051
 NUMBER_OF_BARCODES_LABEL = "Number of Barcodes"
 CELL_TYPES_LABEL = "Cell Type"
 CELL_SUB_TYPE_LABEL = "Sub-type"
-FRACTION_BARCODES_LABEL = "Fraction BCs"
+FRACTION_BARCODES_LABEL = "Fraction Barcodes"
 RIGHT_CHART_HEADING_FONTSIZE = 18
 RIGHT_CHART_TABLE_FONTSIZE = 14
 RIGHT_CHART_CELL_TYPES_WIDTH = 175
@@ -55,11 +54,10 @@ RIGHT_CHART_FRAC_BCS_X = 0
 RIGHT_CHART_FRAC_BCS_WIDTH = 30
 RIGHT_CHART_FRAC_BCS_ALIGNMENT = "right"
 
-
 # Schema of postprocessed cell annotation out
-CELL_TYPING_CSV_SCHEMA = {
+cell_typing_csv_schema = {
     BARCODE_KEY: pl.String,
-    COARSE_CELL_TYPES_KEY: pl.String,
+    DISPLAY_MAP_KEY: pl.String,
     FINE_CELL_TYPES_KEY: pl.String,
 }
 
@@ -69,47 +67,38 @@ def main(args, outs):  # pylint: disable=too-many-locals
         martian.clear(outs)
         return
 
-    pl.set_random_seed(seed=7)
-    lazy_df = pl.scan_csv(args.cell_types, schema_overrides=CELL_TYPING_CSV_SCHEMA).select(
-        [BARCODE_KEY, COARSE_CELL_TYPES_KEY, FINE_CELL_TYPES_KEY]
-    )
+    title_coarse_cell_type_key = f"title_{DISPLAY_MAP_KEY}"
 
+    pl.set_random_seed(seed=7)
+    lazy_df = pl.scan_csv(args.cell_types, schema_overrides=cell_typing_csv_schema).select(
+        [BARCODE_KEY, DISPLAY_MAP_KEY, FINE_CELL_TYPES_KEY]
+    )
     df = (
-        lazy_df.group_by(FINE_CELL_TYPES_KEY)
+        lazy_df.group_by((FINE_CELL_TYPES_KEY, DISPLAY_MAP_KEY))
         .agg(
             pl.len().alias(NUM_BARCODES_KEY),
-            pl.first(
-                COARSE_CELL_TYPES_KEY
-            ),  # Assumes that every coarse cell type can come from only one fine cell type
         )
         .sort(pl.col(NUM_BARCODES_KEY), descending=True)
         .collect()
     )
 
-    df = (
-        df.lazy()
-        .with_columns(
-            pl.col(COARSE_CELL_TYPES_KEY).str.to_titlecase().alias(TITLE_COARSE_CELL_TYPE_KEY)
-        )
-        .collect()
-    )
+    df = df.lazy().with_columns(pl.col(DISPLAY_MAP_KEY).alias(title_coarse_cell_type_key)).collect()
 
     list_of_dicts = (
         df.lazy()
-        .group_by(COARSE_CELL_TYPES_KEY)
+        .group_by(DISPLAY_MAP_KEY)
         .agg(pl.col(NUM_BARCODES_KEY).sum().alias(NUM_BC_IN_COARSE_CELL_TYPE_KEY))
         .collect()
         .to_dicts()
     )
     map_of_total_coarce_cell_types = {
-        x[COARSE_CELL_TYPES_KEY]: x[NUM_BC_IN_COARSE_CELL_TYPE_KEY] for x in list_of_dicts
+        x[DISPLAY_MAP_KEY]: x[NUM_BC_IN_COARSE_CELL_TYPE_KEY] for x in list_of_dicts
     }
     df = df.with_columns(
         [
-            pl.struct([NUM_BARCODES_KEY, COARSE_CELL_TYPES_KEY])
+            pl.struct([NUM_BARCODES_KEY, DISPLAY_MAP_KEY])
             .map_elements(
-                lambda x: x[NUM_BARCODES_KEY]
-                / map_of_total_coarce_cell_types[x[COARSE_CELL_TYPES_KEY]],
+                lambda x: x[NUM_BARCODES_KEY] / map_of_total_coarce_cell_types[x[DISPLAY_MAP_KEY]],
                 return_dtype=pl.Float64,
             )
             .alias(FRACTION_OF_COARSE_CELL_TYPE_KEY)
@@ -133,16 +122,16 @@ def main(args, outs):  # pylint: disable=too-many-locals
     )
 
     default_value = (
-        df.group_by(COARSE_CELL_TYPES_KEY)
+        df.group_by(DISPLAY_MAP_KEY)
         .agg(pl.sum(NUM_BARCODES_KEY))
         .sort(pl.col(NUM_BARCODES_KEY), descending=True)
-        .select(pl.col(COARSE_CELL_TYPES_KEY).first())
+        .select(pl.col(DISPLAY_MAP_KEY).first())
         .to_series()
         .to_list()[0]
     )
 
     brush = alt.selection_point(
-        fields=[COARSE_CELL_TYPES_KEY],
+        fields=[DISPLAY_MAP_KEY],
         empty=False,
         value=default_value,
         clear="dblclick",
@@ -154,11 +143,11 @@ def main(args, outs):  # pylint: disable=too-many-locals
     base_chart = alt.Chart(df)
 
     base_left_chart = base_chart.transform_aggregate(
-        groupby=[COARSE_CELL_TYPES_KEY], num_barcodes=f"sum({NUM_BARCODES_KEY})"
+        groupby=[DISPLAY_MAP_KEY], num_barcodes=f"sum({NUM_BARCODES_KEY})"
     )
 
     num_cell_types = (
-        df.group_by("coarse_cell_type")
+        df.group_by(DISPLAY_MAP_KEY)
         .agg(pl.col("num_barcodes").sum())
         .filter(pl.col("num_barcodes") > COARSE_CELL_TYPE_LOWER_BOUND)
         .height
@@ -168,7 +157,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
     left_chart = (
         base_left_chart.transform_filter(f"datum.num_barcodes > {COARSE_CELL_TYPE_LOWER_BOUND}")
         .transform_calculate(
-            sort_priority=f"datum.{COARSE_CELL_TYPES_KEY} === '{LOW_UMI_BARCODE_KEY}' ? 1 : 0"
+            sort_priority=f"datum.{DISPLAY_MAP_KEY} === '{LOW_UMI_BARCODE_KEY}' ? 1 : 0"
         )
         .transform_window(
             sort_index="rank()",
@@ -183,14 +172,14 @@ def main(args, outs):  # pylint: disable=too-many-locals
             cursor=alt.Cursor("pointer"),
         )
         .encode(
-            y=alt.Y(f"{COARSE_CELL_TYPES_KEY}:N")
+            y=alt.Y(f"{DISPLAY_MAP_KEY}:N")
             .sort(alt.EncodingSortField(field="sort_index", order="ascending"))
             .axis(title=CELL_TYPES_LABEL, labelFontSize=12, titleFontSize=14),
             x=alt.X("num_barcodes:Q").axis(
                 title=NUMBER_OF_BARCODES_LABEL, labelFontSize=12, titleFontSize=14
             ),
             tooltip=[
-                alt.Tooltip(COARSE_CELL_TYPES_KEY, title=CELL_TYPES_LABEL),
+                alt.Tooltip(DISPLAY_MAP_KEY, title=CELL_TYPES_LABEL),
                 alt.Tooltip("num_barcodes", title=NUMBER_OF_BARCODES_LABEL),
             ],
             opacity=alt.condition(brush, alt.value(1), alt.value(0.5)),
@@ -204,7 +193,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
     heading = (
         transformed_chart.transform_calculate(major_type_tooltip_text="'Major cell type'")
         .transform_aggregate(
-            groupby=[TITLE_COARSE_CELL_TYPE_KEY, "major_type_tooltip_text"],
+            groupby=[title_coarse_cell_type_key, "major_type_tooltip_text"],
         )
         .mark_text(
             align=RIGHT_CHART_CELL_TYPES_ALIGNMENT,
@@ -213,7 +202,7 @@ def main(args, outs):  # pylint: disable=too-many-locals
             x=RIGHT_CHART_CELL_TYPES_X,
         )
         .encode(
-            text=f"{TITLE_COARSE_CELL_TYPE_KEY}:N",
+            text=f"{title_coarse_cell_type_key}:N",
             tooltip=alt.Tooltip("major_type_tooltip_text:N"),
         )
         .properties(width=RIGHT_CHART_CELL_TYPES_WIDTH)

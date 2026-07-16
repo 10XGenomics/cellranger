@@ -3,14 +3,20 @@
 #
 
 """Convenience functions for processing read level multiplexing data."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from cellranger.barcodes.utils import load_probe_barcode_map
-from cellranger.fast_utils import MultiGraph
 from cellranger.targeted.rtl_multiplexing import get_probe_bc_whitelist
+
+if TYPE_CHECKING:
+    from cellranger.fast_utils import MultiGraph
+    from cellranger.mro_types.structs import BarcodeReadComponent
 
 
 # Temporarily copied here. Need to move these functions to lib so I can import it.
-def get_overhang_bc_defn(barcode_def):
+def get_overhang_bc_defn(barcode_def: list[BarcodeReadComponent]) -> tuple[int | None, int | None]:
     """Returns the offset and length for overhang multiplexing."""
     offset, length = None, None
     for barcode in barcode_def:
@@ -20,7 +26,8 @@ def get_overhang_bc_defn(barcode_def):
 
 
 def get_sample_tag_barcodes(
-    multi_graph: MultiGraph, barcode_def: list[dict[str, dict[str, str]]]
+    multi_graph: MultiGraph,
+    barcode_def: list[BarcodeReadComponent],
 ) -> dict[str, list[str]]:
     """Return a mapping from sample ID to the tag barcodes associated with them."""
     probe_bc_wl_spec = get_probe_bc_whitelist(barcode_def)

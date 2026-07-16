@@ -38,6 +38,9 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + Ord + ?Sized;
 
+    /// Get or the current value for a key, or insert default.
+    fn get_mut_or_default(&mut self, key: K) -> &mut CountMetric;
+
     /// Insert a value into the histogram backing storage.
     /// Overwrites any current value.
     /// Returns the previous value if there was one.
@@ -110,11 +113,7 @@ where
         if val == 0 {
             return;
         }
-        if let Some(count) = self.get_mut(&key) {
-            count.increment_by(val);
-        } else {
-            HistogramStorage::insert(self, key, val.into());
-        }
+        self.get_mut_or_default(key).increment_by(val);
     }
 
     /// Increment the counter for the `key` by one, inserting it into the
@@ -136,11 +135,7 @@ where
     where
         K: Sized,
     {
-        if let Some(count) = self.get_mut(&key) {
-            count.increment_by(1);
-        } else {
-            HistogramStorage::insert(self, key, 1.into());
-        }
+        self.get_mut_or_default(key).increment_by(1);
     }
 
     /// Observe multiple owned items.
@@ -200,6 +195,11 @@ where
         K: 'a,
     {
         self.counts().map(|x| &x.count)
+    }
+
+    /// Compute the total number of observations in the histogram.
+    fn total_count(&self) -> i64 {
+        self.raw_counts().sum()
     }
 
     /// Compute the effective diversity (inverse Simpson index) of the distribution.
@@ -388,6 +388,15 @@ where
     distribution: TxHashMap<K, CountMetric>,
 }
 
+impl<K> PartialEq for SimpleHistogram<K>
+where
+    K: Eq + Hash + Serialize + for<'a> Deserialize<'a>,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.distribution == other.distribution
+    }
+}
+
 impl<K> HistogramStorage<K> for SimpleHistogram<K>
 where
     K: Eq + Ord + Hash + Serialize + for<'a> Deserialize<'a>,
@@ -406,6 +415,10 @@ where
         Q: Hash + Eq + ?Sized,
     {
         self.distribution.get_mut(key)
+    }
+
+    fn get_mut_or_default(&mut self, key: K) -> &mut CountMetric {
+        self.distribution.entry(key).or_default()
     }
 
     fn insert(&mut self, k: K, v: CountMetric) -> Option<CountMetric> {
@@ -631,6 +644,10 @@ where
         Q: Hash + Eq + Ord + ?Sized,
     {
         self.distribution.get_mut(key)
+    }
+
+    fn get_mut_or_default(&mut self, key: K) -> &mut CountMetric {
+        self.distribution.entry(key).or_default()
     }
 
     fn insert(&mut self, k: K, v: CountMetric) -> Option<CountMetric> {
@@ -871,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn test_top_n() -> Result<(), Error> {
+    fn test_top_n() {
         let data = vec![0, 0, 0, 1, 1, 2, 2, 2, 2];
         let hist = {
             let mut hist = SimpleHistogram::default();
@@ -892,6 +909,5 @@ mod tests {
             top_n.distribution == expected.distribution,
             "top_n = {top_n:?}, expected = {expected:?}"
         );
-        Ok(())
     }
 }

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::read_adaptive_csr_matrix;
 use log::info;
-use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
 use martian_filetypes::tabular_file::CsvFile;

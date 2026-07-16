@@ -390,13 +390,6 @@ class TargetedMetricAnnotations(MetricAnnotations):
         self._override_metric_settings(file_path)
 
 
-class LTMetricAnnotations(MetricAnnotations):
-    def __init__(self, intron_mode_alerts=False):
-        super().__init__(intron_mode_alerts=intron_mode_alerts)
-        file_path = os.path.join(os.path.dirname(__file__), "lt_metrics.csv")
-        self._override_metric_settings(file_path)
-
-
 class Metric:
     """Contains metadata about a single metric along with methods for evaluating its value with respect to that.
 

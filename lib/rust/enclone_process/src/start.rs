@@ -145,7 +145,7 @@ pub(crate) fn main_enclone_start(
     annotations: Annotations,
     refdata: &RefData,
     report_whitelist_contamination: bool,
-) -> Result<(EncloneExacts, Vec<BarcodeFates>), String> {
+) -> (EncloneExacts, Vec<BarcodeFates>) {
     let Annotations {
         mut tig_bc,
         gex_cells,
@@ -549,7 +549,7 @@ pub(crate) fn main_enclone_start(
             }
         }
     }
-    Ok((
+    (
         EncloneExacts {
             to_bc,
             exact_clonotypes,
@@ -560,7 +560,7 @@ pub(crate) fn main_enclone_start(
             sr,
         },
         fate,
-    ))
+    )
 }
 
 fn write_donor_ref_file(

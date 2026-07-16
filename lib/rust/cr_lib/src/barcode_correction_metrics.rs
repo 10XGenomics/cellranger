@@ -1,11 +1,7 @@
 #![deny(missing_docs)]
-use crate::barcode_sort::ReadVisitor;
-use crate::per_type_metric;
-use anyhow::Result;
 use barcode::{BarcodeConstructMetric, BarcodeSegmentState};
 use cr_types::rna_read::RnaRead;
 use cr_types::types::LibraryType;
-use fastq_set::read_pair::ReadPair;
 use json_report_derive::JsonReport;
 use martian_derive::martian_filetype;
 use martian_filetypes::bin_file::BinaryFormat;
@@ -50,12 +46,8 @@ impl InnerBarcodeCorrectionMetrics {
     }
 }
 
-per_type_metric!(
-    BarcodeCorrectionMetrics,
-    BarcodeCorrectionVisitor,
-    LibraryType,
-    InnerBarcodeCorrectionMetrics
-);
+#[derive(Default, Serialize, Deserialize, Metric)]
+pub struct BarcodeCorrectionMetrics(pub TxHashMap<LibraryType, InnerBarcodeCorrectionMetrics>);
 
 impl BarcodeCorrectionMetrics {
     pub fn with_valid(
@@ -70,13 +62,9 @@ impl BarcodeCorrectionMetrics {
         );
         BarcodeCorrectionMetrics(m)
     }
-}
 
-impl ReadVisitor for BarcodeCorrectionVisitor {
-    type ReadType = RnaRead;
-
-    // Visit reads and record barcode correction metrics.
-    fn visit_processed_read(&mut self, read: &mut RnaRead) -> Result<()> {
+    /// Visit reads and record barcode correction metrics.
+    pub fn visit_processed_read(&mut self, read: &mut RnaRead) {
         let metrics = InnerBarcodeCorrectionMetrics {
             // This visitor visits only uncorrected invalid barcodes.
             // The barcode is valid now if and only if it was corrected.
@@ -111,17 +99,7 @@ impl ReadVisitor for BarcodeCorrectionVisitor {
                 .into(),
         };
 
-        self.metrics
-            .0
-            .entry(read.library_type)
-            .or_default()
-            .merge(metrics);
-
-        Ok(())
-    }
-
-    fn visit_unprocessed_read(&mut self, _: ReadPair, _: String) -> Result<()> {
-        unreachable!()
+        self.0.entry(read.library_type).or_default().merge(metrics);
     }
 }
 

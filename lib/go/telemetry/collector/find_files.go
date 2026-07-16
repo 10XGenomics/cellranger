@@ -66,14 +66,28 @@ func (j *jsonSink) close() {
 	}
 }
 
-func readJson(ctx context.Context, p string, sinks map[converter.Converter]*jsonSink) {
-	defer trace.StartRegion(ctx, "readJson").End()
+func readFile(
+	ctx context.Context,
+	p string,
+	sinks map[converter.Converter]*jsonSink,
+	rawListeners []chan<- []byte,
+) {
+	defer trace.StartRegion(ctx, "readFile").End()
 	content, err := os.ReadFile(p)
 	if err != nil {
+		for _, c := range rawListeners {
+			close(c)
+		}
 		for _, sink := range sinks {
 			sink.close()
 		}
 		return
+	}
+	for _, c := range rawListeners {
+		if ctx.Err() == nil {
+			c <- content
+		}
+		close(c)
 	}
 	for conv, sink := range sinks {
 		if ctx.Err() != nil {
@@ -169,9 +183,17 @@ type fileSink struct {
 	// Listeners waiting for specific line results.
 	lineListeners map[converter.Converter]lineFilterSet
 	// listeners for json keys
-	jsonListeners  map[converter.Converter]*jsonSink
+	jsonListeners map[converter.Converter]*jsonSink
+	// listeners for raw file bytes
+	rawListeners   []chan<- []byte
 	key            string
 	alternatePaths []string
+}
+
+func (sink *fileSink) subscribeRaw() <-chan []byte {
+	c := make(chan []byte, 1)
+	sink.rawListeners = append(sink.rawListeners, c)
+	return c
 }
 
 func (sink *fileSink) subscribe(filter FileFilter, conv converter.Converter, result chan<- any) {
@@ -214,9 +236,10 @@ func (sink *fileSink) subscribe(filter FileFilter, conv converter.Converter, res
 }
 
 func (sink *fileSink) notify(ctx context.Context, res fileResult) {
-	if sink.jsonListeners != nil {
-		go readJson(ctx, res.fullPath, sink.jsonListeners)
+	if sink.jsonListeners != nil || len(sink.rawListeners) > 0 {
+		go readFile(ctx, res.fullPath, sink.jsonListeners, sink.rawListeners)
 		sink.jsonListeners = nil
+		sink.rawListeners = nil
 	}
 	if len(sink.lineListeners) > 0 {
 		go readLines(ctx, res.fullPath, sink.lineListeners)
@@ -345,6 +368,10 @@ func convertLines(ctx context.Context, p string,
 }
 
 func (sink *fileSink) close() {
+	for _, c := range sink.rawListeners {
+		close(c)
+	}
+	sink.rawListeners = nil
 	for _, ls := range sink.lineListeners {
 		for _, cs := range ls {
 			for _, c := range cs {
@@ -611,7 +638,8 @@ func (f *fileContentExtractor) Start(ctx context.Context, _ ValueContext,
 }
 
 func (f *fileContentExtractor) RequiresPipeline() bool {
-	return !path.IsAbs(f.paths[0])
+	p := f.paths[0]
+	return !(path.IsAbs(p) || strings.HasPrefix(p, "_"))
 }
 
 func (fileContentExtractor) RequiresFailure() bool {
@@ -668,6 +696,10 @@ func (f *fileContentExtractor) withGlob(globs map[string]string) ValueExtractor 
 }
 
 func (fileContentExtractor) BucketsOptional() bool { return false }
+
+func (fileContentExtractor) IsMultiValue() bool {
+	return false
+}
 
 func MakeAbsFile(ps []string, conv converter.Converter,
 	filter FileFilter) ValueExtractor {

@@ -16,12 +16,12 @@ pub(super) fn count_umis_per_probe(
     _py: Python<'_>,
     mol_info_path: PathBuf,
     target_panel_summary_path: PathBuf,
-) -> PyResult<Option<(Vec<String>, Vec<String>, Vec<String>, Vec<i32>)>> {
+) -> Option<(Vec<String>, Vec<String>, Vec<String>, Vec<i32>)> {
     let tps: TargetPanelSummary = TargetPanelSummaryFormat::from(&target_panel_summary_path)
         .read()
         .unwrap();
     if tps.targeting_method != TargetingMethod::TemplatedLigation {
-        return Ok(None);
+        return None;
     }
 
     let mut valid_bc_filter = FilteredBarcodeFilter::new(&mol_info_path);
@@ -31,7 +31,7 @@ pub(super) fn count_umis_per_probe(
     let probes: Vec<_> = psr.sorted_probes();
 
     if probes.is_empty() | (probes[0].region.is_none()) {
-        return Ok(None);
+        return None;
     }
 
     // iterate over mol info records and increment probe counts for each library,
@@ -57,5 +57,5 @@ pub(super) fn count_umis_per_probe(
             )
         })
         .multiunzip();
-    Ok(Some((probe_ids, gene_ids, regions, result)))
+    Some((probe_ids, gene_ids, regions, result))
 }

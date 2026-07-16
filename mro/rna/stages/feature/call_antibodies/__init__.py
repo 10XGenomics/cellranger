@@ -4,27 +4,37 @@
 #
 """Assign antibodies to cells."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import martian
+
 import cellranger.feature.utils as feature_utils
 import cellranger.matrix as cr_matrix
 import cellranger.rna.library as rna_library
 from cellranger.fast_utils import MultiGraph
-
-# from cellranger.feature.feature_assigner import AntibodyAssigner
 from cellranger.websummary.histograms import make_antibody_histograms
 from cellranger.websummary.treemaps import MIN_ANTIBODY_UMI, make_antibody_treemap_plot
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 # pylint: disable=invalid-name
 
 __MRO__ = """
 stage CALL_ANTIBODIES(
-    in  h5   filtered_feature_counts_matrix,
-    in  bool is_antibody,
-    in  bool is_spatial,
-    in  json multi_graph,
+    in  h5     filtered_feature_counts_matrix,
+    in  bool   is_antibody,
+    in  bool   is_spatial,
+    in  json   multi_graph,
     in  string sample_id,
-    out json antibody_histograms_json,
-    out json antibody_treemap_json,
-    src py   "stages/feature/call_antibodies",
+    in  bool   is_visium_hd,
+    out json   antibody_histograms_json,
+    out json   antibody_histograms_plotly_json,
+    out json   antibody_treemap_json,
+    out json   antibody_treemap_plotly_json,
+    src py     "stages/feature/call_antibodies",
 ) split (
 ) using (
     volatile = strict,
@@ -32,7 +42,35 @@ stage CALL_ANTIBODIES(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_ANTIBODIES stage inputs."""
+
+    filtered_feature_counts_matrix: None | mro_filetypes.h5
+    is_antibody: bool
+    is_spatial: bool
+    multi_graph: None | mro_filetypes.json
+    sample_id: str
+    is_visium_hd: bool
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_ANTIBODIES stage outputs."""
+
+    antibody_histograms_json: None | mro_filetypes.json
+    antibody_histograms_plotly_json: None | mro_filetypes.json
+    antibody_treemap_json: None | mro_filetypes.json
+    antibody_treemap_plotly_json: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CALL_ANTIBODIES chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """CALL_ANTIBODIES chunk outputs."""
+
+
+def split(args: StageInputs):
     """TODO CELLRANGER-7261: Revise the memory reservation."""
     # Use number of cells and non-zero items in count matrix to predict memory usage
     matrix_dims = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_feature_counts_matrix)
@@ -53,11 +91,16 @@ def split(args):
     }
 
 
-def main(args, _outs):
+def main(args: ChunkInputs, _outs: ChunkOutputs):
     pass
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     """This stage is the entry to the _ANTIBODY_ANALYZER pipeline. It calls the feature barcode.
 
     processing APIs such as AntibodyOrAntigenAssigner, AntibodyOrAntigenReporter, and AntibodyAssignmentsMatrix
@@ -105,13 +148,28 @@ def join(args, outs, chunk_defs, chunk_outs):
         filtered_ab_counts_matrix, is_spatial=args.is_spatial, hashtags=hashtags
     )
     antibody_treemap = make_antibody_treemap_plot(
-        filtered_ab_counts_matrix, feature_type, MIN_ANTIBODY_UMI, args.is_spatial
+        filtered_ab_counts_matrix,
+        feature_type,
+        MIN_ANTIBODY_UMI,
+        is_spatial=args.is_spatial,
     )
     if antibody_histograms is None:
         outs.antibody_histograms_json = None
+        outs.antibody_histograms_plotly_json = None
     else:
         feature_utils.write_json_from_dict(antibody_histograms, outs.antibody_histograms_json)
+        plotly_data = antibody_histograms.get("plot")
+        if plotly_data is None:
+            outs.antibody_histograms_plotly_json = None
+        else:
+            feature_utils.write_json_from_dict(plotly_data, outs.antibody_histograms_plotly_json)
     if antibody_treemap is None:
         outs.antibody_treemap_json = None
+        outs.antibody_treemap_plotly_json = None
     else:
         feature_utils.write_json_from_dict(antibody_treemap, outs.antibody_treemap_json)
+        plotly_data = antibody_treemap.get("plot")
+        if plotly_data is None:
+            outs.antibody_treemap_plotly_json = None
+        else:
+            feature_utils.write_json_from_dict(plotly_data, outs.antibody_treemap_plotly_json)

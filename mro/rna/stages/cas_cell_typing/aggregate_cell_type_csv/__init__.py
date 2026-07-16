@@ -5,43 +5,36 @@
 
 """Aggregate cell type CSV files from multiple samples into a single CSV file."""
 
+import functools
+import operator
+
 import martian
 
 __MRO__ = """
+struct CellTypesAllMethods(
+    map<CellTypes> cell_types,
+)
+
+struct CellTypes(
+    csv     cell_types,
+    json.gz cell_annotation_results,
+    csv     cell_annotation_differential_expression,
+)
+
 stage AGGREGATE_CELL_TYPE_CSV(
-    in  map<CellTypes> cell_types,
-    out csv            all_cell_types,
-    src py             "stages/cas_cell_typing/aggregate_cell_type_csv",
+    in  map<CellTypesAllMethods> cell_types_all_methods,
+    out map<csv>                 all_cell_types,
+    src py                       "stages/cas_cell_typing/aggregate_cell_type_csv",
 ) using (
     volatile = strict,
 )
 """
 
 
-def main(args, outs):
-    if not args.cell_types:
-        martian.clear(outs)
-        return
-
-    # Check if there are more than one sample with valid cell_types
-    valid_cell_types_count = sum(
-        1
-        for _, sample_data in args.cell_types.items()
-        if sample_data
-        and isinstance(sample_data, dict)
-        and "cell_types" in sample_data
-        and sample_data["cell_types"] is not None
-    )
-    if valid_cell_types_count < 2:
-        martian.clear(outs)
-        return
-
-    files_to_process = [
-        (sample_name, sample_data.get("cell_types"))
-        for sample_name, sample_data in args.cell_types.items()
-        if sample_data.get("cell_types") is not None
-    ]
-
+def aggregate_csv_files(
+    files_to_process: list[tuple[str, str | bytes]], out_file_path: str | bytes
+):
+    """Aggregate files."""
     aggregated_data = []
     for idx, (sample_name, csv_path) in enumerate(files_to_process):
         if not csv_path:
@@ -58,5 +51,51 @@ def main(args, outs):
                 aggregated_data.append(f"{line.strip()},{sample_name}\n")
 
     # Write the aggregated data to the output file
-    with open(outs.all_cell_types, "w") as out_file:
+    with open(out_file_path, "w") as out_file:
         out_file.writelines(aggregated_data)
+
+
+def main(args, outs):
+    if not args.cell_types_all_methods:
+        martian.clear(outs)
+        return
+
+    sample_keys = sorted(args.cell_types_all_methods)
+    methods_used = sorted(
+        set(
+            functools.reduce(
+                operator.iadd,
+                (x.get("cell_types", []) for x in args.cell_types_all_methods.values() if x),
+                [],
+            )
+        )
+    )
+
+    if not methods_used:
+        martian.clear(outs)
+        return
+
+    methods_used_to_files_to_aggr_map = {method: [] for method in methods_used}
+
+    for method in methods_used:
+        for sample in sample_keys:
+            cell_type_found = (
+                args.cell_types_all_methods.get(sample, {})
+                .get("cell_types", {})
+                .get(method, {})
+                .get("cell_types")
+            )
+            if cell_type_found:
+                methods_used_to_files_to_aggr_map[method].append((sample, cell_type_found))
+
+    num_samples_with_annotations = max(len(x) for x in methods_used_to_files_to_aggr_map.values())
+    if num_samples_with_annotations < 2:
+        martian.clear(outs)
+        return
+
+    outs.all_cell_types = {}
+    for method, files_to_process in methods_used_to_files_to_aggr_map.items():
+        if files_to_process:
+            out_file_path = martian.make_path(f"{method}.csv").decode()
+            aggregate_csv_files(files_to_process, out_file_path)
+            outs.all_cell_types[method] = out_file_path

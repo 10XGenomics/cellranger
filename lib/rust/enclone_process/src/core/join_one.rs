@@ -4,6 +4,7 @@
 use super::defs::{CloneInfo, EncloneControl, ExactClonotype, PotentialJoin};
 use debruijn::Mer;
 use debruijn::dna_string::ndiffs;
+use itertools::zip_eq;
 use qd::{Double, dd};
 use std::cmp::min;
 use std::collections::HashMap;
@@ -25,8 +26,8 @@ pub(crate) fn p_at_most_m_distinct_in_sample_of_x_from_n_double(
     sr: &[Vec<Double>],
 ) -> f64 {
     let mut p = dd![1.0];
-    for u in m + 1..=x {
-        let mut z = dd![sr[x][u]];
+    for (u, sr_val) in sr[x].iter().enumerate().take(x + 1).skip(m + 1) {
+        let mut z = dd![*sr_val];
         for _ in 0..x {
             z *= dd![u as f64] / dd![n as f64];
         }
@@ -284,12 +285,8 @@ pub(crate) fn join_one<'a>(
     // Don't allow different references if one is strongly favored.
     // (not documented)
 
-    if nrefs == 2 {
-        for m in 0..2 {
-            if total[0][m].abs_diff(total[1][m]) > MAX_DEGREDATION {
-                return false;
-            }
-        }
+    if nrefs == 2 && zip_eq(total[0], total[1]).any(|(x, y)| x.abs_diff(y) > MAX_DEGREDATION) {
+        return false;
     }
 
     // Another test for acceptable join.  (not fully documented)

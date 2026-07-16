@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use clap::builder::NonEmptyStringValueParser;
 use clap::{self, Parser};
 use cr_types::LibraryType;
-use cr_types::sample_def::{COUNT_HELP, FastqMode, SampleDef};
+use cr_types::sample_def::{COUNT_HELP, FastqMode, SampleDef, SampleDefBuilder};
 use fastq_set::filenames::fastq_dir::FastqChecker;
 use itertools::Itertools;
 use metric::TxHashSet;
@@ -38,24 +38,20 @@ macro_rules! impl_get_sample_defs {
                     )?;
                     samples_found.extend(sample_names.clone());
 
-                    sample_defs.push(SampleDef {
-                        fastq_mode: FastqMode::ILMN_BCL2FASTQ,
-                        gem_group: None,
-                        lanes: self.lanes.clone(),
-                        library_type: Some(library_type),
-                        r1_length: None,
-                        r2_length: None,
-                        read_path: path,
-                        sample_indices: Some(vec!["any".to_string()]),
-                        // NOTE: subsampling parameters could be added here
-                        subsample_rate: None,
-                        sample_names: Some(sample_names.into_iter().collect()),
-                        fastq_id: None,
-                    });
+                    let mut builder =
+                        SampleDefBuilder::new(FastqMode::ILMN_BCL2FASTQ, path.clone())
+                            .sample_names(sample_names.into_iter().collect::<Vec<_>>())
+                            .sample_indices(vec!["any".to_string()])
+                            .library_type(library_type);
+                    if let Some(lanes) = &self.lanes {
+                        builder = builder.lanes(lanes.clone());
+                    }
+
+                    sample_defs.push(builder.build());
                 }
 
                 // We should have found all the requested samples in at least one sample def
-                if let Some(ref samples) = self.sample {
+                if let Some(samples) = &self.sample {
                     let missing: Vec<_> = samples
                         .iter()
                         .filter(|&s| !samples_found.contains(s))

@@ -123,8 +123,8 @@ pub fn barcode_has_chimeric_contig(
                         barcode.clone(),
                         AsmCellFilter::InsertPriming {
                             common_prefix_length,
-                            contig1_name: contig_i_name.to_string(),
-                            contig2_name: contig_j_name.to_string(),
+                            contig1_name: contig_i_name.clone(),
+                            contig2_name: contig_j_name.clone(),
                         },
                     ));
                 }
@@ -346,7 +346,7 @@ impl Contigs {
                     };
                     if v >= 0 {
                         chimdata.push(ContigChimeraData {
-                            barcode: contig.barcode.to_string(),
+                            barcode: contig.barcode.clone(),
                             cdr3: DnaString::from_acgt_bytes(cdr3_seq.as_bytes())
                                 .clone()
                                 .to_bytes(),

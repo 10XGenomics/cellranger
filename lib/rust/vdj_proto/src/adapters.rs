@@ -7,6 +7,7 @@ use crate::types::{
     AsmData, GexData, MetricsSummary, VdjMetadata, VdjProtoMessage, VdjReferenceRaw,
 };
 use anyhow::Result;
+use itertools::Itertools;
 use sha2::{Digest, Sha256};
 use std::convert::Into;
 use std::fs::{self, File};
@@ -383,10 +384,7 @@ impl VdjReferenceRaw {
     }
 
     pub fn fasta_hash(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(self.regions.as_bytes());
-        let result = hasher.finalize();
-        format!("{result:x}")
+        format!("{:02x}", Sha256::digest(&self.regions).iter().format(""))
     }
 }
 

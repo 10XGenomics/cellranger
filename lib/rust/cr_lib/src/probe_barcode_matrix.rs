@@ -144,15 +144,24 @@ fn write_probe_columns(
         // Get regions of the probe
         // 'other' and 'none' are handled separately
         // 'spliced' and 'unspliced' are the usual options
-        let probe_region_string = match &probe.region {
-            Some(x) => x.to_string(),
-            None => String::from("none"),
-        };
-        probe_region_strings.push(make_fixed_ascii(&probe_region_string)?);
+        probe_region_strings.push(make_fixed_ascii(
+            probe.region.as_ref().map_or("none", |x| x.as_str()),
+        )?);
 
         // Put in the genome as another dataset
         genome_strings.push(make_fixed_ascii(&probe.genome)?);
     }
+
+    write_column_ds::<FixedAscii<FA_LEN>>(
+        group,
+        "_all_tag_keys",
+        &[
+            FixedAscii::from_ascii(b"gene_id")?,
+            FixedAscii::from_ascii(b"gene_name")?,
+            FixedAscii::from_ascii(b"genome")?,
+            FixedAscii::from_ascii(b"probe_region")?,
+        ],
+    )?;
 
     // Write vectors to the H5 matrix
     write_column_ds::<FixedAscii<FA_LEN>>(group, "genome", &genome_strings)?;

@@ -4,6 +4,7 @@ use crate::transcript::{
     AnnotationData, AnnotationParams, AnnotationRegion, PairAnnotationData, TranscriptAnnotator,
 };
 use anyhow::Result;
+use barcode::BcSeq;
 use barcode::whitelist::ReqStrand;
 use cr_bam::bam_tags::{
     ANTISENSE_TAG, EXTRA_FLAGS_TAG, ExtraFlags, FEATURE_IDS_TAG, FEATURE_QUAL_TAG, FEATURE_RAW_TAG,
@@ -11,7 +12,7 @@ use cr_bam::bam_tags::{
     PROC_BC_SEQ_TAG, PROC_UMI_SEQ_TAG, RAW_BARCODE_QUAL_TAG, RAW_BARCODE_SEQ_TAG,
     RAW_GEL_BEAD_BARCODE_QUAL_TAG, RAW_GEL_BEAD_BARCODE_SEQ_TAG, RAW_UMI_QUAL_TAG, RAW_UMI_SEQ_TAG,
     READ_GROUP_TAG, REGION_TAG, REST_R1_QUAL_TAG, REST_R1_SEQ_TAG, REST_R2_QUAL_TAG,
-    REST_R2_SEQ_TAG, TRANSCRIPT_TAG, UNPAIRED_GENE_ID_TAG, UNPAIRED_GENE_NAME_TAG,
+    REST_R2_SEQ_TAG, SPATIAL_BC_TAG, TRANSCRIPT_TAG, UNPAIRED_GENE_ID_TAG, UNPAIRED_GENE_NAME_TAG,
 };
 use cr_types::chemistry::ChemistryDef;
 use cr_types::probe_set::{GapInfo, MappedProbe};
@@ -39,10 +40,10 @@ pub const MAX_INSERT_SIZE: i64 = 1000;
 
 fn attach_umi_tags(umi: &UmiInfo, record: &mut Record) {
     record
-        .push_aux(RAW_UMI_SEQ_TAG, Aux::String(umi.seq.as_str()))
+        .push_aux_unchecked(RAW_UMI_SEQ_TAG, Aux::String(umi.seq.as_str()))
         .unwrap();
     record
-        .push_aux(RAW_UMI_QUAL_TAG, Aux::String(umi.qual.as_str()))
+        .push_aux_unchecked(RAW_UMI_QUAL_TAG, Aux::String(umi.qual.as_str()))
         .unwrap();
 }
 
@@ -80,6 +81,7 @@ impl ReadAnnotator {
         read: RnaRead,
         alignments: Vec<Record>,
         umi_info: UmiInfo,
+        index: usize,
     ) -> ReadAnnotations {
         let mut data = alignments
             .into_iter()
@@ -91,7 +93,7 @@ impl ReadAnnotator {
         if self.annotator.params.aligner != AlignerParam::Minimap2 {
             rescue_alignments_se(&mut data);
         }
-        ReadAnnotations::from_records(read, data, umi_info, false)
+        ReadAnnotations::from_records(read, data, umi_info, false, index)
     }
 
     pub fn annotate_read_pe(
@@ -100,6 +102,7 @@ impl ReadAnnotator {
         r1_data: Vec<Record>,
         r2_data: Vec<Record>,
         umi_info: UmiInfo,
+        index: usize,
     ) -> ReadAnnotations {
         // There should be at least one paired-end alignment
         assert!(!r2_data.is_empty());
@@ -111,7 +114,7 @@ impl ReadAnnotator {
             })
             .collect();
         rescue_alignments_pe(data.as_mut_slice());
-        ReadAnnotations::from_records(read, data, umi_info, pair_improper)
+        ReadAnnotations::from_records(read, data, umi_info, pair_improper, index)
     }
 }
 
@@ -344,6 +347,9 @@ pub struct ReadAnnotations {
     /// Original read data
     pub read: RnaRead,
 
+    /// Locally-unique numeric index for this read.
+    pub index: usize,
+
     /// Matched TSO sequence.
     pub matched_tso: bool,
 
@@ -368,6 +374,7 @@ impl ReadAnnotations {
         mut recs: Vec<RecordAnnotation>,
         umi_info: UmiInfo,
         pair_improper: bool,
+        read_index: usize,
     ) -> ReadAnnotations {
         // there must be a primary alignment or we panic
         let primary = recs.iter().position(|x| !x.rec().0.is_secondary()).unwrap();
@@ -375,6 +382,7 @@ impl ReadAnnotations {
 
         ReadAnnotations {
             read,
+            index: read_index,
             matched_tso: false,
             pair_improper,
             primary,
@@ -390,6 +398,7 @@ impl ReadAnnotations {
         recs: Vec<Record>,
         mut mapped_probe: MappedProbe,
         umi_info: UmiInfo,
+        read_index: usize,
     ) -> ReadAnnotations {
         // There ought to be precisely one primary (non-secondary) alignment record.
         let mut rec = recs.into_iter().find(|x| !x.is_secondary()).unwrap();
@@ -409,6 +418,7 @@ impl ReadAnnotations {
 
         ReadAnnotations {
             read,
+            index: read_index,
             matched_tso: false,
             pair_improper: false,
             primary: RecordAnnotation::new_probe(rec, mapped_probe),
@@ -433,14 +443,17 @@ impl ReadAnnotations {
         // where `xx` denotes an unknown (possibly zero length) sequence.
         // For simplicity, we attach the entire read1 sequence in the 1R/1Y tag
         // instead of having 5 additional tags (one each for `xx` and BC1/BC2).
-        rec.push_aux(
+        rec.push_aux_unchecked(
             REST_R1_SEQ_TAG,
             Aux::String(std::str::from_utf8(self.read.raw_illumina_read1_seq()).unwrap()),
         )?;
-        rec.push_aux(
+        rec.push_aux_unchecked(
             REST_R1_QUAL_TAG,
             Aux::String(std::str::from_utf8(self.read.raw_illumina_read1_qual()).unwrap()),
         )?;
+
+        let bc_vec = self.read.barcode().to_string();
+        rec.push_aux_unchecked(SPATIAL_BC_TAG, Aux::String(&bc_vec))?;
 
         // Attach the rest of R2, which follows the probe if the chemistry has an R2.
         if self.read.r1_range().read() != fastq_set::WhichRead::R2 {
@@ -455,8 +468,8 @@ impl ReadAnnotations {
                 let rest_r2_seq = std::str::from_utf8(&read2_seq[read2_end..]).unwrap();
                 let rest_r2_qual =
                     std::str::from_utf8(&self.read.raw_illumina_read2_qual()[read2_end..]).unwrap();
-                rec.push_aux(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))?;
-                rec.push_aux(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))?;
+                rec.push_aux_unchecked(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))?;
+                rec.push_aux_unchecked(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))?;
             }
         }
         Ok(())
@@ -468,19 +481,19 @@ impl ReadAnnotations {
         let rec = self.primary.mut_rec().0;
 
         // Attach the gel-bead barcode.
-        rec.push_aux(
+        rec.push_aux_unchecked(
             RAW_GEL_BEAD_BARCODE_SEQ_TAG,
             Aux::String(self.read.raw_bc_construct_seq().gel_bead().as_str()),
         )
         .unwrap();
-        rec.push_aux(
+        rec.push_aux_unchecked(
             RAW_GEL_BEAD_BARCODE_QUAL_TAG,
             Aux::String(self.read.raw_bc_construct_qual().gel_bead().as_str()),
         )
         .unwrap();
 
         // Attach the rest of R1, which follows the UMI.
-        let [UmiPart::Untranslated { range: umi }] = self.read.umi_parts.as_slice() else {
+        let [UmiPart { range: umi }] = self.read.umi_parts.as_slice() else {
             unreachable!()
         };
         assert_eq!(umi.read(), fastq_set::WhichRead::R1);
@@ -490,9 +503,9 @@ impl ReadAnnotations {
         if !rest_r1_seq.is_empty() {
             let rest_r1_qual =
                 std::str::from_utf8(&self.read.raw_illumina_read1_qual()[umi_end..]).unwrap();
-            rec.push_aux(REST_R1_SEQ_TAG, Aux::String(rest_r1_seq))
+            rec.push_aux_unchecked(REST_R1_SEQ_TAG, Aux::String(rest_r1_seq))
                 .unwrap();
-            rec.push_aux(REST_R1_QUAL_TAG, Aux::String(rest_r1_qual))
+            rec.push_aux_unchecked(REST_R1_QUAL_TAG, Aux::String(rest_r1_qual))
                 .unwrap();
         }
 
@@ -506,9 +519,9 @@ impl ReadAnnotations {
             if !rest_r2_seq.is_empty() {
                 let rest_r2_qual =
                     std::str::from_utf8(&self.read.raw_illumina_read2_qual()[read2_end..]).unwrap();
-                rec.push_aux(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))
+                rec.push_aux_unchecked(REST_R2_SEQ_TAG, Aux::String(rest_r2_seq))
                     .unwrap();
-                rec.push_aux(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))
+                rec.push_aux_unchecked(REST_R2_QUAL_TAG, Aux::String(rest_r2_qual))
                     .unwrap();
             }
         }
@@ -518,20 +531,31 @@ impl ReadAnnotations {
     fn attach_barcode_tags(&mut self) {
         let bc_seq = self.read.raw_bc_seq();
         self.primary.for_each_rec(|rec| {
-            rec.push_aux(RAW_BARCODE_SEQ_TAG, Aux::String(bc_seq.as_str()))
+            rec.push_aux_unchecked(RAW_BARCODE_SEQ_TAG, Aux::String(bc_seq.as_str()))
                 .unwrap();
         });
 
         let bc_qual = self.read.raw_bc_qual();
         self.primary.for_each_rec(|rec| {
-            rec.push_aux(RAW_BARCODE_QUAL_TAG, Aux::String(bc_qual.as_str()))
+            rec.push_aux_unchecked(RAW_BARCODE_QUAL_TAG, Aux::String(bc_qual.as_str()))
                 .unwrap();
         });
 
         if self.read.barcode_is_valid() {
-            let bc_vec = self.read.barcode().to_string();
-            self.primary
-                .for_each_rec(|rec| rec.push_aux(PROC_BC_SEQ_TAG, Aux::String(&bc_vec)).unwrap());
+            let bc_vec = if self.read.barcode_is_spatial() {
+                let mut sequence = BcSeq::new();
+                let src = self.read.segmented_barcode;
+                for s in src.sequence() {
+                    sequence.push_unchecked(s);
+                }
+                sequence.to_string()
+            } else {
+                self.read.barcode().to_string()
+            };
+            self.primary.for_each_rec(|rec| {
+                rec.push_aux_unchecked(PROC_BC_SEQ_TAG, Aux::String(&bc_vec))
+                    .unwrap();
+            });
         }
 
         if self.read.has_probe_barcode() {
@@ -559,8 +583,10 @@ impl ReadAnnotations {
             } else {
                 self.umi_info.seq.as_str()
             };
-            self.primary
-                .for_each_rec(|rec| rec.push_aux(PROC_UMI_SEQ_TAG, Aux::String(umi)).unwrap());
+            self.primary.for_each_rec(|rec| {
+                rec.push_aux_unchecked(PROC_UMI_SEQ_TAG, Aux::String(umi))
+                    .unwrap();
+            });
         }
     }
 
@@ -1256,7 +1282,8 @@ impl RecordAnnotation {
     fn attach_transcript_tag(&mut self) {
         let attach_transcript_tag = |rec: &mut Record, anno: &AnnotationData| {
             if let Some(tag) = anno.make_tx_tag() {
-                rec.push_aux(TRANSCRIPT_TAG, Aux::String(&tag)).unwrap();
+                rec.push_aux_unchecked(TRANSCRIPT_TAG, Aux::String(&tag))
+                    .unwrap();
             }
         };
         match self {
@@ -1285,18 +1312,20 @@ impl RecordAnnotation {
     /// the transcriptome.
     fn attach_basic_tags(&mut self) {
         let attach_basic_tags = |record: &mut Record, anno: &AnnotationData| {
-            if let Some(tag) = anno.make_re_tag() {
+            record
+                .push_aux_unchecked(REGION_TAG, Aux::Char(anno.make_re_tag().as_bytes()[0]))
+                .unwrap();
+
+            if let Some(tag) = anno.make_mm_tag() {
                 record
-                    .push_aux(REGION_TAG, Aux::Char(tag.as_bytes()[0]))
+                    .push_aux_unchecked(MULTIMAPPER_TAG, Aux::I32(tag))
                     .unwrap();
             }
 
-            if let Some(tag) = anno.make_mm_tag() {
-                record.push_aux(MULTIMAPPER_TAG, Aux::I32(tag)).unwrap();
-            }
-
             if let Some(tag) = anno.make_an_tag() {
-                record.push_aux(ANTISENSE_TAG, Aux::String(&tag)).unwrap();
+                record
+                    .push_aux_unchecked(ANTISENSE_TAG, Aux::String(&tag))
+                    .unwrap();
             }
         };
         match self {
@@ -1316,10 +1345,11 @@ impl RecordAnnotation {
             }
             &mut RecordAnnotation::Probe(ref mut rec, ref data) => {
                 if data.is_mapped() {
-                    rec.push_aux(REGION_TAG, Aux::Char(b'E')).unwrap();
+                    rec.push_aux_unchecked(REGION_TAG, Aux::Char(b'E')).unwrap();
                 }
                 if data.is_rescued() {
-                    rec.push_aux(MULTIMAPPER_TAG, Aux::I32(1)).unwrap();
+                    rec.push_aux_unchecked(MULTIMAPPER_TAG, Aux::I32(1))
+                        .unwrap();
                 }
             }
             RecordAnnotation::FeatureExtracted(_, _, _) => {}
@@ -1338,7 +1368,7 @@ impl RecordAnnotation {
         read_group: &str,
     ) {
         self.for_each_rec(|rec| {
-            rec.push_aux(READ_GROUP_TAG, Aux::String(read_group))
+            rec.push_aux_unchecked(READ_GROUP_TAG, Aux::String(read_group))
                 .unwrap();
         });
         self.attach_transcript_tag();
@@ -1346,9 +1376,12 @@ impl RecordAnnotation {
         match self {
             &mut RecordAnnotation::SeMapped(ref mut rec, ref anno, _) => {
                 if let Some((tag_gx, tag_gn)) = anno.make_gx_gn_tags() {
-                    rec.push_aux(GENE_ID_TAG, Aux::String(&tag_gx)).unwrap();
-                    rec.push_aux(GENE_NAME_TAG, Aux::String(&tag_gn)).unwrap();
-                    rec.push_aux(FEATURE_IDS_TAG, Aux::String(&tag_gx)).unwrap();
+                    rec.push_aux_unchecked(GENE_ID_TAG, Aux::String(&tag_gx))
+                        .unwrap();
+                    rec.push_aux_unchecked(GENE_NAME_TAG, Aux::String(&tag_gn))
+                        .unwrap();
+                    rec.push_aux_unchecked(FEATURE_IDS_TAG, Aux::String(&tag_gx))
+                        .unwrap();
                 }
             }
             &mut RecordAnnotation::PeMapped(
@@ -1361,15 +1394,18 @@ impl RecordAnnotation {
             ) => {
                 if let Some((tag_gx, tag_gn)) = annop.make_gx_gn_tags() {
                     for (rec, anno) in &mut [(rec1, anno1), (rec2, anno2)] {
-                        rec.push_aux(GENE_ID_TAG, Aux::String(&tag_gx)).unwrap();
-                        rec.push_aux(GENE_NAME_TAG, Aux::String(&tag_gn)).unwrap();
-                        rec.push_aux(FEATURE_IDS_TAG, Aux::String(&tag_gx)).unwrap();
+                        rec.push_aux_unchecked(GENE_ID_TAG, Aux::String(&tag_gx))
+                            .unwrap();
+                        rec.push_aux_unchecked(GENE_NAME_TAG, Aux::String(&tag_gn))
+                            .unwrap();
+                        rec.push_aux_unchecked(FEATURE_IDS_TAG, Aux::String(&tag_gx))
+                            .unwrap();
                         if anno.genes != annop.genes
                             && let Some((tag_gx, tag_gn)) = anno.make_gx_gn_tags()
                         {
-                            rec.push_aux(UNPAIRED_GENE_ID_TAG, Aux::String(&tag_gx))
+                            rec.push_aux_unchecked(UNPAIRED_GENE_ID_TAG, Aux::String(&tag_gx))
                                 .unwrap();
-                            rec.push_aux(UNPAIRED_GENE_NAME_TAG, Aux::String(&tag_gn))
+                            rec.push_aux_unchecked(UNPAIRED_GENE_NAME_TAG, Aux::String(&tag_gn))
                                 .unwrap();
                         }
                     }
@@ -1379,18 +1415,22 @@ impl RecordAnnotation {
                 if data.is_mapped() {
                     let ids = data.genes().map(|x| &x.id).join(";");
                     let names = data.genes().map(|x| &x.name).join(";");
-                    rec.push_aux(GENE_ID_TAG, Aux::String(&ids)).unwrap();
-                    rec.push_aux(GENE_NAME_TAG, Aux::String(&names)).unwrap();
-                    rec.push_aux(FEATURE_IDS_TAG, Aux::String(&ids)).unwrap();
+                    rec.push_aux_unchecked(GENE_ID_TAG, Aux::String(&ids))
+                        .unwrap();
+                    rec.push_aux_unchecked(GENE_NAME_TAG, Aux::String(&names))
+                        .unwrap();
+                    rec.push_aux_unchecked(FEATURE_IDS_TAG, Aux::String(&ids))
+                        .unwrap();
 
                     let probes = data.probes().join(";");
-                    rec.push_aux(PROBE_TAG, Aux::String(&probes)).unwrap();
+                    rec.push_aux_unchecked(PROBE_TAG, Aux::String(&probes))
+                        .unwrap();
 
                     if let Some(GapInfo {
                         lhs_end, rhs_start, ..
                     }) = data.gap_info()
                     {
-                        rec.push_aux(
+                        rec.push_aux_unchecked(
                             GAP_COORDINATES_TAG,
                             Aux::ArrayU8(AuxArray::from(&vec![lhs_end as u8, rhs_start as u8])),
                         )
@@ -1400,18 +1440,18 @@ impl RecordAnnotation {
             }
             &mut RecordAnnotation::FeatureExtracted(ref mut rec1, ref data, ref mut rec2) => {
                 for rec in std::iter::once(rec1).chain(rec2.iter_mut()) {
-                    rec.push_aux(
+                    rec.push_aux_unchecked(
                         FEATURE_RAW_TAG,
                         Aux::String(std::str::from_utf8(&data.barcode).unwrap()),
                     )
                     .unwrap();
-                    rec.push_aux(
+                    rec.push_aux_unchecked(
                         FEATURE_QUAL_TAG,
                         Aux::String(std::str::from_utf8(&data.qual).unwrap()),
                     )
                     .unwrap();
                     if let Some(fb) = data.corrected_barcode.as_ref() {
-                        rec.push_aux(
+                        rec.push_aux_unchecked(
                             FEATURE_SEQ_TAG,
                             Aux::String(std::str::from_utf8(fb).unwrap()),
                         )
@@ -1421,7 +1461,7 @@ impl RecordAnnotation {
                         let mut ids = data.ids.iter().map(|x| x.1.as_bytes()).collect::<Vec<_>>();
                         ids.sort();
                         let ids = ids.join(&b';');
-                        rec.push_aux(
+                        rec.push_aux_unchecked(
                             FEATURE_IDS_TAG,
                             Aux::String(std::str::from_utf8(&ids).unwrap()),
                         )
@@ -1472,7 +1512,7 @@ fn attach_primary_tags(
 ) {
     // Note: only attach these flags to primary alignment
     if !rec.is_secondary() {
-        let mut flags: ExtraFlags = Default::default();
+        let mut flags: ExtraFlags = ExtraFlags::default();
 
         if is_conf_mapped_to_transcriptome {
             flags |= ExtraFlags::CONF_MAPPED;
@@ -1499,7 +1539,7 @@ fn attach_primary_tags(
             flags |= ExtraFlags::UMI_COUNT;
         }
 
-        rec.push_aux(EXTRA_FLAGS_TAG, Aux::I32(flags.bits() as i32))
+        rec.push_aux_unchecked(EXTRA_FLAGS_TAG, Aux::I32(flags.bits() as i32))
             .unwrap();
     }
 }

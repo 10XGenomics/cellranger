@@ -71,7 +71,11 @@ const featureBarcodingSequencingMetricsTableEntries: MetricEntryConfig[] = [
   },
   {
     key: "number_of_reads",
-    help: "Total number of read pairs sequenced during this run.",
+    help: "Total number of read pairs analyzed during this run.",
+  },
+  {
+    key: "unprocessed_reads",
+    help: "Total number of read pairs that were ignored by the pipeline because they do no satisfy the minimum length requirements (for example read1 less than 26 bases in 3' v2, 3' v3, or 5').",
   },
   {
     key: "q30_barcode",
@@ -149,6 +153,37 @@ export const gdnaMetricsTable: MetricTableConfig = {
   ],
 };
 
+const readTrimmingQualityTable: MetricTableConfig = {
+  title: "Read Pre-Processing Quality",
+  help: "Read pre-processing metrics per sequencing run. Only present for long-read sequencing platforms requiring adapter trimming and splitting into read pairs.",
+  entries: [
+    {
+      key: "sequencing_platform",
+      help: "Sequencing platform used.",
+    },
+    {
+      key: "total_raw_reads_count",
+      help: "Number of raw input reads from the sequencing platform prior to trimming.",
+    },
+    {
+      key: "reads_with_inserts_count",
+      help: "Reads passing with the appropriate adapter configurations for the 10x chemistry.",
+    },
+    {
+      key: "insert_full_length_frac",
+      help: "Percentage of reads passing with full-length inserts.",
+    },
+    {
+      key: "insert_truncated_frac",
+      help: "Percentage of reads passing with truncated inserts.",
+    },
+    {
+      key: "insert_size_median",
+      help: "Median cDNA insert size after adapter trimming.",
+    },
+  ],
+};
+
 const LibraryShared = {
   VDJ: {
     libraryQuality: {
@@ -179,7 +214,11 @@ const LibraryShared = {
         },
         {
           key: "number_of_reads",
-          help: "Total number of read pairs sequenced during this run.",
+          help: "Total number of read pairs analyzed during this run.",
+        },
+        {
+          key: "unprocessed_reads",
+          help: "Total number of read pairs that were ignored by the pipeline because they do no satisfy the minimum length requirements (for example read1 less than 26 bases in 3' v2, 3' v3, or 5').",
         },
         {
           key: "q30_barcode",
@@ -355,6 +394,7 @@ const MultiplexLibraryConfig = {
         },
       ],
     },
+    readTrimmingQuality: readTrimmingQualityTable,
     sequencing: {
       title: "Sequencing Run Quality",
       help: "Metrics per sequencing run.",
@@ -365,7 +405,11 @@ const MultiplexLibraryConfig = {
         },
         {
           key: "number_of_reads",
-          help: "Total number of read pairs sequenced during this run.",
+          help: "Total number of read pairs analyzed during this run.",
+        },
+        {
+          key: "unprocessed_reads",
+          help: "Total number of read pairs that were ignored by the pipeline because they do no satisfy the minimum length requirements (for example read1 less than 26 bases in 3' v2, 3' v3, or 5').",
         },
         {
           key: "q30_barcode",
@@ -452,6 +496,7 @@ const MultiplexLibraryConfig = {
       help: "Metrics related to overall library quality.",
       entries: featureBarcodingLibraryQualityTableEntries,
     },
+    readTrimmingQuality: readTrimmingQualityTable,
     sequencing: {
       title: "Antibody Sequencing Run Quality",
       help: "Metrics per sequencing run.",
@@ -500,6 +545,7 @@ const MultiplexLibraryConfig = {
       help: "Metrics related to overall library quality.",
       entries: featureBarcodingLibraryQualityTableEntries,
     },
+    readTrimmingQuality: readTrimmingQualityTable,
     sequencing: {
       title: "CRISPR Sequencing Run Quality",
       help: "Metrics per sequencing run.",
@@ -811,7 +857,11 @@ const MultiplexLibraryConfig = {
         },
         {
           key: "number_of_reads",
-          help: "Total number of read pairs sequenced during this run.",
+          help: "Total number of read pairs analyzed during this run.",
+        },
+        {
+          key: "unprocessed_reads",
+          help: "Total number of read pairs that were ignored by the pipeline because they do no satisfy the minimum length requirements (for example read1 less than 26 bases in 3' v2, 3' v3, or 5').",
         },
         {
           key: "q30_barcode",
@@ -899,6 +949,7 @@ const MultiplexLibraryConfig = {
   Custom: {
     hero: {
       title: "Feature Expression",
+      help: "Summary statistics about the detection and association with cells for custom reads in the library.",
       entries: [
         {
           key: "fraction_feature_reads",
@@ -925,6 +976,7 @@ const MultiplexLibraryConfig = {
       entries: featureBarcodingSequencingMetricsTableEntries,
       orderBy: ["fastq_id"],
     },
+    rtl_probe_barcode_metrics: probeBarcodeMetricsTable,
   },
 };
 

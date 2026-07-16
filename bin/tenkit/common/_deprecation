@@ -7,10 +7,8 @@
 
 function check {
     if [ ! -z "$1" ]; then
-        echo "WARNING: This operating system version is unsupported or will soon be unsupported:"
+        echo "WARNING: This operating system version is unsupported:"
         echo "($1)"
-        echo "Future releases of this pipeline will require RedHat/CentOS 8 or greater,"
-        echo "or Ubuntu 16 or greater."
         echo "For more information, see support.10xgenomics.com/os-support."
         echo ""
         echo "To continue running this version for now, set TENX_IGNORE_DEPRECATED_OS=1"
@@ -19,13 +17,36 @@ function check {
     fi
 }
 
+function warn {
+    if [ ! -z "$1" ]; then
+        echo "WARNING: The operating system version is deprecated and will no longer be supported in a future release:"
+        echo "($1)"
+        echo "Future releases of this pipeline will require a more current system."
+        echo "For more information, see support.10xgenomics.com/os-support."
+        echo ""
+    fi
+}
+
 if [ -z "$TENX_IGNORE_DEPRECATED_OS" ]; then
-    # Check for deprecated red-hat derivatives
-    check "$(grep -sh ' [56]\.' /etc/redhat-release /etc/rocks-release /etc/os-release /etc/system-release)"
-    # Check for Ubuntu or Suse 10 or 11
-    check "$(grep -sh ' 1[0-3]\.' /etc/lsb-release)"
+    # Hard incompatibility errors for OSes with workaround of setting TENX_IGNORE_DEPRECATED_OS=1.
+    # Check for incompatible red-hat derivatives (version 5, 6 or 7)
+    check "$(grep -sh ' [567]\.' /etc/redhat-release /etc/rocks-release /etc/os-release /etc/system-release)"
+    # Check for Ubuntu 16 or earlier or Suse 10 or 11
+    check "$(grep -sh ' 1[0-6]\.' /etc/lsb-release)"
     check "$(grep -sh ' [1-9]\.' /etc/lsb-release)"
     check "$(grep -sh 'SUSE.* 1[01]\b' /etc/SuSE-release)"
-    # Check for Debian 6 or earlier
+    # Check for Debian 7 or earlier
     check "$(grep -sh 'PRETTY_NAME="Debian.*\b[1-7]\.' /etc/os-release)"
+
+    # Warn for OSes that are currently compatible but will be incompatible in the future
+    # Note: anything that is flagged as incompatible above will result in not running these deprecation warnings
+    # Red Hat or derivatives 5, 6 or 7
+    warn "$(grep -sh ' [567]\.' /etc/redhat-release /etc/rocks-release /etc/os-release /etc/system-release)"
+    # Ubuntu 18 or earlier
+    warn "$(grep -sh ' 1[0-8]\.' /etc/lsb-release)"
+    warn "$(grep -sh ' [1-9]\.' /etc/lsb-release)"
+    # Suse 10 or 11
+    warn "$(grep -sh 'SUSE.* 1[01]\b' /etc/SuSE-release)"
+    # Debian 7 or earlier
+    warn "$(grep -sh 'PRETTY_NAME="[dD]ebian.*\b[1-7]\.' /etc/os-release)"
 fi

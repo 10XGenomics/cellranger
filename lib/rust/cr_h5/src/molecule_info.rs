@@ -1,5 +1,6 @@
 #![expect(missing_docs)]
 use crate::iter::H5Iterator;
+use crate::probe_reference_io::ProbeMaybeWithFiltering;
 use crate::{
     ChunkedWriter, ColumnAction, feature_reference_io, probe_reference_io, scalar_attribute,
 };
@@ -9,8 +10,7 @@ use cr_types::chemistry::BarcodeReadComponent;
 use cr_types::probe_set::Probe;
 use cr_types::reference::feature_reference::{FeatureDef, FeatureReference};
 use cr_types::{
-    BarcodeIndex, BcUmiInfo, GenomeName, LibraryInfo, LibraryType, PROBE_IDX_SENTINEL_VALUE,
-    UmiCount,
+    BcUmiInfo, GenomeName, LibraryInfo, LibraryType, PROBE_IDX_SENTINEL_VALUE, UmiCount,
 };
 use hdf5::types::{FixedAscii, TypeDescriptor, VarLenAscii, VarLenUnicode};
 use hdf5::{Dataset, Extents, File, Group};
@@ -21,7 +21,7 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand_distr::{Binomial, Distribution};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::cmp::min;
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -294,16 +294,19 @@ impl MoleculeInfoIterator {
         let size = mol_info_dsets.barcode_idx.size();
         let features = feature_reference_io::from_h5(&file.group("features")?)?;
         let probes = match &file.group(PROBE_GROUP_NAME) {
-            Ok(value) => Some(probe_reference_io::from_h5(
-                value,
-                features
-                    .feature_defs
-                    .iter()
-                    .map(|x| &x.genome)
-                    .unique()
-                    .cloned()
-                    .collect(),
-            )?),
+            Ok(value) => Some(
+                probe_reference_io::from_h5(
+                    value,
+                    features
+                        .feature_defs
+                        .iter()
+                        .map(|x| &x.genome)
+                        .unique()
+                        .cloned()
+                        .collect(),
+                )?
+                .0,
+            ),
             Err(_) => None,
         };
         Ok(MoleculeInfoIterator {
@@ -540,6 +543,24 @@ impl MoleculeInfoReader {
 
     pub fn read_feature_ref(path: &Path) -> Result<FeatureReference> {
         feature_reference_io::from_h5(&Self::open(path)?.group("features")?)
+    }
+
+    pub fn read_probes(path: &Path) -> Result<Option<ProbeMaybeWithFiltering>> {
+        let file = File::open(path).with_context(|| path.display().to_string())?;
+        let features = feature_reference_io::from_h5(&file.group("features")?)?;
+        match &file.group(PROBE_GROUP_NAME) {
+            Ok(value) => Ok(Some(probe_reference_io::from_h5(
+                value,
+                features
+                    .feature_defs
+                    .iter()
+                    .map(|x| &x.genome)
+                    .unique()
+                    .cloned()
+                    .collect(),
+            )?)),
+            Err(_) => Ok(None),
+        }
     }
 
     /// Read a molecule_info.h5 file and return the datasets barcode_info/pass_filter.
@@ -804,8 +825,7 @@ impl MoleculeInfoWriter {
     }
 
     /// Write umi count data for one barcode to the molecule_info.h5 file.
-    pub fn fill(&mut self, barcode_index: &BarcodeIndex, count_data: &BcUmiInfo) -> Result<()> {
-        let barcode_idx = barcode_index.must_get(&count_data.barcode) as u64;
+    pub fn fill(&mut self, barcode_idx: u64, count_data: &BcUmiInfo) -> Result<()> {
         for c in &count_data.umi_counts {
             self.write(count_data.barcode.gem_group(), barcode_idx, c)?;
         }
@@ -852,13 +872,11 @@ impl MoleculeInfoWriter {
         self.flush()
     }
 
-    pub fn concatenate_metrics(
-        metrics_list: Vec<serde_json::Map<String, Value>>,
-    ) -> Result<String> {
-        let mut combined_metrics: Option<serde_json::Map<String, Value>> = None;
-        let mut gg_metrics: serde_json::Map<String, Value> = Default::default();
-        let mut lib_metrics: serde_json::Map<String, Value> = Default::default();
-        let mut targeted_metrics: Vec<serde_json::Map<String, Value>> = Default::default();
+    pub fn concatenate_metrics(metrics_list: Vec<Map<String, Value>>) -> Result<String> {
+        let mut combined_metrics: Option<Map<String, Value>> = None;
+        let mut gg_metrics = Map::default();
+        let mut lib_metrics = Map::default();
+        let mut targeted_metrics: Vec<Map<String, Value>> = Vec::default();
 
         for mut single_metrics in metrics_list {
             if combined_metrics.is_none() {

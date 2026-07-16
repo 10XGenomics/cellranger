@@ -12,8 +12,7 @@ pipeline _SLFE_CELLS_REPORTER(
     in  frf.bincode       slfe_feature_reference,
     in  tps.json          target_panel_summary,
     in  h5                matrices_h5,
-    in  map[]             read_chunks,
-    in  int               gem_well,
+    in  json              read_chunks,
     in  bui[]             report_mol_inputs,
     in  json              matrix_computer_summary,
     in  h5                barcode_summary,
@@ -83,7 +82,7 @@ pipeline _SAMPLE_CELLS_REPORTER(
     in  json             crispr_analyzer_metrics,
     in  json             targeted_analyzer_metrics,
     in  json             cell_annotation_metrics,
-    in  json             cas_metrics,
+    in  json             cell_annotation_analysis_metrics,
     in  tps.json         target_panel_summary,
     out json             summary,
 )
@@ -115,7 +114,7 @@ pipeline _SAMPLE_CELLS_REPORTER(
             self.crispr_analyzer_metrics,
             self.targeted_analyzer_metrics,
             self.cell_annotation_metrics,
-            self.cas_metrics,
+            self.cell_annotation_analysis_metrics,
         ],
     )
 

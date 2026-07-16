@@ -4,8 +4,11 @@
 #
 """Aggr preflight check + convert legacy molecule info h5 to current version."""
 
+from __future__ import annotations
+
 import os
 import shutil
+from typing import TYPE_CHECKING
 
 import martian
 
@@ -23,11 +26,15 @@ from cellranger.feature.antigen.specificity import (
 )
 from cellranger.molecule_counter_converter import convert_v2_to_v4, upgrade_file
 
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage CHECK_MOLECULE_INFO_VERSION(
     in  map[]       sample_defs,
     in  string      product_type,
     in  bool        is_pd,
+    in  bool        skip_cell_annotation_in,
     out map[]       updated_sample_defs,
     out bool        is_not_pd,
     out string      beam_mode,
@@ -36,6 +43,7 @@ stage CHECK_MOLECULE_INFO_VERSION(
     out csv         feature_reference,
     out bool        disable_antigen_aggr,
     out bool        is_visium_hd,
+    out bool        skip_cell_annotation,
     src py          "stages/aggregator/check_molecule_info_version",
 ) split (
     in  int         mol_h5_version,
@@ -45,14 +53,52 @@ stage CHECK_MOLECULE_INFO_VERSION(
     volatile = strict,
 )
 """
+
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CHECK_MOLECULE_INFO_VERSION stage inputs."""
+
+    sample_defs: list[dict]  # TODO: be more specific with the type here
+    product_type: str
+    is_pd: bool
+    skip_cell_annotation_in: bool
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CHECK_MOLECULE_INFO_VERSION stage outputs."""
+
+    updated_sample_defs: list[dict]  # TODO: be more specific with the type here
+    is_not_pd: bool
+    beam_mode: str | None
+    is_spatial: bool
+    antigen_specificity_controls: dict[str, str]
+    feature_reference: mro_filetypes.csv | None
+    disable_antigen_aggr: bool
+    is_visium_hd: bool
+    skip_cell_annotation: bool
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CHECK_MOLECULE_INFO_VERSION chunk inputs."""
+
+    mol_h5_version: int
+    sample_def: dict  # TODO: be more specific with the type here
+
+
+class ChunkOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CHECK_MOLECULE_INFO_VERSION chunk outputs."""
+
+    updated_sample_def: dict  # TODO: be more specific with the type here
+
+
 SP_PRODUCT = "sp"
 
 
-def split(args):
+def split(args: StageInputs):
     return check_molecule_info_version_split(args)
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     outs.updated_sample_def = args.sample_def.copy()
 
     if args.mol_h5_version == cr_mol_counter.CURR_FILE_VERSION:
@@ -77,9 +123,15 @@ def main(args, outs):
     outs.updated_sample_def[cr_constants.AGG_H5_FIELD] = out_mole_info_h5
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     outs.is_not_pd = not args.is_pd
     outs.is_spatial = bool(args.product_type == SP_PRODUCT)
+    outs.skip_cell_annotation = bool(args.skip_cell_annotation_in)
     outs.updated_sample_defs = [chunk_out.updated_sample_def for chunk_out in chunk_outs]
 
     outs.beam_mode = None

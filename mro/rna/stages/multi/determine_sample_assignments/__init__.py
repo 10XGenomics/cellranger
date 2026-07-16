@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import itertools
 import json
-from copy import deepcopy
 from enum import Enum
 from math import ceil
+from typing import TYPE_CHECKING, Any
 
 import martian
 
@@ -37,6 +37,10 @@ from cellranger.feature.feature_assignments import (
 )
 from cellranger.matrix import CountMatrix
 
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
+
 __MRO__ = """
 stage DETERMINE_SAMPLE_ASSIGNMENTS(
     in  json[]             barcodes_per_tag,
@@ -44,7 +48,6 @@ stage DETERMINE_SAMPLE_ASSIGNMENTS(
     in  csv                filtered_barcodes,
     in  json               multi_graph,
     in  json               non_singlet_barcodes,
-    in  int                gem_well,
     in  h5                 raw_feature_bc_matrix,
     out json               cells_per_tag,
     out json               sample_barcodes,
@@ -60,11 +63,45 @@ stage DETERMINE_SAMPLE_ASSIGNMENTS(
 """
 
 
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """DETERMINE_SAMPLE_ASSIGNMENTS stage inputs."""
+
+    barcodes_per_tag: None | list[None | mro_filetypes.json]
+    force_sample_barcodes: None | mro_structs.BarcodeAssignments
+    filtered_barcodes: None | mro_filetypes.csv
+    multi_graph: None | mro_filetypes.json
+    non_singlet_barcodes: None | mro_filetypes.json
+    raw_feature_bc_matrix: None | mro_filetypes.h5
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """DETERMINE_SAMPLE_ASSIGNMENTS stage outputs."""
+
+    cells_per_tag: None | mro_filetypes.json
+    sample_barcodes: None | mro_filetypes.json
+    sample_cell_barcodes: None | mro_filetypes.json
+    non_singlet_barcodes: None | mro_filetypes.json
+    sample_summaries: None | dict[str, mro_filetypes.json]
+    summary: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """DETERMINE_SAMPLE_ASSIGNMENTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """DETERMINE_SAMPLE_ASSIGNMENTS chunk outputs."""
+
+
 # Calculate per-cell multiplexing metrics
-def calculate_sample_assignment_metrics(  # pylint: disable=too-many-locals
-    sample_barcodes, multiplets, filtered_barcodes_csv, sample_to_tags, sample_multiplexing_method
-):
-    """Undocumented.
+def calculate_sample_assignment_metrics(
+    sample_barcodes: SampleBarcodes,
+    multiplets: set[bytes],
+    filtered_barcodes_csv: str,
+    sample_to_tags: dict[str, list[str]],
+    sample_multiplexing_method: str,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Calculate sample assignment metrics.
 
     Args:
         sample_barcodes: SampleBarcodes: maps sample names as bytes to assigned barcodes as list of bytes
@@ -78,58 +115,51 @@ def calculate_sample_assignment_metrics(  # pylint: disable=too-many-locals
         sample_summaries: Dict[str,str] dict mapping sample names to JSONs holding sample-specific metrics
             most of the metrics are duplicates of the library-level metrics that are needed for the sample web summary
     """
-    assignment_metrics = {}
-    sample_summaries = {}
-
-    # Count how many samples had singlets
-    samples_with_any_singlets = set()
-    for sample, barcodes in sample_barcodes.items():
-        if len(barcodes) > 0:
-            samples_with_any_singlets.add(sample)
-
-    total_singlets = sum(len(bcs) for bcs in sample_barcodes.values())
-
-    filtered_barcodes = cr_utils.load_barcode_csv(filtered_barcodes_csv)
+    filtered_barcodes = {
+        genome.decode(): set(barcodes)
+        for genome, barcodes in cr_utils.load_barcode_csv(filtered_barcodes_csv).items()
+    }
     total_cell_associated_partitions = sum(len(barcodes) for barcodes in filtered_barcodes.values())
+    total_singlets = sum(len(barcodes) for barcodes in sample_barcodes.values())
 
-    assignment_metrics["cell_associated_partitions_not_assigned_any_samples"] = (
-        total_cell_associated_partitions - total_singlets - len(multiplets)
-    )
-    assignment_metrics["cell_associated_partitions_identified_as_multiplets"] = len(multiplets)
-    assignment_metrics["total_cell_associated_partitions"] = total_cell_associated_partitions
-    assignment_metrics["samples_with_any_singlets"] = len(samples_with_any_singlets)
+    assignment_metrics = {
+        "cell_associated_partitions_identified_as_multiplets": len(multiplets),
+        "cell_associated_partitions_not_assigned_any_samples": (
+            total_cell_associated_partitions - total_singlets - len(multiplets)
+        ),
+        "samples_with_any_singlets": sum(
+            len(barcodes) >= 1 for barcodes in sample_barcodes.values()
+        ),
+        "total_cell_associated_partitions": total_cell_associated_partitions,
+        "total_singlets": total_singlets,
+    }
 
-    assignment_metrics["total_singlets"] = total_singlets
-    # TODO: Jira: CELLRANGER-9147: Consider using reference_genomes list instead
-    genomes = filtered_barcodes.keys()
+    sample_summaries = {}
+    for sample_id, barcodes_for_sample in sample_barcodes.items():
+        sample_id = sample_id.decode()
+        sample_tags = sample_to_tags[sample_id]
 
-    for sample_id in sample_barcodes:
-        barcodes_for_sample = set(sample_barcodes[sample_id])
-
-        sample_metrics = deepcopy(assignment_metrics)
-
-        for genome in genomes:
-            genome_barcodes = set(filtered_barcodes[genome])
-            sample_metrics[genome.decode("utf8") + "_singlets_assigned_to_this_sample"] = len(
-                genome_barcodes.intersection(barcodes_for_sample)
-            )
-
-        sample_metrics["singlets_assigned_to_this_sample"] = len(barcodes_for_sample)
-        sample_metrics["singlets_assigned_to_other_samples"] = total_singlets - len(
-            barcodes_for_sample
+        sample_metrics = (
+            assignment_metrics
+            | {
+                "sample_id": sample_id,
+                "sample_multiplexing_method": sample_multiplexing_method,
+                "sample_tags_count": len(sample_tags),
+                "sample_tags": "|".join(sample_tags),
+                "singlets_assigned_to_other_samples": total_singlets - len(barcodes_for_sample),
+                "singlets_assigned_to_this_sample": len(barcodes_for_sample),
+            }
+            | {
+                f"{genome}_singlets_assigned_to_this_sample": len(
+                    barcodes.intersection(barcodes_for_sample)
+                )
+                for genome, barcodes in filtered_barcodes.items()
+            }
         )
-        if (key := sample_id.decode()) in sample_to_tags:
-            sample_metrics["sample_tags"] = "|".join(sample_to_tags[key])
-            sample_metrics["sample_tags_count"] = len(sample_to_tags[key])
-        sample_metrics["sample_multiplexing_method"] = sample_multiplexing_method
 
-        metrics_filename = "{}_summary.json".format(sample_id.decode("utf8"))
-        metrics_path = martian.make_path(metrics_filename)
-
-        with open(metrics_path, "w") as outf:
-            json.dump(sample_metrics, outf, indent=4, sort_keys=True)
-
-        sample_summaries[sample_id.decode("utf8")] = metrics_path
+        sample_summaries[sample_id] = martian.make_path(f"{sample_id}_summary.json")
+        with open(sample_summaries[sample_id], "w") as f:
+            json.dump(sample_metrics, f, indent=4, sort_keys=True)
 
     return assignment_metrics, sample_summaries
 
@@ -151,7 +181,9 @@ def _get_barcodes_per_tag_files(args) -> list[str]:
     return [x for x in args.barcodes_per_tag if x is not None]
 
 
-def _get_barcodes_per_tag(config: MultiGraph, args, outs) -> CellsPerFeature | None:
+def _get_barcodes_per_tag(
+    config: MultiGraph, args: StageInputs, outs: StageOutputs
+) -> CellsPerFeature | None:
     """Get the barcodes per tag. Returns None if not multiplexed."""
     barcodes_per_tag_files = _get_barcodes_per_tag_files(args)
     if config.is_multiplexed():
@@ -175,12 +207,18 @@ def _get_barcodes_per_tag(config: MultiGraph, args, outs) -> CellsPerFeature | N
 
 
 def _get_forced_mutiplets(
-    force_sample_barcodes,
-    args,
-    outs,
+    force_sample_barcodes: str,
+    args: StageInputs,
+    outs: StageOutputs,
     barcodes_per_tag: CellsPerFeature | None,
-):
-    assignment_metrics = {}
+) -> tuple[
+    set[bytes],
+    dict[str, Any],
+    str,
+    SampleBarcodes,
+    SampleBarcodes,
+    CellsPerFeature | None,
+]:
     cells_per_tag_fn = args.force_sample_barcodes["cells_per_tag"]
     non_singlet_bc_fn = args.force_sample_barcodes["non_singlet_barcodes"]
     try:
@@ -200,11 +238,12 @@ def _get_forced_mutiplets(
             MULTIPLETS_FACTOR_NAME.encode(), []
         )
     )
-    cells_per_tag = CellsPerFeature.load_from_file(args.force_sample_barcodes["cells_per_tag"])
-    for tag, barcodes in cells_per_tag.items():
-        singlet_barcodes_for_tag = [bc for bc in barcodes if bc not in multiplets]
-        metric_name = f"tag_{tag.decode()}_number_of_singlets"
-        assignment_metrics[metric_name] = len(singlet_barcodes_for_tag)
+    assignment_metrics = {
+        f"tag_{tag.decode()}_number_of_singlets": sum(bc not in multiplets for bc in barcodes)
+        for tag, barcodes in CellsPerFeature.load_from_file(
+            args.force_sample_barcodes["cells_per_tag"]
+        ).items()
+    }
     return (
         multiplets,
         assignment_metrics,
@@ -215,18 +254,34 @@ def _get_forced_mutiplets(
     )
 
 
-def _get_singleplex_multiplets(config: MultiGraph, args, barcodes_per_tag: CellsPerFeature | None):
+def _get_singleplex_multiplets(
+    config: MultiGraph, args: StageInputs, barcodes_per_tag: CellsPerFeature | None
+) -> tuple[
+    set[bytes],
+    dict[str, Any],
+    None,
+    SampleBarcodes,
+    SampleBarcodes,
+    CellsPerFeature | None,
+]:
     assignment_metrics = {}
-    filtered_sample_barcodes = SampleBarcodes()
-    sample_barcodes = SampleBarcodes()
     sample_ids = list(config.sample_tag_ids().keys())
     assert len(sample_ids) == 1  # no muxing, multi config must have only one sample
     sample_id = sample_ids[0].encode()
-    filtered_sample_barcodes[sample_id] = []
-    for barcodes in cr_utils.load_barcode_csv(args.filtered_barcodes).values():
-        filtered_sample_barcodes[sample_id] += barcodes
-    filtered_sample_barcodes[sample_id].sort()
-    sample_barcodes[sample_id] = CountMatrix.load_bcs_from_h5(args.raw_feature_bc_matrix)
+
+    sample_barcodes = SampleBarcodes.from_dictionary(
+        {sample_id: CountMatrix.load_bcs_from_h5(args.raw_feature_bc_matrix)}
+    )
+
+    filtered_sample_barcodes = SampleBarcodes.from_dictionary(
+        {
+            sample_id: sorted(
+                itertools.chain.from_iterable(
+                    cr_utils.load_barcode_csv(args.filtered_barcodes).values()
+                )
+            )
+        }
+    )
 
     return (
         set(),
@@ -238,7 +293,16 @@ def _get_singleplex_multiplets(config: MultiGraph, args, barcodes_per_tag: Cells
     )
 
 
-def _get_multiplex_multiplets(config: MultiGraph, args, barcodes_per_tag: CellsPerFeature):
+def _get_multiplex_multiplets(
+    config: MultiGraph, args: StageInputs, barcodes_per_tag: CellsPerFeature
+) -> tuple[
+    set[bytes],
+    dict[str, Any],
+    None,
+    SampleBarcodes,
+    SampleBarcodes,
+    CellsPerFeature,
+]:
     assignment_metrics = {}
     # Determine which barcodes are multiplets
     multiplets = barcodes_per_tag.get_multiplets()
@@ -294,8 +358,19 @@ def _get_multiplex_multiplets(config: MultiGraph, args, barcodes_per_tag: CellsP
 
 
 def _get_multiplets(
-    mode: MultipletMode, config: MultiGraph, args, outs, barcodes_per_tag: CellsPerFeature | None
-):
+    mode: MultipletMode,
+    config: MultiGraph,
+    args: StageInputs,
+    outs: StageOutputs,
+    barcodes_per_tag: CellsPerFeature | None,
+) -> tuple[
+    set[bytes],
+    dict[str, Any],
+    str | None,
+    SampleBarcodes,
+    SampleBarcodes,
+    CellsPerFeature | None,
+]:
     # S.M. fixme currently this is valid only for CMO-multiplexing
     if mode == MultipletMode.FORCED:
         return _get_forced_mutiplets(
@@ -336,7 +411,7 @@ class MultipletMode(Enum):
             return cls.MULTIPLEX
 
 
-def split(args):
+def split(args: StageInputs):
     if args.multi_graph is None:
         return {"chunks": [], "join": {}}
 
@@ -372,7 +447,12 @@ def split(args):
     return {"chunks": [], "join": {"__mem_gb": max(ceil(mem_gib) * 1.5 + 2, 4)}}
 
 
-def join(args, outs, _chunk_defs, _chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     """Chunk phase.
 
     Args:
@@ -420,13 +500,15 @@ def join(args, outs, _chunk_defs, _chunk_outs):
         else:
             hardlink_with_fallback(args.non_singlet_barcodes, outs.non_singlet_barcodes)
 
-        if config.is_rtl_multiplexed() or config.is_oh_multiplexed():
-            cells_per_tag = SampleBarcodes()
-            cell_barcodes = set(itertools.chain(*filtered_sample_barcodes.values()))
-            for tag in barcodes_per_tag:
-                cells_per_tag[tag] = [bc for bc in barcodes_per_tag[tag] if bc in cell_barcodes]
-            outs.cells_per_tag = martian.make_path("cells_per_tag.json")
-            cells_per_tag.save_to_file(outs.cells_per_tag)
+        if config.is_rtl_multiplexed() or config.is_oh_multiplexed() or config.is_cmx_multiplexed():
+            assert barcodes_per_tag is not None
+            cell_barcodes = set(itertools.chain.from_iterable(filtered_sample_barcodes.values()))
+            SampleBarcodes.from_dictionary(
+                {
+                    tag: [bc for bc in barcodes if bc in cell_barcodes]
+                    for tag, barcodes in barcodes_per_tag.items()
+                }
+            ).save_to_file(outs.cells_per_tag)
         elif not config.is_multiplexed():
             outs.cells_per_tag = None
 

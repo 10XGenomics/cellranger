@@ -42,10 +42,7 @@ fn get_vdj_cells_per_tag_cell_level_multiplexing(
         .unwrap()
         .into_iter()
         .map(|(tag_id, gex_cells_set)| {
-            (
-                tag_id.to_string(),
-                gex_cells_set.intersection(cell_bcs).count(),
-            )
+            (tag_id.clone(), gex_cells_set.intersection(cell_bcs).count())
         })
         .collect()
 }
@@ -131,6 +128,9 @@ impl MartianMain for MergePerSampleAnnotations {
                     get_vdj_cells_per_tag_overhang_multiplexing(args.vdj_chemistry_def, &cell_bcs),
                 ),
                 BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL) => {
+                    panic!("Unsupported vdj multiplexing method!")
+                }
+                BarcodeMultiplexingType::ReadLevel(ReadLevel::CMX) => {
                     panic!("Unsupported vdj multiplexing method!")
                 }
             }

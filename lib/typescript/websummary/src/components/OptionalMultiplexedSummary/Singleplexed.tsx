@@ -57,7 +57,7 @@ const GEX = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
           dataTest={getDataTest("barcode_rank_plot")}
           {...content.barcode_rank_plot}
         />
-        {experimentalDesign.is_barnyard && (
+        {experimentalDesign.is_barnyard && content.barnyard_biplot && (
           <TitledChangeablePlot
             dataTest={getDataTest("barnyard_biplot")}
             {...content.barnyard_biplot}
@@ -71,6 +71,11 @@ const GEX = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
       />
       <Metrics
         config={config.GEX.libraryQuality}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+      <Metrics
+        config={config.GEX.readTrimmingQuality}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
       />
@@ -216,6 +221,11 @@ const AB = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
         metrics={libraryMetrics}
       />
       <Metrics
+        config={config.AB.readTrimmingQuality}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+      <Metrics
         config={config.AB.sequencingQuality}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
@@ -348,6 +358,11 @@ const CRISPR = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
       />
       <Metrics
         config={config.CRISPR.libraryQuality}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+      <Metrics
+        config={config.CRISPR.readTrimmingQuality}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
       />
@@ -619,15 +634,18 @@ const Singleplexed = (props: MultiWebSummary) => {
             metrics={combinedMetrics}
           />,
         )}
-        {optionalTab(
-          TabTitle.Annotate,
-          perSample[0].data.cell_annotation_tab,
-          <Annotate
-            content={perSample[0].data.cell_annotation_tab?.content}
-            experimentalDesign={experimentalDesign}
-            metrics={combinedMetrics}
-          />,
-        )}
+        {perSample[0].data.cell_annotation_tabs &&
+          perSample[0].data.cell_annotation_tabs.map((cellAnnotationTab) => {
+            return optionalTab(
+              cellAnnotationTab.content.title,
+              cellAnnotationTab,
+              <Annotate
+                content={cellAnnotationTab.content}
+                experimentalDesign={experimentalDesign}
+                metrics={combinedMetrics}
+              />,
+            );
+          })}
         <Tab
           eventKey={"experimental_design"}
           key={"experimental_design"}

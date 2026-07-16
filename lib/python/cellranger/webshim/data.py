@@ -21,6 +21,7 @@ from six import ensure_binary, ensure_str
 
 import cellranger.analysis.multigenome as cr_mg_analysis
 import cellranger.analysis.singlegenome as cr_sg_analysis
+import cellranger.matrix as cr_matrix
 import cellranger.utils as cr_utils
 import cellranger.vdj.utils as vdj_utils
 import cellranger.webshim.constants.gex as gex_constants
@@ -170,6 +171,13 @@ class SampleData:
             if sample_data_paths.filtered_barcodes_path
             else None
         )
+
+        if self.cell_barcodes is None and getattr(
+            sample_data_paths, "filtered_matrix_h5_path", None
+        ):
+            self.cell_barcodes = set(
+                cr_matrix.CountMatrix.load_bcs_from_h5(sample_data_paths.filtered_matrix_h5_path)
+            )
 
         if sample_data_paths.vdj_cell_barcodes_path:
             assert self.cell_barcodes is None

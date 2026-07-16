@@ -69,18 +69,18 @@ def _round_to_1(x):
 
 def make_histogram_help(is_antibody, is_spatial):
     """Returns help for antibody/antigen umi count histogram."""
-    spot_or_cell = "spots" if is_spatial else "cells"
+    barcode_or_cell = "barcodes" if is_spatial else "cells"
     link_text = LINK_HELP_TEXT if is_spatial else ""
 
     if is_antibody:
         return {
             "helpText": f"Only {link_text} antibodies with total UMI counts over {MIN_COUNTS_PER_ANTIBODY:,} are plotted, and only up to the top {DEFAULT_MAX_HISTOGRAMS} Antibodies by UMI count are shown. "
-            f"The X-axis is the UMI counts in the log scale, while the Y-axis is the number of {spot_or_cell} observed with that UMI count.",
+            f"The X-axis is the UMI counts in the log scale, while the Y-axis is the number of {barcode_or_cell} observed with that UMI count.",
             "title": "Histogram of Antibody UMI Counts",
         }
     else:
         return {
-            "helpText": f"Only Antigens with non-zero total UMI counts in the library are shown. The X-axis is the UMI counts in log scale while the Y-axis is the number of {spot_or_cell} observed with that UMI count. The histogram excludes the 0 data point i.e. the number of barcodes with 0 UMI counts for a given Antigen.\nDouble-click on the name of any feature in the plot legend to view the UMI counts only for that feature.",
+            "helpText": f"Only Antigens with non-zero total UMI counts in the library are shown. The X-axis is the UMI counts in log scale while the Y-axis is the number of {barcode_or_cell} observed with that UMI count. The histogram excludes the 0 data point i.e. the number of barcodes with 0 UMI counts for a given Antigen.\nDouble-click on the name of any feature in the plot legend to view the UMI counts only for that feature.",
             "title": "Histogram of Antigen UMI Counts",
         }
 
@@ -189,8 +189,6 @@ def make_antibody_histograms(ab_matrix, is_spatial, hashtags=None):
     if ab_matrix.features_dim > len(over_threshold_features):
         ab_matrix = ab_matrix.select_features(over_threshold_features)
 
-    ab_counts = np.log10(ab_matrix.m.toarray() + 1.0)
-
     # get allele information (if available) for legend grouping
     if not is_antibody and MHC_ALLELE in ab_matrix.feature_ref.all_tag_keys:
         legend_group = [ensure_str(f.tags[MHC_ALLELE]) for f in ab_matrix.feature_ref.feature_defs]
@@ -215,7 +213,10 @@ def make_antibody_histograms(ab_matrix, is_spatial, hashtags=None):
         feature_id,
         index,
     ) in ab_matrix.feature_ids_map.items():
-        cnts = ab_counts[index, :]
+
+        row_data = ab_matrix.m[index, :].toarray().ravel()
+        cnts = np.log10(row_data + 1.0)
+
         if not is_antibody:
             cnts = cnts[cnts != 0]
         hashtag_label_value = HASHTAG_LABEL if feature_id.decode("utf-8") in hashtags else ""
@@ -228,10 +229,10 @@ def make_antibody_histograms(ab_matrix, is_spatial, hashtags=None):
             )
         )
 
-    spot_or_cell = "Spots" if is_spatial else "Cells"
+    barcode_or_cell = "Barcodes" if is_spatial else "Cells"
 
     histogram_plot = make_histogram_as_bar_plot(
-        data, color_map, "Log10(1+Count)", f"Number of {spot_or_cell}"
+        data, color_map, "Log10(1+Count)", f"Number of {barcode_or_cell}"
     )
     PLOT_CONFIG[MODE_BAR_BUTTONS] = [["toImage"]]
     histogram_plot["config"] = PLOT_CONFIG

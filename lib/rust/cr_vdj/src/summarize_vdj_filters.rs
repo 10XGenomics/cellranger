@@ -298,7 +298,7 @@ impl Annotations {
                 e.cdr3s.push(Cdr3Info {
                     cdr3_aa: format!("{}:{}", ann.chain, ann.cdr3.unwrap()),
                     num_umis: ann.umis,
-                    chain: ann.chain.to_string(),
+                    chain: ann.chain.clone(),
                 });
             }
         }
@@ -999,7 +999,7 @@ fn make_gex_vdj_umi_scatter(
                     let info = &barcode_info[*bc];
                     let g = gex_umis.get(*bc).copied().unwrap_or(0);
                     let hover_suffix = match sub_filters.get(*bc) {
-                        Some(filt) => filt.to_string(),
+                        Some(filt) => filt.clone(),
                         None => String::new(),
                     };
                     let hover_text = format!(

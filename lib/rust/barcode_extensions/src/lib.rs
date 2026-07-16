@@ -61,6 +61,12 @@ fn select_barcode_corrector_common(
                 Some(BarcodeExtraction::JointBc1Bc2 { .. }) => unreachable!(),
             })
         }
-        BarcodeConstruct::Segmented(..) => unreachable!(),
+        BarcodeConstruct::SegmentedGelBeadAndSample(barcode_construct) => {
+            BarcodeConstruct::SegmentedGelBeadAndSample(
+                barcode_construct
+                    .map(|((_spec, whitelist), counts)| basic_corrector(whitelist, counts)),
+            )
+        }
+        BarcodeConstruct::SpatialSegmented(..) => unreachable!(),
     }
 }

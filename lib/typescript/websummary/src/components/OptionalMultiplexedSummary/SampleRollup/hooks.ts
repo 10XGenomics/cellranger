@@ -21,7 +21,12 @@ const getAlertSeverityForTab = (
   >,
 ) => {
   return getAlertSeverity(sampleData, (data) => {
-    const alerts = data.data[tabKey]?.alerts || [];
+    const tabDataOrArray = data.data[tabKey];
+    const alerts = !tabDataOrArray
+      ? []
+      : Array.isArray(tabDataOrArray)
+        ? tabDataOrArray.flatMap((tab) => tab.alerts || [])
+        : tabDataOrArray.alerts || [];
     return getAlertSeverityFromAlerts(alerts);
   });
 };
@@ -55,10 +60,27 @@ export const useFilteredPerSampleData = (
   useMemo(() => {
     const filtered: MultiWebSummarySampleData[] = [];
 
+    // Logical OR for pipe-separated search terms.
+    const searchTerms = filter
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    // Allow searching in both sample IDs and multiplexing barcode IDs.
     data.forEach((d, i) => {
       const hasAlerts = sampleHasAlerts[i];
+      const idLower = d.data.id.toLowerCase();
+      const sampleBcIdLower = d.data.multiplexing_barcode_ids.map((bc) =>
+        bc.toLowerCase(),
+      );
+
       const failsFilter =
-        filter !== "" && !d.data.id.toLowerCase().includes(filter);
+        filter !== "" &&
+        searchTerms.every(
+          (term) =>
+            !idLower.includes(term) &&
+            sampleBcIdLower.every((bcId) => !bcId.includes(term)),
+        );
       const failsAlerts = showOnlyWithAlerts && !hasAlerts;
       if (failsFilter || failsAlerts) {
         return;

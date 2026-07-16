@@ -2,9 +2,9 @@
 #![deny(missing_docs)]
 
 use crate::barcode_correction_metrics::{
-    BarcodeCorrectionMetricsFormat, BarcodeCorrectionVisitor, BarcodeDiversityMetrics,
+    BarcodeCorrectionMetrics, BarcodeCorrectionMetricsFormat, BarcodeDiversityMetrics,
 };
-use crate::barcode_sort::{BarcodeOrder, ReadVisitor};
+use crate::barcode_sort::BarcodeOrder;
 use crate::stages::make_correction_map::CorrectionMapFormat;
 use crate::types::ReadShardFile;
 use anyhow::Result;
@@ -91,19 +91,19 @@ fn is_unusual_flex_molecule(
     probe_barcode_offset_range: &RangeInclusive<usize>,
 ) -> bool {
     const MINIMUM_SUFFIX_MATCH: usize = 4;
-    if find_suffix_overlap_match(r1_seq, X12_CAPTURE_SEQ)
+    if find_suffix_overlap_match(r1_seq, X12_CAPTURE_SEQ.as_bytes())
         .is_some_and(|pos| r1_seq.len() - pos >= MINIMUM_SUFFIX_MATCH)
     {
         return true;
     }
 
-    let Some(x12_pos) = find_with_one_mismatch(r1_seq, X12_CAPTURE_SEQ) else {
+    let Some(x12_pos) = find_with_one_mismatch(r1_seq, X12_CAPTURE_SEQ.as_bytes()) else {
         return false;
     };
 
     let barcode_pos = x12_pos + X12_CAPTURE_SEQ.len();
     !probe_barcode_offset_range.contains(&barcode_pos)
-        || find_with_one_mismatch(&r1_seq[barcode_pos..], X12_CAPTURE_SEQ).is_some()
+        || find_with_one_mismatch(&r1_seq[barcode_pos..], X12_CAPTURE_SEQ.as_bytes()).is_some()
 }
 
 /// Martian stage BARCODE_CORRECTION
@@ -360,7 +360,7 @@ pub fn correct_barcode_in_read(
                                 .filter_map(move |(len1, len2)| {
                                     // Skip cases where the end of bc2 goes past the end of read
                                     (offset + len1 + len2 <= read_len).then_some(
-                                        BarcodeConstruct::Segmented(Segments::from_iter([
+                                        BarcodeConstruct::SpatialSegmented(Segments::from_iter([
                                             RpRange::new(which_read, offset, Some(len1)),
                                             RpRange::new(which_read, offset + len1, Some(len2)),
                                         ])),
@@ -479,8 +479,10 @@ impl MartianStage for BarcodeCorrection {
         let mut invalid_sender = invalid_writer.get_sender();
 
         let mut bc_counts_corrected: TxHashMap<LibraryType, OrderedHistogram<Barcode>> =
-            Default::default();
+            TxHashMap::default();
         let mut bc_counts_invalid = OrderedHistogram::default();
+
+        let mut metrics = BarcodeCorrectionMetrics::default();
 
         let bc_segment_counts = args.barcode_segment_counts.read()?;
 
@@ -512,13 +514,12 @@ impl MartianStage for BarcodeCorrection {
             })
             .try_collect()?;
 
-        let mut visitor = BarcodeCorrectionVisitor::new();
         for rna_read in reader.take(chunk_args.count) {
             let mut rna_read = rna_read?;
             let (extractor, corrector) = &extractors_and_correctors[&rna_read.library_type];
             correct_barcode_in_read(&mut rna_read, *extractor, corrector.as_ref());
 
-            visitor.visit_processed_read(&mut rna_read)?;
+            metrics.visit_processed_read(&mut rna_read);
             let bc = rna_read.barcode();
             if bc.is_valid() {
                 bc_counts_corrected
@@ -537,7 +538,7 @@ impl MartianStage for BarcodeCorrection {
         invalid_writer.finish()?;
 
         let chunk_summary: BarcodeCorrectionMetricsFormat = rover.make_path("chunk_summary");
-        chunk_summary.write(&visitor.metrics)?;
+        chunk_summary.write(&metrics)?;
 
         let corrected_barcode_counts =
             PerLibrarySortedBarcodeCounts::write_histograms(&bc_counts_corrected, |lib_type| {

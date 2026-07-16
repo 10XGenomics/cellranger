@@ -3,30 +3,66 @@
 # Copyright (c) 2017 10X Genomics, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 import json
+from typing import TYPE_CHECKING
+
+import martian
 
 import cellranger.webshim.common as cr_webshim
 import cellranger.websummary.vdj as vdj_web
-from cellranger.analysis.singlegenome import TSNE_NAME
+from cellranger.analysis.singlegenome import UMAP_NAME
 from cellranger.webshim.constants.shared import PIPELINE_VDJ
 from cellranger.websummary.sample_properties import SampleDataPaths, VdjSampleProperties
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage SUMMARIZE_VDJ_REPORTS(
     in  json         metrics_summary_json,
     in  ChemistryDef vdj_chemistry_def,
     in  json         cell_barcodes,
+    in  csv          all_contig_annotations_csv,
     in  csv          clonotype_summary,
     out csv          metrics_summary_csv,
     out html         web_summary,
     out json         web_summary_data,
     src py           "stages/vdj/summarize_reports",
 ) split (
-) 
+)
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_VDJ_REPORTS stage inputs."""
+
+    metrics_summary_json: mro_filetypes.json
+    vdj_chemistry_def: mro_structs.ChemistryDef
+    cell_barcodes: None | mro_filetypes.json
+    all_contig_annotations_csv: None | mro_filetypes.csv
+    clonotype_summary: None | mro_filetypes.csv
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_VDJ_REPORTS stage outputs."""
+
+    metrics_summary_csv: mro_filetypes.csv
+    web_summary: mro_filetypes.html
+    web_summary_data: mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_VDJ_REPORTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """SUMMARIZE_VDJ_REPORTS chunk outputs."""
+
+
+def split(args: StageInputs):
     return {
         "chunks": [{}],
         "join": {
@@ -35,11 +71,16 @@ def split(args):
     }
 
 
-def main(args, outs):
+def main(_args: ChunkInputs, _outs: ChunkOutputs):
     pass
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
 
     sample_data_paths = SampleDataPaths(
         summary_path=args.metrics_summary_json,
@@ -58,7 +99,7 @@ def join(args, outs, chunk_defs, chunk_outs):
         chain_type=metrics_summary["chain_type"],
     )
     sample_data = cr_webshim.load_sample_data(
-        sample_properties, sample_data_paths, projections=TSNE_NAME
+        sample_properties, sample_data_paths, projections=(UMAP_NAME,)
     )
 
     ws_data = vdj_web.build_vdj_web_summary_html(outs.web_summary, sample_properties, sample_data)

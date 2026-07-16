@@ -15,10 +15,8 @@ use metric::TxHashMap;
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ord, Ordering, PartialOrd, min};
 use std::collections::HashMap;
-use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::{BufRead, BufReader, Write};
-use std::iter::zip;
+use std::io::Write;
 use std::ops::Deref;
 use std::path::Path;
 use std::str::FromStr;
@@ -589,11 +587,17 @@ impl ProbeSetReference {
         read_seq: &[u8],
     ) -> Option<MappedProbeHalf> {
         assert!(read_seq.len() <= probe_seq.len());
-        let mismatches = if read_seq.len() == probe_seq.len() {
-            bio::alignment::distance::simd::hamming(probe_seq, read_seq) as i32
-        } else {
-            zip(read_seq, probe_seq).filter(|(a, b)| a != b).count() as i32
-        };
+        // Truncate probe_seq to avoid penalizing reads shorter than the probe sequence.
+        let truncated_probe = &probe_seq[..read_seq.len()];
+
+        let max_possible_score = mapped_score + read_seq.len() as i32;
+        if max_possible_score < self.transcriptome_min_score as i32 {
+            return None;
+        }
+        let max_mismatches =
+            ((max_possible_score - self.transcriptome_min_score as i32) / 2) as u32;
+        let mismatches = bounded_levenshtein(truncated_probe, read_seq, max_mismatches)
+            .map_or_else(|| read_seq.len(), |d| d as usize) as i32;
         let matches = read_seq.len() as i32 - mismatches;
         let score = matches - mismatches;
         // The score of the half-probe alignment must be positive, and the sum
@@ -781,14 +785,14 @@ impl ProbeSetReference {
         let mut lhs_seq_to_probe: SeqToProbeMap = probe_to_seq
             .iter()
             .filter(|(_, probe_sequence)| !probe_sequence.lhs.is_empty())
-            .fold(Default::default(), |mut map, (probe, seq)| {
+            .fold(HashMap::default(), |mut map, (probe, seq)| {
                 map.entry(seq.lhs.clone()).or_default().push(probe.clone());
                 map
             });
         let mut rhs_seq_to_probe: SeqToProbeMap = probe_to_seq
             .iter()
             .filter(|(_, probe_sequence)| !probe_sequence.rhs.is_empty())
-            .fold(Default::default(), |mut map, (probe, seq)| {
+            .fold(HashMap::default(), |mut map, (probe, seq)| {
                 map.entry(seq.rhs.clone()).or_default().push(probe.clone());
                 map
             });
@@ -877,24 +881,32 @@ fn get_rhs_read_kmers<'a>(
     }
 }
 
-/// Read key/value metadata from the beginning of a CSV file.
+/// Read key/value metadata from the comment header lines of a CSV string.
 /// Each line should be of the form #key=value
+/// Ignore white space surrounding the `#` and `=` and trailing commas and whitespace.
+fn read_csv_comment_metadata_from_str(s: &str) -> Result<HashMap<String, String>> {
+    s.lines()
+        .take_while(|line| line.trim_start().starts_with('#'))
+        .map(|line| {
+            let (key, value) = line
+                .trim_start()
+                .strip_prefix("#")
+                .unwrap()
+                .trim_end_matches(|c: char| c == ',' || c.is_whitespace())
+                .split_once('=')
+                .ok_or_else(|| anyhow!("CSV comment metadata line missing value: \"{line}\""))?;
+            Ok((key.trim().to_string(), value.trim().to_string()))
+        })
+        .try_collect()
+}
+
+/// /// Read key/value metadata from the comment header lines of a CSV file.
+/// Each line should be of the form #key=value
+/// Ignore white space surrounding the `#` and `=` and trailing commas and whitespace.
 pub fn read_csv_comment_metadata(path: &Path) -> Result<HashMap<String, String>> {
-    let mut metadata = HashMap::new();
-    for line in
-        BufReader::new(File::open(path).with_context(|| path.display().to_string())?).lines()
-    {
-        let line = line?;
-        if !line.starts_with('#') {
-            break;
-        }
-        let (key, value) = line[1..]
-            .splitn(2, '=')
-            .collect_tuple()
-            .ok_or_else(|| anyhow!("CSV comment metadata line missing value: \"{line}\""))?;
-        metadata.insert(key.to_string(), value.to_string());
-    }
-    Ok(metadata)
+    read_csv_comment_metadata_from_str(
+        &std::fs::read_to_string(path).with_context(|| path.display().to_string())?,
+    )
 }
 
 /// The result of mapping one half of a read to a probe set reference.
@@ -1469,6 +1481,25 @@ mod test {
     }
 
     #[test]
+    fn test_read_csv_comment_metadata_from_str() -> Result<()> {
+        let csv = "\
+            #probe_set_file_format=3.0,,,
+            #panel_name=Name,,,
+            #panel_type=Type,,,
+            #reference_genome=Genome,,,
+            #reference_version=Version,,,
+            gene_id,probe_seq_id,probe_id
+            ";
+        let metadata = read_csv_comment_metadata_from_str(csv)?;
+        assert_eq!(metadata["probe_set_file_format"], "3.0");
+        assert_eq!(metadata["panel_name"], "Name");
+        assert_eq!(metadata["panel_type"], "Type");
+        assert_eq!(metadata["reference_genome"], "Genome");
+        assert_eq!(metadata["reference_version"], "Version");
+        Ok(())
+    }
+
+    #[test]
     fn test_load_metadata() -> Result<()> {
         assert!(
             !ProbeSetReferenceMetadata::load_from(&TargetSetFile::from(
@@ -1537,7 +1568,7 @@ mod test {
     }
 
     #[test]
-    fn test_mapped_gap_alignment_info() -> Result<()> {
+    fn test_mapped_gap_alignment_info() {
         // Alignment:
         // gap:    TGGCTTACACTTTCAACTTG
         //         |||||\|||||\||||||
@@ -1788,7 +1819,6 @@ mod test {
         assert!(!mgi.starts_with_insertion());
 
         // assert!(false);
-        Ok(())
     }
 
     #[test]

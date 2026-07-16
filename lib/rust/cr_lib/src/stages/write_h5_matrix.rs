@@ -1,12 +1,11 @@
 //! Martian stage WRITE_H5_MATRIX.
 #![deny(missing_docs)]
 
-use crate::types::FeatureReferenceFormat;
 use crate::utils::estimate_mem::barcode_mem_gib;
 use anyhow::Result;
 use cr_h5::count_matrix::write_matrix_h5;
 use cr_types::chemistry::{ChemistryDefs, ChemistryDefsExt};
-use cr_types::{BarcodeIndexOutput, CountShardFile, GemWell, H5File};
+use cr_types::{BarcodeIndexOutput, CountShardFile, FeatureReferenceFormat, H5File};
 use martian::{MartianRover, MartianStage, MartianVoid, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
@@ -18,7 +17,6 @@ pub struct WriteH5Matrix;
 
 #[derive(Deserialize, Clone, MartianStruct)]
 pub struct WriteH5MatrixStageInputs {
-    pub gem_well: GemWell,
     pub counts: Vec<CountShardFile>,
     pub feature_reference: FeatureReferenceFormat,
     pub chemistry_defs: ChemistryDefs,
@@ -73,7 +71,6 @@ impl MartianStage for WriteH5Matrix {
             &args.feature_reference.read()?,
             &args.sample_id,
             &args.chemistry_defs.description(),
-            args.gem_well,
             &args.barcode_index_output.index.read()?,
             &rover.pipelines_version(),
         )?;

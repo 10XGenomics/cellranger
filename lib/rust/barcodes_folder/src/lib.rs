@@ -5,8 +5,10 @@ use anyhow::{Context, Result, bail, ensure};
 use itertools::Itertools;
 use std::path::PathBuf;
 
-const CS_CANONICAL_SLIDE_NAME: &str = "visium_hd_v1";
-const PD_CANONICAL_SLIDE_NAME: &str = "visium_hd_rc1";
+const HD_CS_CANONICAL_SLIDE_NAME: &str = "visium_hd_v1";
+const HD_PD_CANONICAL_SLIDE_NAME: &str = "visium_hd_rc1";
+const HD_XL_CANONICAL_SLIDE_NAME: &str = "visium_hd_11mm_v1";
+const HD_XL_PD_CANONICAL_SLIDE_NAME: &str = "visium_hd_rcxl1";
 
 fn search_for_whitelist(
     whitelist_name: &str,
@@ -41,14 +43,24 @@ fn search_for_whitelist(
 /// Find a slide design file
 pub fn find_slide_design(slide_name: &str) -> Result<PathBuf> {
     let filename = match slide_name {
-        PD_CANONICAL_SLIDE_NAME | CS_CANONICAL_SLIDE_NAME => {
-            [PD_CANONICAL_SLIDE_NAME, CS_CANONICAL_SLIDE_NAME]
+        HD_PD_CANONICAL_SLIDE_NAME | HD_CS_CANONICAL_SLIDE_NAME => {
+            [HD_PD_CANONICAL_SLIDE_NAME, HD_CS_CANONICAL_SLIDE_NAME]
                 .into_iter()
                 .find_map(|name| find_whitelist(name, false).ok())
                 .map_or_else(|| find_whitelist(slide_name, false), Ok)
                 .context(format!(
                     "Could not find slide files for slide designs \
-                     {CS_CANONICAL_SLIDE_NAME} or {PD_CANONICAL_SLIDE_NAME}"
+                     {HD_CS_CANONICAL_SLIDE_NAME} or {HD_PD_CANONICAL_SLIDE_NAME}"
+                ))
+        }
+        HD_XL_PD_CANONICAL_SLIDE_NAME | HD_XL_CANONICAL_SLIDE_NAME => {
+            [HD_XL_PD_CANONICAL_SLIDE_NAME, HD_XL_CANONICAL_SLIDE_NAME]
+                .into_iter()
+                .find_map(|name| find_whitelist(name, false).ok())
+                .map_or_else(|| find_whitelist(slide_name, false), Ok)
+                .context(format!(
+                    "Could not find slide files for slide designs \
+                     {HD_XL_CANONICAL_SLIDE_NAME} or {HD_XL_PD_CANONICAL_SLIDE_NAME}"
                 ))
         }
         _ => find_whitelist(slide_name, false)
@@ -164,8 +176,6 @@ mod test {
         assert!(find_whitelist("737K-august-2016", true).is_err());
         let _ = find_whitelist("3M-february-2018_TRU", false)?;
         let _ = find_whitelist("3M-february-2018_NXT", true)?;
-        let _ = find_whitelist("9K-LT-march-2021", false)?;
-        let _ = find_whitelist("9K-LT-march-2021", true)?;
         let _ = find_atac_whitelist("737K-arc-v1")?;
         Ok(())
     }

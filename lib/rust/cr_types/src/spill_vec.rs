@@ -1,4 +1,5 @@
 #![expect(missing_docs)]
+use crate::in_flight::TryIntoIterator;
 use anyhow::Result;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
 use std::vec;
@@ -76,12 +77,23 @@ where
         }
     }
 
-    #[cfg(test)]
-    fn buffer_len(&self) -> usize {
+    /// Number of items currently held in the in-memory buffer.
+    ///
+    /// Items spilled to disk are not counted; this reflects the actual RAM footprint.
+    pub fn len_in_mem(&self) -> usize {
         match self.storage.as_ref().unwrap() {
             SpillableStorage::MemOnly(buf) => buf.len(),
             SpillableStorage::MemAndDisk(buf, _) => buf.len(),
         }
+    }
+}
+
+impl<T, F: LazyFileTypeIO<T>> TryIntoIterator for SpillVec<T, F> {
+    type Item = Result<T>;
+    type IntoIter = SpillVecReader<T, F>;
+
+    fn try_into_iter(self) -> Result<SpillVecReader<T, F>> {
+        self.iter()
     }
 }
 
@@ -145,7 +157,7 @@ mod tests {
         for item in items {
             spill_vec.push(item)?;
         }
-        assert!(spill_vec.buffer_len() <= capacity);
+        assert!(spill_vec.len_in_mem() <= capacity);
         assert_eq!(spill_vec.num_items, expected.len());
         if expected.len() > capacity {
             assert!(spill_pathbuf.exists());

@@ -2,18 +2,17 @@
 ///
 /// Types for dealing with 10x barcodes
 ///
-use crate::LibraryType;
-use anyhow::{Context, Result, format_err};
+use crate::{LibraryType, hardlink_with_fallback};
+use anyhow::{Result, format_err};
 use barcode::Barcode;
 use itertools::Itertools;
 use martian::{AsMartianBlanketType, AsMartianPrimaryType, MartianBlanketType};
 use martian_derive::{MartianStruct, martian_filetype};
 use martian_filetypes::bin_file::BinaryFormat;
 use martian_filetypes::{LazyFileTypeIO, LazyWrite};
-use metric::{Histogram, OrderedHistogram, TxHashMap, TxHashSet};
+use metric::{Histogram, OrderedHistogram, SimpleHistogram, TxHashMap, TxHashSet};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs::{hard_link, rename};
 use std::iter::Peekable;
 use std::path::{Path, PathBuf};
 
@@ -47,6 +46,22 @@ pub fn write_sorted_count_file_from_histogram(
         hist.iter().map(|(bc, count)| (*bc, count.count() as usize)),
         path,
     )
+}
+
+/// Write a sorted count file from a SimpleHistogram.
+///
+/// Note: this requires creating a vector of pointers to the barcode keys,
+/// sorting that vector, then iterating over the map using those sorted keys.
+///
+/// This requires additional memory, but the vector of references is only 8 bytes
+/// per barcode instead of ~56.
+pub fn write_sorted_count_file_from_unordered_histogram(
+    hist: &SimpleHistogram<Barcode>,
+    path: &Path,
+) -> Result<SortedBarcodeCountFile> {
+    let keys: Vec<_> = hist.iter().map(|(bc, _)| bc).sorted().collect();
+
+    write_sorted_count_file(keys.iter().map(|bc| (**bc, hist.get(bc) as usize)), path)
 }
 
 /// A map of library type to sorted barcode count file for that library type.
@@ -138,7 +153,7 @@ impl PerLibrarySortedBarcodeCounts {
 
     /// Merge a collection of per-lib input counts into a single output collection.
     ///
-    /// This operation may move the input files directly into output paths
+    /// This operation may hardlink the input files directly into output paths
     /// for any library type that only has one input file, avoiding the need to
     /// stream anything.
     ///
@@ -156,7 +171,7 @@ impl PerLibrarySortedBarcodeCounts {
 
     /// Merge an iterator of per-lib input counts into a single output collection.
     ///
-    /// This operation may move the input files directly into output paths
+    /// This operation may hardlink the input files directly into output paths
     /// for any library type that only has one input file, avoiding the need to
     /// stream anything.
     ///
@@ -176,15 +191,10 @@ impl PerLibrarySortedBarcodeCounts {
         for (library_type, input_files) in files_by_lib_type {
             let path: SortedBarcodeCountFile = make_path(library_type).into();
             // Optimization - if we only have one input file, there's no neeed to merge.
-            // Move the file into the output path.
+            // Hardlink the file into the output path, falling back to copy if
+            // unsupported.
             let output_file = if input_files.len() == 1 {
-                rename(&input_files[0], &path).with_context(|| {
-                    format!(
-                        "failed to move sorted counts file at path {} to path {}",
-                        input_files[0].to_string_lossy(),
-                        path.to_string_lossy()
-                    )
-                })?;
+                hardlink_with_fallback(&input_files[0], &path)?;
                 path
             } else {
                 // Merge-stream the input files.
@@ -319,7 +329,7 @@ impl Iterator for MergeSortedCounts {
 }
 
 martian_filetype!(BarcodeIndexFile, "bi");
-type _BarcodeIndexFormat = BinaryFormat<BarcodeIndexFile, Vec<Barcode>>;
+pub type BarcodesFormat = BinaryFormat<BarcodeIndexFile, Vec<Barcode>>;
 
 /// On-disk representation of the BarcodeIndex.
 ///
@@ -327,7 +337,7 @@ type _BarcodeIndexFormat = BinaryFormat<BarcodeIndexFile, Vec<Barcode>>;
 /// memory from a pre-sorted collection, and we can also stream the index if
 /// we don't need the by-barcode lookup.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BarcodeIndexFormat(_BarcodeIndexFormat);
+pub struct BarcodeIndexFormat(BarcodesFormat);
 
 impl BarcodeIndexFormat {
     /// Write the barcode index from a sorted iterator of barcodes.
@@ -367,7 +377,7 @@ impl BarcodeIndexFormat {
 
 impl AsMartianPrimaryType for BarcodeIndexFormat {
     fn as_martian_primary_type() -> martian::MartianPrimaryType {
-        _BarcodeIndexFormat::as_martian_primary_type()
+        BarcodesFormat::as_martian_primary_type()
     }
 }
 
@@ -449,11 +459,8 @@ pub struct BarcodeIndexOutput {
 impl BarcodeIndexOutput {
     /// Hardlink or copy this output into a new path.
     pub fn hardlink_or_copy(&self, path: &Path) -> Result<Self> {
-        let path: _BarcodeIndexFormat = path.into();
-        // Try hard linking; if fails, fall back to copy.
-        if hard_link(&self.index, &path).is_err() {
-            std::fs::copy(&self.index, &path)?;
-        }
+        let path: BarcodesFormat = path.into();
+        hardlink_with_fallback(&self.index, &path)?;
         Ok(Self {
             index: BarcodeIndexFormat(path),
             num_barcodes: self.num_barcodes,
@@ -465,6 +472,7 @@ impl BarcodeIndexOutput {
 mod tests {
     use super::*;
     use barcode::BcSeq;
+    use same_file::is_same_file;
 
     fn bc(seq: &[u8]) -> Barcode {
         Barcode::with_seq(1, BcSeq::from_bytes(seq), true)
@@ -558,22 +566,23 @@ mod tests {
             .collect();
         assert_eq!(counts_merged, expected_counts_merged);
 
-        // Test the "move file" optimization where a merge will move a file
+        // Test the hardlink optimization where a merge will hardlink a file
         // instead of stream-merging it if a library type only has a single file.
         // Do this by merging an empty collection with our original.
-        for file in per_lib.0.values() {
-            assert!(std::fs::exists(file)?);
-        }
         let moved = PerLibrarySortedBarcodeCounts::merge(
             [
                 per_lib.clone(),
-                PerLibrarySortedBarcodeCounts(Default::default()),
+                PerLibrarySortedBarcodeCounts(TxHashMap::default()),
             ]
             .into_iter(),
             path_maker(dir.path(), "moved"),
         )?;
-        for file in per_lib.0.values() {
-            assert!(!std::fs::exists(file)?);
+        for (lib, file) in &per_lib.0 {
+            let merged_file = moved.0.get(lib).unwrap();
+            assert!(file.exists());
+            assert!(merged_file.exists());
+            assert!(file != merged_file);
+            assert!(is_same_file(file, merged_file).unwrap());
         }
 
         let counts_moved: Vec<_> = moved.iter_counts()?.try_collect()?;

@@ -4,6 +4,10 @@
 #
 """Assigns tags to cells."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import martian
 import numpy as np
 
@@ -14,6 +18,9 @@ import cellranger.rna.library as rna_library
 from cellranger.feature.feature_assigner import CellEstimateCantConvergeException, TagAssigner
 from cellranger.feature.throughputs import G19_N_GEMS
 from cellranger.pandas_utils import sanitize_dataframe
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage CALL_TAGS_MARGINAL(
@@ -27,32 +34,66 @@ stage CALL_TAGS_MARGINAL(
     out json   tag_contaminant_info,
     src py     "stages/feature/call_tags_marginal",
 ) split (
+) using (
+    volatile = strict,
 )
 """
+
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_MARGINAL stage inputs."""
+
+    filtered_barcodes: mro_filetypes.csv
+    filtered_feature_counts_matrix: mro_filetypes.h5
+    throughput: str
+    multiplexing_method: None | str
+    library_type: None | str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_MARGINAL stage outputs."""
+
+    marginal_tag_calls_per_cell: None | mro_filetypes.csv
+    marginal_tag_frequencies: None | mro_filetypes.csv
+    tag_contaminant_info: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_MARGINAL chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """CALL_TAGS_MARGINAL chunk outputs."""
+
 
 np.random.seed(0)
 MIN_MEM_GB = 6
 
 
-def set_empty(outs):
+def set_empty(outs: StageOutputs):
     """Exit with empty functional outs."""
     outs.marginal_tag_calls_per_cell = None
     outs.tag_contaminant_info = None
     outs.marginal_tag_frequencies = None
 
 
-def split(args):
+def split(args: StageInputs):
     return {"chunks": [], "join": {"__mem_gb": 16}}
 
 
-def _get_input_files(args):
+def _get_input_files(args: StageInputs) -> list[str]:
     return [
         args.filtered_feature_counts_matrix,
         args.filtered_barcodes,
     ]
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     input_files = _get_input_files(args)
     all_inputs_present = feature_utils.all_files_present(input_files)
     no_cells_found = len(feature_utils.get_gex_cell_list(args.filtered_barcodes)) == 0
@@ -110,8 +151,12 @@ def join(args, outs, chunk_defs, chunk_outs):
     except CellEstimateCantConvergeException as ex:
         martian.exit(f"{ex}")
 
-    tag_assigner.feature_calls_summary = tag_assigner.get_feature_calls_summary()
-    tag_assigner.cells_per_feature = tag_assigner.get_cells_per_feature()
+    tag_assigner.feature_calls_summary = (  # FIXME: Member not in the class definition
+        tag_assigner.get_feature_calls_summary()
+    )
+    tag_assigner.cells_per_feature = (  # FIXME: Member not in the class definition
+        tag_assigner.get_cells_per_feature()
+    )
 
     tag_assignments_matrix = tag_assigner.create_tag_assignments_matrix()
     features_per_cell_table = tag_assignments_matrix.get_features_per_cell_table()

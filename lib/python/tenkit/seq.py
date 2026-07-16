@@ -25,6 +25,30 @@ def get_rev_comp(seq: str | bytes) -> bytes:
     return seq.translate(DNA_CONVERT_TABLE)[::-1]
 
 
+def hamming_distance(a: str | bytes, b: str | bytes) -> int:
+    """Compute the Hamming distance between two equal-length sequences."""
+    if isinstance(a, bytes):
+        a = a.decode("ascii")
+    if isinstance(b, bytes):
+        b = b.decode("ascii")
+    if len(a) != len(b):
+        raise ValueError(f"Sequences must be equal length, got {len(a)} and {len(b)}")
+    return sum(c1 != c2 for c1, c2 in zip(a, b))
+
+
+def is_near_palindrome(seq: str | bytes, max_distance: int = 1) -> bool:
+    """Check if a sequence is within max_distance of its own reverse complement.
+
+    Near-palindrome sequences cannot be used to distinguish between forward and
+    reverse-complement orientations of index reads, since they look the same
+    (or nearly the same) in either direction.
+    """
+    rc = get_rev_comp(seq).decode("ascii")
+    if isinstance(seq, bytes):
+        seq = seq.decode("ascii")
+    return hamming_distance(seq, rc) <= max_distance
+
+
 def mask(seq: bytes, keep_start: int, keep_end: int) -> bytes:
     """Mask the sequence leaving only [keep_start, keep_end) unmasked."""
     return b"N" * keep_start + seq[keep_start:keep_end] + b"N" * (len(seq) - keep_end)

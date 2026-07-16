@@ -20,18 +20,17 @@ resolver = '2'
 
 [workspace.dependencies]
 bincode = '1'
-bio = '2'
+bio = '3'
 bio-types = '1'
 bitflags = '2'
 byteorder = '1'
-criterion = '0.7'
+criterion = '0.8'
 csv = '1'
-ctor = '0.5'
+ctor = '1.0'
 debruijn = '0.3'
+digest-io = '0.1'
 docopt = '1'
-fastq = '0.6'
 file_diff = '1'
-flate2 = '1'
 glob = '0.3'
 heck = '0.5'
 hex = '0.4'
@@ -42,31 +41,35 @@ lazy_static = '1'
 libc = '0.2'
 log = '0.4'
 lz4 = '1'
+memchr = '2'
 ndarray = '0.16'
 ndarray-stats = '0.6'
 nom_locate = '4'
+noodles-bgzf = '0.47'
 num-traits = '0.2'
 numpy = '0.25'
-parquet_derive = '56'
+parquet_derive = '58'
 permutation = '0.4'
 petgraph = '0.8'
-plotly = '0.13'
+plotly = '0.14'
 pretty_assertions = '1'
 proc-macro2 = '1'
 proptest = '1'
-prost = '0.13'
-prost-build = '0.13'
+prost = '0.14'
+prost-build = '0.14'
 quote = '1'
-rand_distr = '0.5'
+rand_distr = '0.6'
 rayon = '1'
-sha2 = '0.10'
+serde_with = '3'
+sha1 = '0.11'
+sha2 = '0.11'
 strsim = '0.11'
 syn = '2'
 tempfile = '3'
 thiserror = '2'
 thousands = '0.2'
-tiff = '0.10'
-toml = '0.8'
+tiff = '0.11'
+toml = '1'
 triple_accel = '0.4'
 
 [workspace.dependencies.ahash]
@@ -86,14 +89,14 @@ version = '0.7'
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
+[workspace.dependencies.bytes]
+features = ['serde']
+version = '1'
+
 [workspace.dependencies.clap]
 default-features = false
 features = ['std', 'derive']
 version = '4'
-
-[workspace.dependencies.counter]
-features = ['serde']
-version = '0.6'
 
 [workspace.dependencies.derive_more]
 features = ['add', 'add_assign', 'deref', 'display']
@@ -103,9 +106,18 @@ version = '2'
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
+[workspace.dependencies.fastq]
+branch = 'master'
+git = 'https://github.com/10XGenomics/fastq-rs'
+
+[workspace.dependencies.flate2]
+default-features = false
+features = ['zlib-rs']
+version = '1'
+
 [workspace.dependencies.geo]
 default-features = false
-version = '0.31'
+version = '0.33'
 
 [workspace.dependencies.geo-types]
 default-features = false
@@ -114,7 +126,7 @@ version = '0.7'
 [workspace.dependencies.geojson]
 default-features = false
 features = ['geo-types']
-version = '0.24'
+version = '1.0'
 
 [workspace.dependencies.hclust]
 branch = 'main'
@@ -125,6 +137,10 @@ branch = 'main'
 features = ['static', 'zlib']
 git = 'https://github.com/10XGenomics/hdf5-rust'
 package = 'hdf5-metno'
+
+[workspace.dependencies.hdf5-io]
+branch = 'main'
+git = 'https://github.com/10XGenomics/scan-rs'
 
 [workspace.dependencies.image]
 default-features = false
@@ -148,7 +164,7 @@ git = 'https://github.com/martian-lang/martian-rust'
 
 [workspace.dependencies.minimap2]
 features = ['htslib']
-version = '0.1.28'
+version = '0.1.31'
 
 [workspace.dependencies.ndarray-npy]
 default-features = false
@@ -169,7 +185,7 @@ version = '>=3, <6'
 [workspace.dependencies.parquet]
 default-features = false
 features = ['zstd', 'json']
-version = '56'
+version = '58'
 
 [workspace.dependencies.pyo3]
 features = ['extension-module', 'abi3-py312']
@@ -180,8 +196,8 @@ git = 'https://github.com/Barandis/qd'
 
 [workspace.dependencies.rand]
 default-features = false
-features = ['small_rng']
-version = '0.9'
+features = ['alloc']
+version = '0.10'
 
 [workspace.dependencies.regex]
 default-features = false
@@ -191,14 +207,18 @@ version = '1'
 [workspace.dependencies.rust-htslib]
 default-features = false
 features = ['serde_feature', 'libdeflate']
-version = '0.50'
+version = '1'
 
 [workspace.dependencies.rustix]
 features = ['fs', 'param', 'process', 'system']
 version = '1'
 
+[workspace.dependencies.scan-types]
+branch = 'main'
+git = 'https://github.com/10XGenomics/scan-rs'
+
 [workspace.dependencies.serde]
-features = ['derive']
+features = ['derive', 'rc']
 version = '1.0'
 
 [workspace.dependencies.serde_json]
@@ -224,7 +244,7 @@ version = '0.18'
 
 [workspace.dependencies.strum]
 features = ['derive']
-version = '0.27'
+version = '0.28'
 
 [workspace.dependencies.tenx-websummary]
 branch = 'master'
@@ -236,13 +256,14 @@ version = '1'
 
 [workspace.dependencies.zip]
 default-features = false
-version = '5'
+version = '8'
 
 [workspace.lints]
 [workspace.lints.clippy]
 borrow_as_ptr = 'deny'
 cloned_instead_of_copied = 'deny'
 complexity = 'deny'
+default_trait_access = 'deny'
 enum_glob_use = 'deny'
 explicit_deref_methods = 'deny'
 explicit_into_iter_loop = 'deny'
@@ -279,10 +300,12 @@ semicolon_if_nothing_returned = 'deny'
 single_char_pattern = 'deny'
 style = 'deny'
 suspicious = 'deny'
-unchecked_duration_subtraction = 'deny'
+unchecked_time_subtraction = 'deny'
 unicode_not_nfc = 'deny'
 uninlined_format_args = 'deny'
 unnecessary_join = 'deny'
+unnecessary_wraps = 'deny'
+unnested_or_patterns = 'deny'
 unused_self = 'deny'
 used_underscore_binding = 'deny'
 wildcard_imports = 'deny'

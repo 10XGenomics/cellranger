@@ -4,38 +4,30 @@
 //! Container for the FASTQ data from a single sequencing 'cluster',
 //! including the primary 'R1' and 'R2' and index 'I1' and 'I2' reads.
 
-use crate::WhichEnd;
-use anyhow::{Result, bail, ensure};
+use crate::read_pair_iter::RecordCount;
+use crate::{ERROR_CODE_INFO, WhichEnd};
+use anyhow::{Result, anyhow, bail, ensure};
 use bytes::{Bytes, BytesMut};
 use fastq::Record;
 use serde::{Deserialize, Serialize};
+use std::fmt::{self, Debug};
 use std::io::Write;
-use std::{fmt, ops};
+use std::ops::Range;
+use std::path::PathBuf;
 
 // ▪ fastq crate imposes an upper limit of 68*1024 bytes for a fastq record (id & seq & qual)
 // ▪ bit-packed RpRange storage imposes a u15 limit of 32,767 on offsets and lengths
-const MAX_READ_HEAD: u16 = 767;
-const MAX_READ_LEN: u16 = 32_000;
+pub(crate) const MAX_READ_HEAD: usize = 767;
+pub(crate) const MAX_READ_LEN: usize = 32_000;
 
-/// Pointers into a buffer that identify the positions of lines from a FASTQ record
-/// header exists at buf[start .. head], seq exists at buf[head .. seq], etc.
+/// Offsets into a small buffer for storing seq and qual data, assumed to be the same length.
 #[derive(Deserialize, Serialize, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct ReadOffset {
-    exists: bool,
+    /// Offset into the buffer where seq/qual data start.
     start: u16,
-    head: u16,
-    seq: u16,
-    qual: u16,
-}
-
-impl ReadOffset {
-    fn seq_len(&self) -> Option<usize> {
-        if self.exists {
-            Some((self.seq - self.head) as usize)
-        } else {
-            None
-        }
-    }
+    /// The length of the sequence. The total occupied size in the buffer is
+    /// twice this.
+    seq_len: u16,
 }
 
 /// The possible reads from a Illumina cluster. R1 and R2 are the two
@@ -105,7 +97,6 @@ impl std::str::FromStr for WhichRead {
 /// Components of a FASTQ record.
 #[derive(Debug, Copy, Clone)]
 pub enum ReadPart {
-    Header,
     Seq,
     Qual,
 }
@@ -125,7 +116,7 @@ pub enum ReadPart {
 /// ```rust
 /// extern crate fastq_set;
 /// extern crate fastq;
-/// use fastq_set::read_pair::{RpRange, WhichRead, ReadPart, ReadPair};
+/// use fastq_set::read_pair::{RpRange, WhichRead, ReadPart, ReadPair, ReadHeader};
 /// use fastq_set::WhichEnd;
 /// use fastq::OwnedRecord;
 /// let read1 = OwnedRecord {
@@ -139,7 +130,7 @@ pub enum ReadPart {
 /// // WARNING: DO NOT USE THIS FUNCTION IF YOU ARE STREAMING FASTQ DATA
 /// // AND WANT TO CREATE ReadPair STRUCTS.
 /// // USE `fastq_set::read_pair_iter::ReadPairIter` INSTEAD.
-/// let read_pair = ReadPair::new(input);
+/// let read_pair = ReadPair::new(input, ReadHeader::KeepId);
 /// // Let's say the read1 is of the form BC(16)-UMI(10)-Insert. This example will
 /// // setup different RpRanges to represent these ranges.
 ///
@@ -170,7 +161,7 @@ pub struct RpRange {
     val: u32,
 }
 
-impl fmt::Debug for RpRange {
+impl Debug for RpRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -369,7 +360,7 @@ impl RpRange {
     /// * `test_rprange_trivial_shrink()`: Test shrink to an empty range.
     /// * `prop_test_rprange_shrink()`: Test shrink for arbitrary values of
     ///   `RpRange` and valid `shrink_range`
-    pub fn shrink(&mut self, shrink_range: &ops::Range<usize>) {
+    pub fn shrink(&mut self, shrink_range: &Range<usize>) {
         assert!(
             shrink_range.start <= shrink_range.end,
             "RpRange shrink() expects a valid range with start<=end. Received {shrink_range:?}"
@@ -479,35 +470,42 @@ pub enum ReadPairStorage {
     PerReadAllocation,
 }
 
+/// Configure the header processing used to construct a ReadPair.
+#[derive(Clone, Copy)]
+pub enum ReadHeader {
+    /// Include the read ID.
+    KeepId,
+    /// Do not include the read ID. This is an optimization to reduce storage
+    /// and memory requirements if the read ID is not needed.
+    SkipId,
+}
+
+impl ReadHeader {
+    pub fn skip_id(self) -> bool {
+        matches!(self, Self::SkipId)
+    }
+}
+
 /// Helper struct used during construction of a ReadPair. The data for the ReadPair is
 /// accumulated in the buffer bytes::BytesMut. When all the data has been added, call
 /// `freeze()` to convert this into an immutable `ReadPair` object. Multiple `ReadPair` objects
 /// will be backed slices into the same buffer, which reduces allocation overhead.
 pub(super) struct MutReadPair<'a> {
-    offsets: [ReadOffset; 4],
+    /// The length of the ID, and the read we sourced it from.
+    id: Option<(u16, WhichRead)>,
+    offsets: [Option<ReadOffset>; 4],
     data: &'a mut BytesMut,
     storage: ReadPairStorage,
 }
 
 impl<'a> MutReadPair<'a> {
     pub(super) fn empty(buffer: &mut BytesMut) -> MutReadPair<'_> {
-        let offsets = [ReadOffset::default(); 4];
         MutReadPair {
-            offsets,
+            id: None,
+            offsets: [None; 4],
             data: buffer,
             storage: ReadPairStorage::default(),
         }
-    }
-
-    pub fn new<R: Record>(buffer: &'a mut BytesMut, rr: &[Option<R>; 4]) -> MutReadPair<'a> {
-        let mut rp = MutReadPair::empty(buffer);
-        for (rec, which) in rr.iter().zip(WhichRead::read_types()) {
-            if let Some(rec) = rec {
-                rp.push_read(rec, which);
-            }
-            // default ReadOffsets is exists = false
-        }
-        rp
     }
 
     pub(super) fn storage(mut self, storage: ReadPairStorage) -> Self {
@@ -515,76 +513,205 @@ impl<'a> MutReadPair<'a> {
         self
     }
 
-    pub(super) fn push_read<R: Record>(&mut self, rec: &R, which: WhichRead) {
-        assert!(!self.offsets[which as usize].exists);
-        let start = self.data.len() as u16;
-        self.data.extend_from_slice(rec.head());
-        let head = self.data.len() as u16;
-        assert!(
-            head - start <= MAX_READ_HEAD,
-            "Invalid fastq record with id:{}. The fastq record id must be {} characters or less.",
-            std::str::from_utf8(rec.head()).unwrap(),
-            MAX_READ_HEAD
-        );
-        self.data.extend_from_slice(rec.seq());
-        let seq = self.data.len() as u16;
-        assert!(
-            seq - head <= MAX_READ_LEN,
-            "Invalid fastq record with id:{}. The fastq record sequence must be {} bases or less.",
-            std::str::from_utf8(rec.head()).unwrap(),
-            MAX_READ_LEN
-        );
-        self.data.extend_from_slice(rec.qual());
-        let qual = self.data.len() as u16;
-        assert!(
-            qual - seq == seq - head,
-            "Invalid fastq record with id:{}. The fastq record sequence and quality length do not match!",
-            std::str::from_utf8(rec.head()).unwrap()
-        );
-        let read_offset = ReadOffset {
-            exists: true,
-            start,
-            head,
-            seq,
-            qual,
-        };
-        self.offsets[which as usize] = read_offset;
+    fn id(&self) -> Option<&[u8]> {
+        let id_len = self.id?.0;
+        Some(&self.data[0..id_len as usize])
     }
 
-    pub fn freeze(self) -> ReadPair {
-        ReadPair {
-            offsets: self.offsets,
-            data: match self.storage {
-                ReadPairStorage::SharedBuffer => self.data.split().freeze(),
-                ReadPairStorage::PerReadAllocation => {
-                    Bytes::from(self.data.split().freeze().to_vec()) // Allocate a vector and then make Bytes
-                }
-            },
-        }
-    }
+    pub(super) fn push_read<R: Record>(
+        &mut self,
+        rec: &R,
+        which: WhichRead,
+    ) -> Result<(), PushReadError> {
+        assert!(self.offsets[which as usize].is_none());
 
-    #[inline]
-    /// Get a ReadPart `part` from a read `which` in this cluster
-    pub fn get(&self, which: WhichRead, part: ReadPart) -> Option<&[u8]> {
-        if self.offsets[which as usize].exists {
-            let w = self.offsets[which as usize];
-            match part {
-                ReadPart::Header => Some(&self.data[w.start as usize..w.head as usize]),
-                ReadPart::Seq => Some(&self.data[w.head as usize..w.seq as usize]),
-                ReadPart::Qual => Some(&self.data[w.seq as usize..w.qual as usize]),
+        if let Some(id) = self.id() {
+            let incoming_id = read_id(rec.head());
+            if id != incoming_id {
+                return Err(PushReadError::ReadIdMismatch {
+                    canonical: String::from_utf8_lossy(id).to_string(),
+                    source: self.id.unwrap().1,
+                    mismatched: String::from_utf8_lossy(incoming_id).to_string(),
+                    mismatched_source: which,
+                });
             }
         } else {
-            None
+            // The ID should always occupy the beginning of the buffer.
+            assert_eq!(0, self.data.len());
+            let id = read_id(rec.head());
+            self.data.extend_from_slice(id);
+
+            if id.len() > MAX_READ_HEAD {
+                return Err(PushReadError::General(anyhow!(
+                    "Invalid fastq record with id:{}. The fastq record id must be {} characters or less.",
+                    std::str::from_utf8(rec.head()).unwrap(),
+                    MAX_READ_HEAD
+                )));
+            }
+
+            self.id = Some((id.len() as u16, which));
+        }
+        let start = self.data.len() as u16;
+        let seq = rec.seq();
+
+        if seq.len() > MAX_READ_LEN {
+            return Err(PushReadError::General(anyhow!(
+                "Invalid fastq record with id:{}. The fastq record sequence must be {} bases or less.",
+                std::str::from_utf8(rec.head()).unwrap(),
+                MAX_READ_LEN
+            )));
+        }
+        self.data.extend_from_slice(seq);
+
+        let qual = rec.qual();
+        if qual.len() != seq.len() {
+            return Err(PushReadError::General(anyhow!(
+                "Invalid fastq record with id:{}. The fastq record sequence and quality length do not match!",
+                std::str::from_utf8(rec.head()).unwrap()
+            )));
+        }
+        self.data.extend_from_slice(rec.qual());
+
+        let read_offset = ReadOffset {
+            start,
+            seq_len: seq.len() as u16,
+        };
+        self.offsets[which as usize] = Some(read_offset);
+        Ok(())
+    }
+
+    /// Make this read into an immutable version.
+    pub fn freeze(self, header_handling: ReadHeader) -> ReadPair {
+        let skip_id = header_handling.skip_id();
+        let id_len = self.id.unwrap().0;
+
+        // Update offsets if excluding the header.
+        let mut offsets = self.offsets;
+        if skip_id {
+            for o in offsets.iter_mut().flatten() {
+                o.start -= id_len;
+            }
+        }
+
+        // If we're splitting off a new allocation for this read, we can
+        // reclaim the existing buffer space that we used for it.
+        let data = match self.storage {
+            ReadPairStorage::SharedBuffer => {
+                let mut data = self.data.split();
+                if skip_id {
+                    data = data.split_off(id_len as usize);
+                }
+                data.freeze()
+            }
+            ReadPairStorage::PerReadAllocation => {
+                let start = if skip_id { id_len as usize } else { 0 };
+                let data = Bytes::from(self.data[start..self.data.len()].to_vec());
+                // We've copied the data out, now reclaim the buffer space.
+                self.data.clear();
+                data
+            }
+        };
+
+        ReadPair {
+            id_len: if skip_id { 0 } else { id_len },
+            offsets,
+            data,
         }
     }
 }
 
-/// Container for all read data from a single Illumina cluster. Faithfully represents
-/// the FASTQ data from all available reads, if available.
+/// Get the ID portion of a read header.
+fn read_id(head: &[u8]) -> &[u8] {
+    head.split(|c| *c == b' ' || *c == b'/')
+        .next()
+        .unwrap_or_default()
+}
+
+/// Report enough metadata for header mismatches to allow upstack augmentation.
+pub(crate) enum PushReadError {
+    General(anyhow::Error),
+    ReadIdMismatch {
+        canonical: String,
+        source: WhichRead,
+        mismatched: String,
+        mismatched_source: WhichRead,
+    },
+}
+
+impl PushReadError {
+    /// Produce a full error message in the case of read ID mismatch.
+    pub(crate) fn augment_id_mismatch(
+        self,
+        rec_num: &[RecordCount; 4],
+        paths: &[Option<PathBuf>; 4],
+    ) -> anyhow::Error {
+        match self {
+            Self::General(err) => err,
+            Self::ReadIdMismatch {
+                canonical,
+                source,
+                mismatched,
+                mismatched_source,
+            } => {
+                anyhow!(
+                    "TXRNGR10013: FASTQ headers do not match in input files \
+                         {file1:?} line {line1} and {file2:?} line {line2}: \
+                         '{canonical}' and '{mismatched}'. {ERROR_CODE_INFO}",
+                    line1 = rec_num[source as usize].line_number(None),
+                    line2 = rec_num[mismatched_source as usize].line_number(None),
+                    file1 = paths[source as usize].as_ref().unwrap(),
+                    file2 = paths[mismatched_source as usize].as_ref().unwrap(),
+                )
+            }
+        }
+    }
+
+    /// Produce a simple error message in the case of read ID mismatch.
+    /// It is likely that any code path calling this method will never actually
+    /// produce a read ID mismatch error.
+    pub(crate) fn basic_id_mismatch(self) -> anyhow::Error {
+        match self {
+            Self::General(err) => err,
+            Self::ReadIdMismatch {
+                canonical,
+                mismatched,
+                ..
+            } => {
+                anyhow!("FASTQ headers do not match: '{canonical}' and '{mismatched}'.")
+            }
+        }
+    }
+}
+/// Parameters controlling how many bases to retain from each read when trimming a [`ReadPair`].
+///
+/// Both fields default to `None` (no trimming).  Additional trim parameters can be added to
+/// this struct in the future without changing call sites.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TrimLengths {
+    /// Maximum R1 length in bases.  `None` means no trimming.
+    pub r1: Option<usize>,
+    /// Maximum R2 length in bases.  `None` means no trimming.
+    pub r2: Option<usize>,
+}
+
+impl TrimLengths {
+    /// Returns `true` if no trimming would occur for any read.
+    pub fn is_noop(&self) -> bool {
+        self.r1.is_none() && self.r2.is_none()
+    }
+}
+
+/// Container for all read data from a single Illumina cluster.
+/// Only stores the ID portion of the fastq header, discarding all additional
+/// per-read-part metadata.
 /// Generally should be created by a `ReadPairIter`.
 #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 pub struct ReadPair {
-    offsets: [ReadOffset; 4],
+    /// Length of read ID data. The ID is always stored at the beginning of
+    /// the buffer. If we skip storing this, it will be of len 0 and the method
+    /// that fetches it will return None.
+    id_len: u16,
+    offsets: [Option<ReadOffset>; 4],
 
     // Single vector with all the raw FASTQ data.
     // Use with = "serde_bytes" to get much faster perf
@@ -592,19 +719,31 @@ pub struct ReadPair {
 }
 
 impl ReadPair {
+    /// Get the read ID.
+    pub fn id(&self) -> Option<&[u8]> {
+        if self.id_len == 0 {
+            return None;
+        }
+        Some(&self.data[0..self.id_len as usize])
+    }
+
+    /// Get a new reference to the underlying data buffer.
+    /// This is useful as a very cheap proxy for comparable "read identity"
+    /// regardless of if we stored a read ID.
+    pub fn data(&self) -> Bytes {
+        self.data.clone()
+    }
+
     #[inline]
     /// Get a ReadPart `part` from a read `which` in this cluster
     pub fn get(&self, which: WhichRead, part: ReadPart) -> Option<&[u8]> {
-        if self.offsets[which as usize].exists {
-            let w = self.offsets[which as usize];
-            match part {
-                ReadPart::Header => Some(&self.data[w.start as usize..w.head as usize]),
-                ReadPart::Seq => Some(&self.data[w.head as usize..w.seq as usize]),
-                ReadPart::Qual => Some(&self.data[w.seq as usize..w.qual as usize]),
-            }
-        } else {
-            None
-        }
+        let w = self.offsets[which as usize]?;
+        let seq_start = w.start as usize;
+        let seq_end = seq_start + w.seq_len as usize;
+        Some(match part {
+            ReadPart::Seq => &self.data[seq_start..seq_end],
+            ReadPart::Qual => &self.data[seq_end..seq_end + w.seq_len as usize],
+        })
     }
 
     #[inline]
@@ -635,23 +774,25 @@ impl ReadPair {
 
     /// Read length of the selected read.
     pub fn len(&self, which: WhichRead) -> Option<usize> {
-        self.offsets[which as usize].seq_len()
+        Some(self.offsets[which as usize]?.seq_len as usize)
     }
 
     pub fn is_empty(&self) -> bool {
         !self
             .offsets
             .iter()
-            .any(|o| matches!(o.seq_len(), Some(x) if x != 0))
+            .any(|o| o.map(|o| o.seq_len).unwrap_or_default() > 0)
     }
 
     /// Write read selected by `which` in FASTQ format to `writer`.
     /// This method will silently do nothing if the selected read doesn't exist.
+    /// Note that this will always write the same header for all parts of the
+    /// read, using only the ID portion.
     pub fn write_fastq<W: Write>(&self, which: WhichRead, writer: &mut W) -> Result<()> {
-        if self.offsets[which as usize].exists {
-            let head = self.get(which, ReadPart::Header).unwrap();
+        if self.offsets[which as usize].is_some() {
+            let id = self.id().expect("cannot write FASTQ read without an ID");
             writer.write_all(b"@")?;
-            writer.write_all(head)?;
+            writer.write_all(id)?;
             writer.write_all(b"\n")?;
 
             let seq = self.get(which, ReadPart::Seq).unwrap();
@@ -669,9 +810,128 @@ impl ReadPair {
     /// WARNING: DO NOT USE THIS FUNCTION IF YOU ARE STREAMING FASTQ DATA
     /// This function is intended for testing and illustration purposes
     /// only. Use `ReadPairIter` if you are iterating over a fastq.
-    pub fn new<R: Record>(rr: [Option<R>; 4]) -> ReadPair {
+    pub fn new<R: Record>(rr: [Option<R>; 4], header_handling: ReadHeader) -> ReadPair {
         let mut buffer = BytesMut::with_capacity(4096);
-        MutReadPair::new(&mut buffer, &rr).freeze()
+        let mut rp = MutReadPair::empty(&mut buffer);
+        for (rec, which) in rr.iter().zip(WhichRead::read_types()) {
+            if let Some(rec) = rec {
+                rp.push_read(rec, which)
+                    .map_err(PushReadError::basic_id_mismatch)
+                    .unwrap();
+            }
+        }
+        rp.freeze(header_handling)
+    }
+}
+
+/// Trim `rp` according to `params`, writing the result into `buf` using `storage`.
+///
+/// This is the building block for iterator adapters that want to amortize buffer
+/// allocations across many reads:
+///
+/// - [`ReadPairStorage::SharedBuffer`]: trimmed bytes are zero-copy slice-views into
+///   `buf`'s underlying allocation; `buf` grows amortized (O(log n) allocations for
+///   n reads).  Best throughput when all reads in a batch are consumed together.
+/// - [`ReadPairStorage::PerReadAllocation`] *(default)*: `buf` is used as a reusable
+///   staging area; each [`ReadPair`] gets its own independent [`Bytes`] (one copy per
+///   read, but no per-read `BytesMut` malloc/free).  Better when individual reads may
+///   be held or dropped at different times.
+///
+/// When `params` is a no-op the early-return path is taken — `buf` is not modified
+/// and `rp` is returned as-is.
+pub(crate) fn trim_read_pair_into(
+    rp: ReadPair,
+    params: TrimLengths,
+    buf: &mut BytesMut,
+    storage: ReadPairStorage,
+) -> ReadPair {
+    let r1_limit = params.r1.unwrap_or(usize::MAX);
+    let r2_limit = params.r2.unwrap_or(usize::MAX);
+
+    let r1_stored = rp.offsets[WhichRead::R1 as usize].map_or(0, |o| o.seq_len as usize);
+    let r2_stored = rp.offsets[WhichRead::R2 as usize].map_or(0, |o| o.seq_len as usize);
+
+    if r1_limit >= r1_stored && r2_limit >= r2_stored {
+        return rp;
+    }
+
+    let header_handling = if rp.id_len == 0 {
+        ReadHeader::SkipId
+    } else {
+        ReadHeader::KeepId
+    };
+    let head = rp.id().unwrap_or(b"");
+
+    let mut mrp = MutReadPair::empty(buf).storage(storage);
+
+    for which in WhichRead::read_types() {
+        let Some(seq) = rp.get(which, ReadPart::Seq) else {
+            continue;
+        };
+        let qual = rp.get(which, ReadPart::Qual).unwrap();
+        let limit = match which {
+            WhichRead::R1 => r1_limit,
+            WhichRead::R2 => r2_limit,
+            _ => usize::MAX,
+        };
+        let trimmed_len = limit.min(seq.len());
+        mrp.push_read(
+            &SliceRecord {
+                head,
+                seq: &seq[..trimmed_len],
+                qual: &qual[..trimmed_len],
+            },
+            which,
+        )
+        .map_err(PushReadError::basic_id_mismatch)
+        .expect("trimming a ReadPair should never produce an ID mismatch");
+    }
+
+    mrp.freeze(header_handling)
+}
+
+/// A minimal [`Record`] implementation backed by borrowed slices, used inside
+/// [`trim_read_pair_into`] to avoid intermediate allocations when rebuilding a
+/// trimmed read pair.
+struct SliceRecord<'a> {
+    head: &'a [u8],
+    seq: &'a [u8],
+    qual: &'a [u8],
+}
+
+impl Record for SliceRecord<'_> {
+    fn head(&self) -> &[u8] {
+        self.head
+    }
+    fn seq(&self) -> &[u8] {
+        self.seq
+    }
+    fn qual(&self) -> &[u8] {
+        self.qual
+    }
+    fn write<W: Write>(&self, _writer: &mut W) -> std::io::Result<usize> {
+        unimplemented!("SliceRecord::write is not needed")
+    }
+}
+
+/// Shim a ReadPair to implement the Record interface for the R1 read.
+pub struct ReadPairR1OnlyWrapper<'a>(pub &'a ReadPair);
+
+impl<'a> Record for ReadPairR1OnlyWrapper<'a> {
+    fn head(&self) -> &[u8] {
+        self.0.id().unwrap_or(&[])
+    }
+
+    fn qual(&self) -> &[u8] {
+        self.0.get(WhichRead::R1, ReadPart::Qual).unwrap()
+    }
+
+    fn seq(&self) -> &[u8] {
+        self.0.get(WhichRead::R1, ReadPart::Seq).unwrap()
+    }
+
+    fn write<W: Write>(&self, _writer: &mut W) -> std::io::Result<usize> {
+        unimplemented!();
     }
 }
 
@@ -679,10 +939,10 @@ impl ReadPair {
 mod tests {
     use super::*;
     use fastq::OwnedRecord;
+    use itertools::Itertools;
     use proptest::arbitrary::any;
-    use proptest::prelude::Just;
     use proptest::proptest;
-    use proptest::strategy::Strategy;
+    use proptest::strategy::{Just, Strategy};
     use std::cmp::{max, min};
 
     const MAX_RPRANGE_ENTRY: usize = 1usize << 15;
@@ -870,27 +1130,49 @@ mod tests {
     proptest! {
         #[test]
         fn prop_test_readpair_get(
-            ref head in proptest::collection::vec(any::<u8>(), 0usize..500usize),
+            id in proptest::collection::vec(any::<u8>().prop_filter("no space or slash", |&b| b != b' ' && b != b'/'), 0usize..250usize),
+            head_metadata in proptest::collection::vec(any::<u8>(), 0usize..250usize),
             (seq, qual) in proptest::collection::vec(any::<u8>(), 0usize..1000usize).prop_flat_map(|seq| {
                 let len = seq.len();
                 (Just(seq), proptest::collection::vec(any::<u8>(), len))
             }),
             pos in 0..4usize
         ) {
-            let mut buffer = BytesMut::with_capacity(4096);
-            let owned = OwnedRecord {
-                head: head.clone(),
-                seq: seq.clone(),
-                qual: qual.clone(),
-                sep: None,
+            let head = {
+                let mut head = id.clone();
+                if !head_metadata.is_empty() {
+                    head.push(b' ');
+                    head.extend(head_metadata.clone());
+                }
+                head
             };
-            let mut input = [None, None, None, None];
-            input[pos] = Some(owned);
-            let read_pair = MutReadPair::new(&mut buffer, &input).freeze();
+            let make_input = || {
+                let owned = OwnedRecord {
+                    head: head.clone(),
+                    seq: seq.clone(),
+                    qual: qual.clone(),
+                    sep: None,
+                };
+                let mut input = [None, None, None, None];
+                input[pos] = Some(owned);
+                input
+            };
+
+            let read_pair = ReadPair::new(make_input(), ReadHeader::KeepId);
             let read = WhichRead::from(pos);
-            assert_eq!(read_pair.get(read, ReadPart::Header), Some(head.as_slice()));
+            // Empty input headers result in id being None.
+            if !id.is_empty() {
+                assert_eq!(read_pair.id().unwrap(), read_id(head.as_slice()));
+            } else {
+                assert!(read_pair.id().is_none());
+            }
             assert_eq!(read_pair.get(read, ReadPart::Qual), Some(qual.as_slice()));
             assert_eq!(read_pair.get(read, ReadPart::Seq), Some(seq.as_slice()));
+
+            let read_pair_no_id = ReadPair::new(make_input(), ReadHeader::SkipId);
+            assert!(read_pair_no_id.id().is_none());
+            assert_eq!(read_pair_no_id.get(read, ReadPart::Qual), Some(qual.as_slice()));
+            assert_eq!(read_pair_no_id.get(read, ReadPart::Seq), Some(seq.as_slice()));
         }
     }
 
@@ -939,33 +1221,76 @@ mod tests {
 
     #[test]
     fn test_readpair_max_size() {
-        let r2 = generate_fastq(MAX_READ_HEAD.into(), MAX_READ_LEN.into());
-        let read_pair = ReadPair::new([None, Some(r2), None, None]);
+        let r2 = generate_fastq(MAX_READ_HEAD, MAX_READ_LEN);
+        let read_pair = ReadPair::new([None, Some(r2), None, None], ReadHeader::KeepId);
 
         let expected_r2_offsets = ReadOffset {
-            exists: true,
-            start: 0,
-            head: MAX_READ_HEAD,
-            seq: MAX_READ_HEAD + MAX_READ_LEN,
-            qual: MAX_READ_HEAD + MAX_READ_LEN * 2,
+            start: MAX_READ_HEAD as u16,
+            seq_len: MAX_READ_LEN as u16,
         };
         assert_eq!(
             read_pair.offsets[WhichRead::R2 as usize],
-            expected_r2_offsets
+            Some(expected_r2_offsets)
         );
+        assert_eq!(read_pair.id().unwrap().len(), MAX_READ_HEAD);
     }
 
     #[test]
     #[should_panic]
     fn test_readpair_id_toolong() {
-        let r2 = generate_fastq((MAX_READ_HEAD + 1) as usize, 100);
-        ReadPair::new([None, Some(r2), None, None]);
+        let r2 = generate_fastq(MAX_READ_HEAD + 1, 100);
+        ReadPair::new([None, Some(r2), None, None], ReadHeader::KeepId);
     }
 
     #[test]
     #[should_panic]
     fn test_readpair_seq_toolong() {
-        let r2 = generate_fastq(100, (MAX_READ_LEN + 1) as usize);
-        ReadPair::new([None, Some(r2), None, None]);
+        let r2 = generate_fastq(100, MAX_READ_LEN + 1);
+        ReadPair::new([None, Some(r2), None, None], ReadHeader::KeepId);
+    }
+
+    #[test]
+    fn test_freeze() {
+        let initial_capacity = 2048;
+        let head_len = 32;
+        let seq_len = 128;
+        let rec = generate_fastq(head_len, seq_len);
+
+        let mut buf = BytesMut::with_capacity(initial_capacity);
+
+        let mut expected_capacity = initial_capacity;
+
+        for (storage, header_handling) in [
+            ReadPairStorage::PerReadAllocation,
+            ReadPairStorage::SharedBuffer,
+        ]
+        .into_iter()
+        .cartesian_product([ReadHeader::KeepId, ReadHeader::SkipId])
+        {
+            let mut rp = MutReadPair::empty(&mut buf).storage(storage);
+            assert!(rp.push_read(&rec, WhichRead::R1).is_ok());
+            let rp = rp.freeze(header_handling);
+
+            if header_handling.skip_id() {
+                assert!(rp.id().is_none());
+            } else {
+                assert_eq!(rp.id().unwrap(), &rec.head);
+            }
+
+            assert_eq!(rp.get(WhichRead::R1, ReadPart::Seq).unwrap(), &rec.seq);
+            assert!(buf.is_empty());
+
+            match storage {
+                ReadPairStorage::PerReadAllocation => {
+                    // Should have reclaimed.
+                    assert_eq!(expected_capacity, buf.capacity());
+                }
+                ReadPairStorage::SharedBuffer => {
+                    // Should have consumed the capacity.
+                    assert_eq!(expected_capacity - (head_len + 2 * seq_len), buf.capacity());
+                }
+            }
+            expected_capacity = buf.capacity();
+        }
     }
 }

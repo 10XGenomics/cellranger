@@ -2,14 +2,15 @@
 #![deny(missing_docs)]
 
 use crate::env;
-use crate::types::FeatureReferenceFormat;
 use crate::utils::estimate_mem::barcode_mem_gib;
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::barcode_index::BarcodeIndex;
 use cr_types::reference::feature_reference::{FeatureReference, FeatureType};
 use cr_types::types::FeatureBarcodeCount;
-use cr_types::{BarcodeIndexOutput, BarcodeThenFeatureOrder, CountShardFile};
+use cr_types::{
+    BarcodeIndexOutput, BarcodeThenFeatureOrder, CountShardFile, FeatureReferenceFormat,
+};
 use martian::{MartianFileType, MartianRover, MartianStage, MartianVoid, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::gzip_file::Gzip;

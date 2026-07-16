@@ -88,6 +88,10 @@ def chart_to_json(
     write out field names for all rows and usually saves us a lot in
     storage.
 
+    # TODO: consider rounding float columns (e.g. UMAP coordinates) in the
+    # DataFrame before calling this function to reduce the size of the inline
+    # CSV. Callers are responsible for rounding as appropriate for their data.
+
     Args:
         chart (alt.Chart | alt.LayerChart | alt.HConcatChart | alt.VConcatChart):
             Altair Chart of various flavours.

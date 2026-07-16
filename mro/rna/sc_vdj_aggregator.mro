@@ -60,6 +60,7 @@ pipeline ANTIGEN_AGGR(
         is_spatial         = false,
         multi_graph        = null,
         sample_id          = null,
+        is_visium_hd       = false,
     ) using (
         disabled = self.disable_antigen_aggr,
     )

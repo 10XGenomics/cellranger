@@ -10,24 +10,28 @@ use martian_derive::{MartianStruct, make_mro};
 use martian_filetypes::FileTypeRead;
 use martian_filetypes::tabular_file::CsvFile;
 use serde::{Deserialize, Serialize};
+use std::iter::chain;
 
 const META_HEADER_PREFIX: &str = "Meta:";
 
-fn meta_headers(meta: &Metadata) -> Vec<String> {
-    let mut result = vec![DONOR_HEADER.to_string(), ORIGIN_HEADER.to_string()];
-    for col in &meta.additional_columns {
-        result.push(format!("{META_HEADER_PREFIX}{col}"));
-    }
-    result
+fn meta_headers(meta: &Metadata) -> impl Iterator<Item = String> {
+    chain(
+        [DONOR_HEADER, ORIGIN_HEADER].map(String::from),
+        meta.additional_columns
+            .iter()
+            .map(|x| format!("{META_HEADER_PREFIX}{x}")),
+    )
 }
 
-fn meta_records(meta: &Metadata, gem_well: u32) -> Vec<String> {
+fn meta_records(meta: &Metadata, gem_well: u32) -> impl Iterator<Item = &str> {
     let info = &meta.per_gem_well_info[&gem_well];
-    let mut result = vec![info.donor.clone(), info.origin.clone()];
-    for col in &meta.additional_columns {
-        result.push(info.additional_data[col].clone());
-    }
-    result
+    chain(
+        [&info.donor, &info.origin],
+        meta.additional_columns
+            .iter()
+            .map(|x| &info.additional_data[x]),
+    )
+    .map(String::as_str)
 }
 
 #[derive(Debug, Clone, Deserialize, MartianStruct)]
@@ -47,30 +51,27 @@ pub struct WriteAggrAnn;
 impl MartianMain for WriteAggrAnn {
     type StageInputs = WriteAggrAnnStageInputs;
     type StageOutputs = WriteAggrAnnStageOutputs;
+
     fn main(&self, args: Self::StageInputs, rover: MartianRover) -> Result<Self::StageOutputs> {
         let metadata = args.enclone_gem_well_meta.read()?;
         let augmented_annotation_csv: CsvFile<()> = rover.make_path("augmented_annotation");
 
-        let mut rdr = csv::Reader::from_reader(args.annotation_csv.buf_reader()?);
-        let mut headers = rdr.headers()?.clone();
-        for h in meta_headers(&metadata) {
-            headers.push_field(&h);
-        }
-        let bc_col_num = headers.iter().position(|h| h == "barcode").unwrap();
+        let mut reader = csv::Reader::from_reader(args.annotation_csv.buf_reader()?);
+        let headers: Vec<String> = chain(
+            reader.headers()?.iter().map(String::from),
+            meta_headers(&metadata),
+        )
+        .collect();
+        let bc_col_num = headers.iter().position(|x| x == "barcode").unwrap();
 
-        let mut wtr = csv::Writer::from_writer(augmented_annotation_csv.buf_writer()?);
-        wtr.write_record(&headers)?;
-
-        for r in rdr.records() {
-            let mut records: Vec<_> = r?.iter().map(String::from).collect();
-            let gem_well: u32 = records[bc_col_num]
-                .split('-')
-                .next_back()
-                .unwrap()
-                .parse()?;
-            records.extend(meta_records(&metadata, gem_well));
-            wtr.write_record(&records)?;
+        let mut writer = csv::Writer::from_writer(augmented_annotation_csv.buf_writer()?);
+        writer.write_record(&headers)?;
+        for record in reader.into_records() {
+            let record: csv::StringRecord = record?;
+            let gem_well = record[bc_col_num].rsplit_once('-').unwrap().1.parse()?;
+            writer.write_record(chain(&record, meta_records(&metadata, gem_well)))?;
         }
+        writer.flush()?;
 
         Ok(WriteAggrAnnStageOutputs {
             augmented_annotation_csv,
@@ -81,13 +82,14 @@ impl MartianMain for WriteAggrAnn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use itertools::assert_equal;
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_meta_headers() -> Result<()> {
         let meta =
             EncloneProtoMetaFormat::from("test_resources/write_aggr_ann/1d2o.em.json").read()?;
-        assert_eq!(meta_headers(&meta), ["donor", "origin", "Meta:AMLStatus"]);
+        assert_equal(meta_headers(&meta), ["donor", "origin", "Meta:AMLStatus"]);
         Ok(())
     }
 
@@ -95,7 +97,7 @@ mod tests {
     fn test_meta_column() -> Result<()> {
         let meta =
             EncloneProtoMetaFormat::from("test_resources/write_aggr_ann/1d2o.em.json").read()?;
-        assert_eq!(meta_records(&meta, 1), ["Donor 1", "PBMC", "Normal"]);
+        assert_equal(meta_records(&meta, 1), ["Donor 1", "PBMC", "Normal"]);
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 #![expect(missing_docs)]
-use crate::read_pair::{ReadPart, WhichRead};
-use crate::read_pair_iter::{InputFastqs, ReadPairIter};
+use crate::read_pair::ReadHeader;
+use crate::read_pair_iter::FastqSet;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
@@ -23,26 +23,16 @@ impl Default for IlluminaHeaderInfo {
     }
 }
 
-impl InputFastqs {
+impl FastqSet {
     pub fn get_header_info(&self) -> Result<Option<IlluminaHeaderInfo>> {
-        let mut iter = ReadPairIter::from_fastq_files(self)?;
+        let mut iter = self.clone().read_iter(ReadHeader::KeepId, None)?;
 
         let read1 = iter
             .next()
             .transpose()?
             .ok_or_else(|| anyhow!("Empty fastq file: {self:?}"))?;
 
-        let header = read1
-            .get(WhichRead::R1, ReadPart::Header)
-            .ok_or_else(|| anyhow!("No Read1 in FASTQ data"))?;
-
-        let header = std::str::from_utf8(header)?;
-        let header_prefix = header.split([' ', '/']).next();
-        if header_prefix.is_none() {
-            return Ok(None);
-        }
-        let header_prefix = header_prefix.unwrap();
-
+        let header_prefix = std::str::from_utf8(read1.id().expect("missing FASTQ ID"))?;
         let header_parts: Vec<&str> = header_prefix.split(':').collect();
 
         if header_parts.len() < 4 {
@@ -80,22 +70,15 @@ impl InputFastqs {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::InputFastqs;
-    use crate::filenames::bcl2fastq::Bcl2FastqDef;
-    use crate::filenames::{FindFastqs, LaneSpec};
+    use crate::filenames::{LaneSpec, bcl2fastq};
+    use crate::read_pair_iter::FastqSet;
+    use std::path::Path;
 
     #[test]
     fn test_parse_fastq_info() -> Result<()> {
         let path = "tests/filenames/bcl2fastq";
 
-        let query = Bcl2FastqDef {
-            fastq_path: path.to_string(),
-            sample_name_spec: "Infected".into(),
-            lane_spec: LaneSpec::Any,
-        };
-
-        let mut fqs = query.find_fastqs()?;
-        fqs.sort();
+        let fqs = bcl2fastq::find_fastqs(Path::new(path), &"Infected".into(), &LaneSpec::Any)?;
 
         let info = fqs[0].get_header_info()?;
 
@@ -113,7 +96,7 @@ mod test {
 
     #[test]
     fn weird_header_info() -> Result<()> {
-        let fq = InputFastqs {
+        let fq = FastqSet {
             r1: "tests/read_pair_iter/weird-header-R1.fastq".to_string(),
             r2: Some("tests/read_pair_iter/weird-header-R2.fastq".to_string()),
             i1: None,
@@ -135,7 +118,7 @@ mod test {
 
     #[test]
     fn weird_header2_info() -> Result<()> {
-        let fq = InputFastqs {
+        let fq = FastqSet {
             r1: "tests/read_pair_iter/weird-header2-R1.fastq".to_string(),
             r2: Some("tests/read_pair_iter/weird-header2-R2.fastq".to_string()),
             i1: None,
@@ -152,7 +135,7 @@ mod test {
 
     #[test]
     fn weird_header_csi_1376() -> Result<()> {
-        let fq = InputFastqs {
+        let fq = FastqSet {
             r1: "tests/read_pair_iter/csi-1376-R1.fastq".to_string(),
             r2: Some("tests/read_pair_iter/csi-1376-R2.fastq".to_string()),
             i1: None,

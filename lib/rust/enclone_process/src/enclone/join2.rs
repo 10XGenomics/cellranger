@@ -22,7 +22,7 @@ impl JoinResult {
             j,
             joins: 0,
             errors: 0,
-            join_list: Default::default(),
+            join_list: Vec::default(),
         }
     }
 }

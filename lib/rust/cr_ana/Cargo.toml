@@ -8,6 +8,9 @@ noisy_float = '0.2'
 [dependencies.anyhow]
 workspace = true
 
+[dependencies.barcode]
+path = '../barcode'
+
 [dependencies.bhtsne]
 branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
@@ -28,8 +31,7 @@ workspace = true
 workspace = true
 
 [dependencies.hdf5-io]
-branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs'
+workspace = true
 
 [dependencies.itertools]
 workspace = true
@@ -73,8 +75,7 @@ branch = 'main'
 git = 'https://github.com/10XGenomics/scan-rs'
 
 [dependencies.scan-types]
-branch = 'main'
-git = 'https://github.com/10XGenomics/scan-rs'
+workspace = true
 
 [dependencies.serde]
 workspace = true

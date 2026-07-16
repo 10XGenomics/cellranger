@@ -8,10 +8,13 @@ and sample-level rank plots as plotly JSON, so that they can be passed forward t
 WRITE_MULTI_WEB_SUMMARY stage and inserted into the sample web summary
 """
 
+from __future__ import annotations
+
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
+import martian
 
 import cellranger.rna.library as rna_library
 from cellranger.analysis.singlegenome import UMAP_NAME
@@ -24,6 +27,9 @@ from cellranger.websummary.analysis_tab_core import (
 )
 from cellranger.websummary.react_components import ReactComponentEncoder
 from cellranger.websummary.treemaps import MIN_ANTIBODY_UMI, make_antibody_treemap_plot
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage GENERATE_SAMPLE_PLOTS(
@@ -41,6 +47,32 @@ stage GENERATE_SAMPLE_PLOTS(
 )
 """
 
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """GENERATE_SAMPLE_PLOTS stage inputs."""
+
+    matrices_h5: mro_filetypes.h5
+    raw_matrices_h5: None | mro_filetypes.h5
+    analysis: None | mro_filetypes.path
+    barcode_summary: mro_filetypes.h5
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """GENERATE_SAMPLE_PLOTS stage outputs."""
+
+    sample_projection_plots: None | mro_filetypes.json
+    sample_library_to_barcode_rank: mro_filetypes.json
+    sample_treemap_plots: mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """GENERATE_SAMPLE_PLOTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """GENERATE_SAMPLE_PLOTS chunk outputs."""
+
+
 # Differential expression clustering plot names and library types.
 DIFFEXP_CLUSTERING_PLOT_NAMES = [
     ("gex_diffexp_clustering_plots", rna_library.GENE_EXPRESSION_LIBRARY_TYPE),
@@ -56,9 +88,15 @@ UMI_ON_UMAP_PLOT_NAMES = [
 ]
 
 
-def split(args):
+def split(args: StageInputs):
+    # The matrix counts are loaded when creating the feature treemap plots.
     _num_features, num_barcodes, nnz = CountMatrix.load_dims_from_h5(args.matrices_h5)
-    matrix_gib = CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=4)
+    library_types = CountMatrix.load_library_types_from_h5_file(args.matrices_h5)
+    matrix_gib = (
+        CountMatrix.get_mem_gb_from_matrix_dim(num_barcodes, nnz, scale=0.8)
+        if library_types & {rna_library.ANTIBODY_LIBRARY_TYPE, rna_library.ANTIGEN_LIBRARY_TYPE}
+        else 0
+    )
 
     if args.raw_matrices_h5 is None:
         raw_barcodes_gib = 0
@@ -69,14 +107,14 @@ def split(args):
     with h5py.File(args.barcode_summary) as f:
         barcode_summary_gib = round(estimate_mem_gib_for_dataset(f["bc_sequence"]), 1)
 
-    mem_gib = 3 + matrix_gib + raw_barcodes_gib + barcode_summary_gib
+    mem_gib = 4 + matrix_gib + raw_barcodes_gib + barcode_summary_gib
     print(
         f"{num_barcodes=},{nnz=},{matrix_gib=},{raw_barcodes_gib=},{barcode_summary_gib=},{mem_gib=}"
     )
     return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
-def write_umap_plots(args, outs):
+def write_umap_plots(args: StageInputs, outs: StageOutputs):
     """Write UMAP plots."""
     if args.analysis is None:
         outs.sample_projection_plots = None
@@ -104,7 +142,7 @@ def write_umap_plots(args, outs):
         json.dump(umap_plots, out, sort_keys=True, cls=ReactComponentEncoder)
 
 
-def write_barcode_rank_plots(args, outs):
+def write_barcode_rank_plots(args: StageInputs, outs: StageOutputs):
     """Write per-sample barcode-rank plots."""
     genomes = CountMatrix.get_genomes_from_h5(args.matrices_h5)
     cell_barcodes = set(CountMatrix.load_bcs_from_h5(args.matrices_h5))
@@ -126,15 +164,20 @@ def write_barcode_rank_plots(args, outs):
     )
 
 
-def call_make_treemap(filtered_matrix, lib_type):
+def call_make_treemap(filtered_matrix: mro_filetypes.h5, lib_type: str):
     """Generates inputs for make_antibody_treemap_plot function."""
     filtered_counts_matrix = CountMatrix.load_h5_file(filtered_matrix).select_features_by_type(
         lib_type
     )
-    return make_antibody_treemap_plot(filtered_counts_matrix, lib_type, MIN_ANTIBODY_UMI, False)
+    return make_antibody_treemap_plot(
+        filtered_counts_matrix,
+        lib_type,
+        MIN_ANTIBODY_UMI,
+        is_spatial=False,
+    )
 
 
-def write_treemap_plots(args, outs):
+def write_treemap_plots(args: StageInputs, outs: StageOutputs):
     """Write per-sample treemap feature UMI distribution plots."""
     # build UMAP/clustering, differential expression plots for antigen and antibody
     sample_library_types = CountMatrix.load_library_types_from_h5_file(args.matrices_h5)
@@ -147,7 +190,12 @@ def write_treemap_plots(args, outs):
         json.dump(treemap_plots, out, sort_keys=True, cls=ReactComponentEncoder)
 
 
-def join(args, outs, _chunk_defs, _chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     write_umap_plots(args, outs)
     write_barcode_rank_plots(args, outs)
     write_treemap_plots(args, outs)

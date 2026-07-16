@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 use anyhow::Result;
-use martian::prelude::{MartianFileType, MartianRover};
+use martian::{MartianFileType, MartianRover};
 use std::path::Path;
 
 /// Attempts to create a hard link a file and creates a copy if hard linking fails

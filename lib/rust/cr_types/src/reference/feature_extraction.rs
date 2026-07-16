@@ -4,7 +4,7 @@ use crate::constants::ILLUMINA_QUAL_OFFSET;
 use crate::reference::feature_reference::{FeatureDef, FeatureReference};
 use crate::rna_read::RnaRead;
 use anyhow::{Result, anyhow, bail};
-use fastq_set::read_pair::{ReadPart, WhichRead};
+use fastq_set::read_pair::WhichRead;
 use itertools::Itertools;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
@@ -367,8 +367,8 @@ impl FeatureExtractor {
                 continue;
             }
 
-            let seq = read.read.get(which_read, ReadPart::Seq).unwrap();
-            let qual = read.read.get(which_read, ReadPart::Qual).unwrap();
+            let seq = read.seq(which_read).unwrap();
+            let qual = read.qual(which_read).unwrap();
 
             let s = str::from_utf8(seq).unwrap();
 
@@ -475,7 +475,7 @@ mod tests {
     use barcode::BarcodeSegmentState::NotChecked;
     use barcode::SegmentedBarcode;
     use fastq_set::Record;
-    use fastq_set::read_pair::{ReadPair, RpRange, WhichRead};
+    use fastq_set::read_pair::{ReadHeader, ReadPair, RpRange, WhichRead};
     use std::fs::File;
     use std::io::{BufReader, Cursor, Write};
     use umi::Umi;
@@ -507,7 +507,10 @@ mod tests {
             }
         }
         let read = RnaRead {
-            read: ReadPair::new([Some(Rec { seq, qual }), Some(Rec { seq, qual }), None, None]),
+            read: ReadPair::new(
+                [Some(Rec { seq, qual }), Some(Rec { seq, qual }), None, None],
+                ReadHeader::KeepId,
+            ),
             segmented_barcode: SegmentedBarcode::gel_bead_only(0, b"A", NotChecked),
             umi: Umi::new(b"A"),
             bc_range: GelBeadOnly(RpRange::new(WhichRead::R1, 0, None)),
@@ -521,12 +524,11 @@ mod tests {
     }
 
     #[test]
-    fn test_load_feature_ref() -> Result<()> {
+    fn test_load_feature_ref() {
         let fdf_path = "test/feature/citeseq.csv";
         let rdr = BufReader::new(File::open(fdf_path).unwrap());
         let fref = FeatureReference::new(&[], None, Some(rdr), None, None, None, None).unwrap();
         let _fextr = FeatureExtractor::new(Arc::new(fref), None).unwrap();
-        Ok(())
     }
 
     #[test]

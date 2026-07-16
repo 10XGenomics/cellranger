@@ -6,6 +6,7 @@
 
 right now, computes only median confidently mapped reads per singlet per genome
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -16,9 +17,7 @@ import pandas as pd
 from cellranger.constants import NO_BARCODE
 
 if TYPE_CHECKING:
-    from cellranger.fast_utils import (  # pylint: disable=no-name-in-module,unused-import
-        FilteredBarcodes,
-    )
+    from cellranger.fast_utils import FilteredBarcodes
 
 
 def set_default_no_cells(genomes, antibody_present, crispr_present, custom_present):
@@ -35,6 +34,10 @@ def set_default_no_cells(genomes, antibody_present, crispr_present, custom_prese
         metrics[f"{genome}_filtered_bcs_total_unique_genes_detected"] = 0
         metrics[f"{genome}_filtered_bcs_median_counts"] = 0
         metrics[f"{genome}_filtered_bcs_mean_counts"] = 0
+
+    # Genome-agnostic metrics
+    metrics["filtered_bcs_median_counts"] = 0
+    metrics["filtered_bcs_mean_counts"] = 0
 
     if antibody_present:
         metrics["ANTIBODY_multi_filtered_bcs"] = 0

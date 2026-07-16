@@ -368,6 +368,8 @@ def check_crispr_target_gene(
 
     special_ids: list[bytes] = [ensure_binary(x.lower()) for x in cellranger.constants.FILTER_LIST]
 
+    error_msgs = []
+
     for feat in features:
         target_id_str = feat.tags.get(TARGET_GENE_ID)
         if target_id_str:
@@ -377,31 +379,46 @@ def check_crispr_target_gene(
                 continue
 
             if target_id not in gene_id_name_map:
-                msg = f"CRISPR: This target_gene_id ({ensure_str(target_id)}) declared for one or more guide RNAs in the feature reference does not exist in the transcriptome."
+                feat_id = ensure_str(feat.id)
+                msg = f"CRISPR: Feature id '{feat_id}': This target_gene_id ({ensure_str(target_id)}) does not exist in the transcriptome."
                 msg += "\nPlease specify a target_gene_id that exists in the reference, or use the string 'Non-Targeting' to indicate a control guide."
-                raise FeatureDefException(msg)
+                error_msgs.append(msg)
+                continue
 
             if target_features is not None:
                 target_index = gene_id_index_map[target_id]
                 # target_features maps target set name to list of gene indices
                 if not any(target_index in target_set for target_set in target_features.values()):
+                    feat_id = ensure_str(feat.id)
                     msg = (
-                        f"CRISPR: {ensure_str(target_id)} was specified as the target_gene_id for a guide RNA in the feature reference, "
+                        f"CRISPR: Feature id '{feat_id}': {ensure_str(target_id)} was specified as the target_gene_id for a guide RNA in the feature reference, "
                         + "but this gene is not specified in the gene_id column of the target panel csv file."
                     )
-                    raise FeatureDefException(msg)
+                    error_msgs.append(msg)
 
             target_name = feat.tags.get(TARGET_GENE_NAME)
             if target_name is None or target_name == "":
-                msg = f"CRISPR: No target_gene_name specified for this target_gene_id ({ensure_str(target_id)}) in the feature reference."
-                raise FeatureDefException(msg)
+                feat_id = ensure_str(feat.id)
+                msg = f"CRISPR: Feature id '{feat_id}': No target_gene_name specified for this target_gene_id ({ensure_str(target_id)}) in the feature reference."
+                error_msgs.append(msg)
+                continue
 
             target_name = ensure_binary(target_name)
             if gene_id_name_map[target_id] != target_name:
-                msg = f"CRISPR: You specified target_gene_id = {ensure_str(target_id)} and target_gene_name = {ensure_str(target_name)} in the feature reference.\n"
+                feat_id = ensure_str(feat.id)
+                msg = f"CRISPR: Feature id '{feat_id}': You specified target_gene_id = {ensure_str(target_id)} and target_gene_name = {ensure_str(target_name)} in the feature reference.\n"
                 msg += f"The transcriptome reference has gene_id = {ensure_str(target_id)} with name = {ensure_str(gene_id_name_map[target_id])}. "
                 msg += "Please ensure the target_gene_name field has the correct gene name that matches the transcriptome."
-                raise FeatureDefException(msg)
+                error_msgs.append(msg)
+
+    if error_msgs:
+        shown = error_msgs[:20]
+        joint_first_twenty = "\n\n".join(shown)
+        trailing = (
+            f"\n\n(showing first 20 of {len(error_msgs)} errors)" if len(error_msgs) > 20 else ""
+        )
+        msg = f"{len(error_msgs)} CRISPR guide feature definition errors were found in the feature reference file. Please fix the following issues and try again:\n\n{joint_first_twenty}{trailing}"
+        raise FeatureDefException(msg)
 
 
 def validate_sequence(seq: str):

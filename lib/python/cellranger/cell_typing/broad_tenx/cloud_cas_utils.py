@@ -117,22 +117,33 @@ def extract_token_info(token_path_in) -> TokenInfo:
         _, args_cli_token = broad_tenx_common.read_cli_token(tenx_cloud_token_path)
         tenx_cloud_token_path = LOCAL_TOKEN_PATH.absolute()
 
-    server_url, token_info = broad_tenx_common.read_full_token(tenx_cloud_token_path)
-    if server_url is not None and token_info is not None:
-        # if the full token is valid JSON, parse it
-        parse_result = urlparse(server_url)
-        if not parse_result.scheme:
-            server_url = f"https://{server_url}"
-        cf_dict = token_info.get("cloudflare_token", None)
-        if cf_dict:
-            cfa_tokens = cf_dict
+    try:
+        server_url, token_info = broad_tenx_common.read_full_token(tenx_cloud_token_path)
+        if server_url is not None and token_info is not None:
+            # if the full token is valid JSON, parse it
+            parse_result = urlparse(server_url)
+            if not parse_result.scheme:
+                server_url = f"https://{server_url}"
+            cf_dict = token_info.get("cloudflare_token", None)
+            if cf_dict:
+                cfa_tokens = cf_dict
+            else:
+                cfa_tokens = None
+            cli_token = token_info["cli_token"]
         else:
+            raise broad_tenx_common.MisformedToken(
+                f"Full token has null url or token info {server_url=} {token_info=}"
+            )
+    except broad_tenx_common.MisformedToken as misformed_full_token_exc:
+        print(f"Attempt to read as full Token failed {misformed_full_token_exc}")
+        try:
+            # if the path contains a token only, return it
+            server_url, cli_token = broad_tenx_common.read_cli_token(tenx_cloud_token_path)
             cfa_tokens = None
-        cli_token = token_info["cli_token"]
-    else:
-        # if the path contains a token only, return it
-        server_url, cli_token = broad_tenx_common.read_cli_token(tenx_cloud_token_path)
-        cfa_tokens = None
+        except broad_tenx_common.MisformedToken as misformed_cli_token_exc:
+            raise ValueError(
+                f"Could not read a valid token from CLI after failing to read full token with error: {misformed_full_token_exc}"
+            ) from misformed_cli_token_exc
 
     # CLI token from passed in arg takes precedence over env token
     if args_cli_token is not None:

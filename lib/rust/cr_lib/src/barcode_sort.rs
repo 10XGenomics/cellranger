@@ -1,20 +1,26 @@
 #![deny(missing_docs)]
 
+use crate::make_shard_metrics::{MakeShardMetricProc, MakeShardMetricsAccum};
 use anyhow::Result;
-use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, Whitelist};
+use barcode::{Barcode, BarcodeConstructMetric};
 use cr_bam::constants::{ALN_BC_DISK_CHUNK_SZ, ALN_BC_ITEM_BUFFER_SZ};
-use cr_types::mempool::{MemPool, PoolMember};
+use cr_types::chemistry::ChemistryDef;
 use cr_types::rna_read::{RnaChunk, RnaProcessor, RnaRead};
-use fastq_set::read_pair::{ReadPair, ReadPairStorage};
-use fastq_set::{FastqProcessor, ProcessResult};
-use metric::{CountMetric, Metric};
-use shardio::{BufHandler, Compressor, SortAndWriteHandler, SortKey};
+use fastq_set::length_trim_iter::trim_read_lengths;
+use fastq_set::long_read_adapter_trimmer::{InsertDefinition, LongReadTrimmer, TrimmedReadVisitor};
+use fastq_set::read_pair::{ReadHeader, ReadPair, ReadPairStorage};
+use fastq_set::{BackgroundIteratorScopedExt, ProcessResult};
+use itertools::{Either, Itertools, process_results};
+use json_report_derive::JsonReport;
+use metric::{CountMetric, Histogram, Metric, PercentMetric, SimpleHistogram};
+use metric_derive::Metric;
+use pariter::IteratorExt;
+use serde::{Deserialize, Serialize};
+use shardio::{Compressor, SortKey, process_sorted_bufs};
 use std::borrow::Cow;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender, channel};
-
-/// The maximum number of reads we will pre-buffer in the fastq reader.
-const BG_FASTA_READAHEAD: usize = 1024;
+use std::sync::mpsc::{Receiver, SyncSender, channel, sync_channel};
+use std::sync::{Arc, Mutex};
 
 /// The largest size of each buffer sent to a shard writer.
 /// shardio splits the requested item buffer size into two ping-pong buffers,
@@ -30,91 +36,242 @@ const MAX_READ_BUF_SIZE: usize = ALN_BC_ITEM_BUFFER_SZ / 2;
 /// memory backing the reads.
 const INITIAL_INVALID_READ_BUF_SIZE: usize = MAX_READ_BUF_SIZE / 16;
 
-pub trait ReadVisitor {
-    type ReadType;
-    fn visit_processed_read(&mut self, read: &mut Self::ReadType) -> Result<()>;
-    fn visit_unprocessed_read(&mut self, read: ReadPair, reason: String) -> Result<()>;
+/// How many worker threads to dedicate to computing read metrics and doing
+/// serialization/compression? Note: there's no intrinsic reason these must be
+/// the same, it just happens to be the case that the workload per read is
+/// roughly equal between these two tasks. Serialization/compression is probably
+/// a bit heavier.
+const NUM_WORKERS: usize = 2;
+
+/// Number of downstream processor workers to use if we are doing bgzf decompression.
+/// This was tuned to ensure that the read producer is never stalled.
+const NUM_WORKERS_BGZF: usize = NUM_WORKERS * 3;
+
+/// Use this many threads with bgzf decompression itself. This gives about 2.7 GB/s
+/// throughput into fastq-rs's ~2 GB/s throughput, ensuring that decompression
+/// is not the bottleneck.
+const NUM_DECOMPRESSION_WORKERS_BGZF: usize = 4;
+
+pub(super) struct BarcodeSortResults {
+    pub metrics: BarcodeSortMetrics,
+    pub valid_bc_counts: SimpleHistogram<Barcode>,
+    pub accum: MakeShardMetricsAccum,
 }
 
-pub fn execute_barcode_sort_with_visitor<V: ReadVisitor<ReadType = RnaRead>>(
+/// Number of elements to accumulate in a buffer before sending on down the pipeline.
+/// The main purpose of batching here is to reduce inter-thread communication overhead;
+/// the value just needs to be large enough so that we suppress the number of inter-
+/// thread sync events, as well as limit allocator pressure by not making too
+/// many allocations.
+const BATCH_SIZE: usize = 1024;
+
+#[expect(clippy::too_many_arguments)]
+pub fn execute_barcode_sort_with_visitor(
     chunk: RnaChunk,
+    chem: ChemistryDef,
     valid_path: PathBuf,
     invalid_path: PathBuf,
-    whitelist: BarcodeConstruct<Whitelist>,
     max_iters: Option<usize>,
-    visitor: &mut V,
-) -> Result<BarcodeSortMetrics> {
+    proc: &MakeShardMetricProc,
+    header_handling: ReadHeader,
+    use_multithread_bgzf: bool,
+) -> Result<BarcodeSortResults> {
+    let mut valid_bc_counts = SimpleHistogram::default();
     let mut metrics = BarcodeSortMetrics::default();
+
     let mut nreads: usize = 0;
     let (send_err, recv_err) = channel();
 
-    // Spawn shard writer threads.
+    let processor = &RnaProcessor::new(chunk.clone(), chem.clone())?;
+
+    let metric_shard_sink: Arc<Mutex<Vec<MakeShardMetricsAccum>>> = Arc::default();
+    // This is cloned once per worker in this state, so each worker gets an
+    // initialized copy of the metrics accumulator.
+    let mut metric_shard = MetricShard {
+        state: Some(MakeShardMetricsAccum::new(
+            proc.feature_count,
+            chunk.library_id(),
+            &chem,
+        )),
+        sink: metric_shard_sink.clone(),
+    };
+
+    let mut read_trimming_metrics = ReadTrimmingMetrics::default();
+
+    // Use a scope to manage all worker threads.
     std::thread::scope(|s| {
-        let (send_valid, recv_valid) = channel();
-        let (send_invalid, recv_invalid) = channel();
+        let (send_valid, recv_valid) = sync_channel(1);
+        let (send_invalid, recv_invalid) = sync_channel(1);
 
         let mut read_buffers = ReadBuffers::new(send_valid, send_invalid);
 
-        s.spawn(|| {
-            if let Err(err) = process_read_buffers(valid_path, recv_valid) {
+        let shard_workers = if use_multithread_bgzf {
+            NUM_WORKERS_BGZF
+        } else {
+            NUM_WORKERS
+        };
+        let send_err = &send_err;
+        s.spawn(move || {
+            if let Err(err) = process_read_buffers(valid_path, recv_valid, shard_workers) {
                 let _ = send_err.send(err);
             }
         });
-        s.spawn(|| {
-            if let Err(err) = process_read_buffers(invalid_path, recv_invalid) {
+        s.spawn(move || {
+            if let Err(err) = process_read_buffers(invalid_path, recv_invalid, shard_workers) {
                 let _ = send_err.send(err);
             }
         });
 
-        let processor = RnaProcessor::new(chunk, whitelist);
+        let iter = chunk
+            .read_iter(
+                header_handling,
+                use_multithread_bgzf.then_some(NUM_DECOMPRESSION_WORKERS_BGZF),
+            )?
+            .storage(ReadPairStorage::SharedBuffer)
+            .background_scoped(s, BATCH_SIZE)
+            .flatten();
 
-        for read_result in processor
-            .iter_background_with_storage(BG_FASTA_READAHEAD, ReadPairStorage::SharedBuffer)
-            .unwrap()
-            .take(max_iters.unwrap_or(usize::MAX))
-        {
-            nreads += 1;
+        let iter = match chunk.adapter_trimmer_config.as_ref() {
+            None => Either::Left(iter),
+            Some(config) => Either::Right(pseudo_paired_from_adapters_iter(
+                iter,
+                config.clone().into_trimmer(),
+                header_handling,
+                &mut read_trimming_metrics,
+            )),
+        };
 
-            match read_result? {
-                ProcessResult::Processed(mut read) => {
-                    visitor.visit_processed_read(&mut read)?;
-                    metrics.valid_items_in.merge(
-                        read.segmented_barcode
-                            .segments_valid()
-                            .map(CountMetric::from)
-                            .into(),
-                    );
+        // Apply read-length trimming as the final step so it works uniformly for
+        // all read sources, including pseudo-paired reads from the adapter trimmer.
+        let trim = chunk.trim_lengths();
+        let iter = if trim.is_noop() {
+            Either::Left(iter)
+        } else {
+            Either::Right(trim_read_lengths(iter, trim))
+        };
 
-                    if (if read.barcode_is_valid() {
-                        metrics.valid_items += 1;
-                        read_buffers.put_valid(read)
+        let iter = iter.take(max_iters.unwrap_or(usize::MAX));
+
+        process_results(iter, |reads| {
+            let batched = reads.batching(|i| {
+                let mut batch = Vec::with_capacity(BATCH_SIZE);
+                batch.extend(i.take(BATCH_SIZE));
+                nreads += batch.len();
+                (!batch.is_empty()).then_some(batch)
+            });
+
+            let iter = batched.parallel_map_scoped_custom(
+                s,
+                |o| {
+                    o.threads(if use_multithread_bgzf {
+                        NUM_WORKERS_BGZF
                     } else {
-                        metrics.invalid_items += 1;
-                        read_buffers.put_invalid(read)
+                        NUM_WORKERS
                     })
-                    .is_err()
-                    {
-                        // one of the processors hung up, stop sending and wait
-                        // for error
-                        break;
-                    }
-                }
-                ProcessResult::Unprocessed { read, reason } => {
-                    visitor.visit_unprocessed_read(read, reason)?;
+                },
+                move |batch| {
+                    let metric_accum = metric_shard.state.as_mut().unwrap();
+                    batch
+                        .into_iter()
+                        .filter_map(|r| match processor.process_read(r) {
+                            ProcessResult::Processed(read) => {
+                                proc.visit_processed_read(&read, metric_accum);
+                                Some(read)
+                            }
+                            ProcessResult::Unprocessed { .. } => {
+                                metric_accum.metrics.unprocessed_read_pairs += 1;
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                },
+            );
+
+            for proc_read in iter.flatten() {
+                metrics.valid_items_in.merge(
+                    proc_read
+                        .segmented_barcode
+                        .segments_valid()
+                        .map(CountMetric::from)
+                        .into(),
+                );
+                if (if proc_read.barcode_is_valid() {
+                    valid_bc_counts.observe_owned(proc_read.barcode());
+                    metrics.valid_items += 1;
+                    read_buffers.put_valid(proc_read)
+                } else {
+                    metrics.invalid_items += 1;
+                    read_buffers.put_invalid(proc_read)
+                })
+                .is_err()
+                {
+                    // one of the processors hung up, stop sending and wait
+                    // for error
+                    break;
                 }
             }
-        }
+        })?;
+
         anyhow::Ok(())
     })?;
 
-    println!("Processed {nreads} reads");
-
     // Check for processor error.
-    if let Ok(err) = recv_err.try_recv() {
+    drop(send_err);
+    if let Some(err) = recv_err.into_iter().next() {
         return Err(err);
     }
 
-    Ok(metrics)
+    println!("Processed {nreads} reads");
+
+    // Fold up all the metric accumulators. Note that this must be outside of
+    // the scope to ensure that all scoped workers are guaranteed to have joined,
+    // thus why we can get the Vec out of the Arc below. We could refactor the
+    // scope to use a regular & reference instead of Arc to statically prevent
+    // this from being used incorrectly.
+    let mut accum = Arc::try_unwrap(metric_shard_sink)
+        .expect("all worker threads should have terminated")
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .reduce(|mut x, y| {
+            x.merge(y);
+            x
+        })
+        .unwrap();
+    if read_trimming_metrics.total_raw_reads.count() > 0 {
+        accum.metrics.read_trimming_metrics = Some(read_trimming_metrics);
+    }
+
+    Ok(BarcodeSortResults {
+        metrics,
+        valid_bc_counts,
+        accum,
+    })
+}
+
+/// We need one metrics accumulator per worker - but pariter doesn't
+/// have something like fold, so we need a way to get this back out
+/// of the worker thread at the end of processing. We make use of drop
+/// semantics so that each metric accumulator hands itself back to
+/// the original calling context when processing is complete.
+#[derive(Clone)]
+struct MetricShard {
+    // Needs to be Option so we can take out the value on Drop.
+    state: Option<MakeShardMetricsAccum>,
+    sink: Arc<Mutex<Vec<MakeShardMetricsAccum>>>,
+}
+impl Drop for MetricShard {
+    fn drop(&mut self) {
+        let Some(s) = self.state.take() else {
+            return;
+        };
+        let Ok(mut guard) = self.sink.lock() else {
+            // If the mutex is poisoned, someone panicked, we're going to crash.
+            // Just skip this and drop the metrics.
+            return;
+        };
+        guard.push(s);
+    }
 }
 
 /// Sort by barcode.
@@ -129,32 +286,28 @@ impl SortKey<RnaRead> for BarcodeOrder {
     }
 }
 
+/// These metrics don't escape the stage, but are used for deriving
 #[derive(Copy, Clone, Default)]
-pub struct BarcodeSortMetrics {
+pub(super) struct BarcodeSortMetrics {
     pub valid_items: i64,
     pub valid_items_in: BarcodeConstructMetric<CountMetric>,
     pub invalid_items: i64,
 }
 
 struct ReadBuffer {
-    pool: MemPool<Vec<RnaRead>>,
-    buf: Option<PoolMember<Vec<RnaRead>>>,
+    buf: Vec<RnaRead>,
     /// The maximum number of items to buffer before sending.
     ///
-    /// This can be changed dynamically, but buffer allocations will only
-    /// grow. Capacity will not be reclaimed if shrunk.
+    /// This can be changed dynamically.
     pub size: usize,
-    send: Sender<PoolMember<Vec<RnaRead>>>,
+    send: SyncSender<Vec<RnaRead>>,
 }
 
 impl ReadBuffer {
-    pub fn new(size: usize, send: Sender<PoolMember<Vec<RnaRead>>>) -> Self {
+    pub fn new(size: usize, send: SyncSender<Vec<RnaRead>>) -> Self {
         Self {
-            // Use two read buffers, to allow pre-buffering reads while the other
-            // buffer is being processed by the writer.
-            pool: MemPool::new(2, || Vec::with_capacity(size)),
             send,
-            buf: None,
+            buf: Vec::with_capacity(size),
             size,
         }
     }
@@ -165,16 +318,10 @@ impl ReadBuffer {
     ///
     /// Return Err if a send operation failed due to the processor hanging up.
     pub fn put(&mut self, read: RnaRead) -> Result<()> {
-        let mut buf = self.buf.take().unwrap_or_else(|| {
-            let mut buf = self.pool.fetch();
-            buf.clear();
-            buf
-        });
-        buf.push(read);
-        if buf.len() >= self.size {
+        self.buf.push(read);
+        if self.buf.len() >= self.size {
+            let buf = std::mem::replace(&mut self.buf, Vec::with_capacity(self.size));
             self.send.send(buf)?;
-        } else {
-            self.buf = Some(buf);
         }
         Ok(())
     }
@@ -183,16 +330,18 @@ impl ReadBuffer {
 impl Drop for ReadBuffer {
     /// Send any remaining reads when dropped.
     fn drop(&mut self) {
-        if let Some(buf) = self.buf.take() {
-            self.send.send(buf).unwrap();
+        if !self.buf.is_empty() {
+            self.send.send(std::mem::take(&mut self.buf)).unwrap();
         }
     }
 }
 
-fn process_read_buffers(path: PathBuf, recv: Receiver<PoolMember<Vec<RnaRead>>>) -> Result<()> {
-    let mut handler: SortAndWriteHandler<RnaRead, BarcodeOrder> =
-        SortAndWriteHandler::new(ALN_BC_DISK_CHUNK_SZ, Compressor::Lz4, &path)?;
-    for mut buf in &recv {
+fn process_read_buffers(
+    path: PathBuf,
+    recv: Receiver<Vec<RnaRead>>,
+    n_workers: usize,
+) -> Result<()> {
+    let sorted_buf_iter = recv.into_iter().map(|mut buf| {
         // RnaRead structs are quite large - sort_by_cached_key generates a vec
         // of just the keys+indices and sorts that, then performs the final
         // re-arrangement of the read data itself in an O(N) operation. This
@@ -200,10 +349,16 @@ fn process_read_buffers(path: PathBuf, recv: Receiver<PoolMember<Vec<RnaRead>>>)
         // avoids recomputing the barcode for each comparision operation, as in
         // the default shardio implementation.
         buf.sort_by_cached_key(RnaRead::barcode);
-        handler.process_buf(&mut buf)?;
-    }
-    handler.write_index()?;
-    Ok(())
+        buf
+    });
+
+    process_sorted_bufs::<RnaRead, BarcodeOrder>(
+        sorted_buf_iter,
+        ALN_BC_DISK_CHUNK_SZ,
+        n_workers,
+        Compressor::Lz4,
+        &path,
+    )
 }
 
 /// Own the read buffers and balance their sizes based on read quality.
@@ -215,8 +370,8 @@ struct ReadBuffers {
 
 impl ReadBuffers {
     pub fn new(
-        send_valid: Sender<PoolMember<Vec<RnaRead>>>,
-        send_invalid: Sender<PoolMember<Vec<RnaRead>>>,
+        send_valid: SyncSender<Vec<RnaRead>>,
+        send_invalid: SyncSender<Vec<RnaRead>>,
     ) -> Self {
         Self {
             valid: ReadBuffer::new(MAX_READ_BUF_SIZE, send_valid),
@@ -342,5 +497,248 @@ fn buffer_scaling_factor(ratio: f64) -> usize {
         8
     } else {
         16
+    }
+}
+
+/// Number of threads in the read pre-processor pool.
+// TODO: tune this value
+const N_ADAPTER_TRIMMER_THREADS: usize = 1;
+
+/// Maximum number of reads to buffer during read pre-processing.
+// TODO: tune this value
+const ADAPTER_TRIMMER_BUFFER_SIZE: usize = 32;
+
+pub fn pseudo_paired_from_adapters_iter<'a, I: Iterator<Item = Result<ReadPair>> + 'a>(
+    iter: I,
+    trimmer: LongReadTrimmer,
+    header_handling: ReadHeader,
+    metrics: &'a mut ReadTrimmingMetrics,
+) -> impl Iterator<Item = Result<ReadPair>> + 'a {
+    iter.parallel_map_custom(
+        |o| {
+            o.threads(N_ADAPTER_TRIMMER_THREADS)
+                .buffer_size(ADAPTER_TRIMMER_BUFFER_SIZE)
+        },
+        move |read_result| {
+            let read: ReadPair = read_result?;
+            let mut per_read_metrics = PerReadMetrics::default();
+            let trimmed = trimmer.trim_read(read, header_handling, &mut per_read_metrics)?;
+            Ok((trimmed, per_read_metrics))
+        },
+    )
+    .map_ok(|(trimmed_read, per_read_metrics)| {
+        metrics.update(per_read_metrics);
+        trimmed_read
+    })
+    .filter_map_ok(|opt_read| opt_read)
+}
+
+/// Classification of a read after adapter-trimming boundary detection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TrimmedReadCategory {
+    /// Read contains a canonical insert with both terminal adapters.
+    InsertCanonical,
+    /// Read contains an insert whose final terminal adapter is missing.
+    InsertTruncated,
+    /// Read matches a truncated insert, but truncation is disallowed.
+    RejectedTruncated,
+    /// Read does not match canonical or truncated insert topology.
+    Unrecognized,
+}
+
+/// Add necessary per read metrics here.
+#[derive(Default)]
+pub struct PerReadMetrics {
+    insert_category: Option<TrimmedReadCategory>,
+    insert_size: Option<usize>,
+}
+
+impl TrimmedReadVisitor for PerReadMetrics {
+    fn visit_trimmed_read(&mut self, config: Option<&InsertDefinition>, is_truncated: bool) {
+        self.insert_category = Some(match (&config, is_truncated) {
+            (Some(_), false) => TrimmedReadCategory::InsertCanonical,
+            (Some(_), true) => TrimmedReadCategory::InsertTruncated,
+            (None, true) => TrimmedReadCategory::RejectedTruncated,
+            (None, false) => TrimmedReadCategory::Unrecognized,
+        });
+        self.insert_size = config.map(|c| c.get_retain_range().len());
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, Metric, JsonReport)]
+#[json_report(extend = "extra_reports")]
+pub struct ReadTrimmingMetrics {
+    total_raw_reads: CountMetric,
+    reads_with_inserts: CountMetric,
+    insert_full_length: PercentMetric,
+    insert_truncated: PercentMetric,
+    rejected_truncated: CountMetric,
+    unrecognized: CountMetric,
+    insert_size_distribution: SimpleHistogram<i32>,
+}
+
+impl ReadTrimmingMetrics {
+    /// Computed fields added to the JSON reporter: median insert size.
+    fn extra_reports(&self) -> metric::JsonReporter {
+        let mut reporter = metric::JsonReporter::default();
+        if let Some(median) = self.insert_size_median() {
+            reporter.insert("insert_size_median", median);
+        }
+        reporter
+    }
+
+    /// Returns the median insert size in bases, or `None` if no insert sizes were observed.
+    pub fn insert_size_median(&self) -> Option<i64> {
+        Histogram::percentiles(&self.insert_size_distribution, [50.0_f64])
+            .and_then(|p| p.into_iter().next())
+            .map(|v| v as i64)
+    }
+
+    pub fn update(&mut self, other: PerReadMetrics) {
+        self.total_raw_reads.increment();
+        if let Some(category) = other.insert_category {
+            if category == TrimmedReadCategory::InsertCanonical
+                || category == TrimmedReadCategory::InsertTruncated
+            {
+                self.reads_with_inserts.increment();
+                self.insert_full_length
+                    .increment(category == TrimmedReadCategory::InsertCanonical);
+                self.insert_truncated
+                    .increment(category == TrimmedReadCategory::InsertTruncated);
+            }
+            if category == TrimmedReadCategory::RejectedTruncated {
+                self.rejected_truncated.increment();
+            }
+            if category == TrimmedReadCategory::Unrecognized {
+                self.unrecognized.increment();
+            }
+        }
+        if let Some(insert_size) = other.insert_size {
+            Histogram::observe(&mut self.insert_size_distribution, &(insert_size as i32));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cr_types::chemistry::adapter::layouts;
+    use fastq_set::OwnedRecord;
+    use fastq_set::long_read_adapter_trimmer::{
+        DEFAULT_MAX_R2_LENGTH, ReadSplittingStrategy, TrimmerConfig,
+    };
+    use fastq_set::read_pair::{ReadHeader, ReadPair};
+
+    const RTL_GEX: TrimmerConfig = TrimmerConfig {
+        layout: layouts::FLEX_GEX,
+        splitting_strategy: ReadSplittingStrategy::AdapterLocated {},
+        allow_truncated_constructs: false,
+        is_directional: true,
+        max_r2_length: DEFAULT_MAX_R2_LENGTH,
+    };
+
+    const UNIVERSAL_GEX: TrimmerConfig = TrimmerConfig {
+        layout: layouts::THREE_PRIME_GEX,
+        splitting_strategy: ReadSplittingStrategy::FixedOffset { offset: 4 },
+        allow_truncated_constructs: true,
+        is_directional: true,
+        max_r2_length: DEFAULT_MAX_R2_LENGTH,
+    };
+
+    fn clean_read(read: &[u8]) -> Vec<u8> {
+        read.iter().filter(|&&b| b != b'|').copied().collect()
+    }
+
+    fn make_read_pair(seq: Vec<u8>) -> ReadPair {
+        let qual = vec![b'I'; seq.len()];
+        let record = OwnedRecord {
+            head: b"test".to_vec(),
+            seq,
+            qual,
+            sep: None,
+        };
+        ReadPair::new([Some(record), None, None, None], ReadHeader::KeepId)
+    }
+
+    fn check_per_read_metrics(
+        config: &TrimmerConfig,
+        seq: &[u8],
+        expected_category: Option<TrimmedReadCategory>,
+        expected_insert_size: Option<usize>,
+    ) {
+        let trimmer = config.clone().into_trimmer();
+        let rp = make_read_pair(clean_read(seq));
+        let mut metrics = PerReadMetrics::default();
+        trimmer
+            .trim_read(rp, ReadHeader::KeepId, &mut metrics)
+            .unwrap();
+        assert_eq!(metrics.insert_category, expected_category);
+        assert_eq!(metrics.insert_size, expected_insert_size);
+    }
+
+    #[test]
+    fn test_rtl_gex_canonical_full_length() {
+        // (r1 22 bases)(GGGG)(x12 12 bases)(spacer 13 bases)(ATGCA)(small_rna_r2_rc 12 bases)
+        check_per_read_metrics(
+            &RTL_GEX,
+            b"CTACACGACGCTCTTCCGATCT|GGGG|TTGCTAGGACCG|TTTCTTATATGGG|ATGCA|TGGAATTCTCGG",
+            Some(TrimmedReadCategory::InsertCanonical),
+            Some(34),
+        );
+    }
+
+    #[test]
+    fn test_rtl_gex_truncated_rejected() {
+        // (r1 22 bases)(GGGG)(x12 12 bases)(spacer 13 bases)(ATGCA) — missing terminal 3p adapter
+        check_per_read_metrics(
+            &RTL_GEX,
+            b"CTACACGACGCTCTTCCGATCT|GGGG|TTGCTAGGACCG|TTTCTTATATGGG|ATGCA",
+            Some(TrimmedReadCategory::RejectedTruncated),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_rtl_gex_missing_x12_unrecognized() {
+        // (r1 22 bases)(GGGG)(spacer 13 bases)(ATGCA)(small_rna_r2_rc 12 bases) — missing x12 adapter
+        check_per_read_metrics(
+            &RTL_GEX,
+            b"CTACACGACGCTCTTCCGATCT|GGGG|TTTCTTATATGGG|ATGCA|TGGAATTCTCGG",
+            Some(TrimmedReadCategory::Unrecognized),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_universal_gex_canonical_full_length() {
+        // (r1_bp12 12 bases)(4 bases)(poly_t 20 bases)(4 bases)(rt_primer_rc 28 bases)
+        check_per_read_metrics(
+            &UNIVERSAL_GEX,
+            b"CTCTTCCGATCT|TTCC|TTTTTTTTTTTTTTTTTTTT|GATC|ATGTACTCTGCGTTGATACCACTGCTT",
+            Some(TrimmedReadCategory::InsertCanonical),
+            Some(28),
+        );
+    }
+
+    #[test]
+    fn test_universal_gex_truncated() {
+        // (r1_bp12 12 bases)(4 bases)(poly_t 20 bases)(4 bases) — missing terminal 3p adapter, truncated allowed
+        check_per_read_metrics(
+            &UNIVERSAL_GEX,
+            b"CTCTTCCGATCT|TTCC|TTTTTTTTTTTTTTTTTTTT|GATC",
+            Some(TrimmedReadCategory::InsertTruncated),
+            Some(28),
+        );
+    }
+
+    #[test]
+    fn test_universal_gex_unrecognized() {
+        // No 5' terminal adapter, so no canonical/truncated topology can be formed.
+        check_per_read_metrics(
+            &UNIVERSAL_GEX,
+            b"TTCC|TTTTTTTTTTTTTTTTTTTT|GATC|ATGTACTCTGCGTTGATACCACTGCTT",
+            Some(TrimmedReadCategory::Unrecognized),
+            None,
+        );
     }
 }

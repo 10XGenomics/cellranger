@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -24,9 +25,13 @@ import (
 )
 
 func getUsage() string {
-	return `Usage: telemetry [help] (collect|check|disable|enable|list|show)
+	// Adding Telemetry description here in addition to SharedCmd::Telemetry since clap doesn't
+	// capture nested subcommand descriptions in the help output. Other non-flattened subcommands in
+	// SubCommand (e.g. multi) don't have this issue.
+	return `Configure and inspect telemetry settings and data
 
-collect: Collect telemetry data, if enabled.
+Usage: telemetry [help] (check|disable|enable|list|show)
+
 check:   Show whether telemetry is currently enabled and
          configuration information.
 disable: Disable telemetry collection for this user.
@@ -39,10 +44,11 @@ For more information about what data is collected and how it's used, visit
 }
 
 func main() {
-	f := flag.NewFlagSet("telemetry", flag.ExitOnError)
-	f.Usage = func() {
-		fmt.Fprintln(os.Stderr, getUsage())
-	}
+	f := flag.NewFlagSet("telemetry", flag.ContinueOnError)
+	// We print usage ourselves so we can control ordering relative to the
+	// error message; suppress the flag package's default output.
+	f.Usage = func() {}
+	f.SetOutput(io.Discard)
 	var cpuProfile, traceFile string
 	f.StringVar(&cpuProfile, "profile", "",
 		"Save CPU profiling information for this process to the given file.")
@@ -50,10 +56,22 @@ func main() {
 		"Save an execution trace to the given file.")
 
 	if err := f.Parse(os.Args[1:]); err != nil {
-		panic(err)
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stderr, getUsage())
+			os.Exit(0)
+		}
+		if name, ok := strings.CutPrefix(err.Error(),
+			"flag provided but not defined: "); ok {
+			fmt.Fprintf(os.Stderr,
+				"Error: %s is not a valid option for `telemetry`.\n\n", name)
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %s\n\n", err)
+		}
+		fmt.Fprintln(os.Stderr, getUsage())
+		os.Exit(2)
 	}
 	if f.NArg() < 1 {
-		f.Usage()
+		fmt.Fprintln(os.Stderr, getUsage())
 		os.Exit(1)
 	}
 
@@ -113,6 +131,11 @@ func main() {
 		case "show":
 			return doShow(f.Args()[1:])
 		default:
+			fmt.Fprintf(
+				os.Stderr,
+				"Error: %s is not a valid subcommand for `telemetry`.\n\n",
+				f.Arg(0),
+			)
 			fmt.Fprintln(os.Stderr, getUsage())
 			return 1
 		}
@@ -121,23 +144,26 @@ func main() {
 
 func doHelp(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, getUsage())
+		fmt.Println(getUsage())
 		return 0
 	}
 	switch args[0] {
-	case "collect":
-		value_context.ParseFlags([]string{"--help"})
 	case "disable":
-		fmt.Fprintln(os.Stderr, disableUsage())
+		fmt.Println(disableUsage())
 	case "enable":
-		fmt.Fprintln(os.Stderr, enableUsage())
+		fmt.Println(enableUsage())
 	case "check":
-		fmt.Fprintln(os.Stderr, `Show the whether telemetry is enabled.`)
+		fmt.Println(`Show whether telemetry is enabled.`)
 	case "list":
-		fmt.Fprintln(os.Stderr, `List saved telemetry files.`)
+		fmt.Println(`List saved telemetry files.`)
 	case "show":
 		return doShow([]string{"-h"})
 	default:
+		fmt.Fprintf(
+			os.Stderr,
+			"Error: %s is not a valid subcommand for `telemetry help`.\n\n",
+			args[0],
+		)
 		fmt.Fprintln(os.Stderr, getUsage())
 		return 1
 	}
@@ -174,7 +200,7 @@ Note that telemetry may also be disabled by setting the environment variables
 ` + settings.DisableEnvVar + `, ` + settings.DisableEnvVar + `_UPDATE,
 or ` + settings.DisableEnvVar + `_UPLOAD to non-empty values.
 Config updates or upload can be disabled for all users by creating the files
-/etc/tenx/telemetry/disable_update or /etc/tenx/telemetry/disable_upgrade.`
+/etc/tenx/telemetry/disable_update or /etc/tenx/telemetry/disable_upload.`
 }
 
 func enableUsage() string {
@@ -287,12 +313,12 @@ func doEnable(args []string) int {
 		} else if strings.EqualFold(arg, "update") {
 			update = true
 		} else {
-			fmt.Println(disableUsage())
+			fmt.Println(enableUsage())
 			return 1
 		}
 	}
 	if err := settings.Enable(all, upload, update); err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to disable telemetry:\n", err)
+		fmt.Fprintln(os.Stderr, "Failed to enable telemetry:\n", err)
 		return 3
 	}
 	return 0

@@ -29,9 +29,6 @@ HT_CHEMISTRIES = [
     CHEMISTRY_DEFS["SC5PHT"],
 ]
 
-# LT v3 Chemistry
-CHEMISTRY_SC3P_LT = CHEMISTRY_DEFS["SC3Pv3LT"]
-
 # Single Cell Feature-Barcoding only
 CHEMISTRY_SC_FB = CHEMISTRY_DEFS["SC-FB"]
 

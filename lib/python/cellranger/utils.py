@@ -242,7 +242,7 @@ def compress_seq(seq: bytes, bits: int = 64) -> int:
     return result
 
 
-def merge_jsons_as_dict(in_filenames: Iterable[str | bytes | os.PathLike]) -> dict:
+def merge_jsons_as_dict(in_filenames: Iterable[str | bytes | os.PathLike | None]) -> dict:
     """Merge a list of json files and return the result as a dictionary."""
     result = {}
     for filename in in_filenames:

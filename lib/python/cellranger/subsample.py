@@ -7,7 +7,7 @@ from __future__ import annotations
 import pickle
 from collections.abc import Collection
 from copy import copy
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -20,6 +20,9 @@ import tenkit.stats as tk_stats
 from cellranger.constants import OFF_TARGET_SUBSAMPLE, ON_TARGET_SUBSAMPLE
 from cellranger.cr_io import open_maybe_gzip
 from cellranger.fast_utils import FilteredBarcodes
+
+if TYPE_CHECKING:
+    from cellranger.mro_types.structs import SubsamplingDef
 
 #####################################
 # Subsampling types and target depths
@@ -128,15 +131,6 @@ def compute_target_depths(
         np.linspace(start=0, stop=max_target, num=num_targets + 1, dtype=int)
     )
     return distinct_targets[distinct_targets > 0]
-
-
-class SubsamplingDef(TypedDict):
-    """The dictionary of metadata returned by make_subsamplings."""
-
-    library_type: str
-    subsample_type: str
-    target_read_pairs_per_cell: int
-    library_subsample_rates: list[float]
 
 
 def _subsampling_for_depth(

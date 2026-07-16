@@ -9,7 +9,9 @@ import math
 import os
 import shutil
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
+import martian
 import pandas as pd
 from six import ensure_binary, ensure_str
 
@@ -20,6 +22,9 @@ import cellranger.vdj.reference as vdj_ref
 import cellranger.vdj.report as vdj_report
 import cellranger.vdj.utils as vdj_utils
 from cellranger.library_constants import MULTI_REFS_PREFIX
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage REPORT_CONTIGS(
@@ -36,6 +41,33 @@ stage REPORT_CONTIGS(
 )
 """
 
+
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """REPORT_CONTIGS stage inputs."""
+
+    vdj_reference_path: None | mro_filetypes.path
+    cell_barcodes: None | mro_filetypes.json
+    contigs: mro_filetypes.fasta
+    annotations: mro_filetypes.json
+    filter_summary: None | mro_filetypes.csv
+    umi_summary: mro_filetypes.tsv
+    prefix: None | str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """REPORT_CONTIGS stage outputs."""
+
+    summary: mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """REPORT_CONTIGS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """REPORT_CONTIGS chunk outputs."""
+
+
 MIN_CHAIN_TYPE_CONTIG_FRAC = 0.05
 
 MEM_GB_PER_UMI_SUMMARY_GB = 7.0
@@ -43,7 +75,7 @@ MEM_GB_PER_UMI_SUMMARY_GB = 7.0
 LIBRARY_TYPE = lib_constants.VDJ_LIBRARY_TYPE
 
 
-def split(args):
+def split(args: StageInputs):
     mem_gb_annot = vdj_utils.get_mem_gb_from_annotations_json(args.annotations)
 
     umi_summary_bytes = os.path.getsize(args.umi_summary) if args.umi_summary else 0
@@ -62,7 +94,7 @@ def split(args):
     }
 
 
-def main(args, outs):
+def main(args: ChunkInputs, outs: ChunkOutputs):
     prefix = ""
     if args.prefix is not None:
         prefix = ensure_str(args.prefix)
@@ -136,7 +168,7 @@ def main(args, outs):
 
     reference = vdj_ref.VdjReference(args.vdj_reference_path)
 
-    for barcode in barcodes:  # type: bytes
+    for barcode in barcodes:
         contigs = barcode_contigs[barcode]
         annotations = [contig_annotations[contig[0]] for contig in contigs]
         reporter.vdj_barcode_contig_cb(barcode, contigs, annotations, reference, prefix)
@@ -151,5 +183,10 @@ def main(args, outs):
     reporter.report_summary_json(outs.summary)
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     shutil.copy(chunk_outs[0].summary, outs.summary)

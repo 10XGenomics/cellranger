@@ -5,6 +5,9 @@ workspace = true
 [dependencies.barcode]
 path = '../barcode'
 
+[dependencies.bytes]
+workspace = true
+
 [dependencies.cr_bam]
 path = '../cr_bam'
 

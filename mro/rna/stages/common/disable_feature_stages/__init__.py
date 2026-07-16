@@ -1,8 +1,18 @@
 # Copyright (c) 2019 10x Genomics, Inc. All rights reserved.
 """Looks at the sample def and determines which feature-counter calls can be disabled."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import martian
+
 import cellranger.rna.library as rna_library
 from cellranger.fast_utils import MultiGraph
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage DISABLE_FEATURE_STAGES(
@@ -32,7 +42,44 @@ stage DISABLE_FEATURE_STAGES(
 """
 
 
-def main(args, outs):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """DISABLE_FEATURE_STAGES stage inputs."""
+
+    sample_def: None | list[dict]
+    disable_multi: bool
+    disable_count: bool
+    is_pd: bool
+    in_disable_targeted: bool
+    no_secondary_analysis: bool
+    sample_outs: None | dict[str, mro_structs.SampleSlfeOuts]
+    multi_graph: None | mro_filetypes.json
+    reference_info: mro_structs.ReferenceInfo
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """DISABLE_FEATURE_STAGES stage outputs."""
+
+    disable_crispr: bool
+    disable_antibody: bool
+    disable_antigen: bool
+    disable_multiplexing: bool
+    disable_targeted: bool
+    disable_legacy_stages: bool
+    disable_library_cloupe: bool
+    disable_library_crispr: bool
+    disable_library_rna: bool
+    disable_gex: bool
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """DISABLE_FEATURE_STAGES chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """DISABLE_FEATURE_STAGES chunk outputs."""
+
+
+def main(args: ChunkInputs, outs: ChunkOutputs):
     # this is a workaround so that this stage doesn't have to be disabled
     # instead we just instantly return reasonable outputs
     # if this stage can be disabled it causes disabled binding problems downstream
@@ -61,7 +108,7 @@ def main(args, outs):
     outs.disable_crispr = not found_crispr or args.no_secondary_analysis
     outs.disable_antibody = not found_antibody
     outs.disable_antigen = not found_antigen
-    outs.disable_multiplexing = not found_multiplexing
+    outs.disable_multiplexing = not found_multiplexing or args.disable_multi
     outs.disable_gex = not found_gex
     outs.disable_targeted = args.in_disable_targeted
 

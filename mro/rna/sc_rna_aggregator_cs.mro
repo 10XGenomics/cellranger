@@ -100,6 +100,10 @@ pipeline COUNT_AGGR(
         is_pd                    = self.is_pd,
         spatial_high_barcodes    = false,
         enable_tsne              = self.enable_tsne,
+        pipestance_type          = "SC_RNA_AGGREGATOR_CS",
+        tenx_cloud_token_path    = null,
+        cell_annotation_model    = null,
+        skip_cell_annotation     = true,
     )
 
     call CLOUPE_PREPROCESS(

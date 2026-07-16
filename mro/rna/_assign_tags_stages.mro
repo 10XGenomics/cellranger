@@ -40,9 +40,8 @@ struct AssignTagsOuts(
 
 stage MULTIPLEXING_METHOD(
     in  json   multi_graph,
-    out bool   multiplexing_is_not_rtl,
+    out bool   multiplexing_is_not_read_level,
     out bool   multiplexing_is_not_cmo_or_hashtag,
-    out bool   multiplexing_is_not_oh,
     out bool   output_per_sample_raw_matrix,
     out string multiplexing_method,
     src py     "../rna/stages/multi/multiplexing_method",
@@ -101,7 +100,6 @@ stage DETERMINE_SAMPLE_ASSIGNMENTS(
     in  csv                filtered_barcodes,
     in  json               multi_graph,
     in  json               non_singlet_barcodes,
-    in  int                gem_well,
     in  h5                 raw_feature_bc_matrix,
     out json               cells_per_tag,
     out json               sample_barcodes,

@@ -68,6 +68,12 @@ const GEX = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
       />
 
       <Metrics
+        config={config.GEX.readTrimmingQuality}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+
+      <Metrics
         config={config.GEX.sequencing}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
@@ -223,6 +229,12 @@ const AB = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
 
       <Metrics
         config={config.AB.libraryQuality}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+
+      <Metrics
+        config={config.AB.readTrimmingQuality}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
       />
@@ -459,6 +471,12 @@ const CRISPR = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
       />
 
       <Metrics
+        config={config.CRISPR.readTrimmingQuality}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+
+      <Metrics
         config={config.CRISPR.sequencing}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
@@ -509,6 +527,12 @@ const Custom = ({ content, metrics, experimentalDesign }: TabContentsProps) => {
 
       <Metrics
         config={config.Custom.sequencing}
+        experimentalDesign={experimentalDesign}
+        metrics={libraryMetrics}
+      />
+
+      <Metrics
+        config={config.Custom.rtl_probe_barcode_metrics}
         experimentalDesign={experimentalDesign}
         metrics={libraryMetrics}
       />
@@ -734,7 +758,7 @@ const getAllSampleAlerts = (ws: SampleWebSummary) =>
     ws.antigen_tab?.alerts || [],
     ws.crispr_tab?.alerts || [],
     ws.custom_feature_tab?.alerts || [],
-    ws.cell_annotation_tab?.alerts || [],
+    ws.cell_annotation_tabs?.map((tab) => tab.alerts).flat() || [],
   ].flat();
 
 export default Multiplexed;

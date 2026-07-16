@@ -3,12 +3,12 @@
 
 use crate::EXCLUDED_FEATURE_TYPES;
 use crate::io::{csv, h5};
-use crate::pca::run_pca;
+use crate::pca::{PCA_COMPONENTS, run_pca};
 use crate::types::H5File;
 use anyhow::Result;
 use cr_types::reference::feature_reference::FeatureType;
 use hdf5_io::matrix::read_adaptive_csr_matrix;
-use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, make_mro};
 use scan_rs::normalization::FixedPointFormat;
 use scan_types::matrix::AdaptiveFeatureBarcodeMatrix as FBM;
@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 const PCA_THRESHOLD: f64 = 3.0;
-const PCA_COMPONENTS: usize = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize, MartianStruct)]
 pub struct PcaOutputs {

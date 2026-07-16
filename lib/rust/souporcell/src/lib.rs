@@ -10,7 +10,7 @@ use cr_types::{GeneticDemuxParams, Mtx};
 use itertools::Itertools;
 use metric::TxHashMap;
 use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use souporcell::{
     expectation_maximization, init_cluster_centers, load_cell_data, CellData, Params,
 };

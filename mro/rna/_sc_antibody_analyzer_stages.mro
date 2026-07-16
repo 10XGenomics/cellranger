@@ -13,8 +13,11 @@ stage CALL_ANTIBODIES(
     in  bool   is_spatial,
     in  json   multi_graph,
     in  string sample_id,
+    in  bool   is_visium_hd,
     out json   antibody_histograms_json,
+    out json   antibody_histograms_plotly_json,
     out json   antibody_treemap_json,
+    out json   antibody_treemap_plotly_json,
     src py     "stages/feature/call_antibodies",
 ) split (
 ) using (

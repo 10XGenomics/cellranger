@@ -96,6 +96,23 @@ func (m *Metric) Get() any {
 	return m.get()
 }
 
+// Fill writes this metric's value(s) into props under the given name.
+// If Source is multi-valued, the result is expected to be a
+// map[string]any and each entry is written as name+"_"+suffix.
+// Otherwise the single value is written under name directly.
+func (m *Metric) Fill(name string, props SortedAnyMap) {
+	v := m.Get()
+	if m.Source.IsMultiValue() {
+		if multi, ok := v.(map[string]any); ok {
+			for suffix, val := range multi {
+				props[name+"_"+suffix] = val
+			}
+			return
+		}
+	}
+	props[name] = v
+}
+
 var (
 	GroupConfigurationError  = errors.New("invalid group")
 	MetricConfigurationError = errors.New("invalid metric")
@@ -313,6 +330,9 @@ func (mc *MetricConfig) checkOneSource() error {
 	if mc.MroFlag != "" {
 		sources = append(sources, "mro_flag")
 	}
+	if mc.Env != "" {
+		sources = append(sources, "env")
+	}
 	if mc.RecentCount != "" {
 		sources = append(sources, "recent_count")
 	}
@@ -346,6 +366,8 @@ func (mc *MetricConfig) compileSource() (ValueExtractor, error) {
 		return compileFlagSource(mc.Flag, false)
 	case mc.MroFlag != "":
 		return compileFlagSource(mc.MroFlag, true)
+	case mc.Env != "":
+		return collector.MakeEnv(mc.Env), nil
 	case mc.RecentCount != "":
 		return compileRecentCountSource(mc.RecentCount, mc.Groups)
 	}

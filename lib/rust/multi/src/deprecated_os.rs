@@ -6,13 +6,32 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-const REGEX_RELEASE: &[(&str, &str)] = &[
-    (r" [56]\.", "/etc/redhat-release"),
-    (r" [56]\.", "/etc/rocks-release"),
-    (r" [56]\.", "/etc/os-release"),
-    (r" [56]\.", "/etc/system-release"),
-    // Ubuntu 13 or earlier
-    (r" 1[0-3]\.", "/etc/lsb-release"),
+// Regexes to check for known incompatible OS versions.  If any of these match, the pipeline will fail with an error.
+// The error can be suppressed for by setting TENX_IGNORE_DEPRECATED_OS=1 in your environment.
+const REGEX_RELEASE_INCOMPATIBLE: &[(&str, &str)] = &[
+    // Red Hat or derivatives 5, 6 or 7
+    (r" [567]\.", "/etc/redhat-release"),
+    (r" [567]\.", "/etc/rocks-release"),
+    (r" [567]\.", "/etc/os-release"),
+    (r" [567]\.", "/etc/system-release"),
+    // Ubuntu 16 or earlier
+    (r" 1[0-6]\.", "/etc/lsb-release"),
+    (r" [1-9]\.", "/etc/lsb-release"),
+    // Suse 10 or 11
+    (r"SUSE.* 1[01]\b", "/etc/SuSE-release"),
+    // Debian 7 or earlier
+    (r#"PRETTY_NAME="[dD]ebian.*\b[1-7]\."#, "/etc/os-release"),
+];
+
+// Warn for OSes that are currently compatible but will be incompatible in the future, so users have time to upgrade before it becomes a hard error.
+const REGEX_RELEASE_DEPRECATED: &[(&str, &str)] = &[
+    // Red Hat or derivatives 5, 6 or 7
+    (r" [567]\.", "/etc/redhat-release"),
+    (r" [567]\.", "/etc/rocks-release"),
+    (r" [567]\.", "/etc/os-release"),
+    (r" [567]\.", "/etc/system-release"),
+    // Ubuntu 18 or earlier
+    (r" 1[0-8]\.", "/etc/lsb-release"),
     (r" [1-9]\.", "/etc/lsb-release"),
     // Suse 10 or 11
     (r"SUSE.* 1[01]\b", "/etc/SuSE-release"),
@@ -59,17 +78,28 @@ impl PlatformResult {
 }
 
 fn check_known_os() -> PlatformResult {
-    // check for a known lsb-release file, if we find a matching entry, we're good
-    for (regex, release) in REGEX_RELEASE {
+    // check for a known lsb-release file, if we find a matching entry, error due to incompatibility.
+    for (regex, release) in REGEX_RELEASE_INCOMPATIBLE {
         if let Some(line) = search_file_for_re(Path::new(release), regex) {
             return PlatformResult::Err(Cow::from(format!(
-                "This operating system version is unsupported or will soon be unsupported:
+                "This operating system version is unsupported:
     {}
-Future releases of this pipeline will require a more current system.
 For more information, see support.10xgenomics.com/os-support.
 
 To continue running this version for now, set TENX_IGNORE_DEPRECATED_OS=1
 in your environment.",
+                line.trim(),
+            )));
+        }
+    }
+    // check for a known lsb-release file, if we find a matching entry, warn about future incompatibility
+    for (regex, release) in REGEX_RELEASE_DEPRECATED {
+        if let Some(line) = search_file_for_re(Path::new(release), regex) {
+            return PlatformResult::Warn(Cow::from(format!(
+                "WARNING: The operating system version is deprecated and will no longer be supported in a future release:
+    {}
+Future releases of this pipeline will require a more current system.
+For more information, see support.10xgenomics.com/os-support.",
                 line.trim(),
             )));
         }
@@ -87,7 +117,7 @@ fn check_kernel_version() -> PlatformResult {
             if (major, minor) < (3, 10) {
                 return PlatformResult::Err(Cow::from(format!(
                     "The kernel used by this operating system version is unsupported: {release}
-This release requires kernel version 3.10.0 or higher. Future releases of this 
+This release requires kernel version 3.10.0 or higher. Future releases of this
 pipeline will require kernel version 4.15.0 or higher.
 For more information, see support.10xgenomics.com/os-support.
 

@@ -136,6 +136,21 @@ pub fn validate_ascii_identifier(id: &str) -> Result<String> {
     Ok(String::from(id))
 }
 
+/// Parse and validate a reference genome name, for use with Clap's value_parser.
+/// Like `validate_ascii_identifier` but additionally allows `.` so that public
+/// reference versions such as "mRatBN7.2" can be used directly as the genome
+/// name. The name must not start with a `.` — this rejects path-traversal
+/// special cases (`.`, `..`) as well as hidden-file names.
+pub fn validate_ascii_identifier_with_dots(id: &str) -> Result<String> {
+    ensure!(
+        id.chars()
+            .all(|c| matches!(c, '0'..='9' | 'A'..='Z' | 'a'..='z' | '_' | '-' | '.')),
+        "must contain only letters, digits, underscores, dashes, and periods."
+    );
+    ensure!(!id.starts_with('.'), "must not start with a period.");
+    Ok(String::from(id))
+}
+
 /// Max allowed length of the --id argument
 const MAX_ID_LEN: usize = 64;
 
@@ -160,6 +175,31 @@ mod tests {
         }
         for s in ["_A*S", "_SAMPLE/123", "(?:)", "ΔδΔ"] {
             assert!(validate_id(s).is_err(), "{s} should be an invalid ID");
+        }
+    }
+
+    #[test]
+    fn test_validate_ascii_identifier_with_dots() {
+        // Public reference versions with dots (the motivating case: mRatBN7.2).
+        for s in [
+            "mRatBN7.2",
+            "GRCh38.p14",
+            "v1.2.3",
+            "mm10",
+            "GRCh38_and_mm10",
+            "A-Z",
+        ] {
+            assert!(
+                validate_ascii_identifier_with_dots(s).is_ok(),
+                "{s} should be a valid genome name"
+            );
+        }
+        // Path-traversal / hidden-file forms must still be rejected.
+        for s in [".", "..", ".hidden", "_A*S", "foo/bar", "ΔδΔ"] {
+            assert!(
+                validate_ascii_identifier_with_dots(s).is_err(),
+                "{s} should be an invalid genome name"
+            );
         }
     }
 }

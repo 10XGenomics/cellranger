@@ -1,17 +1,8 @@
 [dependencies]
-[dependencies.arrayvec]
-workspace = true
-
 [dependencies.fastq_set]
 path = '../fastq_set'
 
-[dependencies.itertools]
-workspace = true
-
 [dependencies.serde]
-workspace = true
-
-[dependencies.triple_accel]
 workspace = true
 
 [lib]

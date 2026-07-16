@@ -80,6 +80,7 @@ report_prefix_map = {
 class ReadLevel(Enum):
     RTL = "RTL"
     OH = "OH"
+    CMX = "CMX"
 
 
 class CellLevel(Enum):
@@ -103,6 +104,9 @@ class BarcodeMultiplexingType:
         elif value == ReadLevel.OH.value:
             self.level = "ReadLevel"
             self.type = ReadLevel.OH
+        elif value == ReadLevel.CMX.value:
+            self.level = "ReadLevel"
+            self.type = ReadLevel.CMX
         else:
             raise ValueError("Invalid type for BarcodeMultiplexingType")
 

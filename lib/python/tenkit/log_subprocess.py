@@ -24,9 +24,9 @@ from six import ensure_str
 def __make_pdeathsig() -> Callable[[], None] | None:
     if sys.platform.startswith("linux"):
         # pylint: disable=import-outside-toplevel
-        import ctypes
-        import ctypes.util
-        from signal import SIGKILL
+        import ctypes  # noqa: PLC0415
+        import ctypes.util  # noqa: PLC0415
+        from signal import SIGKILL  # noqa: PLC0415
 
         libc: ctypes.CDLL = ctypes.CDLL(ctypes.util.find_library("c"))
         # pylint: disable-next=invalid-name

@@ -17,7 +17,6 @@ import numpy as np
 
 import cellranger.constants as cr_constants
 import cellranger.rna.library as rna_library
-import cellranger.stats as cr_stats
 import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
 import tenkit.seq as tk_seq
@@ -25,6 +24,13 @@ import tenkit.stats as tk_stats
 from cellranger.reference_paths import get_ref_name_from_genomes, get_reference_genomes
 
 DEFAULT_REPORT_TYPE = "summary"
+
+
+def _effective_diversity(counts):
+    """Inverse Simpson Index, or the effective diversity of power 2."""
+    numerator = np.sum(counts) ** 2
+    denominator = np.sum(v**2 for v in counts)
+    return tk_stats.robust_divide(float(numerator), float(denominator))
 
 
 # Metrics
@@ -249,7 +255,7 @@ class SubsampledTopNMetric(TopNMetric):
 class EffectiveDiversityMetric(DictionaryMetric):
     def report(self):
         counts = np.array(self.d.values())
-        return cr_stats.effective_diversity(counts)
+        return _effective_diversity(counts)
 
 
 class SetMetric(Metric):

@@ -11,8 +11,6 @@ from six import ensure_binary
 
 import cellranger.molecule_counter_extensions as cr_mce
 import tenkit.stats as tk_stats
-
-# pylint: disable=no-name-in-module,import-error
 from cellranger.fast_utils import reads_per_feature
 from cellranger.molecule_counter import (
     COUNT_COL_NAME,

@@ -65,37 +65,30 @@ struct BarcodeReadComponent(
     WhitelistSpec whitelist,
 )
 
-struct UmiWhitelistSpec(
-    string slide,
-    string part,
-    string translation,
-)
-
 struct UmiReadComponent(
-    string           read_type,
-    int              offset,
-    int              length     "The length of the UMI. At most this number of bases will be extracted for use as a UMI.",
-    int              min_length "If a shorter UMI can be used, add it here. None indicates that the full",
-    UmiWhitelistSpec whitelist,
+    string read_type  "The read from which to extract the UMI.",
+    int    offset     "The offset of the UMI within the read.",
+    int    length     "The length of the UMI. At most this number of bases will be extracted for use as a UMI.",
+    int    min_length "The minimum required length of the UMI, or `None` if the full length is required.",
 )
 
 struct RnaReadComponent(
     string read_type,
-    int    offset,
-    int    length,
+    int    offset     "The offset of the RNA part within the read.",
+    int    length     "The length of the RNA part within the read, if explicit.",
     int    min_length,
 )
 
 struct ChemistryDef(
-    string                 name,
-    string                 description,
-    string                 endedness,
-    string                 strandedness,
+    string                 name               "The name of the chemistry.",
+    string                 description        "The description of the chemistry.",
+    string                 endedness          "The 5' or 3' endedness of the chemistry.",
+    string                 strandedness       "The forward or reverse strandedness of the chemistry.",
     BarcodeReadComponent[] barcode,
-    UmiReadComponent[]     umi,
-    RnaReadComponent       rna,
-    RnaReadComponent       rna2,
-    map                    barcode_extraction,
+    UmiReadComponent[]     umi                "The UMI read components.",
+    RnaReadComponent       rna                "The first RNA read component.",
+    RnaReadComponent       rna2               "The optional second RNA read component.",
+    map                    barcode_extraction "The barcode extraction strategy, if any.",
 )
 
 struct VdjPrimers(

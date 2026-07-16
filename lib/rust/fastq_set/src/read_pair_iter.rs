@@ -3,18 +3,19 @@
 #![expect(missing_docs)]
 
 use crate::ERROR_CODE_INFO;
-use crate::read_pair::{MutReadPair, ReadPair, ReadPairStorage, ReadPart, WhichRead};
+use crate::read_pair::{MutReadPair, ReadHeader, ReadPair, ReadPairStorage, ReadPart, WhichRead};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use bytes::{BufMut, BytesMut};
 use fastq::{self, OwnedRecord, Record, RecordRefIter};
 use itertools::{Itertools, zip_eq};
+use martian_derive::MartianType;
 use rand::SeedableRng;
 use rand::distr::{Distribution, Uniform};
 use rand::rngs::SmallRng;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, Write};
-use std::iter::zip;
+use std::io::{BufRead, BufReader, ErrorKind, Read, Seek};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 const GZ_BUF_SIZE: usize = 1 << 16;
@@ -55,8 +56,8 @@ impl<T> FileIoError<T> for std::io::Result<T> {
 /// A set of corresponding FASTQ representing the different read components from a set of flowcell 'clusters'
 /// All reads are optional except for R1. For an interleaved R1/R2 file, set the filename in the `r1` field,
 /// and set `r1_interleaved = true`.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct InputFastqs {
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, MartianType)]
+pub struct FastqSet {
     pub r1: String,
     pub r2: Option<String>,
     pub i1: Option<String>,
@@ -64,55 +65,164 @@ pub struct InputFastqs {
     pub r1_interleaved: bool,
 }
 
+/// Detect whether a gzip file uses BGZF block structure.
+///
+/// Reads up to 4 gzip members and checks each for the BGZF extra subfield
+/// (SI1=0x42, SI2=0x43, SLEN=2). Returns true only if all members inspected
+/// carry the BGZF tag; returns false on the first non-BGZF member or if the
+/// file has no extra field.
+fn is_bgzf(path: &Path) -> std::io::Result<bool> {
+    use std::io::SeekFrom;
+
+    let mut file = File::open(path)?;
+    const MAX_MEMBERS: usize = 4;
+
+    for i in 0..MAX_MEMBERS {
+        let member_start = file.stream_position()?;
+
+        let mut hdr = [0u8; 10];
+        match file.read_exact(&mut hdr) {
+            Ok(()) => {}
+            Err(e) if i > 0 && e.kind() == ErrorKind::UnexpectedEof => return Ok(true),
+            Err(e) => return Err(e),
+        }
+        if hdr[0] != 0x1f || hdr[1] != 0x8b {
+            return Ok(false);
+        }
+        let flags = hdr[3];
+        if flags & 4 == 0 {
+            // No FEXTRA field → cannot be BGZF
+            return Ok(false);
+        }
+        let mut xlen_buf = [0u8; 2];
+        file.read_exact(&mut xlen_buf)?;
+        let xlen = u16::from_le_bytes(xlen_buf) as usize;
+        let mut extra = vec![0u8; xlen];
+        file.read_exact(&mut extra)?;
+
+        // Walk subfields looking for SI1=B(0x42) SI2=C(0x43) SLEN=2
+        let mut bsize: Option<usize> = None;
+        let mut i = 0;
+        while i + 4 <= extra.len() {
+            let slen = u16::from_le_bytes([extra[i + 2], extra[i + 3]]) as usize;
+            if extra[i] == 0x42 && extra[i + 1] == 0x43 && slen == 2 && i + 6 <= extra.len() {
+                bsize = Some(u16::from_le_bytes([extra[i + 4], extra[i + 5]]) as usize + 1);
+                break;
+            }
+            i += 4 + slen;
+        }
+        let Some(bs) = bsize else {
+            return Ok(false);
+        };
+
+        // Skip to the next member using the absolute block size from the member start.
+        // BGZF BSIZE covers the entire block including header, deflate data, and trailer.
+        file.seek(SeekFrom::Start(member_start + bs as u64))?;
+    }
+    Ok(true)
+}
+
+impl FastqSet {
+    /// Returns true if any FASTQ file in this set appears to be BGZF-compressed.
+    /// Used by stage split logic to decide whether to request extra decompression threads.
+    pub fn is_bgzf(&self) -> Result<bool> {
+        for path in [
+            Some(&self.r1),
+            self.r2.as_ref(),
+            self.i1.as_ref(),
+            self.i2.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let path = Path::new(path);
+            if is_bgzf(path).fastq_err(path, 0)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Open an iterator over the reads in this set of fastq files.
+    ///
+    /// When `allowed_bgzf_threads` is Some(N) and the input files are BGZF-compressed,
+    /// a multithreaded bgzf reader is used instead of flate2. Use N
+    /// workers for decompression.
+    pub fn read_iter(
+        &self,
+        header_handling: ReadHeader,
+        allowed_bgzf_threads: Option<usize>,
+    ) -> Result<FastqReadPairIter> {
+        FastqReadPairIter::new(
+            Some(self.r1.clone().into()),
+            self.r2.clone().map(Into::into),
+            self.i1.clone().map(Into::into),
+            self.i2.clone().map(Into::into),
+            self.r1_interleaved,
+            header_handling,
+            None,
+            allowed_bgzf_threads,
+        )
+    }
+
+    /// Open an iterator over the reads in this set of fastq files.
+    /// Use a custom buffer size for parsing reads.
+    pub fn read_iter_with_buf_size(
+        &self,
+        header_handling: ReadHeader,
+        buf_size: usize,
+        allowed_bgzf_threads: Option<usize>,
+    ) -> Result<FastqReadPairIter> {
+        FastqReadPairIter::new(
+            Some(self.r1.clone().into()),
+            self.r2.clone().map(Into::into),
+            self.i1.clone().map(Into::into),
+            self.i2.clone().map(Into::into),
+            self.r1_interleaved,
+            header_handling,
+            Some(buf_size),
+            allowed_bgzf_threads,
+        )
+    }
+}
+
 const BUF_SIZE: usize = 4096 * 4;
 
-/// A type implementing the fastq Record trait for handling trimming
-struct TrimRecord<'a, R: Record> {
-    inner: &'a R,
-    trim: usize,
-}
+/// Track the number of reads read from a FASTQ file.
+/// Provides a helper method for getting an accurate line number for a specific
+/// part of the read.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct RecordCount(usize);
 
-impl<'a, R: Record> TrimRecord<'a, R> {
-    fn new(inner: &'a R, trim: usize) -> Self {
-        let trim = trim.min(inner.seq().len());
-        TrimRecord { inner, trim }
+impl RecordCount {
+    /// Return a line number, starting from 1, pointing to the specified part
+    /// of the read.
+    ///
+    /// Note: since this type stores a count of "the number of records read",
+    /// the appropriate line number for the current state will be one less than
+    /// the current count - if we've read one read, then any reporting about
+    /// the last read read should be for "record 0".
+    pub(crate) fn line_number(&self, which: Option<ReadPart>) -> usize {
+        let record_index = self.0.checked_sub(1).unwrap_or_default();
+        let header_line = (record_index * 4) + 1;
+        header_line
+            + match which {
+                None => 0,
+                Some(ReadPart::Seq) => 1,
+                Some(ReadPart::Qual) => 3,
+            }
     }
-}
 
-impl<R: Record> Record for TrimRecord<'_, R> {
-    fn seq(&self) -> &[u8] {
-        &self.inner.seq()[..self.trim]
-    }
-    fn qual(&self) -> &[u8] {
-        &self.inner.qual()[..self.trim]
-    }
-    fn head(&self) -> &[u8] {
-        self.inner.head()
-    }
-    fn write<W: Write>(&self, writer: &mut W) -> std::io::Result<usize> {
-        // TODO(lhepler): the fundamental impl in fastq here is busted, write may not write all
-        // bytes...
-        const FMT_BYTES: usize = b"@\n\n+\n\n".len();
-        let head = self.head();
-        let seq = self.seq();
-        let qual = self.qual();
-        let written = FMT_BYTES + head.len() + seq.len() + qual.len();
-        writer.write_all(b"@")?;
-        writer.write_all(head)?;
-        writer.write_all(b"\n")?;
-        writer.write_all(seq)?;
-        writer.write_all(b"\n+\n")?;
-        writer.write_all(qual)?;
-        writer.write_all(b"\n")?;
-        Ok(written)
+    /// Increment the record count.
+    fn increment(&mut self) {
+        self.0 += 1;
     }
 }
 
 struct ReadPairIterSet {
     pub iters: [Option<RecordRefIter<Box<dyn BufRead + Send>>>; 4],
     pub paths: [Option<PathBuf>; 4],
-    pub records_read: [usize; 4],
-    pub read_lengths: [usize; 4],
+    pub records_read: [RecordCount; 4],
 }
 
 /// Read sequencing data from a parallel set of FASTQ files.
@@ -121,7 +231,7 @@ struct ReadPairIterSet {
 /// The reader supports any combination of R1/R2/I1/I2 read files,
 /// as well as an interleaved R1/R2 file. Supports plain or gzipped FASTQ files, which
 /// will be detected based on the filename extension.
-pub struct ReadPairIter {
+pub struct FastqReadPairIter {
     // Each input file can interleave up to 2 -- declare those here
     r1_interleaved: bool,
     buffer: BytesMut,
@@ -131,33 +241,38 @@ pub struct ReadPairIter {
     storage: ReadPairStorage,
     iters: Box<ReadPairIterSet>,
     is_single_ended: bool,
+    /// Keep or discard read IDs; read IDs will still be checked for concurrence.
+    header_handling: ReadHeader,
 }
 
-impl ReadPairIter {
-    /// Open a `ReadPairIter` given a `InputFastqs` describing a set of FASTQ files
-    /// for the available parts of a read.
-    pub fn from_fastq_files(input_fastqs: &InputFastqs) -> Result<ReadPairIter> {
-        Self::new(
-            Some(&input_fastqs.r1),
-            input_fastqs.r2.as_ref(),
-            input_fastqs.i1.as_ref(),
-            input_fastqs.i2.as_ref(),
-            input_fastqs.r1_interleaved,
-        )
-    }
-
+impl FastqReadPairIter {
     /// Open a FASTQ file that is uncompressed, gzipped compressed, or lz4 compressed.
     /// The extension of the file is ignored & the filetype is determined by looking
-    /// for magic bytes at the of the file
-    fn open_fastq_from_file(p: &Path, mut file: File) -> Result<Box<dyn BufRead + Send>> {
+    /// for magic bytes at the of the file.
+    ///
+    /// If bgzf is detected and allowed_bgzf_threads is Some(N), use N worker
+    /// threads for decompression.
+    fn open_fastq_from_file(
+        p: &Path,
+        mut file: File,
+        allowed_bgzf_threads: Option<usize>,
+    ) -> Result<Box<dyn BufRead + Send>> {
         let mut buf = [0u8; 4];
         file.read_exact(&mut buf[..]).fastq_err(p, 0)?;
         file.rewind().fastq_err(p, 0)?;
 
         if buf[0..2] == [0x1F, 0x8B] {
-            let gz = flate2::read::MultiGzDecoder::new(file);
-            let buf_reader = BufReader::with_capacity(GZ_BUF_SIZE, gz);
-            Ok(Box::new(buf_reader))
+            if let Some(n_workers) = allowed_bgzf_threads
+                && is_bgzf(p).fastq_err(p, 0)?
+            {
+                use noodles_bgzf::io::MultithreadedReader;
+                let workers = NonZeroUsize::new(n_workers).unwrap();
+                let reader = MultithreadedReader::with_worker_count(workers, file);
+                Ok(Box::new(BufReader::with_capacity(GZ_BUF_SIZE, reader)))
+            } else {
+                let gz = flate2::read::MultiGzDecoder::new(file);
+                Ok(Box::new(BufReader::with_capacity(GZ_BUF_SIZE, gz)))
+            }
         } else if buf[0..4] == [0x04, 0x22, 0x4D, 0x18] {
             let lz = lz4::Decoder::new(file).fastq_err(p, 0)?;
             let buf_reader = BufReader::with_capacity(GZ_BUF_SIZE, lz);
@@ -174,7 +289,10 @@ impl ReadPairIter {
     }
 
     /// Open a (possibly gzip or lz4 compressed) FASTQ file & read some records to confirm the format looks good.
-    fn open_fastq_confirm_fmt(p: &Path) -> Result<Box<dyn BufRead + Send>> {
+    fn open_fastq_confirm_fmt(
+        p: &Path,
+        allowed_bgzf_threads: Option<usize>,
+    ) -> Result<Box<dyn BufRead + Send>> {
         let mut file = File::open(p).open_err(p)?;
         // Clone the file descriptor so we can read the file header.
         // The alternative would be to open the file at that path a second time,
@@ -182,7 +300,13 @@ impl ReadPairIter {
         // cache as effectively, and because it would involve more round trips
         // to the underlying fileystem) and also technically incorrect
         // since the file at that path could have changed.
-        let reader = Self::open_fastq_from_file(p, file.try_clone().open_err(p)?)?;
+        //
+        // Note: always use allowed_bgzf_threads=None for the validation pass. dup()-based clones
+        // share the same open file description (and therefore the same file offset) as the
+        // original. If the validation reader spawns bgzf worker threads, they would race
+        // against the real reader's workers over the shared offset, producing corrupted reads.
+        // The single-threaded gzip impl is safe to use with a dup clone.
+        let reader = Self::open_fastq_from_file(p, file.try_clone().open_err(p)?, None)?;
         let parser = fastq::Parser::new(reader);
 
         // make sure we can successfully read some records
@@ -199,7 +323,7 @@ impl ReadPairIter {
 
         // re-open file so we re-read the initial records
         file.rewind().fastq_err(p, 0)?;
-        Self::open_fastq_from_file(p, file)
+        Self::open_fastq_from_file(p, file, allowed_bgzf_threads)
     }
 
     fn is_single_ended<P: AsRef<Path>>(
@@ -211,7 +335,7 @@ impl ReadPairIter {
             // We only allow parsing single ended RA files
             Ok(r2.is_none())
         } else if let Some(p) = r1.as_ref().map(P::as_ref) {
-            let rdr = Self::open_fastq_confirm_fmt(p)?;
+            let rdr = Self::open_fastq_confirm_fmt(p, None)?;
             let parser = fastq::Parser::new(rdr);
             let mut r1_iter = parser.ref_iter();
             r1_iter
@@ -241,46 +365,37 @@ impl ReadPairIter {
     /// Open a `ReadPairIter` given of FASTQ files.
     /// For interleaved R1/R2 files, set `r2 = None`, and set
     /// `r1_interleaved = true`.
-    pub fn new<P: AsRef<Path>>(
-        r1: Option<P>,
-        r2: Option<P>,
-        i1: Option<P>,
-        i2: Option<P>,
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        r1: Option<PathBuf>,
+        r2: Option<PathBuf>,
+        i1: Option<PathBuf>,
+        i2: Option<PathBuf>,
         r1_interleaved: bool,
-    ) -> Result<ReadPairIter> {
+        header_handling: ReadHeader,
+        buffer_size: Option<usize>,
+        allowed_bgzf_threads: Option<usize>,
+    ) -> Result<FastqReadPairIter> {
         let is_single_ended = Self::is_single_ended(&r1, &r2, r1_interleaved)?;
-        Self::_new(
-            [
-                r1.as_ref().map(P::as_ref),
-                r2.as_ref().map(P::as_ref),
-                i1.as_ref().map(P::as_ref),
-                i2.as_ref().map(P::as_ref),
-            ],
-            r1_interleaved,
-            is_single_ended,
-        )
-    }
+        let paths = [r1, r2, i1, i2];
 
-    fn _new(
-        in_paths: [Option<&Path>; 4],
-        r1_interleaved: bool,
-        is_single_ended: bool,
-    ) -> Result<ReadPairIter> {
         let mut iters = [None, None, None, None];
-        let mut paths = [None, None, None, None];
 
-        for (idx, r) in IntoIterator::into_iter(in_paths).enumerate() {
+        for (idx, r) in paths.iter().enumerate() {
             if let Some(p) = r {
-                let rdr = Self::open_fastq_confirm_fmt(p)?;
-                let parser = fastq::Parser::new(rdr);
+                let rdr = Self::open_fastq_confirm_fmt(p, allowed_bgzf_threads)?;
+                let parser = if let Some(buf_size) = buffer_size {
+                    fastq::Parser::with_buf_size(rdr, buf_size)
+                } else {
+                    fastq::Parser::new(rdr)
+                };
                 iters[idx] = Some(parser.ref_iter());
-                paths[idx] = Some(p.to_path_buf());
             }
         }
 
         let buffer = BytesMut::with_capacity(BUF_SIZE);
 
-        Ok(ReadPairIter {
+        Ok(FastqReadPairIter {
             r1_interleaved,
             buffer,
             rand: SmallRng::seed_from_u64(0),
@@ -290,21 +405,11 @@ impl ReadPairIter {
             iters: Box::new(ReadPairIterSet {
                 paths,
                 iters,
-                records_read: [0; 4],
-                read_lengths: [usize::MAX; 4],
+                records_read: [RecordCount::default(); 4],
             }),
             is_single_ended,
+            header_handling,
         })
-    }
-
-    pub fn illumina_r1_trim_length(mut self, r1_length: Option<usize>) -> Self {
-        self.iters.read_lengths[WhichRead::R1 as usize] = r1_length.unwrap_or(usize::MAX);
-        self
-    }
-
-    pub fn illumina_r2_trim_length(mut self, r2_length: Option<usize>) -> Self {
-        self.iters.read_lengths[WhichRead::R2 as usize] = r2_length.unwrap_or(usize::MAX);
-        self
     }
 
     pub fn storage(mut self, storage: ReadPairStorage) -> Self {
@@ -331,15 +436,16 @@ impl ReadPairIter {
         if self.buffer.remaining_mut() < 512 {
             self.buffer = BytesMut::with_capacity(BUF_SIZE);
         }
+        assert!(self.buffer.is_empty());
 
         // need these local reference to avoid borrow checker problem
         let iters = &mut *self.iters;
         let paths = &iters.paths;
-        let read_lengths = &iters.read_lengths;
         let rec_num = &mut iters.records_read;
         let iters = &mut iters.iters;
 
         let mut rp = MutReadPair::empty(&mut self.buffer).storage(self.storage);
+
         loop {
             // If we're subsampling, decide whether or not we'll be skipping
             // this record.
@@ -350,122 +456,87 @@ impl ReadPairIter {
             let mut iter_ended = [false; 4];
 
             for (idx, iter_opt) in iters.iter_mut().enumerate() {
-                if let Some(ref mut iter) = *iter_opt {
-                    iter.advance()
-                        .fastq_err(paths[idx].as_ref().unwrap(), rec_num[idx] * 4)?;
+                let Some(ref mut iter) = *iter_opt else {
+                    continue;
+                };
+                rec_num[idx].increment();
+                iter.advance()
+                    .fastq_err(paths[idx].as_ref().unwrap(), rec_num[idx].line_number(None))?;
 
-                    let current_read_record = {
+                let current_read_record = {
+                    let record = iter.get();
+
+                    // Check for non-ACGTN characters
+                    if let Some(ref rec) = record {
+                        ensure!(
+                            Record::validate_dnan(rec),
+                            format_error(
+                                "FASTQ contains sequence base with character other than [ACGTN].",
+                                paths[idx].as_ref().unwrap(),
+                                rec_num[idx].line_number(Some(ReadPart::Seq)),
+                            )
+                        );
+                        if sample {
+                            let which = WhichRead::read_types()[idx];
+                            rp.push_read(rec, which)
+                                .map_err(|err| err.augment_id_mismatch(rec_num, paths))?;
+                        }
+                    } else {
+                        // track which reader finished
+                        iter_ended[idx] = true;
+                    }
+
+                    record
+                };
+
+                // If R1 is interleaved, read another entry
+                // and store it as R2
+                if idx == 0 && self.r1_interleaved && !iter_ended[idx] {
+                    if !self.is_single_ended {
+                        rec_num[idx].increment();
+                        iter.advance().fastq_err(
+                            paths[idx].as_ref().unwrap(),
+                            rec_num[idx].line_number(None),
+                        )?;
                         let record = iter.get();
 
                         // Check for non-ACGTN characters
-                        if let Some(ref rec) = record {
+                        if let Some(rec) = &record {
                             ensure!(
                                 Record::validate_dnan(rec),
                                 format_error(
                                     "FASTQ contains sequence base with character other than [ACGTN].",
                                     paths[idx].as_ref().unwrap(),
-                                    rec_num[idx] * 4,
+                                    rec_num[idx].line_number(Some(ReadPart::Seq)),
                                 )
                             );
+
                             if sample {
-                                let which = WhichRead::read_types()[idx];
-                                let read_length = read_lengths[which as usize];
-                                let tr = TrimRecord::new(rec, read_length);
-                                rp.push_read(&tr, which);
+                                let which = WhichRead::read_types()[idx + 1];
+                                rp.push_read(rec, which)
+                                    .map_err(|err| err.augment_id_mismatch(rec_num, paths))?;
                             }
                         } else {
-                            // track which reader finished
-                            iter_ended[idx] = true;
-                        }
-
-                        rec_num[idx] += 1;
-                        record
-                    };
-
-                    // If R1 is interleaved, read another entry
-                    // and store it as R2
-                    if idx == 0 && self.r1_interleaved && !iter_ended[idx] {
-                        if !self.is_single_ended {
-                            iter.advance()
-                                .fastq_err(paths[idx].as_ref().unwrap(), (rec_num[idx] + 1) * 4)?;
-                            let record = iter.get();
-
-                            // Check for non-ACGTN characters
-                            if let Some(rec) = &record {
-                                ensure!(
-                                    Record::validate_dnan(rec),
-                                    format_error(
-                                        "FASTQ contains sequence base with character other than [ACGTN].",
-                                        paths[idx].as_ref().unwrap(),
-                                        rec_num[idx] * 4,
-                                    )
-                                );
-
-                                if sample {
-                                    let which = WhichRead::read_types()[idx + 1];
-                                    let read_length = read_lengths[which as usize];
-                                    let tr = TrimRecord::new(rec, read_length);
-                                    rp.push_read(&tr, which);
-                                }
-                            } else {
-                                // We should only hit this if the FASTQ has an odd number of records.
-                                bail!(format_error(
-                                    "Input FASTQ file was input as interleaved R1 and R2, \
+                            // We should only hit this if the FASTQ has an odd number of records.
+                            bail!(format_error(
+                                "Input FASTQ file was input as interleaved R1 and R2, \
                                      but contains an odd number of records",
-                                    paths[idx].as_ref().unwrap(),
-                                    rec_num[idx] * 4,
-                                ));
-                            }
-
-                            rec_num[idx] += 1;
-                        } else if let Some(current_read_record) = current_read_record
-                            && sample
-                        {
-                            let read_length = read_lengths[WhichRead::R2 as usize];
-                            let fake_r2_read = OwnedRecord {
-                                head: current_read_record.head().to_owned(),
-                                sep: None,
-                                seq: vec![],
-                                qual: vec![],
-                            };
-                            let tr = TrimRecord::new(&fake_r2_read, read_length);
-                            rp.push_read(&tr, WhichRead::R2);
+                                paths[idx].as_ref().unwrap(),
+                                rec_num[idx].line_number(None),
+                            ));
                         }
+                    } else if let Some(current_read_record) = current_read_record
+                        && sample
+                    {
+                        let fake_r2_read = OwnedRecord {
+                            head: current_read_record.head().to_owned(),
+                            sep: None,
+                            seq: vec![],
+                            qual: vec![],
+                        };
+                        rp.push_read(&fake_r2_read, WhichRead::R2)
+                            .map_err(|err| err.augment_id_mismatch(rec_num, paths))?;
                     }
-                }
-            }
-
-            // Check that headers of all reads match.
-            let mut headers = zip(
-                [WhichRead::R1, WhichRead::R2, WhichRead::I1, WhichRead::I2],
-                rec_num.iter().copied(),
-            )
-            .filter_map(|(which_read, this_rec_num)| {
-                rp.get(which_read, ReadPart::Header).map(|header| {
-                    (
-                        which_read,
-                        this_rec_num,
-                        header.split(|&x| matches!(x, b' ' | b'/')).next(),
-                    )
-                })
-            });
-
-            if let Some((first_which_read, first_rec_num, first_header)) = headers.next() {
-                for (this_which_read, this_rec_num, this_header) in headers {
-                    ensure!(
-                        first_header == this_header,
-                        "TXRNGR10013: FASTQ headers do not match in input files \
-                         {file1:?} line {line1} and {file2:?} line {line2}: \
-                         '{header1}' and '{header2}'. {ERROR_CODE_INFO}",
-                        line1 = 4 * first_rec_num,
-                        line2 = 4 * this_rec_num,
-                        file1 = paths[first_which_read as usize].as_ref().unwrap(),
-                        file2 = paths[this_which_read as usize].as_ref().unwrap(),
-                        header1 = first_header
-                            .map_or_else(String::new, |s| String::from_utf8_lossy(s).to_string()),
-                        header2 = this_header
-                            .map_or_else(String::new, |s| String::from_utf8_lossy(s).to_string()),
-                    );
                 }
             }
 
@@ -479,44 +550,25 @@ impl ReadPairIter {
                     format_error(
                         "Input FASTQ file ended prematurely",
                         paths[ended_index].as_ref().unwrap(),
-                        rec_num[ended_index] * 4,
+                        rec_num[ended_index].line_number(None),
                     )
                 );
                 return Ok(None);
             }
 
             if sample {
-                return Ok(Some(rp.freeze()));
+                return Ok(Some(rp.freeze(self.header_handling)));
             }
         }
     }
 }
 
-impl Iterator for ReadPairIter {
+impl Iterator for FastqReadPairIter {
     type Item = Result<ReadPair>;
 
     /// Iterate over ReadPair objects
     fn next(&mut self) -> Option<Result<ReadPair>> {
         self.get_next().transpose()
-    }
-}
-
-type BackgroundReadPairIter = crate::background_iterator::BackgroundIterator<Result<ReadPair>>;
-
-pub(super) enum AnyReadPairIter {
-    Direct(ReadPairIter),
-    Background(BackgroundReadPairIter),
-}
-
-impl Iterator for AnyReadPairIter {
-    type Item = Result<ReadPair>;
-
-    /// Iterate over ReadPair objects
-    fn next(&mut self) -> Option<Result<ReadPair>> {
-        match self {
-            AnyReadPairIter::Direct(v) => v.next(),
-            AnyReadPairIter::Background(v) => v.next(),
-        }
     }
 }
 
@@ -526,10 +578,31 @@ mod test_read_pair_iter {
     use file_diff::diff_files;
     use std::io::Write;
 
+    fn read_pair_iter(
+        r1: Option<&str>,
+        r2: Option<&str>,
+        i1: Option<&str>,
+        i2: Option<&str>,
+        interleaved: bool,
+    ) -> Result<FastqReadPairIter> {
+        FastqReadPairIter::new(
+            r1.map(PathBuf::from),
+            r2.map(PathBuf::from),
+            i1.map(PathBuf::from),
+            i2.map(PathBuf::from),
+            interleaved,
+            ReadHeader::KeepId,
+            None,
+            None,
+        )
+    }
+
     // Verify that we can parse and write to the identical FASTQ.
+    // Verify that we can parse and write to the identical FASTQ. Note that this
+    // test works because we have removed the non-ID read metadata from good-RA.fastq
     #[test]
     fn test_round_trip() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -560,7 +633,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_correct() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -578,7 +651,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_single_ended_correct() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA-single-end.fastq"),
             None,
             None,
@@ -597,7 +670,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_mgi() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/slash1.fastq"),
             Some("tests/read_pair_iter/slash2.fastq"),
             None,
@@ -613,7 +686,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_csi_1376() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/csi-1376-R1.fastq"),
             Some("tests/read_pair_iter/csi-1376-R2.fastq"),
             None,
@@ -630,7 +703,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_not_gzipped() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/not-gzipped-RA.fastq.gz"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -645,7 +718,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_gzipped() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-gzipped-RA.fastq.gz"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -660,7 +733,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_lz4() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-lz4-RA.fastq.lz4"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -675,7 +748,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_missing_pair() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/short-RA.fastq"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -690,7 +763,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_missing_single_end() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/imbalanced-RA.fastq"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -705,7 +778,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_short_i1() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/short-I1.fastq"),
@@ -720,7 +793,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_bad_char_i1() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/bad-char-I1.fastq"),
@@ -735,7 +808,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_short_i2() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/good-I1.fastq"),
@@ -750,7 +823,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_mismatched_header() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/bad-header-I1.fastq"),
@@ -765,7 +838,7 @@ mod test_read_pair_iter {
 
     #[test]
     fn test_mismatched_fastq_error() {
-        let it = ReadPairIter::new(
+        let it = read_pair_iter(
             Some("tests/read_pair_iter/good-RA.fastq"),
             None,
             Some("tests/read_pair_iter/bad-format-I1.fastq"),
@@ -790,7 +863,7 @@ mod test_read_pair_iter {
 
     #[cfg(target_os = "linux")]
     fn test_mem_single(every: usize, storage: ReadPairStorage) -> Result<u64> {
-        let iter = ReadPairIter::new(
+        let iter = read_pair_iter(
             Some("tests/read_pair_iter/vdj_micro_50k.fastq"),
             None,
             None,
@@ -845,5 +918,39 @@ mod test_read_pair_iter {
             used_rss <= max_used_rss,
             "Used {used_rss} kB whereas max is {max_used_rss}"
         );
+    }
+
+    #[test]
+    fn test_bgzf_detection_positive() {
+        use noodles_bgzf as bgzf;
+        use std::io::Write as _;
+        use tempfile::NamedTempFile;
+
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        {
+            let mut writer = bgzf::io::Writer::new(File::create(&path).unwrap());
+            writer.write_all(b"ACGT").unwrap();
+        }
+        let _ = tmp; // keep alive so the path isn't deleted
+        assert!(is_bgzf(&path).unwrap());
+    }
+
+    #[test]
+    fn test_bgzf_detection_negative() {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write as _;
+        use tempfile::NamedTempFile;
+
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        {
+            let mut encoder = GzEncoder::new(File::create(&path).unwrap(), Compression::default());
+            encoder.write_all(b"ACGT").unwrap();
+            encoder.finish().unwrap();
+        }
+        let _ = tmp; // keep alive so the path isn't deleted
+        assert!(!is_bgzf(&path).unwrap());
     }
 }

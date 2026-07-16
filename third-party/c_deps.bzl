@@ -49,6 +49,16 @@ def load_c_deps():
         strip_prefix = "samtools-1.16.1",
     )
 
+    # versions >=3.2.1 should require glibc >= 2.28
+    # and version 3.2.0 has a bug: https://github.com/ncbi/sra-tools/issues/1016, so we use 3.1.1
+    http_archive(
+        name = "sra_tools",
+        build_file = "@cellranger//third-party:sra_tools.BUILD",
+        sha256 = "600ff38589c15033c6d0fb4d1d055519e56175ea031b949a2d3f5a74151c6c12",
+        strip_prefix = "sratoolkit.3.1.1-centos_linux64",
+        urls = ["https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/3.1.1/sratoolkit.3.1.1-centos_linux64.tar.gz"],
+    )
+
     louvain_commit = "fb6919ca85e0284f124f43cead25bafdb0e988df"
     http_archive(
         name = "louvain",

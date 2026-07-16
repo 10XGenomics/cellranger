@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import martian
 
@@ -22,15 +22,10 @@ import tenkit.preflight as tk_preflight
 from cellranger import csv_utils
 from cellranger.fast_utils import validate_reference
 from cellranger.feature_ref import FeatureDefException
-from cellranger.molecule_counter import (
-    LIBRARIES_METRIC,
-    MoleculeCounter,
-)
+from cellranger.molecule_counter import LIBRARIES_METRIC, MoleculeCounter
 from cellranger.reference_paths import get_ref_name_from_genomes, get_reference_genomes
-from cellranger.targeted.targeted_constants import (
-    TARGETING_METHOD_FILE_NAMES,
-    TargetingMethod,
-)
+from cellranger.sample_def import FastqMode, SampleDef
+from cellranger.targeted.targeted_constants import TARGETING_METHOD_FILE_NAMES, TargetingMethod
 from cellranger.targeted.targeted_spatial import SPATIAL_TARGET_DISALLOWED_PANEL_TYPES
 
 ALLOWED_LIBRARY_TYPES = [
@@ -53,6 +48,9 @@ SPATIAL_ALLOWED_LIBRARY_TYPES = [
     rna_library.GENE_EXPRESSION_LIBRARY_TYPE,
     rna_library.ANTIBODY_LIBRARY_TYPE,
 ]
+
+if TYPE_CHECKING:
+    from cellranger.mro_types import structs as mro_structs
 
 
 class PreflightException(Exception):
@@ -83,17 +81,17 @@ def is_int(s):
     return True
 
 
-def check_gex_or_ab_present(sample_def):
+def check_gex_or_ab_present(sample_def: list[SampleDef]):
     # Skip this check if library type is all VDJ.
-    if all(x.get(rna_library.LIBRARY_TYPE) == "VDJ" for x in sample_def):
+    if all(x.library_type == "VDJ" for x in sample_def):
         return
     # At least one "Gene Expression" or "Antibody Capture" library is required.
     # Treat an empty library_type as GENE_EXPRESSION. This is done to maintain backward compatibility
     # with historical, v2 samples that didn't have a library_type
     if not any(
-        x.get(rna_library.LIBRARY_TYPE) == rna_library.GENE_EXPRESSION_LIBRARY_TYPE
-        or x.get(rna_library.LIBRARY_TYPE) == rna_library.ANTIBODY_LIBRARY_TYPE
-        or x.get(rna_library.LIBRARY_TYPE) is None
+        x.library_type
+        in (rna_library.GENE_EXPRESSION_LIBRARY_TYPE, rna_library.ANTIBODY_LIBRARY_TYPE)
+        or x.library_type is None
         for x in sample_def
     ):
         raise PreflightException(
@@ -106,16 +104,21 @@ def check_os():
     tk_preflight.warn_deprecated_os()
 
 
-def check_sample_def(sample_defs, feature_ref=None, pipeline=None, is_spatial=False):
+def check_sample_def(
+    sample_defs: list[SampleDef], feature_ref=None, pipeline=None, is_spatial=False
+):
     hostname = socket.gethostname()
 
-    check(tk_preflight.check_gem_groups(sample_defs))
+    # tenkit defines SampleDef as a TypedDict, so we need to convert to dict here
+    # cannot have tenkit depend on cellranger.sample_def due to circular dependency
+    sdefs = [sdef.to_dict() for sdef in sample_defs]
+    check(tk_preflight.check_gem_groups(sdefs))
+
     if pipeline != cr_constants.PIPELINE_VDJ:
         check_gex_or_ab_present(sample_defs)
     # Check uniqueness of sample_def entries
     sd_entries = sorted(
-        (sd.get("read_path"), sd.get("sample_names"), sd.get("sample_indices"), sd.get("lanes"))
-        for sd in sample_defs
+        (sd.read_path, sd.sample_names, sd.sample_indices, sd.lanes) for sd in sample_defs
     )
 
     for i in range(len(sd_entries) - 1):
@@ -126,8 +129,8 @@ def check_sample_def(sample_defs, feature_ref=None, pipeline=None, is_spatial=Fa
             raise PreflightException(msg)
 
     print("Checking FASTQ folder...", flush=True)
-    for sample_def in sample_defs:
-        read_path = sample_def["read_path"]
+    for sdef in sample_defs:
+        read_path = sdef.read_path
         if read_path.strip() == "":
             raise PreflightException("Empty fastq path specifed. Please specify an absolute path.")
         if not read_path.startswith("/"):
@@ -149,20 +152,20 @@ def check_sample_def(sample_defs, feature_ref=None, pipeline=None, is_spatial=Fa
         if not os.listdir(read_path):
             raise PreflightException("Specified FASTQ folder is empty: " + read_path)
 
-        lanes = sample_def["lanes"]
+        lanes = sdef.lanes
         if lanes is not None:
             for lane in lanes:
                 if not is_int(lane):
                     raise PreflightException("Lanes must be a comma-separated list of numbers.")
 
-        check(tk_preflight.check_sample_indices(sample_def))
+        check(tk_preflight.check_sample_indices(sdef.to_dict()))
 
         if pipeline == cr_constants.PIPELINE_COUNT:
             if is_spatial:
                 options = ", ".join(f"'{x}'" for x in SPATIAL_ALLOWED_LIBRARY_TYPES)
             else:
                 options = ", ".join(f"'{x}'" for x in PUBLIC_LIBRARY_TYPES)
-            library_type = sample_def.get(rna_library.LIBRARY_TYPE, None)
+            library_type = sdef.library_type
 
             # Check for empty library_type
             if library_type == "":
@@ -201,7 +204,7 @@ def check_sample_def(sample_defs, feature_ref=None, pipeline=None, is_spatial=Fa
 
         elif pipeline == cr_constants.PIPELINE_VDJ:
             # library type can be missing, or VDJ
-            library_type = sample_def.get(rna_library.LIBRARY_TYPE, None)
+            library_type = sdef.library_type
             assert library_type in (None, rna_library.VDJ_LIBRARY_TYPE), (
                 f"You declared a library with library_type = '{library_type}'. "
                 "For the VDJ pipeline, the library_type field in sample_def must be missing "
@@ -260,7 +263,7 @@ def expand_libraries_csv(csv_path):
     except csv_utils.CSVParseException as exc:
         raise PreflightException(str(exc)) from exc
 
-    libraries = []
+    sample_defs = []
 
     for row in reader:
         print(row.keys())
@@ -276,19 +279,17 @@ def expand_libraries_csv(csv_path):
                 "Empty sample field in libraries csv. Please specify an non-empty sample value for each library."
             )
 
-        library = {
-            "fastq_mode": "ILMN_BCL2FASTQ",
-            "gem_group": None,
-            "lanes": None,
-            "read_path": row["fastqs"],
-            "sample_names": [row["sample"]],
-            rna_library.LIBRARY_TYPE: row[rna_library.LIBRARY_TYPE],
-            "sample_indices": ["any"],
-        }
+        sdef = SampleDef(
+            fastq_mode=FastqMode.ILMN_BCL2FASTQ,
+            read_path=row["fastqs"],
+            library_type=row[rna_library.LIBRARY_TYPE],
+            sample_names=[row["sample"]],
+            sample_indices=["any"],
+        )
 
-        libraries.append(library)
+        sample_defs.append(sdef)
 
-    return libraries
+    return sample_defs
 
 
 def check_file_properties(path: str, *, file_desc: str = "input"):
@@ -363,11 +364,11 @@ def check_read_length(x):
 
 
 #############################################################################################
-def check_feature_preflights(sample_def, feature_ref_path):
+def check_feature_preflights(sample_def: list[SampleDef], feature_ref_path: str | None):
     """If any non "Gene Expression" libraries are present then the feature-ref is required."""
 
-    def is_not_gene_expression(sample):
-        library_type = sample.get("library_type")
+    def is_not_gene_expression(sample: SampleDef):
+        library_type = sample.library_type
         if library_type is None:
             return False
         return library_type != rna_library.GENE_EXPRESSION_LIBRARY_TYPE
@@ -378,14 +379,14 @@ def check_feature_preflights(sample_def, feature_ref_path):
                 "You must specify --feature-ref when using feature barcoding libraries."
             )
 
-    def is_crispr_guide_capture(sample):
-        library_type = sample.get("library_type")
+    def is_crispr_guide_capture(sample: SampleDef):
+        library_type = sample.library_type
         if library_type is None:
             return False
         return library_type == rna_library.CRISPR_LIBRARY_TYPE
 
-    def is_antigen_capture(sample):
-        library_type = sample.get("library_type")
+    def is_antigen_capture(sample: SampleDef):
+        library_type = sample.library_type
         if library_type is None:
             return False
         return library_type == rna_library.ANTIGEN_LIBRARY_TYPE
@@ -564,7 +565,7 @@ def check_target_features_same(target_sets):
 
 
 def check_sample_info(
-    sample_def, reference_path, full_check, feature_ref_path=None, is_spatial=False
+    sample_def: list[SampleDef], reference_path, full_check, feature_ref_path=None, is_spatial=False
 ):
     feature_ref = None
     if feature_ref_path is not None:
@@ -638,12 +639,12 @@ def check_targeting_method(targeting_method, target_sets):
 
 
 def check_common_preflights(
-    full_check,
-    reference_path,
-    r1_length,
-    r2_length,
-    recovered_cells,
-    force_cells,
+    full_check: bool,
+    reference_path: str | None,
+    r1_length: int | None,
+    r2_length: int | None,
+    recovered_cells: mro_structs.CellCallingParam | None,
+    force_cells: mro_structs.CellCallingParam | None,
 ):
     print("Checking reference...", flush=True)
     if reference_path is not None:
@@ -663,9 +664,9 @@ def check_common_preflights(
         check_environment()
 
     print("Checking optional arguments...", flush=True)
-    recovered_cells = recovered_cells["per_gem_well"] if recovered_cells else None
-    force_cells = force_cells["per_gem_well"] if force_cells else None
-    if recovered_cells is not None and force_cells is not None:
+    recovered_cells_val = recovered_cells["per_gem_well"] if recovered_cells else None
+    force_cells_val = force_cells["per_gem_well"] if force_cells else None
+    if recovered_cells_val is not None and force_cells_val is not None:
         raise PreflightException(
             "Cannot specify both --force-cells and --expect-cells in the same run."
         )

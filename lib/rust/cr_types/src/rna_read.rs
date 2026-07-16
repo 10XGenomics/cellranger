@@ -2,31 +2,30 @@
 //! Provides access to the barcode and allows for dynamic trimming.
 #![expect(missing_docs)]
 use crate::chemistry::{
-    BarcodeExtraction, BarcodeReadComponent, ChemistryDef, UmiReadComponent, UmiTranslation,
+    BarcodeExtraction, BarcodeReadComponent, ChemistryDef, ChemistryName, UmiReadComponent,
 };
 use crate::sample_def::SampleDef;
 use crate::serde_helpers::NumberOrStr;
-use crate::types::LibraryType;
-use anyhow::Result;
+use crate::types::{AlignerParam, LibraryType};
+use anyhow::{Result, ensure};
 use arrayvec::ArrayVec;
-use barcode::whitelist::find_slide_design;
 use barcode::{
     Barcode, BarcodeConstruct, BarcodeSegment, BcQual, BcSegQual, BcSegSeq, BcSeq,
     SegmentedBarcode, Segments, Whitelist,
 };
+use fastq_set::ProcessResult;
 use fastq_set::adapter_trimmer::{AdapterTrimmer, ReadAdapterCatalog, intersect_ranges};
 use fastq_set::adapters::X12_CAPTURE_SEQ;
-use fastq_set::metric_utils::ILLUMINA_QUAL_OFFSET;
-use fastq_set::read_pair::{ReadPair, ReadPart, RpRange, WhichRead};
-use fastq_set::read_pair_iter::InputFastqs;
-use fastq_set::{FastqProcessor, ProcessResult};
+use fastq_set::long_read_adapter_trimmer::TrimmerConfig;
+use fastq_set::read_pair::{ReadHeader, ReadPair, ReadPart, RpRange, TrimLengths, WhichRead};
+use fastq_set::read_pair_iter::{FastqReadPairIter, FastqSet};
 use itertools::{Itertools, chain, zip_eq};
 use martian_derive::MartianType;
 use metric::TxHashMap;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::cmp::{max, min};
 use std::ops::Range;
-use umi::{SplintToUmiTranslator, Umi, UmiQual, UmiSeq};
+use umi::{Umi, UmiQual, UmiSeq};
 
 const MAX_UMI_PARTS: usize = 4;
 
@@ -40,11 +39,20 @@ pub fn find_with_one_mismatch(target: &[u8], query: &[u8]) -> Option<usize> {
     })
 }
 
+/// Configuration parameters for library adapter trimming configuration.
+#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct AdapterTrimmingParameters {
+    /// True if the library constructs can be assumed to be "directional", such
+    /// that we only need to match adapter motifs in the forward direction.
+    pub is_directional: bool,
+    /// The aligner used downstream of trimming. When set to [`AlignerParam::Star`],
+    /// a shorter [`TrimmerConfig::max_r2_length`] is applied (90 bp) to stay within
+    /// STAR's maximum read-length constraint.
+    pub aligner: AlignerParam,
+}
+
 /// `RnaChunk` represents a chunk of reads from any of our RNA products.
 /// This is typically created by the `SETUP_CHUNKS` stage in our pipelines.
-/// This struct knows how to interpret the raw fastq data using the `chemistry`.
-/// `RnaChunk` is a `FastqProcessor`, meaning it can process the raw reads and
-/// create `RnaRead`, which resolves various regions in the read such as BC, UMI etc.
 /// You can also specify a subsample rate and set R1/R2 lengths.
 ///
 /// # Example
@@ -63,11 +71,11 @@ pub fn find_with_one_mismatch(target: &[u8], query: &[u8]) -> Option<usize> {
 /// * `test_rna_chunk_processor_non_interleaved_sc_vdj_r2` - Test that the `RnaRead`
 ///   produced by the `RnaChunk` has the expected barcode, umi, read1, read2 for
 ///   VDJ R2-only chemistry with non-interleaved reads.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, MartianType)]
+#[derive(Serialize, Deserialize, Clone, Debug, MartianType)]
 pub struct RnaChunk {
-    pub chemistry: ChemistryDef,
+    pub adapter_trimmer_config: Option<TrimmerConfig>,
     pub gem_group: u16,
-    pub fastqs: InputFastqs,
+    pub fastqs: FastqSet,
     pub read_group: String,
     pub subsample_rate: Option<f64>,
     pub library_type: LibraryType,
@@ -75,83 +83,97 @@ pub struct RnaChunk {
     pub chunk_id: u16,
     pub library_id: u16,
     pub fastq_id: Option<String>,
-    pub umi_extractor: UmiExtractor,
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianType)]
-pub struct UmiExtractor {
-    /// A optional translator for each of the UMI parts
-    translators: ArrayVec<Option<SplintToUmiTranslator>, MAX_UMI_PARTS>,
-}
-
-impl UmiExtractor {
-    fn new(umi_parts: &[UmiReadComponent]) -> Self {
-        UmiExtractor {
-            translators: umi_parts
-                .iter()
-                .map(|part| {
-                    part.whitelist.as_ref().map(|wl| {
-                        assert_eq!(wl.translation, UmiTranslation::SingleBase);
-                        let slide_path =
-                            find_slide_design(&wl.slide).expect("Failed to find slide design file");
-                        SplintToUmiTranslator::new(
-                            slide_design::load_oligos(&slide_path, wl.part)
-                                .unwrap()
-                                .iter()
-                                .map(String::as_bytes),
-                            1,
-                        )
-                    })
-                })
-                .collect(),
-        }
-    }
-
-    fn extract_umi(
-        &self,
-        read: &ReadPair,
-        umi_read_parts: &[UmiReadComponent],
-    ) -> Result<(ArrayVec<UmiPart, MAX_UMI_PARTS>, UmiSeq)> {
-        let mut umi_parts = ArrayVec::new();
-        let mut umi_seq = UmiSeq::new();
-        for (umi_part, translator) in zip_eq(umi_read_parts, &self.translators) {
-            let umi_length = max(
-                min(
-                    read.len(umi_part.read_type)
-                        .unwrap()
-                        .saturating_sub(umi_part.offset),
-                    umi_part.length,
-                ),
-                umi_part.min_length.unwrap_or(umi_part.length),
-            );
-            let range = RpRange::new(umi_part.read_type, umi_part.offset, Some(umi_length));
-
-            read.check_range(&range, "UMI")?;
-
-            let seq = read.get_range(range, ReadPart::Seq).unwrap();
-            match translator {
-                Some(t) => {
-                    let base = t.translate(seq);
-                    umi_seq.push_unchecked(&[base]);
-                    umi_parts.push(UmiPart::SingleBaseTranslated { range, base });
-                }
-                None => {
-                    umi_seq.push_unchecked(seq);
-                    umi_parts.push(UmiPart::Untranslated { range });
-                }
-            };
-        }
-        Ok((umi_parts, umi_seq))
-    }
+    /// NOTE: this is only here for downstream use in getting bamtofast headers.
+    /// DO NOT use this to load up a chemistry, get it from the defs.
+    chemistry_name: ChemistryName,
 }
 
 impl RnaChunk {
+    /// Get the fastq files
+    ///
+    /// Return an error if interleaved and r2 is not None.
+    fn fastq_files(&self) -> Result<FastqSet> {
+        if self.fastqs.r2.is_some() {
+            ensure!(
+                !self.fastqs.r1_interleaved,
+                "fastq must not be interleaved if R2 file is provided"
+            );
+        }
+
+        Ok(self.fastqs.clone())
+    }
+
+    /// Create the iterator over the input reads for this chunk.
+    ///
+    /// The returned iterator yields untrimmed reads.  Callers that need
+    /// read-length trimming should compose [`fastq_set::length_trim_iter::trim_read_lengths`]
+    /// as the final step, after any other adapters (e.g. the long-read adapter
+    /// trimmer), using [`RnaChunk::trim_lengths`] to obtain the parameters.
+    ///
+    /// If allowed_bgzf_threads is Some(N), allow using multi-threaded bgzf
+    /// decompression with N worker threads.
+    pub fn read_iter(
+        &self,
+        header_handling: ReadHeader,
+        allowed_bgzf_threads: Option<usize>,
+    ) -> Result<FastqReadPairIter> {
+        Ok(self
+            .fastq_files()?
+            .read_iter(header_handling, allowed_bgzf_threads)?
+            .subsample_rate(self.subsample_rate.unwrap_or(1.0)))
+    }
+
+    /// Returns the read-length trimming parameters stored on this chunk.
+    pub fn trim_lengths(&self) -> TrimLengths {
+        TrimLengths {
+            r1: self.read_lengths.get(&WhichRead::R1).copied(),
+            r2: self.read_lengths.get(&WhichRead::R2).copied(),
+        }
+    }
+
+    /// Get the bamtofastq headers for this chunk.
+    pub fn bamtofastq_headers(&self) -> Option<&'static [&'static str]> {
+        if self.chemistry_name == ChemistryName::Custom {
+            return None;
+        }
+        Some(self.chemistry_name.bamtofastq_headers())
+    }
+}
+
+fn extract_umi(
+    read: &ReadPair,
+    umi_read_parts: &[UmiReadComponent],
+) -> Result<(ArrayVec<UmiPart, MAX_UMI_PARTS>, UmiSeq)> {
+    let mut umi_parts = ArrayVec::new();
+    let mut umi_seq = UmiSeq::new();
+    for umi_part in umi_read_parts {
+        let umi_length = max(
+            min(
+                read.len(umi_part.read_type)
+                    .unwrap()
+                    .saturating_sub(umi_part.offset),
+                umi_part.length,
+            ),
+            umi_part.min_length.unwrap_or(umi_part.length),
+        );
+        let range = RpRange::new(umi_part.read_type, umi_part.offset, Some(umi_length));
+        read.check_range(&range, "UMI")?;
+        let seq = read.get_range(range, ReadPart::Seq).unwrap();
+        umi_seq.push_unchecked(seq);
+        umi_parts.push(UmiPart { range });
+    }
+    Ok((umi_parts, umi_seq))
+}
+
+impl RnaChunk {
+    #[expect(clippy::too_many_arguments)]
     /// Create a new `RnaChunk`.
     pub fn new(
-        chemistry: &ChemistryDef,
+        chem: &ChemistryDef,
         sample_def: &SampleDef,
+        adapter_trimmer_config: Option<TrimmerConfig>,
         default_library_type: LibraryType,
-        fastqs: InputFastqs,
+        fastqs: FastqSet,
         sample_id: &str,
         library_id: u16,
         chunk_id: u16,
@@ -166,16 +188,26 @@ impl RnaChunk {
         };
         let read_group = format!("{sample_id}:{library_id}:{gem_group}:{flowcell}:{lane}");
 
+        // Merge user-specified r2_length with the aligner-driven cap from the adapter trimmer.
+        let effective_r2_length = match (
+            sample_def.r2_length,
+            adapter_trimmer_config.as_ref().map(|c| c.max_r2_length),
+        ) {
+            (Some(user), Some(cap)) => Some(user.min(cap)),
+            (opt_user, opt_cap) => opt_user.or(opt_cap),
+        };
+
         let read_lengths = [
             sample_def.r1_length.map(|x| (WhichRead::R1, x)),
-            sample_def.r2_length.map(|x| (WhichRead::R2, x)),
+            effective_r2_length.map(|x| (WhichRead::R2, x)),
         ]
         .into_iter()
         .flatten()
         .collect();
 
         Ok(RnaChunk {
-            chemistry: chemistry.clone(),
+            chemistry_name: chem.name,
+            adapter_trimmer_config,
             gem_group,
             fastqs,
             read_group,
@@ -185,7 +217,6 @@ impl RnaChunk {
             chunk_id,
             library_id,
             fastq_id: sample_def.fastq_id.clone(),
-            umi_extractor: UmiExtractor::new(&chemistry.umi),
         })
     }
 
@@ -275,17 +306,20 @@ pub fn make_library_info(
 
 pub struct RnaProcessor {
     chunk: RnaChunk,
+    chem: ChemistryDef,
     whitelist: BarcodeConstruct<Whitelist>,
     barcode_lengths: BarcodeConstruct<Range<usize>>,
 }
 
 impl RnaProcessor {
-    pub fn new(chunk: RnaChunk, whitelist: BarcodeConstruct<Whitelist>) -> Self {
-        RnaProcessor {
+    pub fn new(chunk: RnaChunk, chem: ChemistryDef) -> Result<Self> {
+        let whitelist = chem.barcode_whitelist()?;
+        Ok(RnaProcessor {
             chunk,
+            chem,
             barcode_lengths: whitelist.as_ref().map(Whitelist::sequence_lengths),
             whitelist,
-        }
+        })
     }
 }
 
@@ -350,7 +384,7 @@ pub fn extract_barcode(
                         .filter_map(move |(len1, len2)| {
                             // Skip cases where the end of bc2 goes past the end of read
                             (offset + len1 + len2 <= read_len).then_some(
-                                BarcodeConstruct::Segmented(Segments::from_iter([
+                                BarcodeConstruct::SpatialSegmented(Segments::from_iter([
                                     RpRange::new(which_read, offset, Some(len1)),
                                     RpRange::new(which_read, offset + len1, Some(len2)),
                                 ])),
@@ -417,7 +451,7 @@ pub fn get_probe_barcode_range(
         assert_eq!(gel_bead.offset(), 0);
         let r1_seq = read.get(WhichRead::R1, ReadPart::Seq).unwrap();
         // Do not return a match to the capture sequence if it overlaps with the gel-bead barcode.
-        find_with_one_mismatch(r1_seq, X12_CAPTURE_SEQ)
+        find_with_one_mismatch(r1_seq, X12_CAPTURE_SEQ.as_bytes())
             .filter(|&x12_pos| x12_pos >= gel_bead.length())
             .map(|x12_pos| x12_pos + X12_CAPTURE_SEQ.len())
     } else {
@@ -459,19 +493,29 @@ pub fn get_probe_barcode_range(
     }
 }
 
-impl FastqProcessor for RnaProcessor {
-    type ReadType = RnaRead;
+impl RnaProcessor {
     /// This function creates a processed `RnaRead` from a raw `ReadPair`
-    /// using the chemistry stored in `self`. A rough outline of what
+    /// using the stored chemistry. A rough outline of what
     /// happens inside:
     /// - Attach Barcodes and UMIs
     /// - Find the ranges for RNA read1 and RNA read2. Remember, RNA read1 could
     ///   point to illumina read2, ut it guaranteed to be empty
     /// - Optionally hard trim the illumina R1 and R2 reads
-    fn process_read(&self, read: ReadPair) -> ProcessResult<RnaRead> {
-        let chem = &self.chunk.chemistry;
+    pub fn process_read(&self, read: ReadPair) -> ProcessResult<RnaRead> {
+        let chem = &self.chem;
 
-        let (umi_parts, umi_seq) = match self.chunk.umi_extractor.extract_umi(&read, &chem.umi) {
+        let min_r1 = chem.min_read_length(WhichRead::R1);
+        if read.len(WhichRead::R1).unwrap_or(0) < min_r1 {
+            return ProcessResult::Unprocessed {
+                read,
+                reason: format!(
+                    "R1 length is below minimum {min_r1} for chemistry {}",
+                    chem.name
+                ),
+            };
+        }
+
+        let (umi_parts, umi_seq) = match extract_umi(&read, &chem.umi) {
             Ok((r, s)) => (r, s),
             Err(e) => {
                 return ProcessResult::Unprocessed {
@@ -480,7 +524,6 @@ impl FastqProcessor for RnaProcessor {
                 };
             }
         };
-
         let r1_range = {
             let rna = chem.rna;
             let read_length = read.len(rna.read_type).unwrap_or(0);
@@ -493,7 +536,6 @@ impl FastqProcessor for RnaProcessor {
             };
             let mut range = RpRange::new(rna.read_type, rna.offset, rna_length);
 
-            // TODO: this is no longer necessary, plumbed through FastqProcessor
             if let Some(&trim_length) = self.chunk.read_lengths.get(&rna.read_type) {
                 let trim_len = min(trim_length, read_length);
                 range.intersect(RpRange::new(rna.read_type, 0, Some(trim_len)));
@@ -511,7 +553,6 @@ impl FastqProcessor for RnaProcessor {
         let r2_range = match chem.rna2 {
             Some(rna2) => {
                 let mut range: RpRange = rna2.into();
-                // TODO: this is no longer necessary, plumbed through FastqProcessor
                 if let Some(len) = self.chunk.read_lengths.get(&rna2.read_type) {
                     let trim_len = min(*len, read.len(rna2.read_type).unwrap_or(0));
                     range.intersect(RpRange::new(rna2.read_type, 0, Some(trim_len)));
@@ -534,7 +575,7 @@ impl FastqProcessor for RnaProcessor {
             chem.barcode_extraction(),
             self.whitelist.as_ref(),
             self.barcode_lengths.as_ref(),
-            self.gem_group(),
+            self.chunk.gem_group,
         ) {
             Ok(value) => value,
             Err(e) => {
@@ -557,60 +598,11 @@ impl FastqProcessor for RnaProcessor {
             chunk_id: self.chunk.chunk_id,
         })
     }
-
-    /// Get the fastq files
-    ///
-    /// # Panics
-    /// * If interleaved and r2 is not None
-    /// * If not interleaved and r2 is None
-    ///
-    /// # Tests
-    /// * `test_rna_chunk_fastq_panic_1()` - Make sure that we panic if
-    ///   interleaved and r2 is not None
-    /// * `test_rna_chunk_fastq_panic_2()` - Make sure that we panic if
-    ///   not interleaved and r2 is None
-    fn fastq_files(&self) -> InputFastqs {
-        // Make sure that either
-        // - r2 is None and interleaved
-        // - r2 is Some and not interleaved
-        if self.chunk.fastqs.r2.is_some() {
-            assert!(!self.chunk.fastqs.r1_interleaved);
-        }
-
-        self.chunk.fastqs.clone()
-    }
-
-    fn bc_subsample_rate(&self) -> f64 {
-        1.0
-    }
-    fn read_subsample_rate(&self) -> f64 {
-        self.chunk.subsample_rate.unwrap_or(1.0)
-    }
-    fn illumina_r1_trim_length(&self) -> Option<usize> {
-        self.chunk.read_lengths.get(&WhichRead::R1).copied()
-    }
-    fn illumina_r2_trim_length(&self) -> Option<usize> {
-        self.chunk.read_lengths.get(&WhichRead::R2).copied()
-    }
-
-    fn gem_group(&self) -> u16 {
-        self.chunk.gem_group
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UmiPart {
-    SingleBaseTranslated { range: RpRange, base: u8 },
-    Untranslated { range: RpRange },
-}
-
-impl UmiPart {
-    pub fn range(self) -> RpRange {
-        match self {
-            UmiPart::SingleBaseTranslated { range, .. } => range,
-            UmiPart::Untranslated { range } => range,
-        }
-    }
+pub struct UmiPart {
+    pub range: RpRange,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -633,6 +625,10 @@ impl RnaRead {
 
     pub fn barcode_is_valid(&self) -> bool {
         self.segmented_barcode.is_valid()
+    }
+
+    pub fn barcode_is_spatial(&self) -> bool {
+        self.segmented_barcode.is_spatial()
     }
 
     pub fn raw_bc_seq(&self) -> BcSeq {
@@ -678,10 +674,10 @@ impl RnaRead {
         self.bc_range
     }
     pub fn has_two_part_barcode(&self) -> bool {
-        matches!(self.bc_range, BarcodeConstruct::Segmented(s) if s.is_two_part())
+        matches!(self.bc_range, BarcodeConstruct::SpatialSegmented(s) if s.is_two_part())
     }
     pub fn umi_ranges(&self) -> impl Iterator<Item = RpRange> + '_ {
-        self.umi_parts.iter().map(|part| part.range())
+        self.umi_parts.iter().map(|part| part.range)
     }
     pub fn r1_range(&self) -> RpRange {
         self.r1_range
@@ -700,63 +696,75 @@ impl RnaRead {
         self.library_type == LibraryType::Gex
     }
 
-    /// FASTQ read header
-    pub fn header(&self) -> &[u8] {
-        self.read.get(WhichRead::R1, ReadPart::Header).unwrap()
+    /// FASTQ read ID. May be None if we skipped storing it.
+    pub fn id(&self) -> Option<&[u8]> {
+        self.read.id()
     }
 
-    /// Full raw R1 sequence
+    /// Get a portion of the sequence.
+    pub fn seq(&self, which: WhichRead) -> Option<&[u8]> {
+        self.read.get(which, ReadPart::Seq)
+    }
+
+    /// Get a portion of the sequence quality.
+    pub fn qual(&self, which: WhichRead) -> Option<&[u8]> {
+        self.read.get(which, ReadPart::Qual)
+    }
+
+    /// Full raw R1 sequence.
+    ///
+    /// Panics if there is no R1.
     pub fn raw_illumina_read1_seq(&self) -> &[u8] {
-        self.read.get(WhichRead::R1, ReadPart::Seq).unwrap()
+        self.seq(WhichRead::R1).unwrap()
     }
 
-    /// Full raw R1 QVs
+    /// Full raw R1 QVs.
+    ///
+    /// Panics if there is no R1.
     pub fn raw_illumina_read1_qual(&self) -> &[u8] {
-        self.read.get(WhichRead::R1, ReadPart::Qual).unwrap()
+        self.qual(WhichRead::R1).unwrap()
     }
 
-    /// Full R2 sequence
+    /// Full R2 sequence.
+    ///
+    /// Panics if there is no R2.
     pub fn raw_illumina_read2_seq(&self) -> &[u8] {
-        self.read.get(WhichRead::R2, ReadPart::Seq).unwrap()
+        self.seq(WhichRead::R2).unwrap()
     }
 
-    /// Full R2 QVs
+    /// Full R2 QVs.
+    ///
+    /// Panics if there is no R2.
     pub fn raw_illumina_read2_qual(&self) -> &[u8] {
-        self.read.get(WhichRead::R2, ReadPart::Qual).unwrap()
+        self.qual(WhichRead::R2).unwrap()
     }
 
-    /// Full raw I1 sequence
+    /// Full raw I1 sequence.
     pub fn raw_illumina_i1_seq(&self) -> Option<&[u8]> {
-        self.read.get(WhichRead::I1, ReadPart::Seq)
+        self.seq(WhichRead::I1)
     }
 
-    /// Full raw I1 QVs
+    /// Full raw I1 QVs.
     pub fn raw_illumina_i1_qual(&self) -> Option<&[u8]> {
-        self.read.get(WhichRead::I1, ReadPart::Qual)
+        self.qual(WhichRead::I1)
     }
 
-    /// Full I2 sequence
+    /// Full raw I2 sequence.
     pub fn raw_illumina_i2_seq(&self) -> Option<&[u8]> {
-        self.read.get(WhichRead::I2, ReadPart::Seq)
+        self.seq(WhichRead::I2)
     }
 
-    /// Full I2 QVs
+    /// Full I2 QVs.
     pub fn raw_illumina_i2_qual(&self) -> Option<&[u8]> {
-        self.read.get(WhichRead::I2, ReadPart::Qual)
+        self.qual(WhichRead::I2)
     }
 
     /// Raw, uncorrected UMI sequence
     pub fn raw_umi_seq(&self) -> UmiSeq {
         let mut umi = UmiSeq::new();
         for part in &self.umi_parts {
-            match part {
-                UmiPart::SingleBaseTranslated { base, .. } => {
-                    umi.push_unchecked(&[*base]);
-                }
-                UmiPart::Untranslated { range } => {
-                    umi.push_unchecked(self.read.get_range(*range, ReadPart::Seq).unwrap());
-                }
-            }
+            let UmiPart { range } = part;
+            umi.push_unchecked(self.read.get_range(*range, ReadPart::Seq).unwrap());
         }
         umi
     }
@@ -765,22 +773,8 @@ impl RnaRead {
     pub fn raw_umi_qual(&self) -> UmiQual {
         let mut qual = UmiQual::new();
         for part in &self.umi_parts {
-            match part {
-                UmiPart::SingleBaseTranslated { range, .. } => {
-                    // We use the minimum quality among the original splint bases
-                    let min_qual = self
-                        .read
-                        .get_range(*range, ReadPart::Qual)
-                        .unwrap()
-                        .iter()
-                        .min()
-                        .unwrap();
-                    qual.push_unchecked(&[*min_qual]);
-                }
-                UmiPart::Untranslated { range } => {
-                    qual.push_unchecked(self.read.get_range(*range, ReadPart::Qual).unwrap());
-                }
-            }
+            let UmiPart { range } = part;
+            qual.push_unchecked(self.read.get_range(*range, ReadPart::Qual).unwrap());
         }
         qual
     }
@@ -820,16 +814,12 @@ impl RnaRead {
 
     /// Returns the minimum barcode quality score.
     pub fn barcode_min_qual(&self) -> u8 {
-        let &q = self.raw_bc_qual().as_bytes().iter().min().unwrap();
-        assert!(q >= ILLUMINA_QUAL_OFFSET);
-        q - ILLUMINA_QUAL_OFFSET
+        self.raw_bc_qual().min_qual()
     }
 
     /// Returns the minimum UMI quality score.
     pub fn umi_min_qual(&self) -> u8 {
-        let &q = self.raw_umi_qual().iter().min().unwrap();
-        assert!(q >= ILLUMINA_QUAL_OFFSET);
-        q - ILLUMINA_QUAL_OFFSET
+        self.raw_umi_qual().min_qual()
     }
 
     /// Given an `RpRange` and a list of adapter trimmers, this function
@@ -841,14 +831,14 @@ impl RnaRead {
     fn trim_adapters_helper(
         &mut self,
         read_range: RpRange,
-        trimmers: &mut [AdapterTrimmer<'_>],
+        trimmers: &[AdapterTrimmer],
     ) -> (Range<usize>, TxHashMap<String, RpRange>) {
         let seq = self.read.get_range(read_range, ReadPart::Seq).unwrap();
         let trim_results: Vec<_> = trimmers
-            .iter_mut()
+            .iter()
             .filter_map(|t| {
                 t.find(seq)
-                    .map(|trim_result| (t.adapter.name.clone(), trim_result))
+                    .map(|trim_result| (t.adapter_name().to_string(), trim_result))
             })
             .collect();
         let shrink_range = trim_results.iter().fold(0..seq.len(), |acc, (_, x)| {
@@ -882,12 +872,12 @@ impl RnaRead {
     /// * `test_rna_read_adapter_trim()`: Test that we can trim reads consistent with cutadapt.
     pub fn trim_adapters(
         &mut self,
-        adapter_catalog: &mut ReadAdapterCatalog<'_>,
+        adapter_catalog: &ReadAdapterCatalog,
     ) -> TxHashMap<String, RpRange> {
         let mut result = TxHashMap::default();
         // Trim r1
         {
-            let ad_trimmers = adapter_catalog.get_mut_trimmers(self.r1_range.read());
+            let ad_trimmers = adapter_catalog.get_trimmers(self.r1_range.read());
             let range = self.r1_range; // Creates a copy
             let (shrink_range, adapter_pos) = self.trim_adapters_helper(range, ad_trimmers);
             result.extend(adapter_pos);
@@ -897,7 +887,7 @@ impl RnaRead {
         // Trim r2
         {
             if let Some(range) = self.r2_range {
-                let ad_trimmers = adapter_catalog.get_mut_trimmers(range.read());
+                let ad_trimmers = adapter_catalog.get_trimmers(range.read());
                 let (shrink_range, adapter_pos) = self.trim_adapters_helper(range, ad_trimmers);
                 result.extend(adapter_pos);
                 if let Some(x) = self.r2_range.as_mut() {
@@ -912,10 +902,10 @@ impl RnaRead {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chemistry::{BarcodeKind, ChemistryName, UmiWhitelistSpec};
+    use crate::chemistry::{BarcodeKind, ChemistryName};
     use BarcodeConstruct::GelBeadOnly;
     use barcode::whitelist::ReqStrand;
-    use barcode::{BarcodeSegmentState, Segments, WhitelistSource, WhitelistSpec};
+    use barcode::{BarcodeSegmentState, Segments, WhitelistSpec};
     use itertools::assert_equal;
     use metric::{Histogram, TxHashSet, set};
     use proptest::arbitrary::any;
@@ -932,27 +922,32 @@ mod tests {
         assert_eq!(find_with_one_mismatch(b"Hello, world!", b"wxxld"), None);
     }
 
-    fn processor(chunk: RnaChunk) -> RnaProcessor {
-        let whitelist = chunk
-            .chemistry
-            .barcode_whitelist_source()
-            .unwrap()
-            .as_ref()
-            .map_result(WhitelistSource::as_whitelist)
-            .unwrap();
-        RnaProcessor::new(chunk, whitelist)
+    fn proc_reads(
+        chunk: RnaChunk,
+        chem: ChemistryDef,
+    ) -> Result<impl Iterator<Item = Result<ProcessResult<RnaRead>>>> {
+        use fastq_set::length_trim_iter::trim_read_lengths;
+        let trim = chunk.trim_lengths();
+        let base_iter = chunk.read_iter(ReadHeader::KeepId, None)?;
+        let iter: Box<dyn Iterator<Item = Result<ReadPair>>> = if trim.is_noop() {
+            Box::new(base_iter)
+        } else {
+            Box::new(trim_read_lengths(base_iter, trim))
+        };
+        let proc = RnaProcessor::new(chunk, chem)?;
+        Ok(iter.map(move |r| r.map(|r| proc.process_read(r))))
     }
 
     #[test]
     fn test_read_10bp_umis() -> Result<()> {
         // make sure we can read 10bp UMIs with the v3 chemistry setup.
         let chemistry = ChemistryDef::named(ChemistryName::ThreePrimeV3PolyA);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/small_3p_v2.fastq".into(),
                 r2: None,
                 i1: None,
@@ -969,7 +964,7 @@ mod tests {
         };
 
         let mut n = 0;
-        for r in processor(chunk).iter()? {
+        for r in proc_reads(chunk, chemistry)? {
             let umi = match r? {
                 ProcessResult::Processed(rna) => rna.umi(),
                 ProcessResult::Unprocessed { .. } => unreachable!(),
@@ -984,15 +979,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn test_rna_chunk_fastq_panic_1() {
+    fn test_rna_chunk_fastq_err() {
         let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/r1_2k.fastq.lz4".into(),
                 r2: Some("test/rna_read/r2_2k.fastq.lz4".into()),
                 i1: None,
@@ -1007,35 +1000,7 @@ mod tests {
             library_id: 0,
             fastq_id: None,
         };
-        let _ = processor(chunk).fastq_files();
-    }
-
-    #[test]
-    #[should_panic]
-    #[ignore] // this behavior is no longer panicky b/c SC5P-R1
-    fn test_rna_chunk_fastq_panic_2() {
-        let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
-        let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
-            gem_group: 1,
-            fastqs: InputFastqs {
-                r1: "test/rna_read/r1_1k.fasta.lz4".into(),
-                r2: None,
-                i1: None,
-                i2: None,
-                r1_interleaved: true,
-            },
-            read_group: "Blah".into(),
-            subsample_rate: None,
-            library_type: LibraryType::VdjAuto,
-            read_lengths: TxHashMap::default(),
-            chunk_id: 0,
-            library_id: 0,
-            fastq_id: None,
-        };
-        let _ = processor(chunk).fastq_files();
+        chunk.fastq_files().unwrap_err();
     }
 
     fn load_expected(fname: impl AsRef<Path>) -> Vec<Vec<u8>> {
@@ -1049,12 +1014,11 @@ mod tests {
     #[test]
     fn test_rna_chunk_processor_interleaved_sc_vdj() {
         let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/interleaved_2k.fastq.lz4".into(),
                 r2: None,
                 i1: None,
@@ -1078,7 +1042,7 @@ mod tests {
         let expected_r2 = load_expected("test/rna_read/rna_r2.json");
         let expected_r2_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
-        for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
+        for (i, rna_read_result) in proc_reads(chunk, chemistry).unwrap().enumerate() {
             let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
                 unreachable!();
             };
@@ -1139,12 +1103,11 @@ mod tests {
     #[test]
     fn test_rna_chunk_processor_interleaved_sc_vdj_r2() {
         let chemistry = ChemistryDef::named(ChemistryName::VdjR2);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/interleaved_2k.fastq.lz4".into(),
                 r2: None,
                 i1: None,
@@ -1166,7 +1129,7 @@ mod tests {
         let expected_r1 = load_expected("test/rna_read/rna_r2.json");
         let expected_r1_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
-        for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
+        for (i, rna_read_result) in proc_reads(chunk, chemistry).unwrap().enumerate() {
             let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
                 unreachable!();
             };
@@ -1224,12 +1187,11 @@ mod tests {
     #[test]
     fn test_rna_chunk_processor_non_interleaved_sc_vdj() {
         let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/r1_2k.fastq.lz4".into(),
                 r2: Some("test/rna_read/r2_2k.fastq.lz4".into()),
                 i1: None,
@@ -1253,7 +1215,7 @@ mod tests {
         let expected_r2 = load_expected("test/rna_read/rna_r2.json");
         let expected_r2_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
-        for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
+        for (i, rna_read_result) in proc_reads(chunk, chemistry).unwrap().enumerate() {
             let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
                 unreachable!();
             };
@@ -1314,12 +1276,11 @@ mod tests {
     #[test]
     fn test_rna_chunk_processor_non_interleaved_sc_vdj_r2() {
         let chemistry = ChemistryDef::named(ChemistryName::VdjR2);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/r1_2k.fastq.lz4".into(),
                 r2: Some("test/rna_read/r2_2k.fastq.lz4".into()),
                 i1: None,
@@ -1341,7 +1302,7 @@ mod tests {
         let expected_r1 = load_expected("test/rna_read/rna_r2.json");
         let expected_r1_qual = load_expected("test/rna_read/rna_r2_qual.json");
 
-        for (i, rna_read_result) in processor(chunk).iter().unwrap().enumerate() {
+        for (i, rna_read_result) in proc_reads(chunk, chemistry).unwrap().enumerate() {
             let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
                 unreachable!();
             };
@@ -1399,12 +1360,11 @@ mod tests {
     #[test]
     fn test_rna_chunk_subsample() {
         let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-        let umi_extractor = UmiExtractor::new(&chemistry.umi);
         let chunk = RnaChunk {
-            chemistry,
-            umi_extractor,
+            chemistry_name: chemistry.name,
+            adapter_trimmer_config: None,
             gem_group: 1,
-            fastqs: InputFastqs {
+            fastqs: FastqSet {
                 r1: "test/rna_read/interleaved_2k.fastq".into(),
                 r2: None,
                 i1: None,
@@ -1419,7 +1379,7 @@ mod tests {
             library_id: 0,
             fastq_id: None,
         };
-        let processed_reads: usize = processor(chunk).iter().unwrap().map(|_| 1).sum();
+        let processed_reads: usize = proc_reads(chunk, chemistry).unwrap().map(|_| 1).sum();
         println!("{processed_reads}");
         // Expecting 400 reads since we start with 2000 reads
         assert!(processed_reads > 300); // < 1e-6 probability of this happening by chance
@@ -1449,12 +1409,11 @@ mod tests {
                 };
 
                 let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-                let umi_extractor = UmiExtractor::new(&chemistry.umi);
                 let mut chunk = RnaChunk {
-                    chemistry,
-                    umi_extractor,
+                    chemistry_name: chemistry.name,
+                    adapter_trimmer_config: None,
                     gem_group: 1,
-                    fastqs: InputFastqs{
+                    fastqs: FastqSet{
                         r1: "test/rna_read/interleaved_2k.fastq.lz4".into(),
                         r2: None,
                         i1: None,
@@ -1475,7 +1434,7 @@ mod tests {
                     chunk.set_illumina_r2_trim_length(r2_length);
                 }
 
-                for rna_read_result in processor(chunk).iter().unwrap().take(100) {
+                for rna_read_result in proc_reads(chunk, chemistry).unwrap().take(100) {
                     let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
                         unreachable!();
                     };
@@ -1494,12 +1453,11 @@ mod tests {
                 };
 
                 let chemistry = ChemistryDef::named(ChemistryName::VdjR2);
-                let umi_extractor = UmiExtractor::new(&chemistry.umi);
                 let mut chunk = RnaChunk {
-                    chemistry,
-                    umi_extractor,
+                    chemistry_name: chemistry.name,
+                    adapter_trimmer_config: None,
                     gem_group: 1,
-                    fastqs: InputFastqs{
+                    fastqs: FastqSet{
                         r1: "test/rna_read/interleaved_2k.fastq.lz4".into(),
                         r2: None,
                         i1: None,
@@ -1520,7 +1478,7 @@ mod tests {
                     chunk.set_illumina_r2_trim_length(r2_length);
                 }
 
-                for rna_read_result in processor(chunk).iter().unwrap().take(100) {
+                for rna_read_result in proc_reads(chunk, chemistry).unwrap().take(100) {
                     let ProcessResult::Processed(rna_read) = rna_read_result.unwrap() else {
                         unreachable!();
                     };
@@ -1540,15 +1498,14 @@ mod tests {
         // test makes sure that the trimming that we produce exactly matches the cutadapt outputs. There are 2000 read pairs in total and 85
         // read pairs are trimmed in total.
         use fastq_set::adapter_trimmer::{Adapter, ReadAdapterCatalog};
-        use fastq_set::read_pair_iter::ReadPairIter;
         use metric::SimpleHistogram;
 
         let vdj_adapters: TxHashMap<WhichRead, Vec<Adapter>> =
             serde_json::from_reader(File::open("test/rna_read/vdj_adapters.json").unwrap())
                 .unwrap();
-        let mut ad_catalog = ReadAdapterCatalog::from(&vdj_adapters);
+        let ad_catalog = ReadAdapterCatalog::new(&vdj_adapters);
 
-        let fastqs = InputFastqs {
+        let fastqs = FastqSet {
             // This file was created by running the script `test/rna_read/run_cutadapt.sh`
             // It is be the trimmed output fastq returned by cutadapt
             r1: "test/rna_read/interleaved_trimmed_2k.fastq".into(),
@@ -1560,15 +1517,14 @@ mod tests {
 
         // SCVDJ Chemistry
         {
-            let rp_iter = ReadPairIter::from_fastq_files(&fastqs).unwrap();
+            let rp_iter = fastqs.read_iter(ReadHeader::KeepId, None).unwrap();
 
             let chemistry = ChemistryDef::named(ChemistryName::VdjPE);
-            let umi_extractor = UmiExtractor::new(&chemistry.umi);
             let chunk = RnaChunk {
-                chemistry,
-                umi_extractor,
+                chemistry_name: chemistry.name,
+                adapter_trimmer_config: None,
                 gem_group: 1,
-                fastqs: InputFastqs {
+                fastqs: FastqSet {
                     r1: "test/rna_read/interleaved_2k.fastq".into(),
                     r2: None,
                     i1: None,
@@ -1586,11 +1542,11 @@ mod tests {
 
             let mut n_trimmed = 0;
             let mut adapter_counts: SimpleHistogram<String> = SimpleHistogram::default();
-            for (rna_read_result, rp_result) in processor(chunk).iter().unwrap().zip(rp_iter) {
+            for (rna_read_result, rp_result) in proc_reads(chunk, chemistry).unwrap().zip(rp_iter) {
                 let ProcessResult::Processed(mut rna_read) = rna_read_result.unwrap() else {
                     unreachable!();
                 };
-                adapter_counts.extend_owned(rna_read.trim_adapters(&mut ad_catalog).into_keys());
+                adapter_counts.extend_owned(rna_read.trim_adapters(&ad_catalog).into_keys());
                 let rp = rp_result.unwrap();
                 assert_eq!(
                     rna_read.r1_seq(),
@@ -1623,15 +1579,14 @@ mod tests {
 
         // SC-VDJ R2 chemistry
         {
-            let rp_iter = ReadPairIter::from_fastq_files(&fastqs).unwrap();
+            let rp_iter = fastqs.read_iter(ReadHeader::KeepId, None).unwrap();
 
             let chemistry = ChemistryDef::named(ChemistryName::VdjR2);
-            let umi_extractor = UmiExtractor::new(&chemistry.umi);
             let chunk = RnaChunk {
-                chemistry,
-                umi_extractor,
+                chemistry_name: chemistry.name,
+                adapter_trimmer_config: None,
                 gem_group: 1,
-                fastqs: InputFastqs {
+                fastqs: FastqSet {
                     r1: "test/rna_read/interleaved_2k.fastq".into(),
                     r2: None,
                     i1: None,
@@ -1647,11 +1602,11 @@ mod tests {
                 fastq_id: None,
             };
 
-            for (rna_read_result, rp_result) in processor(chunk).iter().unwrap().zip(rp_iter) {
+            for (rna_read_result, rp_result) in proc_reads(chunk, chemistry).unwrap().zip(rp_iter) {
                 let ProcessResult::Processed(mut rna_read) = rna_read_result.unwrap() else {
                     unreachable!();
                 };
-                rna_read.trim_adapters(&mut ad_catalog);
+                rna_read.trim_adapters(&ad_catalog);
                 let rp = rp_result.unwrap();
                 assert_eq!(
                     rna_read.r1_seq(),
@@ -1690,16 +1645,14 @@ mod tests {
             offset: 16,
             length: 12,
             min_length: Some(10),
-            whitelist: None,
         }];
-        let rp = ReadPair::new(input);
-        let extractor = UmiExtractor::new(&umi_parts);
+        let rp = ReadPair::new(input, ReadHeader::KeepId);
 
-        let (parts, seq) = extractor.extract_umi(&rp, &umi_parts).unwrap();
+        let (parts, seq) = extract_umi(&rp, &umi_parts).unwrap();
         assert_eq!(seq.as_bytes(), b"AGCGACCTCGGG");
         assert_eq!(
             parts.as_slice(),
-            [UmiPart::Untranslated {
+            [UmiPart {
                 range: RpRange::new(WhichRead::R1, 16, Some(12))
             }]
         );
@@ -1719,167 +1672,17 @@ mod tests {
             offset: 16,
             length: 12,
             min_length: Some(10),
-            whitelist: None,
         }];
-        let rp = ReadPair::new(input);
-        let extractor = UmiExtractor::new(&umi_parts);
+        let rp = ReadPair::new(input, ReadHeader::KeepId);
 
-        let (parts, seq) = extractor.extract_umi(&rp, &umi_parts).unwrap();
+        let (parts, seq) = extract_umi(&rp, &umi_parts).unwrap();
         assert_eq!(seq.as_bytes(), b"AGCGACCTCG");
         assert_eq!(
             parts.as_slice(),
-            [UmiPart::Untranslated {
+            [UmiPart {
                 range: RpRange::new(WhichRead::R1, 16, Some(10))
             }]
         );
-    }
-
-    #[test]
-    fn test_umi_extraction_3() {
-        let translator =
-            |seqs: [&str; 4]| SplintToUmiTranslator::new(seqs.iter().map(|x| x.as_bytes()), 1);
-        let extractor = UmiExtractor {
-            translators: [
-                Some(translator(["AATA", "CGCC", "GCGG", "TTAT"])),
-                Some(translator(["AGCA", "CATC", "GTAG", "TCGT"])),
-                Some(translator(["ACTC", "CGAT", "GTGA", "TACG"])),
-                None,
-            ]
-            .into(),
-        };
-        let umi_parts = [
-            UmiReadComponent {
-                read_type: WhichRead::R1,
-                offset: 7,
-                length: 4,
-                min_length: None,
-                whitelist: Some(UmiWhitelistSpec {
-                    slide: "test".to_string(),
-                    part: slide_design::OligoPart::Bc1,
-                    translation: UmiTranslation::SingleBase,
-                }),
-            },
-            UmiReadComponent {
-                read_type: WhichRead::R1,
-                offset: 18,
-                length: 4,
-                min_length: None,
-                whitelist: Some(UmiWhitelistSpec {
-                    slide: "test".to_string(),
-                    part: slide_design::OligoPart::Bc1,
-                    translation: UmiTranslation::SingleBase,
-                }),
-            },
-            UmiReadComponent {
-                read_type: WhichRead::R1,
-                offset: 29,
-                length: 4,
-                min_length: None,
-                whitelist: Some(UmiWhitelistSpec {
-                    slide: "test".to_string(),
-                    part: slide_design::OligoPart::Bc1,
-                    translation: UmiTranslation::SingleBase,
-                }),
-            },
-            UmiReadComponent {
-                read_type: WhichRead::R1,
-                offset: 40,
-                length: 8,
-                min_length: None,
-                whitelist: None,
-            },
-        ];
-
-        {
-            let rp = ReadPair::new([
-                Some(fastq::OwnedRecord {
-                    head: b"some_name".to_vec(),
-                    seq: concat!(
-                        "CTGATGG", "AATA", // UMI base 'A'
-                        "AACACAG", "TCGA", // UMI base 'T'
-                        "CTCGGGT", "CGAT", // UMI base 'C'
-                        "ACACCTT", "GTTCAGGT", // Last 8 UMI bases
-                    )
-                    .into(),
-                    qual: b"GGGAGIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
-                    sep: None,
-                }),
-                None,
-                None,
-                None,
-            ]);
-
-            let (parts, seq) = extractor.extract_umi(&rp, &umi_parts).unwrap();
-
-            assert_eq!(seq.as_bytes(), b"ATCGTTCAGGT");
-            assert_eq!(
-                parts.as_slice(),
-                [
-                    UmiPart::SingleBaseTranslated {
-                        range: RpRange::new(WhichRead::R1, 7, Some(4)),
-                        base: b'A'
-                    },
-                    UmiPart::SingleBaseTranslated {
-                        range: RpRange::new(WhichRead::R1, 18, Some(4)),
-                        base: b'T'
-                    },
-                    UmiPart::SingleBaseTranslated {
-                        range: RpRange::new(WhichRead::R1, 29, Some(4)),
-                        base: b'C'
-                    },
-                    UmiPart::Untranslated {
-                        range: RpRange::new(WhichRead::R1, 40, Some(8)),
-                    },
-                ]
-            );
-        }
-
-        {
-            let rp = ReadPair::new([
-                Some(fastq::OwnedRecord {
-                    head: b"some_name".to_vec(),
-                    seq: [
-                        "CTGATGG", "ACGA", // UMI base 'N'
-                        "AACACAG", "TCGA", // UMI base 'T'
-                        "CTCGGGT", "CGAT", // UMI base 'C'
-                        "ACACCTT", "GTTCAGGT", // Last 8 UMI bases
-                    ]
-                    .iter()
-                    .flat_map(|x| x.as_bytes())
-                    .copied()
-                    .collect(),
-                    qual: b"GGGAGIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
-                    sep: None,
-                }),
-                None,
-                None,
-                None,
-            ]);
-
-            let (parts, seq) = extractor.extract_umi(&rp, &umi_parts).unwrap();
-
-            assert_eq!(seq.as_bytes(), b"NTCGTTCAGGT");
-            assert_eq!(
-                parts.as_slice(),
-                [
-                    UmiPart::SingleBaseTranslated {
-                        range: RpRange::new(WhichRead::R1, 7, Some(4)),
-                        base: b'N'
-                    },
-                    UmiPart::SingleBaseTranslated {
-                        range: RpRange::new(WhichRead::R1, 18, Some(4)),
-                        base: b'T'
-                    },
-                    UmiPart::SingleBaseTranslated {
-                        range: RpRange::new(WhichRead::R1, 29, Some(4)),
-                        base: b'C'
-                    },
-                    UmiPart::Untranslated {
-                        range: RpRange::new(WhichRead::R1, 40, Some(8))
-                    },
-                ]
-            );
-        }
     }
 
     #[test]
@@ -1965,7 +1768,7 @@ mod tests {
             sep: None,
         };
         let input = [Some(read1), None, None, None];
-        ReadPair::new(input)
+        ReadPair::new(input, ReadHeader::KeepId)
     }
 
     fn dummy_whitelist_spec() -> WhitelistSpec {
@@ -2000,11 +1803,11 @@ mod tests {
         };
         let read = make_read(&format!("{prefix}{bc1_fill}{bc2_fill}TTCAGGT"));
 
-        let whitelist = make_seqs_into_whitelists(BarcodeConstruct::Segmented(
+        let whitelist = make_seqs_into_whitelists(BarcodeConstruct::SpatialSegmented(
             [bc1.as_str(), bc2.as_str()].into_iter().collect(),
         ));
 
-        let components = BarcodeConstruct::Segmented(Segments {
+        let components = BarcodeConstruct::SpatialSegmented(Segments {
             segment1: BarcodeReadComponent {
                 read_type: WhichRead::R1,
                 kind: BarcodeKind::SpotSegment,
@@ -2041,7 +1844,7 @@ mod tests {
             (true, true) => {
                 assert_eq!(
                     barcode.segments(),
-                    BarcodeConstruct::Segmented(Segments::from_iter([
+                    BarcodeConstruct::SpatialSegmented(Segments::from_iter([
                         BarcodeSegment::with_sequence(
                             bc1.as_bytes(),
                             BarcodeSegmentState::ValidBeforeCorrection
@@ -2055,7 +1858,7 @@ mod tests {
 
                 assert_eq!(
                     bc_range,
-                    BarcodeConstruct::Segmented(Segments {
+                    BarcodeConstruct::SpatialSegmented(Segments {
                         segment1: RpRange::new(WhichRead::R1, prefix.len(), Some(bc1.len())),
                         segment2: RpRange::new(
                             WhichRead::R1,

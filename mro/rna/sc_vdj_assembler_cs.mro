@@ -6,7 +6,6 @@
 @include "sc_multi_cs.mro"
 @include "_cr_lib_stages.mro"
 @include "_sc_multi_defs.mro"
-@include "_sc_vdj_assembler_stages.mro"
 
 pipeline _STRUCTIFY(
     in  CommonInputs        common_input,
@@ -24,9 +23,19 @@ pipeline _STRUCTIFY(
     )
 }
 
+stage VDJ_PREFLIGHT(
+    in  SampleDef[] sample_def,
+    in  path        vdj_reference_path,
+    in  bool        denovo,
+    in  bool        full_check,
+    in  path        inner_enrichment_primers,
+    in  string      chain_type,
+    src py          "stages/vdj/vdj_preflight",
+)
+
 pipeline SC_VDJ_ASSEMBLER_CS(
     in  string       sample_id,
-    in  map[]        sample_def,
+    in  SampleDef[]  sample_def,
     in  string       sample_desc,
     in  path         vdj_reference_path,
     in  bool         denovo,

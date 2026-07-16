@@ -9,6 +9,7 @@ use crate::core::defs::{
 };
 use amino::nucleotide_to_aminoacid_sequence;
 use debruijn::dna_string::DnaString;
+use itertools::zip_eq;
 use rayon::prelude::*;
 use vdj_ann::refx::RefData;
 use vector_utils::{next_diff1_2, reverse_sort};
@@ -183,10 +184,10 @@ pub(crate) fn find_exact_subclonotypes(
             if tig_bc[s].len() != tig_bc[r].len() {
                 break;
             }
-            for m in 0..tig_bc[r].len() {
-                let (cid1, cid2) = (tig_bc[r][m].c_ref_id, tig_bc[s][m].c_ref_id);
-                if tig_bc[s][m].cdr3_dna != tig_bc[r][m].cdr3_dna
-                    || tig_bc[s][m].seq() != tig_bc[r][m].seq()
+            for (tig_r, tig_s) in zip_eq(&tig_bc[r], &tig_bc[s]) {
+                let (cid1, cid2) = (tig_r.c_ref_id, tig_s.c_ref_id);
+                if tig_s.cdr3_dna != tig_r.cdr3_dna
+                    || tig_s.seq() != tig_r.seq()
 
                     // Working around a bug here.  See above for explanation.
 
@@ -197,14 +198,14 @@ pub(crate) fn find_exact_subclonotypes(
                         && refdata.name[cid1.unwrap()] != refdata.name[cid2.unwrap()] )
 
                     || ( cid1.is_some() && cid2.is_some()
-                        && tig_bc[r][m].c_start.unwrap() + tig_bc[s][m].j_stop
-                        < tig_bc[s][m].c_start.unwrap() + tig_bc[r][m].j_stop )
+                        && tig_r.c_start.unwrap() + tig_s.j_stop
+                        < tig_s.c_start.unwrap() + tig_r.j_stop )
 
                     // Check for different donors if MIX_DONORS specified on command line.
                     // Note funky redundancy in checking each chain
 
                     || ( !ctl.cr_opt.mix_donors
-                        && tig_bc[r][m].donor_index != tig_bc[s][m].donor_index )
+                        && tig_r.donor_index != tig_s.donor_index )
                 {
                     ok = false;
                     break;

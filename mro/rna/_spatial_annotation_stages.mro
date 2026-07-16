@@ -1,0 +1,33 @@
+filetype csv;
+filetype geojson;
+filetype json;
+filetype png;
+filetype webp;
+
+stage CREATE_HD_WEBSUMMARY_IMAGE(
+    in  png   tissue_hires_image,
+    in  json  scalefactors,
+    in  int   dark_images,
+    in  bool  is_standalone_pipeline,
+    out webp  websummary_tissue_image,
+    out float websummary_tissue_image_scale,
+    src py    "stages/spatial/create_hd_websummary_image",
+) using (
+    mem_gb   = 2,
+    vmem_gb  = 10,
+    volatile = strict,
+)
+
+stage SEGMENTATION_SPATIAL_PLOTS(
+    in  path    analysis_csv,
+    in  csv     cell_types,
+    in  geojson cell_segmentations,
+    in  bool    is_standalone_pipeline,
+    in  webp    websummary_tissue_image,
+    in  float   websummary_tissue_image_scale,
+    out json    spatial_segmentation_chart,
+    src py      "stages/spatial/segmentation_spatial_plots",
+) split (
+) using (
+    volatile = strict,
+)

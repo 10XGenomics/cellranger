@@ -2,7 +2,7 @@
 use crate::env::PkgEnv;
 use crate::mrp_args::MrpArgs;
 use crate::telemetry::TelemetryCollector;
-use crate::utils::{CliPath, validate_ascii_identifier};
+use crate::utils::{CliPath, validate_ascii_identifier_with_dots};
 use crate::{IntoExitCode, execute_to_status, make_mro};
 use anyhow::{Context, Result, bail, ensure};
 use clap::{self, Parser, value_parser};
@@ -54,10 +54,10 @@ impl MkrefShared {
 
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct Mkref {
-    /// Unique genome name, used to name output folder [a-zA-Z0-9_-]+.
-    /// Specify multiple genomes by specifying this argument multiple times; the
-    /// output folder will be <name1>_and_<name2>.
-    #[clap(long = "genome", required = true, value_parser = validate_ascii_identifier)]
+    /// Unique genome name, used to name output folder [a-zA-Z0-9_.-]+ (must not
+    /// start with `.`). Specify multiple genomes by specifying this argument
+    /// multiple times; the output folder will be <name1>_and_<name2>.
+    #[clap(long = "genome", required = true, value_parser = validate_ascii_identifier_with_dots)]
     pub genome_names: Vec<String>,
 
     /// Path to FASTA file containing your genome reference.
@@ -99,7 +99,7 @@ impl Mkref {
         );
 
         let output_dir_name = self.genome_names.join(MULTI_GENOME_SEPARATOR);
-        let pipestance_name = format!("mkref_{output_dir_name}");
+        let pipestance_name = pipestance_name("mkref", &output_dir_name);
 
         // Check to make sure the final output path is clear, but only if the
         // user didn't specify a custom output directory.
@@ -141,8 +141,9 @@ impl Mkref {
 
 #[derive(Parser, Debug, Clone, Serialize)]
 pub struct Mkvdjref {
-    /// Unique genome name, used to name output folder [a-zA-Z0-9_-]+.
-    #[clap(long = "genome", required = true, value_parser = validate_ascii_identifier)]
+    /// Unique genome name, used to name output folder [a-zA-Z0-9_.-]+ (must not
+    /// start with `.`).
+    #[clap(long = "genome", required = true, value_parser = validate_ascii_identifier_with_dots)]
     pub genome_name: String,
 
     /// Path to FASTA file containing your genome reference.
@@ -177,7 +178,7 @@ impl Mkvdjref {
     /// the pipestance folder.
     pub fn execute(&self, telemetry: &mut TelemetryCollector) -> Result<ExitCode> {
         let output_dir_name = &self.genome_name;
-        let pipestance_name = format!("mkvdjref_{output_dir_name}");
+        let pipestance_name = pipestance_name("mkvdjref", output_dir_name);
 
         let output_dir = Path::new(output_dir_name);
 
@@ -237,6 +238,17 @@ impl Mkvdjref {
     }
 }
 
+/// Build the Martian pipestance directory name from a command prefix
+/// (`mkref` / `mkvdjref`) and the user-supplied genome/output directory name.
+///
+/// Martian only allows `[0-9A-Za-z_-]` in pipestance names. Genome names are
+/// allowed to contain `.` (e.g. `mRatBN7.2`), so map `.` → `-` for the
+/// internal pipestance directory. The user-facing reference output directory
+/// keeps the original genome name.
+fn pipestance_name(prefix: &str, output_dir_name: &str) -> String {
+    format!("{prefix}_{}", output_dir_name.replace('.', "-"))
+}
+
 fn move_outputs(pipestance_name: &str, args: &MrpArgs, output_ref_dir_name: &str) -> Result<()> {
     let pipestance_path = Path::new(args.output_dir.as_deref().unwrap_or(pipestance_name));
     let outs_path = pipestance_path.join("outs");
@@ -277,4 +289,33 @@ fn move_outputs(pipestance_name: &str, args: &MrpArgs, output_ref_dir_name: &str
         let _ = fs::remove_dir_all(pipestance_path);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pipestance_name_sanitizes_periods() {
+        // Bare alphanumeric genome name passes through unchanged.
+        assert_eq!(pipestance_name("mkref", "mm10"), "mkref_mm10");
+        // Single period (the motivating case: mRatBN7.2) becomes a dash, since
+        // Martian rejects `.` in pipestance names.
+        assert_eq!(pipestance_name("mkref", "mRatBN7.2"), "mkref_mRatBN7-2");
+        // Multiple periods are all replaced.
+        assert_eq!(
+            pipestance_name("mkref", "GRCh38.p14.alt"),
+            "mkref_GRCh38-p14-alt"
+        );
+        // Multi-genome joins with the existing separator and is also sanitized.
+        assert_eq!(
+            pipestance_name("mkref", "GRCh38_and_mRatBN7.2"),
+            "mkref_GRCh38_and_mRatBN7-2"
+        );
+        // Different command prefix works the same way.
+        assert_eq!(
+            pipestance_name("mkvdjref", "mRatBN7.2"),
+            "mkvdjref_mRatBN7-2"
+        );
+    }
 }

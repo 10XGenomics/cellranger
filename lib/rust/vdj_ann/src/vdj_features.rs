@@ -443,9 +443,7 @@ pub fn score_fwr3(aa: &[u8], r: usize, freqs: &[Vec<Vec<(u32, u8)>>]) -> f64 {
         let x = aa[cdr3 - j - 1];
         let mut m = 0;
         let mut total = 0;
-        for k in 0..freqs[r][j].len() {
-            let count = freqs[r][j][k].0;
-            let y = freqs[r][j][k].1;
+        for &(count, y) in &freqs[r][j] {
             total += count;
             if y == x {
                 m += count;

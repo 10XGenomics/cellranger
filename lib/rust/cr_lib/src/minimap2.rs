@@ -14,11 +14,10 @@ pub struct MinimapReference {
 
 impl MinimapReference {
     pub fn load(preset: Preset, strandedness: ReqStrand, index: &Path, tx_bed: &Path) -> Self {
-        let mut aligner = Aligner::builder().preset(preset);
-
+        let mut aligner = Aligner::builder().preset(preset.clone());
         match strandedness {
-            ReqStrand::Forward => aligner.mapopt.flag &= !MM_F_SPLICE_REV as i64,
-            ReqStrand::Reverse => aligner.mapopt.flag &= !MM_F_SPLICE_FOR as i64,
+            ReqStrand::Forward => aligner.mapopt.flag &= !(MM_F_SPLICE_REV as i64),
+            ReqStrand::Reverse => aligner.mapopt.flag &= !(MM_F_SPLICE_FOR as i64),
         }
 
         // Return the MD FLAG
@@ -30,7 +29,12 @@ impl MinimapReference {
             .with_index(index, None)
             .unwrap();
 
-        aligner.read_junction_lr(tx_bed.to_str().unwrap()).unwrap();
+        // Use read_junction_lr for splice preset, read_junction for splicesr preset
+        match preset {
+            Preset::Splice => aligner.read_junction_lr(tx_bed.to_str().unwrap()).unwrap(),
+            Preset::SpliceSr => aligner.read_junction(tx_bed.to_str().unwrap()).unwrap(),
+            _ => unimplemented!("{preset:?}"),
+        };
 
         let mut header = Header::new();
         aligner.populate_header(&mut header);

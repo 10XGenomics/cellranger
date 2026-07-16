@@ -12,12 +12,10 @@
 pipeline _POST_MATRIX_COMPUTATION(
     in  CountInputs           count_inputs,
     in  CellCalling           cell_calling_config,
-    in  int                   gem_well,
     in  string                sample_id,
     in  map<ChemistryDef>     chemistry_defs,
     in  bool                  is_antibody_only,
-    in  bool                  is_pd,
-    in  map[]                 chunks,
+    in  json                  chunks,
     in  tps.json              target_panel_summary,
     in  string                multi_config_sha,
     in  bool                  disable_multi,
@@ -36,7 +34,6 @@ pipeline _POST_MATRIX_COMPUTATION(
     out h5                    molecule_info,
     out h5                    filtered_gene_bc_matrices_h5,
     out path                  filtered_gene_bc_matrices_mex,
-    out int[]                 gem_groups,
     out csv                   per_probe_metrics,
     out h5                    raw_probe_bc_matrix,
     # sliced outputs for multi
@@ -58,7 +55,7 @@ pipeline _POST_MATRIX_COMPUTATION(
         per_barcode_metrics    = self.matrix_computer_outs.per_barcode_metrics,
         chemistry_defs         = self.chemistry_defs,
         sample_id              = self.sample_id,
-        gem_groups             = [self.gem_well],
+        gem_groups             = [1],
         is_antibody_only       = self.is_antibody_only,
         is_spatial             = self.is_spatial,
         multi_graph            = self.multi_graph,
@@ -66,18 +63,17 @@ pipeline _POST_MATRIX_COMPUTATION(
         *                      = self.count_inputs,
     )
 
-    call SUMMARIZE_H5_DIMS(
-        prefix = "filtered_matrix",
-        matrix = FILTER_BARCODES.filtered_matrices_h5,
+    call SUMMARIZE_MATRIX_DIMS(
+        prefix    = "filtered_matrix",
+        matrix    = FILTER_BARCODES.filtered_matrices_h5,
+        probe_set = null,
     )
 
     call DISABLE_STAGES(
-        raw_feature_bc_matrix = self.matrix_computer_outs.raw_gene_bc_matrices_h5,
-        probe_barcode_counts  = self.matrix_computer_outs.probe_barcode_counts,
-        disable_multi         = self.disable_multi,
-        is_pd                 = self.is_pd,
-        is_visium_hd          = self.is_visium_hd,
-        *                     = self.count_inputs,
+        disable_multi        = self.disable_multi,
+        is_visium_hd         = self.is_visium_hd,
+        no_bam               = self.count_inputs.no_bam,
+        probe_barcode_counts = self.matrix_computer_outs.probe_barcode_counts,
     )
 
     call COLLATE_PROBE_METRICS(
@@ -88,6 +84,14 @@ pipeline _POST_MATRIX_COMPUTATION(
         probe_set_name        = self.count_inputs.target_set_name,
         raw_feature_bc_matrix = self.matrix_computer_outs.raw_gene_bc_matrices_h5,
         *                     = self.count_inputs,
+    ) using (
+        disabled = DISABLE_STAGES.no_probe_barcode_counts,
+    )
+
+    call SUMMARIZE_MATRIX_DIMS as SUMMARIZE_PROBE_MATRIX_DIMS(
+        prefix    = "raw_probe_matrix",
+        matrix    = COLLATE_PROBE_METRICS.raw_probe_bc_matrix,
+        probe_set = self.count_inputs.target_set,
     ) using (
         disabled = DISABLE_STAGES.no_probe_barcode_counts,
     )
@@ -116,7 +120,6 @@ pipeline _POST_MATRIX_COMPUTATION(
         report_mol_inputs         = self.matrix_computer_outs.report_mol_inputs,
         slfe_feature_reference    = self.matrix_computer_outs.slfe_feature_reference,
         chemistry_defs            = self.chemistry_defs,
-        gem_well                  = self.gem_well,
         multi_config_sha          = self.multi_config_sha,
         read_chunks               = self.chunks,
         slide_serial_capture_area = self.slide_serial_capture_area,
@@ -144,11 +147,10 @@ pipeline _POST_MATRIX_COMPUTATION(
         molecule_info         = _CELLS_REPORTER.molecule_info,
         raw_feature_bc_matrix = self.matrix_computer_outs.raw_gene_bc_matrices_h5,
         chemistry_defs        = self.chemistry_defs,
-        gem_well              = self.gem_well,
         multi_graph           = self.multi_graph,
         *                     = self.count_inputs,
     ) using (
-        disabled = DISABLE_STAGES.disable_assign_tags,
+        disabled = self.disable_multi,
     )
 
     # stages/pipelines below here are for multiplexing sliced outputs
@@ -212,7 +214,6 @@ pipeline _POST_MATRIX_COMPUTATION(
         filtered_barcodes         = FILTER_BARCODES.filtered_barcodes,
         per_probe_metrics         = COLLATE_PROBE_METRICS.per_probe_metrics,
         chemistry_defs            = self.chemistry_defs,
-        gem_well                  = self.gem_well,
         read_chunks               = self.chunks,
         target_panel_summary      = self.target_panel_summary,
         multi_config_sha          = self.multi_config_sha,
@@ -223,12 +224,21 @@ pipeline _POST_MATRIX_COMPUTATION(
         disabled = self.disable_multi,
     )
 
+    call COMPUTE_SUBSEQ_METRICS(
+        filtered_barcodes = FILTER_BARCODES.filtered_barcodes,
+        chemistry_defs    = self.chemistry_defs,
+    ) using (
+        disabled = self.is_spatial,
+    )
+
     call MERGE_METRICS(
         summaries = [
-            SUMMARIZE_H5_DIMS.summary,
+            SUMMARIZE_MATRIX_DIMS.summary,
+            SUMMARIZE_PROBE_MATRIX_DIMS.summary,
             _CELLS_REPORTER.summary,
             _ASSIGN_TAGS.assign_tags_outs.tag_call_metrics,
             COLLATE_PROBE_METRICS.estimated_gdna_metrics,
+            COMPUTE_SUBSEQ_METRICS.summary,
         ],
     )
 
@@ -243,7 +253,6 @@ pipeline _POST_MATRIX_COMPUTATION(
         possorted_genome_csi_index    = WRITE_POS_BAM.pos_sorted_bam.csi_index_file,
         summary                       = MERGE_METRICS.summary,
         molecule_info                 = _CELLS_REPORTER.molecule_info,
-        gem_groups                    = [self.gem_well],
         per_probe_metrics             = COLLATE_PROBE_METRICS.per_probe_metrics,
         raw_probe_bc_matrix           = COLLATE_PROBE_METRICS.raw_probe_bc_matrix,
         # sliced outputs for multi
@@ -263,12 +272,11 @@ pipeline _POST_MATRIX_COMPUTATION(
 pipeline _BASIC_SC_RNA_COUNTER(
     in  CountInputs          count_inputs,
     in  CellCalling          cell_calling_config,
-    in  int                  gem_well,
     in  string               sample_id,
     in  map<ChemistryDef>    chemistry_defs,
     in  bool                 is_antibody_only,
     in  bool                 is_pd,
-    in  map[]                chunks,
+    in  json                 chunks,
     in  csv                  target_features,
     in  tps.json             target_panel_summary,
     in  string               multi_config_sha,
@@ -295,7 +303,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
     out path                 raw_gene_bc_matrices_mex,
     out h5                   filtered_gene_bc_matrices_h5,
     out path                 filtered_gene_bc_matrices_mex,
-    out int[]                gem_groups,
     out ReadShards           read_shards,
     out AnnotationFiles      annotation_files,
     out smf.json             sequencing_metrics,
@@ -317,7 +324,7 @@ pipeline _BASIC_SC_RNA_COUNTER(
     out bmsf[]               per_barcode_metrics_shard,
     out bui[]                bc_umi_info,
     out asf[]                alignments,
-    out map[]                read_chunks,
+    out json                 read_chunks,
     out string               target_set_name,
     out frf.bincode          slfe_feature_reference,
     # Shard files of feature x barcode counts sorted by barcode
@@ -355,7 +362,6 @@ pipeline _BASIC_SC_RNA_COUNTER(
         possorted_genome_csi_index    = _POST_MATRIX_COMPUTATION.pos_sorted_bam.csi_index_file,
         summary                       = _POST_MATRIX_COMPUTATION.summary,
         molecule_info                 = _POST_MATRIX_COMPUTATION.molecule_info,
-        gem_groups                    = [self.gem_well],
         per_probe_metrics             = _POST_MATRIX_COMPUTATION.per_probe_metrics,
         raw_probe_bc_matrix           = _POST_MATRIX_COMPUTATION.raw_probe_bc_matrix,
         # sliced outputs for multi

@@ -2,6 +2,8 @@
 # Copyright (c) 2018 10X Genomics, Inc. All rights reserved.
 #
 
+@include "rna/_cr_lib_stages.mro"
+
 filetype csv;
 filetype pdf;
 filetype h5;
@@ -26,18 +28,35 @@ stage CALL_PROTOSPACERS(
     volatile = strict,
 )
 
-stage MEASURE_PERTURBATIONS(
+stage COMPUTE_PRESPLIT_ASSIGNMENT(
     in  csv  protospacer_calls_per_cell,
     in  h5   filtered_feature_counts_matrix,
-    in  bool by_feature,
-    out csv  perturbation_efficiencies,
-    out path perturbation_effects_path,
-    src py   "stages/feature/measure_perturbations",
+    out json reduce_plan,
+    out json by_feature_chunks,
+    out json by_target_chunks,
+    src py   "stages/feature/compute_presplit_assignment",
+) using (
+    mem_gb   = 3,
+    volatile = strict,
+)
+
+stage MEASURE_PERTURBATIONS(
+    in  csv      protospacer_calls_per_cell,
+    in  h5       control_stats,
+    in  h5       control_bootstrap,
+    in  h5[]     chunk_stats,
+    in  h5[]     chunk_bootstrap,
+    in  json     chunk_perturbations,
+    in  bool     by_feature,
+    out csv      perturbation_efficiencies,
+    out path     perturbation_effects_path,
+    src py       "stages/feature/measure_perturbations",
 ) split (
-    in  int  chunk_start,
-    in  int  chunk_end,
-    out csv  chunk_perturbation_efficiencies,
-    out csv  chunk_perturbation_effects,
+    in  h5       chunk_stats_slice,
+    in  h5       chunk_bootstrap_slice,
+    in  string[] which_perturbations,
+    out csv      chunk_perturbation_efficiencies,
+    out csv      chunk_perturbation_effects,
 ) using (
     volatile = strict,
 )

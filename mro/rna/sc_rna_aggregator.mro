@@ -2,6 +2,7 @@
 # Copyright (c) 2022 10X Genomics, Inc. All rights reserved.
 #
 
+@include "cell_annotation_service.mro"
 @include "sc_rna_analyzer.mro"
 @include "_cr_aggr_stages.mro"
 @include "_crispr_analyzer.mro"
@@ -38,6 +39,10 @@ pipeline SC_RNA_AGGREGATOR(
     in  bool        spatial_high_barcodes,
     in  int         min_crispr_umi_threshold,
     in  bool        enable_tsne,
+    in  string      pipestance_type,
+    in  string      tenx_cloud_token_path,
+    in  string      cell_annotation_model,
+    in  bool        skip_cell_annotation,
     out h5          raw_gene_bc_matrices_h5,
     out h5          filtered_gene_bc_matrices_h5,
     out path        filtered_gene_bc_matrices_mex,
@@ -67,9 +72,10 @@ pipeline SC_RNA_AGGREGATOR(
     )
 
     call CHECK_MOLECULE_INFO_VERSION(
-        sample_defs  = self.sample_defs,
-        product_type = self.product_type,
-        is_pd        = self.is_pd,
+        sample_defs             = self.sample_defs,
+        product_type            = self.product_type,
+        is_pd                   = self.is_pd,
+        skip_cell_annotation_in = self.skip_cell_annotation,
     )
 
     call SETUP_SAMPLES(
@@ -168,6 +174,35 @@ pipeline SC_RNA_AGGREGATOR(
         },
     )
 
+    call CELL_ANNOTATION_ALL_MODELS as AGGR_CELL_ANNOTATION_SERVICE(
+        filtered_matrix        = WRITE_MATRICES.filtered_matrix_h5,
+        analysis               = SC_RNA_ANALYZER.common_analyzer.analysis,
+        sample_id              = self.sample_id,
+        sample_desc            = self.sample_desc,
+        model_families         = [
+            "Azimuth",
+            "10x_Cloud",
+        ],
+        tissue_positions       = null,
+        tissue_lowres_image    = null,
+        scale_factors          = null,
+        cell_annotation_model  = self.cell_annotation_model,
+        tenx_cloud_token_path  = self.tenx_cloud_token_path,
+        pipestance_type        = self.pipestance_type,
+        alert_string           = null,
+        is_pd                  = self.is_pd,
+        cloupe_projection      = null,
+        aggregate_and_annotate = false,
+    ) using (
+        disabled = CHECK_MOLECULE_INFO_VERSION.skip_cell_annotation,
+    )
+
+    call CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED as AGGR_CLOUD_CAS_VIABLE(
+        filtered_matrix       = WRITE_MATRICES.filtered_matrix_h5,
+        skip_cell_annotation  = self.skip_cell_annotation,
+        tenx_cloud_token_path = self.tenx_cloud_token_path,
+    )
+
     call SUMMARIZE_AGGREGATED_REPORTS(
         sample_id                = self.sample_id,
         sample_desc              = self.sample_desc,
@@ -182,6 +217,8 @@ pipeline SC_RNA_AGGREGATOR(
         product_type             = self.product_type,
         sample_defs              = CHECK_MOLECULE_INFO_VERSION.updated_sample_defs,
         skip_tsne                = SC_RNA_ANALYZER.common_analyzer.skip_tsne,
+        cell_type_websummary_bundle_value = AGGR_CELL_ANNOTATION_SERVICE.cell_type_websummary_bundle_value,
+        cloud_cell_annotation_viable_but_not_requested = AGGR_CLOUD_CAS_VIABLE.cloud_cell_annotation_viable_but_not_requested,
     )
 
     call CHECK_INVARIANTS(

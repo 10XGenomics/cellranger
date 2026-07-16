@@ -24,6 +24,10 @@ CELL_ANNOTATION_REQUIRES_JSON_RESULTS = "results:json"
 CELL_ANNOTATION_REQUIRES_QUALITY_SCORES = "qscores"
 
 
+class MisformedToken(Exception):
+    """Raise an error if a misformed token found."""
+
+
 def check_h5_type(filtered_matrix_path: str) -> str:
     """Checks the matrix filetype by investigating the suffix.
 
@@ -72,8 +76,8 @@ def read_cli_token(path) -> tuple[str | None, str | None]:
         return url, cli_token
     except Exception as err:  # pylint: disable=broad-except
         # could not read the token
-        print(f"Error while reading the token at {path}.\nError {err}")
-        return None, None
+        print(f"Error decoding CLI token at {path}.\n error seen {err}")
+        raise MisformedToken(f"Error while reading the CLI token at {path}.\n") from err
 
 
 def read_full_token(path) -> tuple[str | None, dict | None]:
@@ -88,5 +92,5 @@ def read_full_token(path) -> tuple[str | None, dict | None]:
             url = next(iter(token_info.keys()))
             return url, token_info[url]
     except json.JSONDecodeError as err:
-        print(f"Error decoding token JSON at {path}.\n error seen {err}")
-        return None, None
+        print(f"Error decoding full token JSON at {path}.\n error seen {err}")
+        raise MisformedToken(f"Error decoding full token JSON at {path}.\n") from err

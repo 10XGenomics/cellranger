@@ -4,9 +4,10 @@ use crate::align_metrics::{AlignAndCountVisitor, BarcodeMetrics, LibFeatThenBarc
 use crate::aligner::BarcodeSummary;
 use anyhow::Result;
 use cr_types::types::LibraryType;
+use itertools::Itertools;
 use martian_filetypes::LazyWrite;
 use metric::TxHashMap;
-use rand::Rng;
+use rand::RngExt;
 use rand::rngs::SmallRng;
 use shardio::ShardSender;
 use std::collections::HashSet;
@@ -27,6 +28,7 @@ where
     ann_writer_num_reads: usize,
     metrics_sender: ShardSender<BarcodeMetrics, LibFeatThenBarcodeOrder>,
     target_genes: Option<HashSet<Gene>>,
+    is_spatial: bool,
 }
 
 impl<W> StageVisitor<W>
@@ -36,6 +38,7 @@ where
     pub(super) fn new(
         metrics_sender: ShardSender<BarcodeMetrics, LibFeatThenBarcodeOrder>,
         target_genes: Option<HashSet<Gene>>,
+        is_spatial: bool,
     ) -> Self {
         StageVisitor {
             visitors: TxHashMap::default(),
@@ -43,6 +46,7 @@ where
             ann_writer_num_reads: 0,
             metrics_sender,
             target_genes,
+            is_spatial,
         }
     }
 
@@ -52,6 +56,7 @@ where
         ann_writer: W,
         sample_rate: f32,
         rng: SmallRng,
+        is_spatial: bool,
     ) -> Self {
         StageVisitor {
             visitors: TxHashMap::default(),
@@ -59,6 +64,7 @@ where
             ann_writer_num_reads: 0,
             metrics_sender,
             target_genes,
+            is_spatial,
         }
     }
 
@@ -77,11 +83,28 @@ where
         Ok(())
     }
 
-    pub(super) fn barcode_summaries(&self) -> Vec<BarcodeSummary> {
+    pub(super) fn has_barcode_summaries(&self) -> bool {
         self.visitors
             .values()
-            .flat_map(|v| v.barcode_summaries.iter().cloned())
-            .collect()
+            .any(|v| v.barcode_summaries.is_some())
+    }
+
+    /// Iterate over all of the BarcodeSummary in totally-sorted order.
+    pub(super) fn sorted_barcode_summaries(&self) -> impl Iterator<Item = &BarcodeSummary> {
+        self.visitors
+            .iter()
+            .sorted_by_key(|(library_type, _)| **library_type)
+            .filter_map(|(_, v)| v.barcode_summaries.as_ref())
+            // NOTE: this produces sorted output because barcode summaries for each library
+            // type are stored in different visitors, so even though BarcodeSummary
+            // sorts by LibraryType before barcode, and the order of each collection
+            // of BarcodeSummary is sorted by barcode first, this still allows us
+            // to produce a totally-sorted collection by first sorting the visitors
+            // by library type, then flattening all of their iterators together.
+            // We could replace this with Itertools::kmerge() which would ensure
+            // that we maintain total ordering even if the BarcodeSummary
+            // order criteria change, at the cost of a lot of extra comparisons.
+            .flatten()
     }
 }
 
@@ -108,6 +131,7 @@ where
                     annotation.read.library_type,
                     self.metrics_sender.clone(),
                     self.target_genes.clone(),
+                    self.is_spatial,
                 ))
                 .visit_read_annotation(annotation);
             }

@@ -4,6 +4,7 @@
 //! Sized, stack-allocated container for a short quality string.
 
 use crate::array::{ArrayContent, ByteArray};
+use crate::metric_utils::ILLUMINA_QUAL_OFFSET;
 use std::iter::Iterator;
 use std::str;
 
@@ -32,6 +33,15 @@ impl ArrayContent for SQualityContents {
 /// An `SQualityGen` is guaranteed to contain only valid quality characters.
 pub type SQualityGen<const N: usize> = ByteArray<SQualityContents, N>;
 
+impl<const N: usize> SQualityGen<N> {
+    /// Return the min quality score; the standard qual offset is subtracted.
+    pub fn min_qual(&self) -> u8 {
+        let &min = self.iter().min().unwrap();
+        assert!(min >= ILLUMINA_QUAL_OFFSET);
+        min - ILLUMINA_QUAL_OFFSET
+    }
+}
+
 /// Fixed-sized container for a short quality string, up to 23bp in length.
 /// Used as a convenient container for a barcode or UMI quality string.
 /// An `SQuality` is guaranteed to contain only valid quality characters.
@@ -53,6 +63,8 @@ mod squality_test {
             SQuality::from_bytes(&VALID_CHARS[0..23]).to_string(),
             str::from_utf8(&VALID_CHARS[0..23]).unwrap()
         );
+        assert_eq!(SQuality::from_bytes(&VALID_CHARS[0..23]).min_qual(), 0);
+        assert_eq!(SQuality::from_bytes(&VALID_CHARS[23..42]).min_qual(), 23);
     }
 
     #[test]

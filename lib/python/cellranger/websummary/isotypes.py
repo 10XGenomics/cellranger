@@ -100,13 +100,13 @@ def get_antibody_feature_dict(
             f.id
             for f in filtered_feature_defs
             if f.feature_type == ANTIBODY_LIBRARY_TYPE
-            and f.tags.get("isotype_control", "FALSE") != "TRUE"
+            and f.tags.get("isotype_control", "FALSE").upper() != "TRUE"
         }
         control_filtered_abs_ids = {
             f.id
             for f in filtered_feature_defs
             if f.feature_type == ANTIBODY_LIBRARY_TYPE
-            and f.tags.get("isotype_control", "FALSE") == "TRUE"
+            and f.tags.get("isotype_control", "FALSE").upper() == "TRUE"
         }
 
         raw_feature_defs = raw_matrix.feature_ref.feature_defs
@@ -114,13 +114,13 @@ def get_antibody_feature_dict(
             f.id
             for f in raw_feature_defs
             if f.feature_type == ANTIBODY_LIBRARY_TYPE
-            and f.tags.get("isotype_control", "FALSE") != "TRUE"
+            and f.tags.get("isotype_control", "FALSE").upper() != "TRUE"
         }
         control_raw_abs_ids = {
             f.id
             for f in raw_feature_defs
             if f.feature_type == ANTIBODY_LIBRARY_TYPE
-            and f.tags.get("isotype_control", "FALSE") == "TRUE"
+            and f.tags.get("isotype_control", "FALSE").upper() == "TRUE"
         }
 
         non_control_feature_ids = non_control_filtered_abs_ids.intersection(non_control_raw_abs_ids)
@@ -339,8 +339,12 @@ def fbc_isotype_correlation(
         isotype_matrix = matrix.m[isotype_index, :]
         antibody_matrix = matrix.m[antibody_index, :]
 
-    isotype_bc_counts = round_floats_in_list(isotype_matrix.sum(axis=0).tolist()[0])
-    antibody_bc_counts = round_floats_in_list(antibody_matrix.sum(axis=0).tolist()[0])
+    if log_transform:
+        isotype_bc_counts = round_floats_in_list(isotype_matrix.sum(axis=0).tolist()[0])
+        antibody_bc_counts = round_floats_in_list(antibody_matrix.sum(axis=0).tolist()[0])
+    else:
+        isotype_bc_counts = [int(x) for x in isotype_matrix.sum(axis=0).tolist()[0]]
+        antibody_bc_counts = [int(x) for x in antibody_matrix.sum(axis=0).tolist()[0]]
 
     isotype_antibody_counts_df = pd.DataFrame(
         {
@@ -467,7 +471,11 @@ def make_ab_ab_correlation_heatmap(
 
 # need to use the raw matrix
 def make_fbc_isotype_correlation_scatter(
-    raw_matrix: cr_matrix.CountMatrix, filtered_barcodes: list, log_transform: bool = False
+    raw_matrix: cr_matrix.CountMatrix,
+    filtered_barcodes: list,
+    log_transform: bool = False,
+    max_points: int | None = None,
+    return_plot: bool = False,
 ):
     """Generates a scatter plot showing the correlation between isotype and non-isotype antibodies.
 
@@ -475,6 +483,10 @@ def make_fbc_isotype_correlation_scatter(
         raw_matrix (cr_matrix.CountMatrix): raw unnormalized FBC matrix
         filtered_barcodes (list): a list of barcodes under tissue
         log_transform (bool): whether to log transform the data
+        max_points (int | None): if set, downsample to at most this many points before plotting.
+            The seed is derived from the sorted barcodes so the same sample always produces the
+            same subsample.
+        return_plot (bool): whether to return the Altair plot object (for testing) or a JSON spec for the plot (for production)
 
     Returns:
         dict: A dictionary containing the plot data in JSON format, along with help text and a title.
@@ -502,6 +514,10 @@ def make_fbc_isotype_correlation_scatter(
         ndigits=3,
     )
 
+    if max_points is not None and len(isotype_corr) > max_points:
+        seed = hash(tuple(sorted(filtered_barcodes))) % (2**32)
+        isotype_corr = isotype_corr.sample(n=max_points, random_state=seed)
+
     chart_title = alt.TitleParams(
         f"r² = {r_squared}",
         anchor="middle",
@@ -517,6 +533,8 @@ def make_fbc_isotype_correlation_scatter(
             tooltip=["Isotype Antibody", "Non-Isotype Antibody"],
         )
     )
+    if return_plot:
+        return isotype_corr_plot, r_squared
 
     transform_text = "log transformed" if log_transform else "raw"
 
@@ -527,6 +545,7 @@ def make_fbc_isotype_correlation_scatter(
         f"Barcodes in the top 1% of isotype antibody or non-isotype antibody counts are colored in orange and discarded before calculating r².",
         "title": "Isotype vs. Non-Isotype Antibodies",
     }
+
     isotype_corr_plot_plot_data = {
         "isotype_corr_plot": {"help": isotype_corr_plot_plot_help, "spec": isotype_corr_plot}
     }

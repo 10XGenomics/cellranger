@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import martian
 import numpy as np
@@ -18,6 +19,9 @@ import tenkit.safe_json as tk_safe_json
 from cellranger.molecule_counter import MoleculeCounter
 from cellranger.rna.library import GENE_EXPRESSION_LIBRARY_TYPE
 
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+
 __MRO__ = """
 stage CHECK_INVARIANTS(
     in  map[] input_sample_defs,
@@ -29,7 +33,24 @@ stage CHECK_INVARIANTS(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CHECK_INVARIANTS stage inputs."""
+
+    input_sample_defs: list[dict]  # TODO: be more specific with the type here
+    merged_raw_gene_bc_matrices_h5: mro_filetypes.h5
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """CHECK_INVARIANTS stage outputs."""
+
+    summary: mro_filetypes.json
+
+
+ChunkInputs = StageInputs
+ChunkOutputs = StageOutputs
+
+
+def split(args: StageInputs):
     matrix_mem_gb = int(
         1.5 * cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.merged_raw_gene_bc_matrices_h5)
     )
@@ -100,7 +121,12 @@ def _update_counts(
     return len(gem_groups)
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     # compute invariants on input data
     input_genomes = set()
     input_features = set()

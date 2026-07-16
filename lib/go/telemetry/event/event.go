@@ -222,7 +222,7 @@ func collectWithGlob(ctx context.Context,
 		doneWait *sync.WaitGroup, results chan<- Event) {
 		defer doneWait.Done()
 		for n, m := range metrics {
-			ev.Properties[n] = m.Get()
+			m.Fill(n, ev.Properties)
 		}
 		results <- ev
 	}(ev, doneWait, results)

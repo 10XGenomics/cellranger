@@ -21,7 +21,10 @@ mod barcode_overlap;
 mod barcode_sort;
 
 /// Struct containing cell annotation metrics for all figures
-mod cell_annotation_ws_parameters;
+pub mod cell_annotation_ws_parameters;
+
+/// Streaming sufficient-statistics reducer for CRISPR perturbation DE (SPLIT_PERTURBATION_MATRIX).
+pub mod crispr_perturbation_stats;
 
 mod detect_chemistry;
 
@@ -33,9 +36,6 @@ mod fit_piecewise_linear_model;
 
 /// gDNA utils
 mod gdna_utils;
-
-/// Miscellaneous macros
-mod macros;
 
 /// Metrics for MAKE_SHARD
 mod make_shard_metrics;
@@ -73,10 +73,11 @@ pub use barcode_sort::BarcodeOrder;
 pub use read_level_multiplexing::map_multiplexing_seq_to_id;
 pub use stages::{correct_barcode_in_read, load_dist, make_bam_header, write_web_summary_html};
 pub use types::*;
+pub use utils::hard_link_file;
 
 // initialize insta test harness
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init() {
     // when we need things like samtools or bgzip, put them on path
     dui_tests::bazel_utils::set_env_vars(&[("PATH", "lib/bin")], &[]).unwrap_or_default();
@@ -84,4 +85,10 @@ fn init() {
     let cwd = std::env::current_dir().unwrap();
     let workspace_root = cwd.parent().unwrap();
     unsafe { std::env::set_var("INSTA_WORKSPACE_ROOT", workspace_root) }
+    // TODO: Remove this env variable upon OS upgrade requested in CICD-241
+    // Tests may run on OS versions that are deprecated (e.g. CentOS 7 in CI).
+    // Set TENX_IGNORE_DEPRECATED_OS=1 so the OS deprecation check performed
+    // inside stage `main` functions does not interrupt snapshot assertions that
+    // are testing other behaviour.
+    unsafe { std::env::set_var("TENX_IGNORE_DEPRECATED_OS", "1") }
 }

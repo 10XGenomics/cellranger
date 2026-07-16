@@ -74,7 +74,7 @@ impl ProductiveContig {
                 .cdr3_seq
                 .as_ref()
                 .ok_or_else(|| anyhow!("required cdr3_nt not found"))?
-                .to_string(),
+                .clone(),
             vdj_nt: ann
                 .get_vdj_seq()
                 .ok_or_else(|| anyhow!("required vdj_nt not found"))?,
@@ -97,7 +97,7 @@ pub fn generate_exact_clonotypes(
                 .push(ProductiveContig::new(&ann)?);
         }
     }
-    let mut exact_clonotypes_map: HashMap<Vec<ProductiveContig>, Vec<String>> = Default::default();
+    let mut exact_clonotypes_map: HashMap<Vec<ProductiveContig>, Vec<String>> = HashMap::default();
     for (bc, mut contigs) in prod_contigs_per_bc {
         contigs.sort(); // sort contigs within each barcode
         exact_clonotypes_map.entry(contigs).or_default().push(bc);

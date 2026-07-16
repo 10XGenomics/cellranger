@@ -26,7 +26,8 @@ def _get_n_threads():
     if not _CACHED_MARTIAN_STATUS[0]:
         _CACHED_MARTIAN_STATUS[2] += 1
         try:
-            import martian  # pylint: disable=bad-option-value,import-outside-toplevel
+            # pylint: disable-next=bad-option-value,import-outside-toplevel
+            import martian  # noqa: PLC0415
 
             n_threads = martian.get_threads_allocation()
             _CACHED_MARTIAN_STATUS[1] = n_threads

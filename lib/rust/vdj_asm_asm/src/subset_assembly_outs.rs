@@ -123,6 +123,9 @@ impl MartianMain for SubsetAssemblyOuts {
             BarcodeMultiplexingType::ReadLevel(ReadLevel::RTL) => {
                 panic!("Unsupported multiplexing method!")
             }
+            BarcodeMultiplexingType::ReadLevel(ReadLevel::CMX) => {
+                panic!("Unsupported multiplexing method!")
+            }
         };
 
         // subset contig annotaions

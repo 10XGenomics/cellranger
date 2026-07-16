@@ -9,6 +9,9 @@ import json
 import cellranger.fast_utils as fast_utils
 import cellranger.matrix as cr_matrix
 import cellranger.websummary.violin_plots as cr_vp
+from cellranger.cell_typing.common_cell_typing import (
+    DISPLAY_MAP_KEY,
+)
 
 __MRO__ = """
 stage GET_CELL_TYPES_BOX_PLOT(
@@ -46,11 +49,13 @@ def join(args, outs, _chunk_defs, _chunk_outs):
         plot_width = 450
     else:
         plot_width = 900
+
     box_plot = cr_vp.make_cell_types_boxplot(
         h5_path=args.filtered_matrix,
         cell_types=args.cell_types,
         barcode_lower_bound=COARSE_CELL_TYPE_LOWER_BOUND,
         final_plot_width=plot_width,
+        group_by_name=DISPLAY_MAP_KEY,
         return_plot=False,
     )
     with open(outs.cell_types_box_plot, "w") as f:

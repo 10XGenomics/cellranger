@@ -3,15 +3,7 @@
 
 use anyhow::Result;
 use bio::io::fasta::Reader;
-// The prelude brings the following items in scope:
-// - Traits: MartianMain, MartianStage, RawMartianStage, MartianFileType, MartianMakePath
-// - Struct/Enum: MartianRover, Resource, StageDef, MartianVoid,
-//                Error (from failure crate), LevelFilter (from log crate)
-// - Macros: martian_stages!
-// - Functions: martian_main, martian_main_with_log_level, martian_make_mro
-use martian::prelude::*;
-// Bring the procedural macros in scope:
-// #[derive(MartianStruct)], #[derive(MartianType)], #[make_mro], martian_filetype!
+use martian::{MartianMain, MartianRover};
 use martian_derive::{MartianStruct, make_mro, martian_filetype};
 use martian_filetypes::json_file::JsonFile;
 use martian_filetypes::tabular_file::TsvFile;
@@ -220,7 +212,7 @@ impl MartianMain for AirrFilter {
             let repertoire_id = args.gem_well_map.as_ref().map(|gw_map| {
                 let gw = ann.barcode.parse::<barcode::Barcode>().unwrap().gem_group() as u32;
                 let (library_id, _) = gw_map.get(&gw).unwrap();
-                library_id.to_string()
+                library_id.clone()
             });
 
             airr_writer.write_item(&Rearrangement {
@@ -276,6 +268,7 @@ impl MartianMain for AirrFilter {
 mod tests {
     use super::*;
     use insta::{assert_ron_snapshot, assert_snapshot};
+    use martian::MartianStage;
     use martian_filetypes::FileTypeRead;
 
     #[test]

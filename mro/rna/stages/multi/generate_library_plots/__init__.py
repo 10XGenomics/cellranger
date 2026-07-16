@@ -13,18 +13,19 @@ from __future__ import annotations
 
 import json
 import pickle
+from typing import TYPE_CHECKING
 
 import h5py
+import martian
 
-import cellranger.rna.library as rna_library
 import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
 from cellranger.analysis.multigenome import MultiGenomeAnalysis
 from cellranger.analysis.singlegenome import UMAP_NAME
 from cellranger.feature.feature_assignments import CellsPerFeature
 from cellranger.feature_ref import HASHTAG_TAG
-from cellranger.hdf5 import estimate_mem_gib_for_dataset
 from cellranger.multi.barcode_rank_plots import write_library_to_barcode_rank_json
+from cellranger.rna.library import BarcodeMultiplexingType, CellLevel
 from cellranger.webshim.common import populate_biplot_chart
 from cellranger.webshim.jibes_web import make_jibes_biplot_histogram
 from cellranger.websummary.analysis_tab_aux import (
@@ -33,6 +34,10 @@ from cellranger.websummary.analysis_tab_aux import (
 )
 from cellranger.websummary.analysis_tab_core import umi_on_projection_from_path
 from cellranger.websummary.react_components import ReactComponentEncoder
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 stage GENERATE_LIBRARY_PLOTS(
@@ -62,16 +67,66 @@ stage GENERATE_LIBRARY_PLOTS(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """GENERATE_LIBRARY_PLOTS stage inputs."""
+
+    disable_count: bool
+    barcode_summary_h5: mro_filetypes.h5
+    filtered_barcodes: mro_filetypes.csv
+    reference_info: mro_structs.ReferenceInfo
+    tag_assigner_pickle: None | mro_filetypes.pickle
+    analysis: None | mro_filetypes.path
+    cells_per_tag: None | mro_filetypes.json
+    non_singlet_barcodes: None | mro_filetypes.json
+    force_sample_barcodes: None | mro_structs.BarcodeAssignments
+    multiplexing_method: None | str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """GENERATE_LIBRARY_PLOTS stage outputs."""
+
+    library_to_barcode_rank: None | mro_filetypes.json
+    jibes_biplot_histogram: None | mro_filetypes.json
+    barnyard_biplot: None | mro_filetypes.json
+    cmo_projection_plot: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """GENERATE_LIBRARY_PLOTS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """GENERATE_LIBRARY_PLOTS chunk outputs."""
+
+
+def split(args: StageInputs):
+    if args.multiplexing_method is not None:
+        multiplexing_method = BarcodeMultiplexingType(args.multiplexing_method)
+        hashtag_gib = 4 if multiplexing_method.is_cell_multiplexed() else 0
+    else:
+        multiplexing_method = None
+        hashtag_gib = 0
+
+    with open(args.filtered_barcodes) as f:
+        filtered_barcodes = sum(1 for _ in f)
     with h5py.File(args.barcode_summary_h5, "r") as f:
-        barcodes_gib = estimate_mem_gib_for_dataset(f["bc_sequence"])
-    # memory usage of the stage scales approximately with the number of barcodes
-    mem_gib = 6 + round(2.5 * barcodes_gib, 1)
-    print(f"{barcodes_gib=},{mem_gib=}")
+        raw_barcodes = len(f["bc_sequence"])
+    barcodes_gib = round(108 * raw_barcodes / (1024**3), 1)
+
+    mem_gib = 2 + hashtag_gib + barcodes_gib
+    print(
+        f"{multiplexing_method=},{filtered_barcodes=},{raw_barcodes=},"
+        f"{barcodes_gib=},{hashtag_gib=},{mem_gib=}"
+    )
     return {"chunks": [], "join": {"__mem_gb": mem_gib}}
 
 
-def join(args, outs, _chunk_defs, _chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     if args.disable_count:
         outs.library_to_barcode_rank = None
         outs.jibes_biplot_histogram = None
@@ -105,14 +160,14 @@ def join(args, outs, _chunk_defs, _chunk_outs):
 
     if (
         args.multiplexing_method is not None
-        and rna_library.BarcodeMultiplexingType(args.multiplexing_method).is_cell_multiplexed()
+        and BarcodeMultiplexingType(args.multiplexing_method).is_cell_multiplexed()
         and args.analysis is not None
         and cells_per_tag is not None
         and args.non_singlet_barcodes is not None
     ):
-        multiplexing_method = rna_library.BarcodeMultiplexingType(args.multiplexing_method)
+        multiplexing_method = BarcodeMultiplexingType(args.multiplexing_method)
 
-        if multiplexing_method.type == rna_library.CellLevel.Hashtag:
+        if multiplexing_method.type == CellLevel.Hashtag:
             cmo_umi_projection_plot = umi_on_projection_from_path(
                 args.analysis,
                 projection=UMAP_NAME,
@@ -172,9 +227,10 @@ def join(args, outs, _chunk_defs, _chunk_outs):
     else:
         outs.jibes_biplot_histogram = None
 
-    if len(genomes) >= 2:
-        assert args.analysis is not None
-
+    # The barnyard biplot is derived from the multi-genome secondary analysis, which is
+    # absent when secondary analysis is disabled (`--no-secondary`). In that case fall
+    # through to the `else` branch and emit no biplot, mirroring the single-genome path.
+    if len(genomes) >= 2 and args.analysis is not None:
         barnyard_biplot = initialize_barnyard_biplot_chart()
         multi_genome_analysis = MultiGenomeAnalysis.load_default_format(args.analysis)
         populate_biplot_chart(barnyard_biplot, multi_genome_analysis)

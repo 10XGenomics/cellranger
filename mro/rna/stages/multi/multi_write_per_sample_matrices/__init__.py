@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import gc
 import json
+from typing import TYPE_CHECKING
 
 import martian
 
@@ -17,6 +18,10 @@ import cellranger.matrix as cr_matrix
 import cellranger.rna.matrix as rna_matrix
 import cellranger.utils as cr_utils
 from cellranger.fast_utils import MultiGraph
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
+    import cellranger.mro_types.structs as mro_structs
 
 __MRO__ = """
 struct SampleMatrices(
@@ -53,7 +58,39 @@ stage MULTI_WRITE_PER_SAMPLE_MATRICES(
 """
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """MULTI_WRITE_PER_SAMPLE_MATRICES stage inputs."""
+
+    matrix_h5: mro_filetypes.h5
+    raw_matrix_h5: mro_filetypes.h5
+    filtered_barcodes: None | mro_filetypes.csv
+    aggregate_barcodes: None | mro_filetypes.csv
+    sample_barcodes: None | mro_filetypes.json
+    sample_cell_barcodes: None | mro_filetypes.json
+    multi_graph: None | mro_filetypes.json
+    sample_raw_probe_bc_matrices: None | dict[str, None | mro_filetypes.h5]
+    samples_per_probe_metrics: None | dict[str, None | mro_filetypes.csv]
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """MULTI_WRITE_PER_SAMPLE_MATRICES stage outputs."""
+
+    sample_matrices: list[mro_structs.SampleMatrices]
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """MULTI_WRITE_PER_SAMPLE_MATRICES chunk inputs."""
+
+    sample: str
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """MULTI_WRITE_PER_SAMPLE_MATRICES chunk outputs."""
+
+    matrices: mro_structs.SampleMatrices
+
+
+def split(args: StageInputs):
     mem_gib = 4 + cr_matrix.CountMatrix.get_mem_gb_from_matrix_h5(args.raw_matrix_h5, scale=1.6)
     return {
         "chunks": [
@@ -69,7 +106,7 @@ def split(args):
     }
 
 
-def main(args, outs):  # pylint: disable=too-many-locals
+def main(args: ChunkInputs, outs: ChunkOutputs):  # pylint: disable=too-many-locals
     def load_sample_barcodes(barcodes_file: str) -> list[str]:
         with open(barcodes_file) as f:
             return json.load(f)[args.sample]
@@ -172,11 +209,22 @@ def main(args, outs):  # pylint: disable=too-many-locals
     }
 
 
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    chunk_defs: list[ChunkInputs],
+    chunk_outs: list[ChunkOutputs],
+):
     outs.sample_matrices = [c.matrices for c in chunk_outs]
 
 
-def filter_matrix(h5_in, h5_out, mex_out, barcodes: set[bytes], matrix_attrs):
+def filter_matrix(
+    h5_in: mro_filetypes.h5,
+    h5_out: str,
+    mex_out: str,
+    barcodes: set[bytes],
+    matrix_attrs,
+):
     """Filter the provided count matrix by the provided barcodes.
 
     Write out filtered h5 and mex files.
@@ -197,7 +245,11 @@ def filter_matrix(h5_in, h5_out, mex_out, barcodes: set[bytes], matrix_attrs):
 
 
 def filter_csv(
-    in_path: str, out_path: str, barcodes: set[bytes], barcode_col: int, has_header: bool
+    in_path: str,
+    out_path: str,
+    barcodes: set[bytes],
+    barcode_col: int,
+    has_header: bool,
 ):
     """Filter the provided CSV by the provided barcode set.
 
@@ -214,7 +266,9 @@ def filter_csv(
 
 
 def hardlink_sample_file(
-    sample: str, per_sample_files: dict[str, str] | None, filename_suffix: str
+    sample: str,
+    per_sample_files: dict[str, str] | None,
+    filename_suffix: str,
 ) -> str | None:
     """Hardlink a sample-wise file into local outs.
 

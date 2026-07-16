@@ -3,13 +3,14 @@
 #![deny(missing_docs)]
 use crate::AggregateBarcode;
 use crate::align_metrics::{BarcodeKind, BarcodeMetrics, LibFeatThenBarcodeOrder, VisitorMetrics};
-use crate::types::{BarcodeMetricsShardFile, FeatureReferenceFormat};
+use crate::types::BarcodeMetricsShardFile;
 use anyhow::Result;
 use barcode::Barcode;
 use cr_types::filtered_barcodes::{FilteredBarcodesCsv, read_filtered_barcodes_set};
 use cr_types::reference::reference_info::ReferenceInfo;
 use cr_types::{
-    GenomeName, LibraryType, MetricsFile, SampleAssignment, SampleBarcodes, SampleBarcodesFile,
+    FeatureReferenceFormat, GenomeName, LibraryType, MetricsFile, SampleAssignment, SampleBarcodes,
+    SampleBarcodesFile,
 };
 use itertools::{Itertools, chain};
 use json_report_derive::JsonReport;

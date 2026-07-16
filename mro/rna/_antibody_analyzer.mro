@@ -16,18 +16,22 @@ pipeline _ANTIBODY_ANALYZER(
     in  bool   is_spatial,
     in  json   multi_graph,
     in  string sample_id,
+    in  bool   is_visium_hd,
     out path   antibody_analysis,
     out json   antibody_histograms_json,
     out json   antibody_treemap_json,
+    out json   antibody_histograms_plotly_json,
+    out json   antibody_treemap_plotly_json,
 )
 {
     # Currently makes histograms
     call CALL_ANTIBODIES(
         filtered_feature_counts_matrix = self.filtered_feature_counts_matrix,
-        is_antibody = self.is_antibody,
-        is_spatial  = self.is_spatial,
-        multi_graph = self.multi_graph,
-        sample_id   = self.sample_id,
+        is_antibody  = self.is_antibody,
+        is_spatial   = self.is_spatial,
+        multi_graph  = self.multi_graph,
+        sample_id    = self.sample_id,
+        is_visium_hd = self.is_visium_hd,
     )
 
     # Currently copies this file
@@ -37,8 +41,10 @@ pipeline _ANTIBODY_ANALYZER(
     )
 
     return (
-        antibody_analysis        = SUMMARIZE_ANTIBODY_ANALYSIS.antibody_analysis,
-        antibody_histograms_json = CALL_ANTIBODIES.antibody_histograms_json,
-        antibody_treemap_json    = CALL_ANTIBODIES.antibody_treemap_json,
+        antibody_analysis            = SUMMARIZE_ANTIBODY_ANALYSIS.antibody_analysis,
+        antibody_histograms_json     = CALL_ANTIBODIES.antibody_histograms_json,
+        antibody_treemap_json        = CALL_ANTIBODIES.antibody_treemap_json,
+        antibody_histograms_plotly_json = CALL_ANTIBODIES.antibody_histograms_plotly_json,
+        antibody_treemap_plotly_json = CALL_ANTIBODIES.antibody_treemap_plotly_json,
     )
 }

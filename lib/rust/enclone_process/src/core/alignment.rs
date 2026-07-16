@@ -541,7 +541,7 @@ impl TracebackCell {
     /// Initialize a blank traceback cell
     #[inline(always)]
     pub fn new() -> TracebackCell {
-        Default::default()
+        TracebackCell::default()
     }
 
     /// Sets 4 bits [pos, pos+4) with the 4 LSBs of value

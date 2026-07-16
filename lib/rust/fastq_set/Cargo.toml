@@ -6,8 +6,7 @@ workspace = true
 workspace = true
 
 [dependencies.bytes]
-features = ['serde']
-version = '1'
+workspace = true
 
 [dependencies.fastq]
 workspace = true
@@ -24,6 +23,18 @@ workspace = true
 [dependencies.lz4]
 workspace = true
 
+[dependencies.martian]
+workspace = true
+
+[dependencies.martian-derive]
+workspace = true
+
+[dependencies.memchr]
+workspace = true
+
+[dependencies.noodles-bgzf]
+workspace = true
+
 [dependencies.rand]
 workspace = true
 
@@ -31,6 +42,12 @@ workspace = true
 workspace = true
 
 [dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.strum]
 workspace = true
 
 [lib]

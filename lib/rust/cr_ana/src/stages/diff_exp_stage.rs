@@ -6,10 +6,10 @@ use crate::types::{ClusteringType, H5File};
 use anyhow::Result;
 use cr_types::FeatureBarcodeType;
 use cr_types::reference::feature_reference::FeatureType;
-use diff_exp::{compute_sseq_params, sseq_differential_expression};
+use diff_exp::{NbExactBackend, compute_sseq_params, sseq_differential_expression_backend};
 use hdf5_io::matrix::{read_adaptive_csr_matrix, read_matrix_metadata};
 use itertools::Itertools;
-use martian::prelude::{MartianRover, MartianStage, Resource, StageDef};
+use martian::{MartianRover, MartianStage, Resource, StageDef};
 use martian_derive::{MartianStruct, MartianType, make_mro};
 use martian_filetypes::bin_file::BincodeFile;
 use martian_filetypes::lz4_file::Lz4;
@@ -161,12 +161,13 @@ impl MartianStage for DiffExpStage {
                     cond_b.push(i);
                 }
             }
-            let result = DiffExpResult::new(sseq_differential_expression(
+            let result = DiffExpResult::new(sseq_differential_expression_backend(
                 &matrix,
                 &cond_a,
                 &cond_b,
                 &sseq_params,
                 None,
+                NbExactBackend::Ratio,
             ));
             writer.write_item(&result)?;
         }

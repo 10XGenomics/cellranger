@@ -37,6 +37,7 @@ stage PREPROCESS_MATRIX(
     in  bool disable_correct_chemistry_batch,
     in  bool skip_multigenome_analysis,
     in  bool enable_tsne,
+    in  bool is_standalone_pca_ppln,
     out bool skip_antibody_analysis,
     out bool skip_antigen_analysis,
     out h5   cloupe_matrix_h5,
@@ -202,8 +203,10 @@ def join(args, outs, chunk_defs, chunk_outs):
 
     # gem groups are needed for cloupe, and older versions of cellranger count
     # may not have added those to the matrix_attrs
-    if cr_matrix.get_gem_group_index(args.matrix_h5) is None and (
-        library_type is not ATACSEQ_LIBRARY_TYPE
+    if (
+        cr_matrix.get_gem_group_index(args.matrix_h5) is None
+        and (library_type is not ATACSEQ_LIBRARY_TYPE)
+        and not args.is_standalone_pca_ppln
     ):
         # TODO: Is this is still necessary?
         # Not sure when this broke but the sample_id is not piped to the analyzer.
@@ -259,6 +262,7 @@ def join(args, outs, chunk_defs, chunk_outs):
     # Skip ANTIGEN_ANALYZER in SC_RNA_ANALYZER in aggr, it is called in VDJ AGGR
     if (
         library_type is not ATACSEQ_LIBRARY_TYPE
+        and not args.is_standalone_pca_ppln
         and len(cr_matrix.get_gem_group_index(args.matrix_h5)) > 1
     ):
         outs.skip_antigen_analysis = True

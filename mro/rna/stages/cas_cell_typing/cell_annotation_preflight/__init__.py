@@ -4,7 +4,6 @@
 #
 """Determine whether or not the cell annotation stage should run."""
 
-
 __MRO__ = """
 stage CELL_ANNOTATION_PREFLIGHT(
     in  bool   is_cr_annotate,
@@ -31,10 +30,12 @@ import martian
 
 import cellranger.cell_typing.broad_tenx.cloud_cas_client as cloud_client_lib
 import cellranger.cell_typing.broad_tenx.cloud_cas_utils as cloud_cas_utils
+import cellranger.env as cr_env
 import cellranger.matrix as cr_matrix
+from cellranger.cell_typing.common_cell_typing import GENOMES_WITH_SUPPORTED_LOCAL_MODELS
 
 
-def _check_connection(args, cloud_client: cloud_client_lib.CloudAPIClient):
+def _check_connection(args, cloud_client: cloud_client_lib.CloudAPIClient, product: str):
     """Verify that we can connect to the cloud server with the current client.
 
     Exit if there is something wrong with the setup.  This will try 3 times in case of the
@@ -44,15 +45,27 @@ def _check_connection(args, cloud_client: cloud_client_lib.CloudAPIClient):
     max_retries = 3
     retry_interval = 60
     preflight_succeeded = False
+    token_extracted_from_default_path = (
+        args.tenx_cloud_token_path is None
+        or args.tenx_cloud_token_path
+        == str(
+            cloud_cas_utils.LOCAL_TOKEN_PATH
+        )  # wrapper sets to LOCAL_TOKEN_PATH if tenx_cloud_token_path not provided
+    )
+    local_token_hint = (
+        f" If you do not want to use cloud-based annotation, remove the token at {cloud_cas_utils.LOCAL_TOKEN_PATH}."
+        if token_extracted_from_default_path
+        else ""
+    )
     while num_tries < max_retries:
         num_tries += 1
         try:
             connected, valid_user = cloud_cas_utils.test_cloud_connection(cloud_client)
-        except ValueError as err:
+        except (ConnectionError, ValueError) as err:
             martian.exit(
                 "Error while trying to test 10x Cloud connection. "
-                f"Please check the contents of {args.tenx_cloud_token_path}, or run 'cellranger cloud auth verify' to verify that your token is valid. \n"
-                f"Error seen: {err}"
+                f"Please check the contents of {args.tenx_cloud_token_path}, or run '{product} cloud auth verify' to verify that your token is valid. \n"
+                f"Error seen: {err}{local_token_hint}"
             )
         if connected and valid_user:
             preflight_succeeded = True
@@ -60,30 +73,36 @@ def _check_connection(args, cloud_client: cloud_client_lib.CloudAPIClient):
         elif connected and not valid_user:
             martian.exit(
                 f"Invalid cloud access token found at {args.tenx_cloud_token_path}.  "
-                f"Please check the contents of this file, or run 'cellranger cloud auth setup' to re-authenticate."
+                f"Please check the contents of this file, or run '{product} cloud auth setup' to re-authenticate."
+                f"{local_token_hint}"
             )
         # wait momentarily for server to come back
         martian.log_info(f"Waiting {retry_interval} seconds for server response")
         time.sleep(retry_interval)
 
     if not preflight_succeeded:
-        martian.exit(f"Could not connect to cloud server after {max_retries} attempts")
+        martian.exit(
+            f"Could not connect to cloud server after {max_retries} attempts.{local_token_hint}"
+        )
 
 
-def main(args, _outs):
+def main(args, _outs):  # pylint: disable=too-many-branches
     if args.skip_cell_annotation:
         return
+
+    product = cr_env.product()
 
     # CHECKS COMMON TO ANNOTATE, COUNT, MULTI
     # if cloud token path is None, check local token
     if args.tenx_cloud_token_path is None:
         if not cloud_cas_utils.LOCAL_TOKEN_PATH.exists():
             martian.log_warn(
-                "No 10x cloud token defined. To enable cell annotation via the 10x Cloud, please run `cellranger cloud auth setup`."
+                "No 10x cloud token defined. To enable cell annotation using the Automated Cell Annotation service"
+                f" on 10x Cloud via the 10x Cloud, please run `{product} cloud auth setup`."
             )
     elif args.tenx_cloud_token_path and not os.path.exists(args.tenx_cloud_token_path):
         martian.exit(
-            f"No 10x cloud token found at {args.tenx_cloud_token_path}. To create a token, please run `cellranger cloud auth setup`. "
+            f"No 10x cloud token found at {args.tenx_cloud_token_path}. To create a token, please run `{product} cloud auth setup`. "
             "Please check that the path and is valid and ensure the permissions are correct."
         )
     # check if the token is valid
@@ -97,14 +116,26 @@ def main(args, _outs):
                 "Please check that the path and is valid and ensure the permissions are correct."
             )
         elif args.is_multi:
-            martian.exit(
-                "Failed to authenticate for Cell Ranger Cloud. "
-                "Please run `cellranger cloud auth setup` to set up cloud authentication or provide a valid token via the tenx-cloud-token-path parameter in the config CSV."
+            if args.cell_annotation_model:
+                martian.exit(
+                    f"Cell annotation model '{args.cell_annotation_model}' was specified but no valid cloud "
+                    "authentication is available. "
+                    f"Please run `{product} cloud auth setup` to set up cloud authentication or provide a "
+                    "valid token via the tenx-cloud-token-path parameter in the config CSV."
+                )
+            else:
+                martian.log_warn(
+                    "Unable to authenticate for Cell Ranger Cloud. "
+                    f"Please run `{product} cloud auth setup` to set up cloud authentication or provide a valid token via the tenx-cloud-token-path parameter in the config CSV."
+                )
+        elif args.cell_annotation_model is None and args.tenx_cloud_token_path is None:
+            martian.log_warn(
+                f"No 10x cloud token defined. To enable cell annotation via the 10x Cloud, please run `{product} cloud auth setup`. Just running local cell annotation models."
             )
         else:
             martian.exit(
                 "Failed to authenticate for Cell Ranger Cloud. "
-                "Please run `cellranger cloud auth setup` to set up cloud authentication or provide a valid token via the --tenx-cloud-token-path parameter."
+                f"Please run `{product} cloud auth setup` to set up cloud authentication or provide a valid token via the --tenx-cloud-token-path parameter."
             )
 
     # check if the model provided is valid (and that we can connect to the cloud)
@@ -114,7 +145,7 @@ def main(args, _outs):
             token_info.cli_token,
             cfa_tokens=token_info.cfa_tokens,
         ) as cloud_client:
-            _check_connection(args, cloud_client)
+            _check_connection(args, cloud_client, product)
 
             if args.cell_annotation_model:
                 # this could also be in a retry loop but it's unlikely to fail
@@ -124,8 +155,8 @@ def main(args, _outs):
                 ]
                 if len(matched_models) != 1:
                     martian.exit(
-                        f"{args.cell_annotation_model} is not a valid cell annotation model. "
-                        "Please run `cellranger cloud annotation models` to view available models."
+                        f"{args.cell_annotation_model} is not a valid 10x Cloud cell annotation model. "
+                        f"Please run `{product} cloud annotation models` to view available models."
                     )
 
                 genomes = set(matched_models[0].genomes)
@@ -174,6 +205,13 @@ def main(args, _outs):
         if len(ref) > 1:
             martian.exit(
                 f"Multi-genome references, {ref}, are not supported by cell annotation at this time."
+            )
+        if not token_info and not any(
+            any(genome in r for r in ref) for genome in GENOMES_WITH_SUPPORTED_LOCAL_MODELS
+        ):
+            martian.exit(
+                f"The reference genome {ref[0]} does not have a local cell annotation model and no token for running cloud-based annotation is provided. "
+                f"Supported genomes are {GENOMES_WITH_SUPPORTED_LOCAL_MODELS}."
             )
         if num_bcs > cloud_cas_utils.MAX_BARCODE_THRESHOLD:
             martian.exit(

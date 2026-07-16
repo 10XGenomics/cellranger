@@ -1,6 +1,9 @@
+@include "sc_rna_analyzer.mro"
 @include "_cell_annotation_common_stages.mro"
+@include "_cell_annotation_structs.mro"
 @include "_cr_ana_stages.mro"
 @include "_cr_lib_stages.mro"
+@include "_spatial_annotation_stages.mro"
 
 filetype csv;
 filetype h5;
@@ -10,13 +13,6 @@ filetype json.gz;
 filetype png;
 filetype h5ad;
 filetype cloupe;
-
-struct CellTypes(
-    csv     cell_types,
-    json.gz cell_annotation_results,
-    html    web_summary_cell_types,
-    csv     cell_annotation_differential_expression,
-)
 
 struct AggregatedCellTypes(
     csv     all_cell_types,
@@ -32,9 +28,10 @@ stage GET_CLOUPE_CELL_TYPES(
 )
 
 stage GET_CELL_TYPES_BARCHART(
-    in  csv  cell_types,
-    out json cell_type_interactive_bar_chart,
-    src py   "stages/cas_cell_typing/get_cell_types_barchart",
+    in  csv    cell_types,
+    in  string model_used,
+    out json   cell_type_interactive_bar_chart,
+    src py     "stages/cas_cell_typing/get_cell_types_barchart",
 ) using (
     volatile = strict,
 )
@@ -43,6 +40,7 @@ stage GET_CELL_TYPES_BOX_PLOT(
     in  csv    cell_types,
     in  h5     filtered_matrix,
     in  string pipestance_type,
+    in  string model_used,
     out json   cell_types_box_plot,
     src py     "stages/cas_cell_typing/get_cell_types_box_plot",
 ) split (
@@ -55,6 +53,7 @@ stage GET_CELL_TYPES_UMAP_PLOT(
     in  csv    cell_types,
     in  string pipestance_type,
     in  csv    cloupe_projection,
+    in  string model_used,
     out json   cell_types_umap_plot,
     src py     "stages/cas_cell_typing/get_cell_types_umap_plot",
 ) using (
@@ -78,13 +77,13 @@ stage ANALYZE_CELL_TYPES(
     in  csv    tissue_positions,
     in  png    tissue_lowres_image,
     in  json   scale_factors,
-    in  float  cas_frac_returned_bcs     "Fraction of barcodes that went into cell annotation that were returned",
+    in  float  cas_frac_returned_bcs             "Fraction of barcodes that went into cell annotation that were returned",
     in  string cas_model_used,
     in  string pipestance_type,
     in  bool   cas_success,
     in  bool   is_pd,
     in  json   metadata,
-    out json   cas_metrics,
+    out json   cell_annotation_analysis_metrics,
     out json   cell_type_bar_chart,
     out json   spatial_cell_types_chart,
     src py     "stages/cas_cell_typing/analyze_cell_types",
@@ -101,25 +100,43 @@ stage DISABLE_CAS_REPORTER_STAGES(
 )
 
 stage APPEND_CELL_TYPES_CLOUPE(
-    in  cloupe sample_cloupe,
-    in  json   cloupe_cas_types,
-    in  string cas_track_name,
-    out cloupe cell_annotation_sample_cloupe,
-    src py     "stages/cas_cell_typing/append_cell_types_cloupe",
+    in  cloupe                      sample_cloupe,
+    in  json                        cloupe_cas_types,
+    in  string                      cas_track_name,
+    in  CellAnnotationLoupeInputs[] cell_annotation_loupe_inputs,
+    out cloupe                      cell_annotation_sample_cloupe,
+    src py                          "stages/cas_cell_typing/append_cell_types_cloupe",
+)
+
+stage STRUCTIFY_CELL_ANNOTATION_OUTS(
+    in  string[]                    model_families,
+    in  CellTypeWebSummaryBundle[]  cell_annotation_websummary_bundles,
+    in  CellTypes[]                 all_cell_types,
+    in  json[]                      cloupe_cas_types,
+    in  string[]                    cell_annotation_cloupe_names,
+    in  json[]                      cell_annotation_analysis_metrics_in,
+    out map<json>                   cell_annotation_analysis_metrics,
+    out map<json>                   cell_annotation_metrics,
+    out CellAnnotationLoupeInputs[] loupe_file_inputs,
+    out WebSummaryCellTypeInputs    websummary_inputs,
+    out CellTypesAllMethods         cell_types_all_methods,
+    src py                          "stages/cas_cell_typing/structify_cell_annotation_outs",
 )
 
 stage WRITE_CELL_TYPES_H5(
-    in  csv  cell_types,
-    out h5   cell_types,
-    out json cell_types_map,
-    src py   "stages/cas_cell_typing/write_cell_types_h5",
+    in  csv    cell_types,
+    in  string cell_types_key,
+    out h5     cell_types,
+    out json   cell_types_map,
+    src py     "stages/cas_cell_typing/write_cell_types_h5",
 )
 
 stage DEMUX_CLOUPE_TRACK_NAME(
-    in  string cas_track_name_from_user,
-    in  string cas_track_name_from_ppln,
-    out string cas_track_name,
-    src py     "stages/cas_cell_typing/demux_cloupe_track_name",
+    in  string   cas_track_name_from_user,
+    in  string   cas_track_name_from_ppln,
+    out string   cas_track_name,
+    out string[] cas_track_name_list,
+    src py       "stages/cas_cell_typing/demux_cloupe_track_name",
 )
 
 stage CHECK_CLOUPE_MATRIX_CONSISTENT(
@@ -129,11 +146,13 @@ stage CHECK_CLOUPE_MATRIX_CONSISTENT(
     src py     "stages/cas_cell_typing/check_cloupe_matrix_consistent",
 )
 
-stage CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
-    in  h5   filtered_matrix,
-    in  bool skip_cell_annotation,
-    out bool cell_annotation_viable_but_not_requested,
-    src py   "stages/cas_cell_typing/cell_annotation_viable_but_not_requested",
+stage CLOUD_CELL_ANNOTATION_VIABLE_BUT_NOT_REQUESTED(
+    in  h5     filtered_matrix,
+    in  bool   skip_cell_annotation,
+    in  string tenx_cloud_token_path,
+    out bool   cloud_cell_annotation_viable_but_not_requested,
+    out json   metrics,
+    src py     "stages/cas_cell_typing/cloud_cell_annotation_viable_but_not_requested",
 )
 
 stage TIDY_CELLTYPE_DIFFEXP(
@@ -155,15 +174,28 @@ stage REPLACE_LOW_UMI_CELLS(
     volatile = strict,
 )
 
+stage MERGE_ALL_CELL_TYPE_METRICS(
+    in  json cell_annotation_primary_metrics,
+    in  json cell_annotation_analysis_metrics,
+    out json merged_cell_annotation_metrics,
+    src py   "stages/cas_cell_typing/merge_all_cell_type_metrics",
+) using (
+    volatile = strict,
+) retain (
+    merged_cell_annotation_metrics,
+)
+
 pipeline CELL_TYPE_DIFF_EXP(
-    in  csv  cell_types,
-    in  h5   filtered_matrix,
-    out json diffexp,
-    out csv  cas_diffexp_csv,
+    in  csv    cell_types,
+    in  h5     filtered_matrix,
+    in  string cell_types_key,
+    out json   diffexp,
+    out csv    cas_diffexp_csv,
 )
 {
     call WRITE_CELL_TYPES_H5(
-        cell_types = self.cell_types,
+        cell_types     = self.cell_types,
+        cell_types_key = self.cell_types_key,
     )
 
     call RUN_DIFFERENTIAL_EXPRESSION as DIFF_EXP_CAS(
@@ -195,7 +227,7 @@ pipeline SUMMARIZE_CELL_TYPES(
     in  bool                     cas_success,
     in  bool                     is_pd,
     in  csv                      cloupe_projection,
-    out json                     cas_metrics,
+    out json                     cell_annotation_analysis_metrics,
     out json                     cell_type_bar_chart,
     out json                     spatial_cell_types_chart,
     out json                     cloupe_cas_types,
@@ -210,12 +242,14 @@ pipeline SUMMARIZE_CELL_TYPES(
 
     call GET_CELL_TYPES_BARCHART(
         cell_types = self.cell_types,
+        model_used = self.cell_type_results.model_used,
     )
 
     call GET_CELL_TYPES_BOX_PLOT(
         cell_types      = self.cell_types,
         filtered_matrix = self.filtered_matrix,
         pipestance_type = self.pipestance_type,
+        model_used      = self.cell_type_results.model_used,
     )
 
     call GET_CELL_TYPES_UMAP_PLOT(
@@ -223,6 +257,7 @@ pipeline SUMMARIZE_CELL_TYPES(
         cell_types        = self.cell_types,
         pipestance_type   = self.pipestance_type,
         cloupe_projection = self.cloupe_projection,
+        model_used        = self.cell_type_results.model_used,
     )
 
     call ANALYZE_CELL_TYPES(
@@ -246,18 +281,25 @@ pipeline SUMMARIZE_CELL_TYPES(
     call CELL_TYPE_DIFF_EXP(
         cell_types      = self.cell_types,
         filtered_matrix = self.filtered_matrix,
+        cell_types_key  = null,
     ) using (
         disabled = DISABLE_CAS_REPORTER_STAGES.disable_differential_expression,
     )
 
     return (
-        cas_metrics                 = ANALYZE_CELL_TYPES.cas_metrics,
+        cell_annotation_analysis_metrics = ANALYZE_CELL_TYPES.cell_annotation_analysis_metrics,
         cloupe_cas_types            = GET_CLOUPE_CELL_TYPES.cloupe_cas_types,
         spatial_cell_types_chart    = ANALYZE_CELL_TYPES.spatial_cell_types_chart,
         cell_type_bar_chart         = ANALYZE_CELL_TYPES.cell_type_bar_chart,
         cell_type_websummary_bundle = {
+            aggregate_and_annotate:          null,
+            cell_annotation_metadata:        null,
             cell_annotation_metrics:         null,
+            cell_annotation_model_family:    null,
+            cell_type_info:                  null,
             cell_type_interactive_bar_chart: GET_CELL_TYPES_BARCHART.cell_type_interactive_bar_chart,
+            cell_type_pd_plots:              null,
+            cell_type_spatial_plot:          null,
             cell_types_box_plot:             GET_CELL_TYPES_BOX_PLOT.cell_types_box_plot,
             cell_types_umap_plot:            GET_CELL_TYPES_UMAP_PLOT.cell_types_umap_plot,
             diffexp:                         CELL_TYPE_DIFF_EXP.diffexp,
@@ -267,11 +309,131 @@ pipeline SUMMARIZE_CELL_TYPES(
     )
 }
 
+pipeline _ANNOTATE_CELLS(
+    in  h5                       filtered_matrix,
+    in  path                     analysis,
+    in  string                   sample_id,
+    in  string                   sample_desc,
+    in  string                   model_family,
+    in  csv                      tissue_positions,
+    in  png                      tissue_lowres_image,
+    in  json                     scale_factors,
+    in  string                   cell_annotation_model,
+    in  string                   tenx_cloud_token_path,
+    in  string                   pipestance_type,
+    in  bool                     is_pd,
+    in  csv                      cloupe_projection,
+    in  json                     metacell_to_cell_map,
+    in  bool                     aggregate_and_annotate,
+    out CellTypes                cell_types,
+    out json                     cell_annotation_analysis_metrics,
+    out json                     cloupe_cas_types,
+    out json                     cell_type_bar_chart,
+    out json                     spatial_cell_types_chart,
+    out CellTypeWebSummaryBundle cell_type_websummary_bundle,
+    out CellTypeInfo             cell_type_info,
+    out CellTypePdPlots          cell_type_pd_plots,
+    out json                     cell_type_metadata,
+    out bool                     disable_summarize,
+)
+{
+    call CREATE_META_CELLS(
+        filtered_matrix = self.filtered_matrix,
+        metacell_json   = self.metacell_to_cell_map,
+    )
+
+    call CALL_CELL_TYPES(
+        override_num_bc_limit = false,
+        filtered_matrix       = CREATE_META_CELLS.filtered_metacell_matrix,
+        sample_id             = self.sample_id,
+        sample_desc           = self.sample_desc,
+        model_family          = self.model_family,
+        cell_annotation_model = self.cell_annotation_model,
+        tenx_cloud_token_path = self.tenx_cloud_token_path,
+        pipestance_type       = self.pipestance_type,
+        is_pd                 = self.is_pd,
+    )
+
+    call REMOVE_META_CELLS_FROM_CELL_TYPES(
+        cell_types_in = CALL_CELL_TYPES.cell_type_results.cell_types,
+        metacell_json = self.metacell_to_cell_map,
+    )
+
+    call REPLACE_LOW_UMI_CELLS(
+        filtered_matrix = self.filtered_matrix,
+        cell_types      = REMOVE_META_CELLS_FROM_CELL_TYPES.cell_types,
+    )
+
+    call SUMMARIZE_CELL_TYPES(
+        filtered_matrix     = self.filtered_matrix,
+        cell_type_results   = CALL_CELL_TYPES.cell_type_results,
+        cell_types          = REPLACE_LOW_UMI_CELLS.cell_types,
+        analysis            = self.analysis,
+        tissue_positions    = self.tissue_positions,
+        tissue_lowres_image = self.tissue_lowres_image,
+        scale_factors       = self.scale_factors,
+        pipestance_type     = self.pipestance_type,
+        cas_success         = CALL_CELL_TYPES.cas_success,
+        is_pd               = self.is_pd,
+        cloupe_projection   = self.cloupe_projection,
+    ) using (
+        disabled = CALL_CELL_TYPES.disable_summarize,
+    )
+
+    return (
+        cell_types                  = {
+            cell_annotation_differential_expression: SUMMARIZE_CELL_TYPES.cas_diffexp_csv,
+            cell_annotation_results:                 CALL_CELL_TYPES.cell_type_results.results,
+            cell_types:                              REPLACE_LOW_UMI_CELLS.cell_types,
+        },
+        disable_summarize           = CALL_CELL_TYPES.disable_summarize,
+        cell_type_websummary_bundle = {
+            aggregate_and_annotate:          self.aggregate_and_annotate,
+            cell_annotation_metadata:        CALL_CELL_TYPES.cell_type_results.metadata,
+            cell_annotation_metrics:         null,
+            cell_annotation_model_family:    self.model_family,
+            cell_type_info: {
+                cas_frac_returned_bcs:           CALL_CELL_TYPES.cell_type_results.frac_returned_bcs,
+                cas_success:                     CALL_CELL_TYPES.cas_success,
+                cell_annotation_model:           CALL_CELL_TYPES.cell_type_results.model_used,
+                disable_cas_ws:                  CALL_CELL_TYPES.disable_cas_ws,
+                disable_differential_expression: SUMMARIZE_CELL_TYPES.disable_differential_expression,
+            },
+            cell_type_interactive_bar_chart: SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.cell_type_interactive_bar_chart,
+            cell_type_pd_plots: {
+                cell_type_bar_chart:      SUMMARIZE_CELL_TYPES.cell_type_bar_chart,
+                spatial_cell_types_chart: SUMMARIZE_CELL_TYPES.spatial_cell_types_chart,
+            },
+            cell_type_spatial_plot:          null,
+            cell_types_box_plot:             SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.cell_types_box_plot,
+            cell_types_umap_plot:            SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.cell_types_umap_plot,
+            diffexp:                         SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.diffexp,
+        },
+        cell_annotation_analysis_metrics = SUMMARIZE_CELL_TYPES.cell_annotation_analysis_metrics,
+        cell_type_bar_chart         = SUMMARIZE_CELL_TYPES.cell_type_bar_chart,
+        spatial_cell_types_chart    = SUMMARIZE_CELL_TYPES.spatial_cell_types_chart,
+        cloupe_cas_types            = SUMMARIZE_CELL_TYPES.cloupe_cas_types,
+        cell_type_info              = {
+            cas_frac_returned_bcs:           CALL_CELL_TYPES.cell_type_results.frac_returned_bcs,
+            cas_success:                     CALL_CELL_TYPES.cas_success,
+            cell_annotation_model:           CALL_CELL_TYPES.cell_type_results.model_used,
+            disable_cas_ws:                  CALL_CELL_TYPES.disable_cas_ws,
+            disable_differential_expression: SUMMARIZE_CELL_TYPES.disable_differential_expression,
+        },
+        cell_type_pd_plots          = {
+            cell_type_bar_chart:      SUMMARIZE_CELL_TYPES.cell_type_bar_chart,
+            spatial_cell_types_chart: SUMMARIZE_CELL_TYPES.spatial_cell_types_chart,
+        },
+        cell_type_metadata          = CALL_CELL_TYPES.cell_type_results.metadata,
+    )
+}
+
 pipeline CELL_ANNOTATION_SERVICE(
     in  h5                       filtered_matrix,
     in  path                     analysis,
     in  string                   sample_id,
     in  string                   sample_desc,
+    in  string                   model_family,
     in  csv                      tissue_positions,
     in  png                      tissue_lowres_image,
     in  json                     scale_factors,
@@ -280,97 +442,184 @@ pipeline CELL_ANNOTATION_SERVICE(
     in  string                   pipestance_type,
     in  string                   alert_string,
     in  bool                     is_pd,
+    in  bool                     aggregate_and_annotate,
+    in  json                     metacell_to_cell_map,
     in  csv                      cloupe_projection,
     out CellTypes                cell_types,
-    out json                     cas_metrics,
+    out html                     web_summary_cell_types,
+    out json                     cell_annotation_analysis_metrics,
     out json                     cloupe_cas_types,
     out json                     cell_type_bar_chart,
     out json                     spatial_cell_types_chart,
     out CellTypeWebSummaryBundle cell_type_websummary_bundle,
+    out json                     cell_type_websummary_bundle_value,
     out string                   cell_annotation_cloupe_name,
     out bool                     disable_summarize,
 )
 {
-    call CALL_CLOUD_CELL_TYPES(
-        override_num_bc_limit = false,
-        *                     = self,
+    call _ANNOTATE_CELLS(
+        * = self,
     )
 
-    call REPLACE_LOW_UMI_CELLS(
-        filtered_matrix = self.filtered_matrix,
-        cell_types      = CALL_CLOUD_CELL_TYPES.cell_type_results.cell_types,
-    )
-
-    call SUMMARIZE_CELL_TYPES(
-        filtered_matrix     = self.filtered_matrix,
-        cell_type_results   = CALL_CLOUD_CELL_TYPES.cell_type_results,
-        cell_types          = REPLACE_LOW_UMI_CELLS.cell_types,
-        analysis            = self.analysis,
-        tissue_positions    = self.tissue_positions,
-        tissue_lowres_image = self.tissue_lowres_image,
-        scale_factors       = self.scale_factors,
-        pipestance_type     = self.pipestance_type,
-        cas_success         = CALL_CLOUD_CELL_TYPES.cas_success,
-        is_pd               = self.is_pd,
-        cloupe_projection   = self.cloupe_projection,
+    call GENERATE_CAS_METRICS(
+        metadata               = _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_annotation_metadata,
+        cell_type_info         = _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_info,
+        aggregate_and_annotate = self.aggregate_and_annotate,
     ) using (
-        disabled = CALL_CLOUD_CELL_TYPES.disable_summarize,
+        disabled = _ANNOTATE_CELLS.disable_summarize,
     )
 
     call GENERATE_CAS_WEBSUMMARY(
-        sample_id                   = self.sample_id,
-        sample_desc                 = self.sample_desc,
-        alert_string                = self.alert_string,
-        cas_frac_returned_bcs       = CALL_CLOUD_CELL_TYPES.cell_type_results.frac_returned_bcs,
-        cell_annotation_model       = CALL_CLOUD_CELL_TYPES.cell_type_results.model_used,
-        cell_type_bar_chart         = SUMMARIZE_CELL_TYPES.cell_type_bar_chart,
-        spatial_cell_types_chart    = SUMMARIZE_CELL_TYPES.spatial_cell_types_chart,
-        metadata                    = CALL_CLOUD_CELL_TYPES.cell_type_results.metadata,
-        cas_success                 = CALL_CLOUD_CELL_TYPES.cas_success,
-        disable_cas_ws              = CALL_CLOUD_CELL_TYPES.disable_cas_ws,
-        disable_differential_expression = SUMMARIZE_CELL_TYPES.disable_differential_expression,
-        pipestance_type             = self.pipestance_type,
-        cell_type_websummary_bundle = SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle,
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        alert_string                 = self.alert_string,
+        pipestance_type              = self.pipestance_type,
+        cell_type_websummary_bundle  = {
+            aggregate_and_annotate:          self.aggregate_and_annotate,
+            cell_annotation_metadata:        _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_annotation_metadata,
+            cell_annotation_metrics:         GENERATE_CAS_METRICS.cell_annotation_metrics,
+            cell_annotation_model_family:    _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_annotation_model_family,
+            cell_type_info:                  _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_info,
+            cell_type_interactive_bar_chart: _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_interactive_bar_chart,
+            cell_type_pd_plots:              _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_pd_plots,
+            cell_type_spatial_plot:          null,
+            cell_types_box_plot:             _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_types_box_plot,
+            cell_types_umap_plot:            _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_types_umap_plot,
+            diffexp:                         _ANNOTATE_CELLS.cell_type_websummary_bundle.diffexp,
+        },
+        cell_type_websummary_bundles = null,
     ) using (
-        disabled = CALL_CLOUD_CELL_TYPES.disable_summarize,
+        disabled = _ANNOTATE_CELLS.disable_summarize,
     )
 
     return (
         cell_types                  = {
-            cell_annotation_differential_expression: SUMMARIZE_CELL_TYPES.cas_diffexp_csv,
-            cell_annotation_results:                 CALL_CLOUD_CELL_TYPES.cell_type_results.results,
-            cell_types:                              REPLACE_LOW_UMI_CELLS.cell_types,
-            web_summary_cell_types:                  GENERATE_CAS_WEBSUMMARY.summary,
+            cell_annotation_differential_expression: _ANNOTATE_CELLS.cell_types.cell_annotation_differential_expression,
+            cell_annotation_results:                 _ANNOTATE_CELLS.cell_types.cell_annotation_results,
+            cell_types:                              _ANNOTATE_CELLS.cell_types.cell_types,
         },
-        cell_annotation_cloupe_name = GENERATE_CAS_WEBSUMMARY.cell_annotation_cloupe_name,
-        disable_summarize           = CALL_CLOUD_CELL_TYPES.disable_summarize,
+        web_summary_cell_types      = GENERATE_CAS_WEBSUMMARY.summary,
+        cell_annotation_cloupe_name = GENERATE_CAS_METRICS.cell_annotation_cloupe_name,
+        disable_summarize           = _ANNOTATE_CELLS.disable_summarize,
         cell_type_websummary_bundle = {
-            cell_annotation_metrics:         GENERATE_CAS_WEBSUMMARY.cell_annotation_metrics,
-            cell_type_interactive_bar_chart: SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.cell_type_interactive_bar_chart,
-            cell_types_box_plot:             SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.cell_types_box_plot,
-            cell_types_umap_plot:            SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.cell_types_umap_plot,
-            diffexp:                         SUMMARIZE_CELL_TYPES.cell_type_websummary_bundle.diffexp,
+            aggregate_and_annotate:          self.aggregate_and_annotate,
+            cell_annotation_metadata:        _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_annotation_metadata,
+            cell_annotation_metrics:         GENERATE_CAS_METRICS.cell_annotation_metrics,
+            cell_annotation_model_family:    _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_annotation_model_family,
+            cell_type_info:                  _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_info,
+            cell_type_interactive_bar_chart: _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_interactive_bar_chart,
+            cell_type_pd_plots:              _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_type_pd_plots,
+            cell_type_spatial_plot:          null,
+            cell_types_box_plot:             _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_types_box_plot,
+            cell_types_umap_plot:            _ANNOTATE_CELLS.cell_type_websummary_bundle.cell_types_umap_plot,
+            diffexp:                         _ANNOTATE_CELLS.cell_type_websummary_bundle.diffexp,
         },
-        cas_metrics                 = SUMMARIZE_CELL_TYPES.cas_metrics,
-        cell_type_bar_chart         = SUMMARIZE_CELL_TYPES.cell_type_bar_chart,
-        spatial_cell_types_chart    = SUMMARIZE_CELL_TYPES.spatial_cell_types_chart,
-        cloupe_cas_types            = SUMMARIZE_CELL_TYPES.cloupe_cas_types,
+        cell_annotation_analysis_metrics = _ANNOTATE_CELLS.cell_annotation_analysis_metrics,
+        cell_type_bar_chart         = _ANNOTATE_CELLS.cell_type_bar_chart,
+        spatial_cell_types_chart    = _ANNOTATE_CELLS.spatial_cell_types_chart,
+        cloupe_cas_types            = _ANNOTATE_CELLS.cloupe_cas_types,
+        cell_type_websummary_bundle_value = GENERATE_CAS_WEBSUMMARY.cell_type_websummary_bundle_value,
+    )
+}
+
+pipeline CELL_ANNOTATION_ALL_MODELS(
+    in  h5                          filtered_matrix,
+    in  path                        analysis,
+    in  string                      sample_id,
+    in  string                      sample_desc,
+    in  string[]                    model_families,
+    in  csv                         tissue_positions,
+    in  png                         tissue_lowres_image,
+    in  json                        scale_factors,
+    in  string                      cell_annotation_model,
+    in  string                      tenx_cloud_token_path,
+    in  string                      pipestance_type,
+    in  string                      alert_string,
+    in  bool                        is_pd,
+    in  bool                        aggregate_and_annotate,
+    in  csv                         cloupe_projection,
+    out json                        cell_annotation_analysis_metrics,
+    out json                        cell_annotation_primary_metrics,
+    out json                        metacell_to_cell_map,
+    out CellAnnotationLoupeInputs[] loupe_file_inputs,
+    out WebSummaryCellTypeInputs    websummary_inputs,
+    out CellTypesAllMethods         cell_types_all_methods,
+    out json[]                      cell_type_websummary_bundle_value,
+)
+{
+    call ASSIGN_LOW_UMI_CELLS(
+        umi_upper_threshold = null,
+        umi_lower_threshold = null,
+        *                   = self,
+    )
+
+    map call CELL_ANNOTATION_SERVICE as ANNOTATE_CELLS(
+        model_family           = split self.model_families,
+        metacell_to_cell_map   = ASSIGN_LOW_UMI_CELLS.metacell_json,
+        filtered_matrix        = self.filtered_matrix,
+        analysis               = self.analysis,
+        sample_id              = self.sample_id,
+        sample_desc            = self.sample_desc,
+        tissue_positions       = self.tissue_positions,
+        tissue_lowres_image    = self.tissue_lowres_image,
+        scale_factors          = self.scale_factors,
+        cell_annotation_model  = self.cell_annotation_model,
+        tenx_cloud_token_path  = self.tenx_cloud_token_path,
+        pipestance_type        = self.pipestance_type,
+        alert_string           = self.alert_string,
+        is_pd                  = self.is_pd,
+        aggregate_and_annotate = self.aggregate_and_annotate,
+        cloupe_projection      = self.cloupe_projection,
+    )
+
+    call STRUCTIFY_CELL_ANNOTATION_OUTS(
+        model_families               = self.model_families,
+        cell_annotation_websummary_bundles = ANNOTATE_CELLS.cell_type_websummary_bundle,
+        all_cell_types               = ANNOTATE_CELLS.cell_types,
+        cloupe_cas_types             = ANNOTATE_CELLS.cloupe_cas_types,
+        cell_annotation_cloupe_names = ANNOTATE_CELLS.cell_annotation_cloupe_name,
+        cell_annotation_analysis_metrics_in = ANNOTATE_CELLS.cell_annotation_analysis_metrics,
+    )
+
+    call MERGE_METRICS_MAPS as MERGE_ANNOTATION_METRICS(
+        top_level_name = "cell_annotation_primary_metrics",
+        summaries      = STRUCTIFY_CELL_ANNOTATION_OUTS.cell_annotation_metrics,
+    )
+
+    call MERGE_METRICS_MAPS as MERGE_ANNOTATION_ANALYSIS_METRICS(
+        top_level_name = "cell_annotation_analysis_metrics",
+        summaries      = STRUCTIFY_CELL_ANNOTATION_OUTS.cell_annotation_analysis_metrics,
+    )
+
+    return (
+        cell_annotation_analysis_metrics = MERGE_ANNOTATION_ANALYSIS_METRICS.summary,
+        cell_annotation_primary_metrics = MERGE_ANNOTATION_METRICS.summary,
+        loupe_file_inputs      = STRUCTIFY_CELL_ANNOTATION_OUTS.loupe_file_inputs,
+        websummary_inputs      = STRUCTIFY_CELL_ANNOTATION_OUTS.websummary_inputs,
+        cell_types_all_methods = STRUCTIFY_CELL_ANNOTATION_OUTS.cell_types_all_methods,
+        metacell_to_cell_map   = ASSIGN_LOW_UMI_CELLS.metacell_json,
+        cell_type_websummary_bundle_value = ANNOTATE_CELLS.cell_type_websummary_bundle_value,
+    )
+
+    retain (
+        ASSIGN_LOW_UMI_CELLS.metacell_json,
     )
 }
 
 pipeline CELLRANGER_ANNOTATE_CS(
-    in  h5      filtered_matrix,
-    in  string  tenx_cloud_token_path,
-    in  string  sample_id,
-    in  string  sample_desc,
-    in  string  cell_annotation_model,
-    in  cloupe  sample_cloupe,
-    in  string  cas_track_name,
-    out csv     cell_types,
-    out json.gz cell_annotation_results,
-    out html    web_summary_cell_types,
-    out csv     cell_annotation_differential_expression,
-    out cloupe  cell_annotation_sample_cloupe,
+    in  h5             filtered_matrix,
+    in  string         tenx_cloud_token_path,
+    in  string         sample_id,
+    in  string         sample_desc,
+    in  string         cell_annotation_model,
+    in  cloupe         sample_cloupe,
+    in  string         cas_track_name,
+    in  path           segmented_outputs,
+    in  string         pipestance_type,
+    in  bool           aggregate_and_annotate,
+    out map<CellTypes> cell_types,
+    out html           web_summary,
+    out cloupe         cell_annotation_sample_cloupe,
 )
 {
     call CELL_ANNOTATION_PREFLIGHT(
@@ -391,82 +640,137 @@ pipeline CELLRANGER_ANNOTATE_CS(
         * = self,
     )
 
+    call GET_PCA_EMBEDDINGS(
+        feature_barcode_matrix = self.filtered_matrix,
+    )
+
     call EXTRACT_LOUPE_PROJECTION(
         sample_cloupe   = self.sample_cloupe,
         projection_name = "umap",
     )
 
-    call CELL_ANNOTATION_SERVICE(
-        filtered_matrix       = self.filtered_matrix,
-        analysis              = null,
-        sample_id             = self.sample_id,
-        sample_desc           = self.sample_desc,
-        tissue_positions      = null,
-        tissue_lowres_image   = null,
-        scale_factors         = null,
-        cell_annotation_model = self.cell_annotation_model,
-        tenx_cloud_token_path = self.tenx_cloud_token_path,
-        pipestance_type       = "CELLRANGER_ANNOTATE_CS",
-        alert_string          = CHECK_CLOUPE_MATRIX_CONSISTENT.alert_string,
-        is_pd                 = false,
-        cloupe_projection     = EXTRACT_LOUPE_PROJECTION.projection,
+    call CELL_ANNOTATION_ALL_MODELS(
+        filtered_matrix        = GET_PCA_EMBEDDINGS.preprocessed_matrix,
+        analysis               = GET_PCA_EMBEDDINGS.analysis,
+        tissue_positions       = null,
+        scale_factors          = null,
+        tissue_lowres_image    = null,
+        sample_id              = self.sample_id,
+        sample_desc            = self.sample_desc,
+        model_families         = [
+            "Azimuth",
+            "10x_Cloud",
+        ],
+        cell_annotation_model  = self.cell_annotation_model,
+        pipestance_type        = self.pipestance_type,
+        tenx_cloud_token_path  = self.tenx_cloud_token_path,
+        alert_string           = CHECK_CLOUPE_MATRIX_CONSISTENT.alert_string,
+        is_pd                  = false,
+        cloupe_projection      = EXTRACT_LOUPE_PROJECTION.projection,
+        aggregate_and_annotate = self.aggregate_and_annotate,
     )
 
-    call DEMUX_CLOUPE_TRACK_NAME(
-        cas_track_name_from_user = self.cas_track_name,
-        cas_track_name_from_ppln = CELL_ANNOTATION_SERVICE.cell_annotation_cloupe_name,
+    call VALIDATE_SEGMENTATION_DIRECTORY(
+        segmented_outputs = self.segmented_outputs,
+    )
+
+    call CREATE_HD_WEBSUMMARY_IMAGE(
+        tissue_hires_image     = VALIDATE_SEGMENTATION_DIRECTORY.validate_segmentation_outputs.tissue_hires_image,
+        scalefactors           = VALIDATE_SEGMENTATION_DIRECTORY.validate_segmentation_outputs.scale_factors_json,
+        dark_images            = 0,
+        is_standalone_pipeline = true,
+    ) using (
+        disabled = VALIDATE_SEGMENTATION_DIRECTORY.disable_segmentation_spatial_plot,
+    )
+
+    map call SEGMENTATION_SPATIAL_PLOTS(
+        analysis_csv                  = null,
+        cell_types                    = split CELL_ANNOTATION_ALL_MODELS.cell_types_all_methods.cell_types.cell_types,
+        cell_segmentations            = VALIDATE_SEGMENTATION_DIRECTORY.validate_segmentation_outputs.cell_segmentations,
+        websummary_tissue_image       = CREATE_HD_WEBSUMMARY_IMAGE.websummary_tissue_image,
+        websummary_tissue_image_scale = CREATE_HD_WEBSUMMARY_IMAGE.websummary_tissue_image_scale,
+        is_standalone_pipeline        = false,
+    ) using (
+        disabled = VALIDATE_SEGMENTATION_DIRECTORY.disable_segmentation_spatial_plot,
+    )
+
+    call STRUCTIFY_WEBSUMMARY_INPUTS(
+        websummary_inputs      = CELL_ANNOTATION_ALL_MODELS.websummary_inputs,
+        cell_type_spatial_plot = SEGMENTATION_SPATIAL_PLOTS.spatial_segmentation_chart,
+    )
+
+    call GENERATE_CAS_WEBSUMMARY(
+        sample_id                    = self.sample_id,
+        sample_desc                  = self.sample_desc,
+        alert_string                 = null,
+        pipestance_type              = self.pipestance_type,
+        cell_type_websummary_bundle  = null,
+        cell_type_websummary_bundles = STRUCTIFY_WEBSUMMARY_INPUTS.websummary_inputs_with_spatial_charts,
+    )
+
+    call MERGE_ALL_CELL_TYPE_METRICS(
+        cell_annotation_primary_metrics = CELL_ANNOTATION_ALL_MODELS.cell_annotation_primary_metrics,
+        cell_annotation_analysis_metrics = CELL_ANNOTATION_ALL_MODELS.cell_annotation_analysis_metrics,
     )
 
     call APPEND_CELL_TYPES_CLOUPE(
-        sample_cloupe    = self.sample_cloupe,
-        cloupe_cas_types = CELL_ANNOTATION_SERVICE.cloupe_cas_types,
-        cas_track_name   = DEMUX_CLOUPE_TRACK_NAME.cas_track_name,
-    ) using (
-        disabled = CELL_ANNOTATION_SERVICE.disable_summarize,
+        sample_cloupe                = self.sample_cloupe,
+        cloupe_cas_types             = null,
+        cas_track_name               = self.cas_track_name,
+        cell_annotation_loupe_inputs = CELL_ANNOTATION_ALL_MODELS.loupe_file_inputs,
     )
 
     return (
-        cell_types                    = CELL_ANNOTATION_SERVICE.cell_types.cell_types,
-        cell_annotation_results       = CELL_ANNOTATION_SERVICE.cell_types.cell_annotation_results,
-        cell_annotation_differential_expression = CELL_ANNOTATION_SERVICE.cell_types.cell_annotation_differential_expression,
-        web_summary_cell_types        = CELL_ANNOTATION_SERVICE.cell_types.web_summary_cell_types,
+        cell_types                    = CELL_ANNOTATION_ALL_MODELS.cell_types_all_methods.cell_types,
+        web_summary                   = GENERATE_CAS_WEBSUMMARY.summary,
         cell_annotation_sample_cloupe = APPEND_CELL_TYPES_CLOUPE.cell_annotation_sample_cloupe,
     )
 }
 
 stage AGGREGATE_CELL_TYPE_CSV(
-    in  map<CellTypes> cell_types,
-    out csv            all_cell_types,
-    src py             "stages/cas_cell_typing/aggregate_cell_type_csv",
+    in  map<CellTypesAllMethods> cell_types_all_methods,
+    out map<csv>                 all_cell_types,
+    src py                       "stages/cas_cell_typing/aggregate_cell_type_csv",
 ) using (
     volatile = strict,
 )
 
 stage AGGREGATE_CELL_TYPE_JSON(
-    in  map<CellTypes> cell_types,
-    out json.gz        all_cell_annotation_results,
-    src py             "stages/cas_cell_typing/aggregate_cell_type_json",
+    in  map<CellTypesAllMethods> cell_types_all_methods,
+    out map<json.gz>             all_cell_annotation_results,
+    src py                       "stages/cas_cell_typing/aggregate_cell_type_json",
+) using (
+    volatile = strict,
+)
+
+stage STRUCTIFY_AGGREGATED_CELLTYPES(
+    in  map<csv>                 all_cell_types,
+    in  map<json.gz>             all_cell_annotation_results,
+    out map<AggregatedCellTypes> library_cell_types,
+    src py                       "stages/cas_cell_typing/structify_aggregated_celltypes",
 ) using (
     volatile = strict,
 )
 
 pipeline AGGREGATE_CELL_ANNOTATIONS(
-    in  map<CellTypes>      cell_types,
-    out AggregatedCellTypes library_cell_types,
+    in  map<CellTypesAllMethods> cell_types_all_methods,
+    out map<AggregatedCellTypes> library_cell_types,
 )
 {
     call AGGREGATE_CELL_TYPE_CSV(
-        cell_types = self.cell_types,
+        cell_types_all_methods = self.cell_types_all_methods,
     )
 
     call AGGREGATE_CELL_TYPE_JSON(
-        cell_types = self.cell_types,
+        cell_types_all_methods = self.cell_types_all_methods,
+    )
+
+    call STRUCTIFY_AGGREGATED_CELLTYPES(
+        all_cell_annotation_results = AGGREGATE_CELL_TYPE_JSON.all_cell_annotation_results,
+        all_cell_types              = AGGREGATE_CELL_TYPE_CSV.all_cell_types,
     )
 
     return (
-        library_cell_types = {
-            all_cell_annotation_results: AGGREGATE_CELL_TYPE_JSON.all_cell_annotation_results,
-            all_cell_types:              AGGREGATE_CELL_TYPE_CSV.all_cell_types,
-        },
+        library_cell_types = STRUCTIFY_AGGREGATED_CELLTYPES.library_cell_types,
     )
 }

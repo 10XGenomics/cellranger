@@ -264,7 +264,7 @@ fn collate_probe_metrics(
 /// `pass_filter` is `true` when the probe
 /// - is not deprecated and
 /// - passes the gDNA filter
-fn compute_filtered_probes(per_probe_metrics: Vec<ProbeCounts>) -> Result<Vec<ProbeCounts>> {
+fn compute_filtered_probes(per_probe_metrics: Vec<ProbeCounts>) -> Vec<ProbeCounts> {
     // Dictionary with number of spliced probes that every gene has
     let mut num_spliced_probes_per_gene = TxHashMap::default();
     // Dictionary with number of unspliced probes that every gene has
@@ -363,7 +363,7 @@ fn compute_filtered_probes(per_probe_metrics: Vec<ProbeCounts>) -> Result<Vec<Pr
     let estimated_gdna_per_probe = (estimated_model.model.constant.exp() - 1.0).ceil() as usize;
 
     // Determine which probes are excluded by the gDNA filter. Deprecated probes are also excluded.
-    Ok(per_probe_metrics
+    per_probe_metrics
         .into_iter()
         .map(|x| ProbeCounts {
             pass_filter: x.pass_filter
@@ -371,7 +371,7 @@ fn compute_filtered_probes(per_probe_metrics: Vec<ProbeCounts>) -> Result<Vec<Pr
                     && x.umis_in_filtered_barcodes <= estimated_gdna_per_probe),
             ..x
         })
-        .collect())
+        .collect()
 }
 
 /// Takes in probe barcode counts, filtered barcodes, the probe sets and the refernce
@@ -410,11 +410,13 @@ pub fn get_filtered_per_probe_metrics(
 
     // We run the gDNA analysis only if there are at least GDNA_GENE_THRESHOLD genes
     // with spliced and unspliced probes
-    if num_genes_with_spliced_and_unspliced_probes >= GDNA_GENE_THRESHOLD {
-        compute_filtered_probes(raw_per_probe_metrics)
-    } else {
-        Ok(raw_per_probe_metrics)
-    }
+    Ok(
+        if num_genes_with_spliced_and_unspliced_probes >= GDNA_GENE_THRESHOLD {
+            compute_filtered_probes(raw_per_probe_metrics)
+        } else {
+            raw_per_probe_metrics
+        },
+    )
 }
 
 /// Given the count shards of probe-barcode counts, filtered probes and

@@ -1,14 +1,13 @@
 #![deny(missing_docs)]
-use super::scsv::{Span, eof, rstrip_space, take_until_eof};
+use super::scsv::{Span, eof, rstrip_space, space0, space1, take_until_eof};
 use anyhow::{Result, bail};
 use nom::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till};
-use nom::character::complete::{space0, space1};
 use nom::combinator::peek;
 use nom::multi::many0;
 use nom::sequence::{delimited, preceded, terminated};
-use regex::bytes::Regex;
+use regex::Regex;
 use std::fmt::{Display, Formatter};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
@@ -80,7 +79,10 @@ fn end_val(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
 }
 
 fn not_end_val(input: Span<'_>) -> IResult<Span<'_>, Span<'_>> {
-    let (s, r) = terminated(alt((take_till(|c| c == '|'), take_until_eof)), space0)(input)?;
+    let (s, r) = terminated(
+        alt((take_till(|c| c == '|'), |x| Ok(take_until_eof(x)))),
+        space0,
+    )(input)?;
     Ok((s, rstrip_space(r)))
 }
 
@@ -114,13 +116,12 @@ where
     <T as FromStr>::Err: std::error::Error + Send + Sync + 'static,
 {
     let r = Regex::new(r"^([1-9][0-9]*)(-[1-9][0-9]*)?$")?;
-    if let Some(cap) = r.captures(input.fragment().as_bytes()) {
+    if let Some(cap) = r.captures(input.fragment()) {
         let m = cap.get(1).unwrap();
-        let b = unsafe { std::str::from_utf8_unchecked(m.as_bytes()) };
-        let b = b.parse::<T>()?;
+        let b = m.as_str().parse::<T>()?;
         return if let Some(e) = cap.get(2) {
             // skip the '-'
-            let e = unsafe { std::str::from_utf8_unchecked(&e.as_bytes()[1..]) };
+            let e = &e.as_str()[1..];
             let e = e.parse::<T>()?;
             Ok(b..=e)
         } else {
@@ -137,12 +138,12 @@ where
 
 pub(crate) fn parse_prefixed_range(input: Span<'_>) -> Result<Vec<String>> {
     let r = Regex::new(r"([1-9][0-9]*)(-[1-9][0-9]*)?$")?;
-    if let Some(cap) = r.captures(input.fragment().as_bytes()) {
+    if let Some(cap) = r.captures(input.fragment()) {
         let m = cap.get(1).unwrap();
-        let b = unsafe { std::str::from_utf8_unchecked(m.as_bytes()) };
+        let b = m.as_str();
         let b = b.parse::<usize>()?;
         let range = if let Some(e) = cap.get(2) {
-            let e = unsafe { std::str::from_utf8_unchecked(&e.as_bytes()[1..]) };
+            let e = &e.as_str()[1..];
             let e = e.parse::<usize>()?;
             b..=e
         } else {
@@ -152,6 +153,111 @@ pub(crate) fn parse_prefixed_range(input: Span<'_>) -> Result<Vec<String>> {
         return Ok(range.map(|n| format!("{prefix}{n}")).collect::<Vec<_>>());
     }
     Ok(vec![input.to_string()])
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct WellIndex {
+    col: usize, // Specifying col first so that WellIndex is sorted in column-major order.
+    row: char,
+}
+impl WellIndex {
+    fn increment_column_major(&self, plate_layout: &PlateLayout) -> Option<WellIndex> {
+        if self.row < plate_layout.well_max.row {
+            Some(WellIndex {
+                row: ((self.row as u8) + 1) as char,
+                col: self.col,
+            })
+        } else if self.col < plate_layout.well_max.col {
+            Some(WellIndex {
+                row: plate_layout.well_min.row,
+                col: self.col + 1,
+            })
+        } else {
+            None
+        }
+    }
+    fn new(col: usize, row: char, plate_layout: &PlateLayout) -> Result<WellIndex> {
+        let well_index = WellIndex { col, row };
+        if well_index >= plate_layout.well_min && well_index <= plate_layout.well_max {
+            return Ok(well_index);
+        }
+        anyhow::bail!(
+            "Invalid well coordinate. Well coordinates must be between {} and {}.",
+            plate_layout.well_min,
+            plate_layout.well_max
+        )
+    }
+}
+impl Display for WellIndex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:02}{}", self.col, self.row)
+    }
+}
+struct PlateLayout {
+    well_min: WellIndex,
+    well_max: WellIndex,
+}
+impl PlateLayout {
+    const WELL_96: PlateLayout = PlateLayout {
+        well_min: WellIndex { col: 1, row: 'A' },
+        well_max: WellIndex { col: 12, row: 'H' },
+    };
+    fn expand_range_along_plate_columns(
+        &self,
+        start_well: WellIndex,
+        end_well: WellIndex,
+    ) -> Result<Vec<WellIndex>> {
+        /* Expands a range of plate coordinates by traversing columns.
+        e.g. Given a range 1B to 3C, return all wells from 1B through 1H (assuming a 96 well plate),
+        the entirety of column 2, and 3A through 3C. This logic is consistent with how samples are specified for Scale. */
+        if start_well > end_well {
+            anyhow::bail!("Invalid range. Range start must be less than or equal to range end.")
+        }
+        let mut wells: Vec<WellIndex> = Vec::new();
+        let mut current_well = Some(start_well);
+
+        while let Some(well) = current_well {
+            wells.push(well);
+
+            if well >= end_well {
+                break;
+            }
+            current_well = well.increment_column_major(self);
+        }
+
+        Ok(wells)
+    }
+}
+
+pub(crate) fn parse_prefixed_plate_range(input: Span<'_>) -> Result<Vec<String>> {
+    let plate_layout = PlateLayout::WELL_96;
+    let r = Regex::new(r"^([^0-9]*)([0-9]{2})([A-Z])(?:-([0-9]{2})([A-Z]))?$")?;
+    let Some(cap) = r.captures(input.fragment()) else {
+        bail!(
+            "invalid range '{}' at line: {}, col: {}. Expected coordinates like <prefix><two-digit row><upper case column letter>, e.g. prefix01A",
+            input.fragment(),
+            input.location_line(),
+            input.get_utf8_column()
+        )
+    };
+    let prefix = cap.get(1).unwrap().as_str();
+    let col_start = cap.get(2).unwrap().as_str().parse::<usize>()?;
+    let row_start = cap.get(3).unwrap().as_str().chars().next().unwrap();
+    let start_well = WellIndex::new(col_start, row_start, &plate_layout)?;
+
+    let Some(m) = cap.get(4) else {
+        return Ok(vec![format!("{prefix}{start_well}")]);
+    };
+    let col_end = m.as_str().parse::<usize>()?;
+    let row_end = cap.get(5).unwrap().as_str().chars().next().unwrap();
+
+    let end_well = WellIndex::new(col_end, row_end, &plate_layout)?;
+
+    Ok(plate_layout
+        .expand_range_along_plate_columns(start_well, end_well)?
+        .into_iter()
+        .map(|well_index| format!("{prefix}{well_index}"))
+        .collect())
 }
 
 #[cfg(test)]
@@ -174,6 +280,59 @@ mod tests {
     {
         let (s, _) = peek(alpha1)(input)?;
         s.split_at_position_complete(|c| !(c.is_alphanum() || c.as_char() == '_'))
+    }
+
+    #[test]
+    fn test_parse_prefixed_plate_range() -> Result<()> {
+        let s = span("QRT01A");
+        let r = parse_prefixed_plate_range(s)?;
+        assert_eq!(r, ["QRT01A"]);
+        let s = span("QRT01A-03B");
+        let r = parse_prefixed_plate_range(s)?;
+        assert_eq!(
+            r,
+            vec![
+                "QRT01A", "QRT01B", "QRT01C", "QRT01D", "QRT01E", "QRT01F", "QRT01G", "QRT01H",
+                "QRT02A", "QRT02B", "QRT02C", "QRT02D", "QRT02E", "QRT02F", "QRT02G", "QRT02H",
+                "QRT03A", "QRT03B"
+            ]
+        );
+
+        let s = span("QRT1A-3B");
+        let err = parse_prefixed_plate_range(s).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "invalid range 'QRT1A-3B' at line: 1, col: 1. Expected coordinates like <prefix><two-digit row><upper case column letter>, e.g. prefix01A"
+        );
+
+        let s = span("QRT01a-02B");
+        let err = parse_prefixed_plate_range(s).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "invalid range 'QRT01a-02B' at line: 1, col: 1. Expected coordinates like <prefix><two-digit row><upper case column letter>, e.g. prefix01A"
+        );
+
+        let s = span("QRT03B-01A");
+        let err = parse_prefixed_plate_range(s).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "Invalid range. Range start must be less than or equal to range end."
+        );
+
+        let s = span("QRT00A-01A");
+        let err = parse_prefixed_plate_range(s).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "Invalid well coordinate. Well coordinates must be between 01A and 12H."
+        );
+
+        let s = span("QRT03D-03A");
+        let err = parse_prefixed_plate_range(s).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "Invalid range. Range start must be less than or equal to range end."
+        );
+        Ok(())
     }
 
     #[test]

@@ -8,7 +8,7 @@ use cr_h5::molecule_info::{
 use cr_types::reference::feature_reference::{FeatureDef, FeatureType};
 use ndarray::Axis;
 use pyo3::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::iter::zip;
 use std::path::Path;
 use std::str::FromStr;
@@ -149,7 +149,7 @@ pub(super) fn counts_per_barcode(
     _py: Python<'_>,
     mol_info_path: String,
     feature_type_str: String,
-) -> PyResult<HashMap<String, (Vec<u32>, Vec<u32>)>> {
+) -> std::collections::HashMap<String, (Vec<u32>, Vec<u32>)> {
     // Sum up all the read counts for a list of features, returning a tuple of
     // cnts, feature_id, feature_type
     // method is inefficient because it parses all data columns in mol_info but only uses 2,
@@ -173,7 +173,7 @@ pub(super) fn counts_per_barcode(
     });
 
     // Now translate back for Python
-    Ok(zip(
+    zip(
         counter.features.into_iter().map(|feat| feat.id),
         counter.cnts,
     )
@@ -182,5 +182,5 @@ pub(super) fn counts_per_barcode(
         cnt.umi_cnts.retain(|&x| x != 0);
         (feature, (cnt.umi_cnts, cnt.read_cnts))
     })
-    .collect())
+    .collect()
 }

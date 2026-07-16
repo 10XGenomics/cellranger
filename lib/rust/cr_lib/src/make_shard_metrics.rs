@@ -1,25 +1,27 @@
 #![deny(missing_docs)]
 
 use crate::SequencingMetrics;
-use crate::barcode_sort::ReadVisitor;
+use crate::barcode_sort::ReadTrimmingMetrics;
 use anyhow::Result;
-use barcode::{Barcode, BarcodeConstruct, BarcodeConstructMetric, BcSegSeq};
+use barcode::{BarcodeConstruct, BarcodeConstructMetric, BcSegSeq};
+use cr_types::SequencingPlatform;
 use cr_types::chemistry::ChemistryDef;
 use cr_types::reference::feature_extraction::FeatureExtractor;
 use cr_types::reference::feature_reference::FeatureReference;
-use cr_types::rna_read::{RnaChunk, RnaRead};
+use cr_types::rna_read::RnaRead;
 use fastq_set::metric_utils::{ILLUMINA_QUAL_OFFSET, PatternCheck};
-use fastq_set::read_pair::{ReadPair, ReadPart, WhichRead};
+use fastq_set::read_pair::WhichRead;
+use itertools::Itertools;
 use json_report_derive::JsonReport;
 use metric::{
-    CountMetric, Histogram, JsonReporter, Metric, OrderedHistogram, PercentMetric, SimpleHistogram,
-    TxHashMap,
+    CountMetric, Histogram, JsonReporter, Metric, PercentMetric, SimpleHistogram, TxHashMap,
 };
 use metric_derive::Metric;
+use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::convert::Into;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 const HOMOPOLYMER_LENGTH: usize = 15;
 const BARCODE_MIN_QUAL_THRESHOLD: u8 = 10;
@@ -27,39 +29,39 @@ const UMI_MIN_QUAL_THRESHOLD: u8 = 10;
 const UMI_POLYT_SUFFIX_LENGTH: usize = 5;
 
 #[allow(non_snake_case)]
-#[derive(Default, Serialize, Deserialize, Metric, JsonReport)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Metric, JsonReport)]
 #[json_report(extend = "extra_reports")]
-pub struct MakeShardMetrics {
-    bc_N_bases: PercentMetric,
-    umi_N_bases: PercentMetric,
-    read_N_bases: PercentMetric,
-    read2_N_bases: Option<PercentMetric>,
-    i1_N_bases: Option<PercentMetric>,
-    i2_N_bases: Option<PercentMetric>,
+pub(super) struct MakeShardMetrics {
+    pub bc_N_bases: PercentMetric,
+    pub umi_N_bases: PercentMetric,
+    pub read_N_bases: PercentMetric,
+    pub read2_N_bases: Option<PercentMetric>,
+    pub i1_N_bases: Option<PercentMetric>,
+    pub i2_N_bases: Option<PercentMetric>,
 
-    bc_bases_with_q30: PercentMetric,
+    pub bc_bases_with_q30: PercentMetric,
     /// bc_bases_with_q30_in_gel_bead_frac and bc_bases_with_q30_in_probe_frac
-    bc_bases_with_q30_in: BarcodeConstructMetric<PercentMetric>,
-    umi_bases_with_q30: PercentMetric,
-    read_bases_with_q30: PercentMetric,
-    read2_bases_with_q30: Option<PercentMetric>,
-    i1_bases_with_q30: Option<PercentMetric>,
-    i2_bases_with_q30: Option<PercentMetric>,
+    pub bc_bases_with_q30_in: BarcodeConstructMetric<PercentMetric>,
+    pub umi_bases_with_q30: PercentMetric,
+    pub read_bases_with_q30: PercentMetric,
+    pub read2_bases_with_q30: Option<PercentMetric>,
+    pub i1_bases_with_q30: Option<PercentMetric>,
+    pub i2_bases_with_q30: Option<PercentMetric>,
 
-    A_perfect_homopolymer: PercentMetric,
-    C_perfect_homopolymer: PercentMetric,
-    G_perfect_homopolymer: PercentMetric,
-    T_perfect_homopolymer: PercentMetric,
+    pub A_perfect_homopolymer: PercentMetric,
+    pub C_perfect_homopolymer: PercentMetric,
+    pub G_perfect_homopolymer: PercentMetric,
+    pub T_perfect_homopolymer: PercentMetric,
 
-    good_umi: PercentMetric,
-    has_n_barcode_property: PercentMetric,
-    has_n_umi_property: PercentMetric,
-    pub(super) homopolymer_barcode_property: PercentMetric,
-    homopolymer_umi_property: PercentMetric,
-    low_min_qual_barcode_property: PercentMetric,
-    low_min_qual_umi_property: PercentMetric,
-    polyt_suffix_umi_property: PercentMetric,
-    miss_whitelist_barcode_property: PercentMetric,
+    pub good_umi: PercentMetric,
+    pub has_n_barcode_property: PercentMetric,
+    pub has_n_umi_property: PercentMetric,
+    pub homopolymer_barcode_property: PercentMetric,
+    pub homopolymer_umi_property: PercentMetric,
+    pub low_min_qual_barcode_property: PercentMetric,
+    pub low_min_qual_umi_property: PercentMetric,
+    pub polyt_suffix_umi_property: PercentMetric,
+    pub miss_whitelist_barcode_property: PercentMetric,
 
     /// If there are a total of `r1` read pairs in the input fastqs, we process `r2` read pairs
     /// through `MAKE_SHARD`. `r2` is the minimum of these numbers:
@@ -78,23 +80,31 @@ pub struct MakeShardMetrics {
     /// used historically for `r3`. `total_read_pairs` metric was originally computed in this stage,
     /// but has been moved to `ALIGN_AND_COUNT` except for VDJ which is why we have a
     /// `vdj_total_read_pairs` metric in this struct. `total_read_pairs` = `sequenced_reads_count`.
-    sequenced_reads: CountMetric,
+    pub sequenced_reads: CountMetric,
 
     /// Number of read pairs skipped because it cannot be a valid RnaRead, typically due to
     /// insufficient length. Equal to r2 - r3 (see comment above)
-    unprocessed_read_pairs: i64,
+    pub unprocessed_read_pairs: i64,
 
     /// See the comment on `sequenced_reads`. Only reported for VDJ library types
     #[json_report(skip)]
-    vdj_total_read_pairs: i64,
+    pub vdj_total_read_pairs: i64,
 
     /// Total read pairs per library
     #[json_report(skip)]
-    total_read_pairs_per_library: TxHashMap<u16, i64>,
+    pub total_read_pairs_per_library: TxHashMap<u16, i64>,
 
     /// Fraction of outstanding unknown feature barcode sequences
     #[json_report(block)]
-    unknown_feature_bcs: Option<TxHashMap<String, f64>>,
+    pub unknown_feature_bcs: Option<TxHashMap<String, f64>>,
+
+    /// Metrics collected from trimming long reads.
+    #[json_report(inline)]
+    pub(crate) read_trimming_metrics: Option<ReadTrimmingMetrics>,
+
+    /// Observed and inferred properties of the presumed sequencing platform.
+    #[json_report(inline)]
+    pub(super) platform: Option<SequencerPlatformMetrics>,
 }
 
 impl MakeShardMetrics {
@@ -131,9 +141,10 @@ impl MakeShardMetrics {
             q30_read1: self.read_bases_with_q30,
             unprocessed_reads: self.unprocessed_read_pairs as usize,
             q30_read2: self.read2_bases_with_q30,
+            sequencing_platform: None,
+            read_trimming_metrics: self.read_trimming_metrics.clone(),
         }
     }
-
     pub fn report_unknown_fbc(
         &mut self,
         library_id: u16,
@@ -155,8 +166,60 @@ impl MakeShardMetrics {
         }
     }
 }
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonReport)]
+pub(super) struct SequencerPlatformMetrics {
+    /// The number of :-separated components in the fastq ID header.
+    fastq_id_components: usize,
+    /// The sequencing platform, if we were able to uniquely infer it from headers.
+    inferred_platform: Option<SequencingPlatform>,
+}
 
-#[derive(Clone, Serialize, Deserialize)]
+impl SequencerPlatformMetrics {
+    pub fn from_fastq_id(id: &[u8]) -> Self {
+        let fastq_id_components = id.iter().filter(|&&c| c == b':').count() + 1;
+
+        static ID_PATTERNS: LazyLock<Vec<(SequencingPlatform, Regex)>> = LazyLock::new(|| {
+            vec![
+                (
+                    SequencingPlatform::Illumina,
+                    // <instrument>:<run number>:<flowcell ID>:<lane>:<tile>:<x-pos>:<y-pos>
+                    Regex::new(r"^[a-zA-Z0-9_]*:\d*:[a-zA-Z0-9]*:\d*:\d*:\d*:\d*(?: |$)").unwrap(),
+                ),
+                (
+                    SequencingPlatform::Ultima,
+                    // <instrument id>:<run id>:<wafer id>:<chuck>:<camera>:<ring>:<tile>:<x-pos>:<y-pos>:<segment-num>:<first-flow-signal>:<filtered>:RSQ
+                    Regex::new(r"^[a-zA-Z0-9]*:\d*:[a-zA-Z0-9]*:\d*:\d*:\d*:\d*:\d*:\d*:\d*:\d*:[YN]:[0-9\.]*:[ACTG]*:[A-Z]*:\d*(?: |$)")
+                        .unwrap(),
+                ),
+            ]
+        });
+
+        let inferred_platform = ID_PATTERNS
+            .iter()
+            .filter_map(|(platform, re)| re.is_match(id).then_some(*platform))
+            .unique()
+            .at_most_one()
+            .ok() // if we matched more than one platform, return None
+            .flatten();
+        Self {
+            fastq_id_components,
+            inferred_platform,
+        }
+    }
+}
+
+impl Metric for SequencerPlatformMetrics {
+    fn merge(&mut self, other: Self) {
+        // Keep whichever FASTQ ID component count is higher.
+        // TODO: this is arbitrary. It would be nice if we could report a value
+        // per fastq, but telemetry does not support this currently.
+        self.fastq_id_components = self.fastq_id_components.max(other.fastq_id_components);
+        // We'll probably only ever have one of these...
+        self.inferred_platform = self.inferred_platform.max(other.inferred_platform);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MakeShardHistograms {
     pub(super) valid_bc_segment_counts: BarcodeConstruct<SimpleHistogram<BcSegSeq>>,
     pub(super) r1_lengths: SimpleHistogram<usize>,
@@ -195,7 +258,7 @@ impl MakeShardHistograms {
             .for_each(|(this, that)| this.merge(that));
     }
     fn observe(&mut self, rna_read: &RnaRead) {
-        if let Some(r1) = rna_read.read.get(WhichRead::R1, ReadPart::Seq) {
+        if let Some(r1) = rna_read.seq(WhichRead::R1) {
             self.r1_lengths.observe(&r1.len());
         }
         rna_read
@@ -211,74 +274,70 @@ impl MakeShardHistograms {
     }
 }
 
-pub struct MakeShardVisitor<'a> {
+#[derive(Debug, Clone)]
+pub struct MakeShardMetricsAccum {
+    pub metrics: MakeShardMetrics,
+    pub histograms: MakeShardHistograms,
+    pub feature_counts: Vec<i64>,
+    library_id: u16,
+}
+
+impl MakeShardMetricsAccum {
+    pub fn new(feature_count: usize, library_id: u16, chemistry_def: &ChemistryDef) -> Self {
+        let mut metrics = MakeShardMetrics::default();
+        // Handle edge case where a library has no read counts (possibly because it wasn't sequenced
+        // far enough to have a parseable read) and so would not be initialized with a count.
+        metrics.total_read_pairs_per_library.insert(library_id, 0);
+        Self {
+            metrics,
+            histograms: MakeShardHistograms::new(chemistry_def.barcode_construct().map(|_| ())),
+            feature_counts: vec![0i64; feature_count],
+            library_id,
+        }
+    }
+
+    pub fn merge(&mut self, rhs: Self) {
+        self.metrics.merge(rhs.metrics);
+        self.histograms.merge(rhs.histograms);
+        self.feature_counts
+            .iter_mut()
+            .zip_eq(rhs.feature_counts)
+            .for_each(|(x, y)| *x += y);
+        assert_eq!(self.library_id, rhs.library_id);
+    }
+}
+
+pub struct MakeShardMetricProc {
     poly_a_pattern: PatternCheck,
     poly_c_pattern: PatternCheck,
     poly_g_pattern: PatternCheck,
     poly_t_pattern: PatternCheck,
-    metrics: MakeShardMetrics,
-    histograms: MakeShardHistograms,
-    valid_bc_counts: OrderedHistogram<Barcode>,
-    read_chunks: &'a [RnaChunk],
-    pub(super) feature_counts: Vec<i64>,
-    feature_extractor: Option<FeatureExtractor>,
+    feature_extractor: Option<Arc<FeatureExtractor>>,
+    pub feature_count: usize,
 }
 
-impl<'a> MakeShardVisitor<'a> {
-    pub fn new(
-        reference: Option<FeatureReference>,
-        read_chunks: &'a [RnaChunk],
-        chunk_id: usize,
-        chemistry_def: &ChemistryDef,
-    ) -> Result<Self> {
-        let (feature_counts, feature_extractor) = if let Some(reference) = reference {
+impl MakeShardMetricProc {
+    pub fn new(reference: Option<FeatureReference>) -> Result<Self> {
+        let (feature_count, feature_extractor) = if let Some(reference) = reference {
             (
-                vec![0i64; reference.feature_defs.len()],
-                Some(FeatureExtractor::new(Arc::new(reference), None)?),
+                reference.feature_defs.len(),
+                Some(Arc::new(FeatureExtractor::new(Arc::new(reference), None)?)),
             )
         } else {
-            (vec![], None)
+            (0, None)
         };
-        // Handle edge case where a library has no read counts (possibly because it wasn't sequenced
-        // far enough to have a parseable read) and so would not be initialized with a count.
-        let mut metrics = MakeShardMetrics::default();
-        metrics
-            .total_read_pairs_per_library
-            .insert(read_chunks[chunk_id].library_id(), 0);
-        Ok(MakeShardVisitor {
+
+        Ok(MakeShardMetricProc {
             poly_a_pattern: PatternCheck::new(&[b'A'; HOMOPOLYMER_LENGTH]),
             poly_c_pattern: PatternCheck::new(&[b'C'; HOMOPOLYMER_LENGTH]),
             poly_g_pattern: PatternCheck::new(&[b'G'; HOMOPOLYMER_LENGTH]),
             poly_t_pattern: PatternCheck::new(&[b'T'; HOMOPOLYMER_LENGTH]),
-            metrics,
-            feature_counts,
             feature_extractor,
-            read_chunks,
-            histograms: MakeShardHistograms::new(chemistry_def.barcode_construct().map(|_| ())),
-            valid_bc_counts: Default::default(),
+            feature_count,
         })
     }
 
-    /// Return the associated metrics.
-    pub fn metrics(&self) -> &MakeShardMetrics {
-        &self.metrics
-    }
-
-    /// Return the various histograms.
-    pub fn histograms(&self) -> &MakeShardHistograms {
-        &self.histograms
-    }
-
-    /// Return the ordered valid barcode histogram.
-    pub fn valid_bc_counts(&self) -> &OrderedHistogram<Barcode> {
-        &self.valid_bc_counts
-    }
-}
-
-impl ReadVisitor for MakeShardVisitor<'_> {
-    type ReadType = RnaRead;
-
-    fn visit_processed_read(&mut self, rna_read: &mut Self::ReadType) -> Result<()> {
+    pub fn visit_processed_read(&self, rna_read: &RnaRead, accum: &mut MakeShardMetricsAccum) {
         let homopolymer_metric = |pattern_check: &PatternCheck,
                                   read: &[u8],
                                   read2_option: Option<&[u8]>|
@@ -327,7 +386,7 @@ impl ReadVisitor for MakeShardVisitor<'_> {
                 rna_read.r2_seq(),
             ),
 
-            good_umi: rna_read.umi().is_valid().into(),
+            good_umi: rna_read.umi().is_valid(&rna_read.raw_umi_qual()).into(),
             has_n_barcode_property: rna_read
                 .raw_bc_construct_seq()
                 .iter()
@@ -352,20 +411,21 @@ impl ReadVisitor for MakeShardVisitor<'_> {
             miss_whitelist_barcode_property: (!rna_read.barcode_is_valid()).into(),
             sequenced_reads: 1.into(),
             vdj_total_read_pairs: i64::from(rna_read.library_type.is_vdj()),
-            total_read_pairs_per_library: std::iter::once((
-                rna_read.read_chunk(self.read_chunks).library_id(),
-                1,
-            ))
-            .collect(),
-            unknown_feature_bcs: Default::default(),
+            // Optimization - manually merge this below to avoid allocating a hashmap for every read.
+            total_read_pairs_per_library: TxHashMap::default(),
+            read_trimming_metrics: None,
+            unknown_feature_bcs: None,
 
             unprocessed_read_pairs: 0,
+            platform: None,
         };
-        self.metrics.merge(read_metrics);
-        self.histograms.observe(rna_read);
-        if rna_read.barcode_is_valid() {
-            self.valid_bc_counts.observe_owned(rna_read.barcode());
-        }
+        accum.metrics.merge(read_metrics);
+        *accum
+            .metrics
+            .total_read_pairs_per_library
+            .get_mut(&accum.library_id)
+            .unwrap() += 1;
+        accum.histograms.observe(rna_read);
 
         // collect initial feature barcode counts
         if let Some(res) = self
@@ -374,21 +434,15 @@ impl ReadVisitor for MakeShardVisitor<'_> {
             .and_then(|e| e.match_read(rna_read))
         {
             if res.ids.len() == 1 {
-                self.feature_counts[res.ids[0].0] += 1;
+                accum.feature_counts[res.ids[0].0] += 1;
             } else {
                 let raw_feature_bc = String::from_utf8(res.barcode).unwrap();
-                self.histograms
+                accum
+                    .histograms
                     .unknown_feature_bcs
                     .observe_owned(raw_feature_bc);
             }
         }
-
-        Ok(())
-    }
-
-    fn visit_unprocessed_read(&mut self, _: ReadPair, _: String) -> Result<()> {
-        self.metrics.unprocessed_read_pairs += 1;
-        Ok(())
     }
 }
 
@@ -427,4 +481,67 @@ where
         }
     }
     (num, den).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::barcode_sort::ReadTrimmingMetrics;
+    #[test]
+    fn test_sequencing_metrics_includes_trimming() {
+        let m = MakeShardMetrics {
+            read_trimming_metrics: Some(ReadTrimmingMetrics::default()),
+            ..Default::default()
+        };
+        let seq = m.sequencing_metrics_for_fastq("test_fastq".to_string());
+        assert!(seq.read_trimming_metrics.is_some());
+    }
+
+    fn check_fastq_id(
+        id: &[u8],
+        expected_components: usize,
+        expected_platform: Option<SequencingPlatform>,
+    ) {
+        let metrics = SequencerPlatformMetrics::from_fastq_id(id);
+        assert_eq!(
+            metrics.fastq_id_components,
+            expected_components,
+            "Header {:?}: expected {} ID components, got {}",
+            String::from_utf8_lossy(id),
+            expected_components,
+            metrics.fastq_id_components
+        );
+        assert_eq!(
+            metrics.inferred_platform,
+            expected_platform,
+            "Header {:?}: expected platform {:?}, got {:?}",
+            String::from_utf8_lossy(id),
+            expected_platform,
+            metrics.inferred_platform
+        );
+    }
+
+    #[test]
+    fn test_from_fastq_header() {
+        // Illumina headers
+        check_fastq_id(
+            b"D000684:840:HFCNFBCXY:1:1101:4266:2693",
+            7,
+            Some(SequencingPlatform::Illumina),
+        );
+
+        // Production Ultima headers
+        check_fastq_id(
+            b"V143:442353:442353:442353:0:2:1:187:11:1:990:N:0.872:CTCAGCATA:NA:1286",
+            16,
+            Some(SequencingPlatform::Ultima),
+        );
+
+        // Unrecognized formats
+        check_fastq_id(b"UNKNOWN_FORMAT_READ_12345", 1, None);
+        check_fastq_id(b"", 1, None);
+        check_fastq_id(b"INST:1:FLOWCELL:1:2", 5, None);
+        check_fastq_id(b"read.123.something/1", 1, None);
+        check_fastq_id(b"A:B:C", 3, None);
+    }
 }

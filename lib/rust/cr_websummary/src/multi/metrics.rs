@@ -205,6 +205,8 @@ pub struct MetricConditions {
     pub has_gdna: Option<bool>,
     /// Include introns mode is/isn't set.
     pub include_introns: Option<bool>,
+    /// Has/doesn't have Q30 scores.
+    pub has_q30_scores: Option<bool>,
 }
 
 fn matches_option<T: PartialEq>(opt: Option<T>, val: T) -> bool {
@@ -224,6 +226,7 @@ impl MetricConditions {
             && matches_option(self.is_read_multiplexed, cond.is_read_multiplexed)
             && matches_option(self.is_rtl, cond.is_rtl)
             && matches_option(self.has_gdna, cond.has_gdna)
+            && matches_option(self.has_q30_scores, cond.has_q30_scores)
     }
 
     fn matches_section(&self, this_section: Section) -> bool {
@@ -255,6 +258,8 @@ pub struct ActiveConditions {
     pub has_gdna: bool,
     /// The parameter include-introns is enabled.
     pub include_introns: bool,
+    /// Has Q30 scores.
+    pub has_q30_scores: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -595,8 +600,8 @@ mod test {
 
         let extracted = metrics_proc.process(
             Section::Gex,
-            &Default::default(),
-            &Default::default(),
+            &ActiveConditions::default(),
+            &AlertContext::default(),
             &metrics,
         )?;
         assert_json_snapshot!(extracted);

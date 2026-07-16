@@ -12,12 +12,13 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 import numpy.ma as ma
 
-import cellranger.sgt as cr_sgt
-import cellranger.stats as cr_stats
 from cellranger.analysis.diffexp import adjust_pvalue_bh
+from cellranger.cell_calling_stats import (
+    compute_multinomial_ambient_pvalues,
+    eval_multinomial_loglikelihoods,
+)
 from cellranger.chemistry import (
     CHEMISTRY_DESCRIPTION_FIELD,
-    CHEMISTRY_SC3P_LT,
     FLEX_V2_CHEMISTRIES,
     HT_CHEMISTRIES,
     SC3P_V3_CHEMISTRIES,
@@ -25,58 +26,56 @@ from cellranger.chemistry import (
     SC5P_CHEMISTRIES,
     SC5P_V3_CHEMISTRIES,
 )
+from cellranger.sgt import SimpleGoodTuringError, sgt_proportions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from typing import Literal
 
-    from scipy.sparse import csc_matrix
-
-    from cellranger.feature_ref import FeatureReference
-    from cellranger.matrix import CountMatrix
+    from cellranger.matrix import CountMatrixView
 
 # Minimum number of UMIs for a barcode to be called as a cell
 MIN_GLOBAL_UMIS = 0
-
 # Maximum percentage of mitochondrial reads allowed for a barcode to be called a cell
 MAX_MITO_PCT = 100.0
-
 # Minimum number of UMIS per barcode to consider after the initial cell calling
 MIN_UMIS = 500
-
 # Default number of background simulations to make
 NUM_SIMS = 100000
-
 # Minimum number of UMIS per barcode to consider after the initial cell calling for targeted GEX
 TARGETED_CC_MIN_UMIS_ADDITIONAL_CELLS = 10
-
 # Minimum number of target gene UMIs per barcode required to be called a cell for targeted GEX
 TARGETED_CC_MIN_UMIS_FROM_TARGET_GENES = 1
 
 
 def estimate_profile_sgt(
-    matrix: csc_matrix,
+    matrix: CountMatrixView,
     barcode_indices: np.ndarray[tuple[int], np.dtype[np.intp]],
     nz_feat: np.ndarray[tuple[int], np.dtype[np.intp]],
 ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Estimate a gene expression profile by Simple Good Turing.
 
     Args:
-      matrix: Sparse matrix of all counts
+      matrix: CountMatrixView
       barcode_indices: Barcode indices to use
       nz_feat: Indices of features that are non-zero at least once
 
     Returns:
       profile (np.array(float)): Estimated probabilities of length len(nz_feat).
     """
-    # Initial profile estimate
-    prof_mat = matrix[:, barcode_indices]
-
-    profile = np.ravel(prof_mat[nz_feat, :].sum(axis=1))
+    # Initial profile estimate. `nz_feat` is in original-matrix index space (callers map
+    # view-positions through `feat_original_indices` before calling); `select_features` is
+    # mask-based and takes original-matrix indices, so this form works regardless of whether
+    # the input view has already been filtered (multi-feature-type, multi-genome).
+    # `barcode_indices` are likewise in original-matrix space; this is valid because the
+    # caller (find_nonambient_barcodes) guarantees the view selects all barcodes (it asserts
+    # bc_mask.all()), so original-matrix and view barcode indices coincide.
+    profile = np.ravel(
+        matrix.select_barcodes(barcode_indices).select_features(nz_feat).sum(axis=1)
+    ).astype(np.int64)
     zero_feat = np.flatnonzero(profile == 0)
 
     # Simple Good Turing estimate
-    p_smoothed, p0 = cr_sgt.sgt_proportions(profile[np.flatnonzero(profile)])
+    p_smoothed, p0 = sgt_proportions(profile[np.flatnonzero(profile)])
 
     n0 = len(zero_feat)
     if n0 == 0:
@@ -95,15 +94,15 @@ def estimate_profile_sgt(
 
 
 class NonAmbientBarcodeResult(NamedTuple):
-    eval_bcs: np.ndarray  # Candidate barcode indices (n)
-    log_likelihood: np.ndarray  # Ambient log likelihoods (n)
-    pvalues: np.ndarray  # pvalues (n)
-    pvalues_adj: np.ndarray  # B-H adjusted pvalues (n)
-    is_nonambient: np.ndarray  # Boolean nonambient calls (n)
+    eval_bcs: np.ndarray[tuple[int], np.dtype[np.intp]]  # Candidate barcode indices (n)
+    log_likelihood: np.ndarray[tuple[int], np.dtype[np.float64]]  # Ambient log likelihoods (n)
+    pvalues: np.ndarray[tuple[int], np.dtype[np.float64]]  # pvalues (n)
+    pvalues_adj: np.ndarray[tuple[int], np.dtype[np.float64]]  # B-H adjusted pvalues (n)
+    is_nonambient: np.ndarray[tuple[int], np.dtype[np.bool_]]  # Boolean nonambient calls (n)
     emptydrops_minimum_umis: int  # Min UMI threshold for empty drops (1)
 
 
-def get_empty_drops_fdr(chemistry_description: str) -> float:
+def _get_empty_drops_fdr(chemistry_description: str) -> float:
     """Gets the maximum adjusted p-value to call a barcode as non-ambient."""
     # The chips used with V4 have roughly double the GEMs as the older V3 chips
     chemistries = SC3P_V4_CHEMISTRIES + SC3P_V3_CHEMISTRIES + SC5P_CHEMISTRIES + HT_CHEMISTRIES
@@ -121,9 +120,7 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
     Returns:
         (lower_range, upper_range)
     """
-    if chemistry_description == CHEMISTRY_SC3P_LT[CHEMISTRY_DESCRIPTION_FIELD]:
-        n_partitions = 9000
-    elif any(
+    if any(
         chemistry_description == chem[CHEMISTRY_DESCRIPTION_FIELD]
         for chem in HT_CHEMISTRIES + SC3P_V4_CHEMISTRIES + SC5P_V3_CHEMISTRIES
     ):
@@ -144,48 +141,39 @@ def get_empty_drops_range(chemistry_description: str, num_probe_bcs: int | None)
     return (n_partitions // 2, n_partitions)
 
 
-def _sort_by_feat_id(
-    eval_features: np.ndarray[tuple[int], np.dtype[np.intp]],
-    feature_ref: FeatureReference,
-):
-    """Sort eval_features by feature ID."""
-    assert max(eval_features) < len(feature_ref.feature_defs)
-    eval_features_set = set(eval_features)
-    feat_id_order = np.argsort(
-        [
-            feat_id
-            for idx, feat_id in enumerate(feature_ref.get_feature_ids())
-            if idx in eval_features_set
-        ]
-    )
-    eval_features[:] = eval_features[feat_id_order]
-
-
 def find_nonambient_barcodes(
-    matrix: CountMatrix,
+    matrix: CountMatrixView,
     orig_cell_bcs: Iterable[str],
     chemistry_description,
     num_probe_bcs: int | None,
     *,
     emptydrops_minimum_umis: int = MIN_UMIS,
     num_sims: int = NUM_SIMS,
-    method: Literal["dirichlet", "multinomial"] = "multinomial",
 ) -> NonAmbientBarcodeResult | None:
     """Call barcodes as being sufficiently distinct from the ambient profile.
 
     Args:
-      matrix (CountMatrix): Full expression matrix.
+      matrix (CountMatrixView): Full expression matrix.
       orig_cell_bcs (iterable of str): Strings of initially-called cell barcodes.
-      chemistry_description: Change ambient RNA estimation for LT chemistry
+      chemistry_description: Change ambient RNA estimation
       num_probe_bcs: The number of probe or OCM multiplexing barcodes
       emptydrops_minimum_umis: Minimum UMI threshold
       num_sims: Number of simulations
-      method: Either "dirichlet" or "multinomial"
 
     Returns:
       NonAmbientBarcodeResult
     """
-    assert method in ["dirichlet", "multinomial"]
+    # select_barcodes/select_features on a CountMatrixView take indices in the *original*
+    # matrix space (mask-AND), but `ambient_bcs`/`eval_bcs` below are in the view's barcode
+    # space (get_counts_per_bc / arange(bcs_dim)). They coincide only when no barcode subset
+    # is applied. FILTER_BARCODES always runs a single GEM group, so the incoming view selects
+    # all barcodes; assert that invariant rather than translating indices. The deeper fix —
+    # unifying CountMatrix vs CountMatrixView index conventions — is a follow-up to the
+    # CountMatrixView refactor (CELLRANGER-9712).
+    assert matrix.bc_mask.all(), (
+        "find_nonambient_barcodes requires a view with all barcodes selected; a barcode-subset "
+        "view would mis-select columns (view-space vs original-matrix indices in select_barcodes)."
+    )
 
     # Estimate an ambient RNA profile
     umis_per_bc = matrix.get_counts_per_bc()
@@ -196,22 +184,15 @@ def find_nonambient_barcodes(
     if len(ambient_bcs) > 0:
         try:
             eval_features: np.ndarray[tuple[int], np.dtype[np.intp]] = np.flatnonzero(
-                np.asarray(matrix.m.sum(1))
+                np.asarray(matrix.sum(1))
             )
-            # Sort features by their ID to ensure consistent ordering between runs with and without
-            # the reference genome. A better fix would be to sort the features by their ID when the
-            # feature ref data structure is built at the start of the pipeline making the matrix
-            # feature dimension itself consistent. However, this would break aggr-ing outputs of
-            # current CR version with older versions. When aggr supports out of order features, the
-            # better fix can be implemented.
-            # Jira: CELLRANGER-9524
-            _sort_by_feat_id(eval_features, matrix.feature_ref)
+            eval_features = matrix.feat_original_indices[eval_features]
             ambient_profile_p = estimate_profile_sgt(
-                matrix.m,
+                matrix,
                 ambient_bcs,
                 eval_features,
             )
-        except cr_sgt.SimpleGoodTuringError as e:
+        except SimpleGoodTuringError as e:
             print(str(e))
             return None
     else:
@@ -222,8 +203,8 @@ def find_nonambient_barcodes(
     orig_cell_bcs_set = set(orig_cell_bcs)
     orig_cells: np.ndarray[tuple[int], np.dtype[np.intp]] = np.flatnonzero(
         np.fromiter(
-            (bc in orig_cell_bcs_set for bc in matrix.bcs),
-            count=len(matrix.bcs),
+            (bc in orig_cell_bcs_set for bc in matrix.get_barcodes()),
+            count=matrix.bcs_dim,
             dtype=bool,
         )
     )
@@ -256,11 +237,9 @@ def find_nonambient_barcodes(
         matrix=matrix,
         eval_features=eval_features,
         eval_bcs=eval_bcs,
-        ambient_bcs=ambient_bcs,
         ambient_profile_p=ambient_profile_p,
         umis_per_bc=umis_per_bc,
         chemistry_description=chemistry_description,
-        method=method,
         num_sims=num_sims,
     )
     is_nonambient = pvalues_adj <= max_adj_pvalue
@@ -278,7 +257,7 @@ def find_nonambient_barcodes(
 
 
 def _compute_eval_bcs(
-    matrix: CountMatrix,
+    matrix: CountMatrixView,
     orig_cells: np.ndarray[tuple[int], np.dtype[np.intp]],
     empty_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
     umis_per_bc: np.ndarray[tuple[int], np.dtype[np.intp]],
@@ -291,7 +270,7 @@ def _compute_eval_bcs(
         evaluated.
     """
     # Look at non-cell barcodes above a minimum UMI count
-    eval_bcs = np.ma.array(np.arange(matrix.bcs_dim))
+    eval_bcs: ma.MaskedArray[tuple[int], np.dtype[np.int_]] = np.ma.array(np.arange(matrix.bcs_dim))
     eval_bcs[orig_cells] = ma.masked
 
     max_background_umis = np.max(umis_per_bc[empty_bcs], initial=0)
@@ -301,7 +280,7 @@ def _compute_eval_bcs(
     eval_bcs[umis_per_bc < emptydrops_minimum_umis] = ma.masked
     n_unmasked_bcs = len(eval_bcs) - eval_bcs.mask.sum()
 
-    eval_bcs: np.ndarray[tuple[int], np.dtype[np.intp]] = np.argsort(
+    result = np.argsort(
         ma.masked_array(
             umis_per_bc,
             mask=eval_bcs.mask,
@@ -312,22 +291,25 @@ def _compute_eval_bcs(
     # which sorts the input, and also to get the string barcode sequences via np.array(matrix.bcs)[eval_bcs],
     # which doesn't. Without sorting here, the matching between the sequences and their counts from both
     # genomes is essentially random, thus the species assignments will be wrong.
-    eval_bcs.sort()
+    result.sort()
 
-    return eval_bcs
+    return result
 
 
 def _compute_pvalues(
-    matrix: CountMatrix,
+    matrix: CountMatrixView,
     eval_features: np.ndarray[tuple[int], np.dtype[np.intp]],
     eval_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
-    ambient_bcs: np.ndarray[tuple[int], np.dtype[np.intp]],
     ambient_profile_p: np.ndarray[tuple[int], np.dtype[np.float64]],
     umis_per_bc: np.ndarray[tuple[int], np.dtype[np.int64]],
     chemistry_description: str,
-    method: Literal["dirichlet", "multinomial"],
     num_sims: int,
-):
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.float64]],
+    np.ndarray[tuple[int], np.dtype[np.float64]],
+    np.ndarray[tuple[int], np.dtype[np.float64]],
+    float,
+]:
     """Compute p-values for the evaluation of barcodes.
 
     Returns:
@@ -338,35 +320,33 @@ def _compute_pvalues(
     """
     # Compute observed log-likelihood of barcodes being generated from ambient RNA and
     # simulate log-likelihoods
-    eval_mat = matrix.m[eval_features, :][:, eval_bcs]
-    if method == "dirichlet":
-        alpha = cr_stats.estimate_dirichlet_overdispersion(matrix.m, ambient_bcs, ambient_profile_p)
-        obs_loglk = cr_stats.eval_dirichlet_multinomial_loglikelihoods(
-            eval_mat, alpha * ambient_profile_p
-        )
-        distinct_ns, sim_loglk = cr_stats.simulate_dirichlet_multinomial_loglikelihoods(
-            alpha * ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
-        )
-    else:
-        obs_loglk = cr_stats.eval_multinomial_loglikelihoods(
-            eval_mat,
-            np.log(ambient_profile_p),
-        )
-        (
-            distinct_ns,
-            sim_loglk,
-        ) = cr_stats.simulate_multinomial_loglikelihoods(
-            ambient_profile_p, umis_per_bc[eval_bcs], num_sims=num_sims
-        )
-
-    # Compute p-values
-    pvalues = cr_stats.compute_ambient_pvalues(
-        umis_per_bc[eval_bcs], obs_loglk, distinct_ns, sim_loglk
+    matrix = matrix.select_features(eval_features).select_barcodes(eval_bcs)
+    obs_loglk = eval_multinomial_loglikelihoods(
+        matrix,
+        np.log(ambient_profile_p),
+    )
+    # `compute_multinomial_ambient_pvalues` runs a seeded N-simulation whose draws are
+    # `np.searchsorted(np.cumsum(ambient_profile_p), RNG.random(...))`, so the simulated
+    # log-likelihoods depend on the feature ordering of `ambient_profile_p`. Master
+    # historically ordered features by feature_id (CELLRANGER-9524) so that runs with and
+    # without a reference genome agree; that sort is now done here via `feat_id_perm` below.
+    # The view-based code keeps features
+    # in mask order (= original-matrix-index ascending), which would produce different
+    # simulated p-values for the same input. `obs_loglk` is permutation-invariant in
+    # features (sum-of-products), so we can reorder `ambient_profile_p` for the simulation
+    # without touching the obs_loglk computation above.
+    feat_ids = matrix.matrix.feature_ref.get_feature_ids()
+    feat_id_perm = np.argsort([feat_ids[i] for i in eval_features])
+    pvalues = compute_multinomial_ambient_pvalues(
+        ambient_profile_p[feat_id_perm],
+        umis_per_bc[eval_bcs],
+        obs_loglk,
+        num_sims=num_sims,
     )
 
     pvalues_adj = adjust_pvalue_bh(pvalues)
 
-    max_adj_pvalue = get_empty_drops_fdr(chemistry_description)
+    max_adj_pvalue = _get_empty_drops_fdr(chemistry_description)
     print(f"Max adjusted P-value: {max_adj_pvalue}")
     print(f"Min observed P-value: {min(pvalues_adj)}")
 

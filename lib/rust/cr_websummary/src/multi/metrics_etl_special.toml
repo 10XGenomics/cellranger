@@ -16,77 +16,121 @@ group_by_key = "fastq_id"
 
     [sequencing_metrics.number_of_reads]
     type = "usize"
-    header = "Number of reads"
+    header = "Number of reads analyzed"
 
-    [sequencing_metrics.q30_barcode]
+    [sequencing_metrics.unprocessed_reads]
+    type = "usize"
+    header = "Number of short reads skipped"
+
+    [sequencing_metrics.sequencing_platform]
+    type = "String"
+    extract = "optional"
+    header = "Platform"
+
+    [sequencing_metrics.total_raw_reads_count]
+    type = "usize"
+    extract = "optional"
+    header = "Raw input reads"
+
+    [sequencing_metrics.reads_with_inserts_count]
+    type = "usize"
+    extract = "optional"
+    header = "Reads passing"
+
+    [sequencing_metrics.insert_full_length_frac]
+    type = "Percent"
+    extract = "optional"
+    header = "% Reads full-length"
+
+    [sequencing_metrics.insert_truncated_frac]
+    type = "Percent"
+    extract = "optional"
+    header = "% Reads truncated"
+
+    [sequencing_metrics.insert_size_median]
+    type = "usize"
+    extract = "optional"
+    header = "Median insert size"
+
+[sequencing_metrics_q30]
+tier = "Library"
+group_by_key = "fastq_id"
+
+    [sequencing_metrics_q30.conditions]
+    has_q30_scores = true
+
+    [sequencing_metrics_q30.fastq_id]
+    header = "Fastq ID"
+    type = "String"
+
+    [sequencing_metrics_q30.q30_barcode]
     json_key = "q30_barcode_frac"
     type = "Percent"
     header = "Q30 barcodes"
 
-        [[sequencing_metrics.q30_barcode.alerts]]
+        [[sequencing_metrics_q30.q30_barcode.alerts]]
         error_threshold = 0.45
         warn_threshold = 0.55
         warn_title = "Fraction of cell barcode bases with Q-score >= 30 is low"
         detail = "Ideal > 55%. Fraction of cell barcode bases (R1 for Single Cell 3' v2/v3/v4 and Single Cell 5', or either R1 or R2 for Flex) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
-    [sequencing_metrics.q30_gem_barcode]
+    [sequencing_metrics_q30.q30_gem_barcode]
     json_key = "q30_gem_barcode_frac"
     type = "Percent"
     extract = "optional"
     header = "Q30 GEM barcodes"
 
-        [[sequencing_metrics.q30_gem_barcode.alerts]]
+        [[sequencing_metrics_q30.q30_gem_barcode.alerts]]
         error_threshold = 0.45
         warn_threshold = 0.55
         warn_title = "Fraction of GEM barcode bases with Q-score >= 30 is low"
         detail = "Ideal > 55%. Fraction of GEM barcode bases (R1 for Flex) with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
-    [sequencing_metrics.q30_probe_barcode]
+    [sequencing_metrics_q30.q30_probe_barcode]
     json_key = "q30_probe_barcode_frac"
     type = "Percent"
     extract = "optional"
     header = "Q30 probe barcodes"
 
-        [[sequencing_metrics.q30_probe_barcode.alerts]]
+        [[sequencing_metrics_q30.q30_probe_barcode.alerts]]
         error_threshold = 0.45
         warn_threshold = 0.8
         warn_title = "Fraction of probe barcode bases with Q-score >= 30 is low"
         detail = "Ideal > 80%. Fraction of probe barcode bases in the R2 read for Flex with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality. This issue can be caused by a lack of sequence diversity in the flowcell, and it may be remedied by increasing diversity by adding PhiX or other library types during sequencing."
 
-    [sequencing_metrics.q30_umi]
+    [sequencing_metrics_q30.q30_umi]
     json_key = "q30_umi_frac"
     type = "Percent"
     header = "Q30 UMI"
 
-        [[sequencing_metrics.q30_umi.alerts]]
+        [[sequencing_metrics_q30.q30_umi.alerts]]
         error_threshold = 0.65
         warn_threshold = 0.75
         warn_title = "Fraction of UMI bases with Q-score >= 30 is low"
         detail = "Ideal > 75%. Fraction of UMI bases in the R1 read with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
-    [sequencing_metrics.q30_read1]
+    [sequencing_metrics_q30.q30_read1]
     json_key = "q30_read1_frac"
     type = "Percent"
     header = "Q30 RNA read" # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
 
-        [[sequencing_metrics.q30_read1.alerts]]
+        [[sequencing_metrics_q30.q30_read1.alerts]]
         error_threshold = 0.55
         warn_threshold = 0.65
         warn_title = "Fraction of RNA Read bases with Q-score >= 30 is low"
         detail = "Ideal > 65%. Fraction of RNA Read bases with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
 
-    [sequencing_metrics.q30_read2]
+    [sequencing_metrics_q30.q30_read2]
     json_key = "q30_read2_frac"
     type = "Percent"
     extract = "optional"
     header = "Q30 RNA read 2" # RNA read 1 is Illumina Read 2 and RNA read 2 is None except in paired end
 
-        [[sequencing_metrics.q30_read2.alerts]]
+        [[sequencing_metrics_q30.q30_read2.alerts]]
         error_threshold = 0.55
         warn_threshold = 0.65
         warn_title = "Fraction of RNA Read 2 bases with Q-score >= 30 is low"
         detail = "Ideal > 65%. Fraction of RNA Read 2 bases with Q-score >= 30 is low. A lower fraction might indicate poor sequencing quality."
-
 
 
 # --------------------------------------------------------------------------------------------------

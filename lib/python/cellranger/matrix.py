@@ -10,7 +10,7 @@ import os.path
 import pathlib
 import shutil
 from collections import OrderedDict
-from collections.abc import Callable, Collection, Container, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Container, Generator, Iterable, Mapping, Sequence
 from io import IOBase
 from typing import Any, overload
 
@@ -26,10 +26,7 @@ import cellranger.rna.library as rna_library
 import cellranger.sparse as cr_sparse
 import cellranger.utils as cr_utils
 import tenkit.safe_json as tk_safe_json
-from cellranger.fast_utils import (  # pylint: disable=no-name-in-module, invalid-name
-    MatrixBarcodeIndex,
-    load_matrix_by_filtered_feature_type,
-)
+from cellranger.fast_utils import MatrixBarcodeIndex, load_matrix_by_filtered_feature_type
 from cellranger.feature_ref import GENOME_FEATURE_TAG, FeatureDef, FeatureReference
 from cellranger.wrapped_tables import tables
 
@@ -86,8 +83,8 @@ class NullAxisMatrixError(Exception):
 
 
 def _ensure_types_match(
-    original: sp_sparse.spmatrix, subset: sp_sparse.spmatrix
-) -> sp_sparse.spmatrix:
+    original: sp_sparse.csc_matrix, subset: sp_sparse.csc_matrix
+) -> sp_sparse.csc_matrix:
     """Scipy has the fantastic habit of subsetting a matrix of one dtype down to a float64 if no elements are selected.
 
     This function makes the new matrix have the same type as the old matrix, and can be called after subsetting.
@@ -127,8 +124,12 @@ class CountMatrixView:
         feature_indices: Collection[int] | None = None,
         bc_indices: Collection[int] | None = None,
     ):
-        self.feature_mask = np.ones(matrix.features_dim, dtype="bool")
-        self.bc_mask = np.ones(matrix.bcs_dim, dtype="bool")
+        self.feature_mask: np.ndarray[tuple[int], np.dtype[np.bool_]] = np.ones(
+            matrix.features_dim, dtype="bool"
+        )
+        self.bc_mask: np.ndarray[tuple[int], np.dtype[np.bool_]] = np.ones(
+            matrix.bcs_dim, dtype="bool"
+        )
         self.matrix: CountMatrix = matrix
 
         if feature_indices is not None:
@@ -160,17 +161,37 @@ class CountMatrixView:
         """Return a copy of this view."""
         return self._copy()
 
+    @overload
+    def sum(self, axis: None) -> np.int_: ...
+
+    @overload
+    def sum(self, axis: int) -> np.ndarray[tuple[int], np.dtype[np.int_]]: ...
+
     def sum(self, axis: int | None = None):
         """Sum across an axis."""
         return cr_sparse.sum_masked(self.matrix.m, self.feature_mask, self.bc_mask, axis=axis)
 
-    def max(self, axis: int | None = None) -> Any:
+    @overload
+    def max(self, axis: None) -> np.int_: ...
+
+    @overload
+    def max(self, axis: int) -> np.ndarray[tuple[int], np.dtype[np.int_]]: ...
+
+    def max(self, axis: int | None = None):
         """Max across an axis."""
-        return (
-            self.matrix.m.asformat("csr", copy=False)[self.feature_mask, :][:, self.bc_mask]
-            .max(axis=axis)
-            .toarray()[0]
+        assert axis in (0, 1, None), f"axis must be 0, 1, or None, got {axis}"
+        mx = self.matrix.m.asformat("csr", copy=False)[self.feature_mask, :][:, self.bc_mask].max(
+            axis=axis
         )
+        if axis is None:
+            return mx
+        # On scipy >=1.x a sparse `.max(axis=0|1)` returns a coo_matrix (not a numpy matrix),
+        # which has no `.flatten()`; densify and ravel to a 1-D array.
+        return mx.toarray().ravel()
+
+    def get_barcodes(self) -> np.ndarray[tuple[int], np.dtype[np.bytes_]]:
+        """Get the barcode sequences in this view."""
+        return self.matrix.bcs[self.bc_mask]
 
     @overload
     def count_ge(self, axis: None, threshold: int) -> np.uint64: ...
@@ -183,13 +204,40 @@ class CountMatrixView:
     def count_ge(
         self, axis: int | None, threshold: int
     ) -> np.uint64 | np.ndarray[tuple[int], np.dtype[np.uint64]]:
-        """Count number of elements >= X over an axis."""
+        """Count number of elements >= X over an axis or the whole matrix view.
+
+        Args:
+            axis (int | None): 0 or 1. None will return a single count across the matrix view.
+            threshold (int): Threshold.
+
+        Returns:
+            np.uint64 | np.ndarray[tuple[int], np.dtype[np.uint64]]: Counts across an axis or single
+                count across the matrix view
+        """
         return cr_sparse.count_ge_masked(
             self.matrix.m, self.feature_mask, self.bc_mask, threshold, axis
         )
 
-    def select_barcodes(self, indices: list[int] | np.ndarray):
-        """Select a subset of barcodes (by index in the original matrix) and return the resulting view."""
+    def select_barcodes(
+        self,
+        indices: list[int] | np.ndarray[tuple[int], np.dtype[np.intp]],
+    ) -> CountMatrixView:
+        """Subset current view by selecting on barcodes with given indices (referencing original matrix).
+
+        Selecting barcodes that are not in the current view is an error, because the indices
+        reference the original matrix, not the current view, which is a surprising footgun.
+
+        Args:
+            indices (list[int] | np.ndarray[tuple[int], np.dtype[np.intp]]): Barcode indices
+                referencing original matrix.
+
+        Returns:
+            CountMatrixView: A new view that subsets current view on barcodes with given indices
+        """
+        if len(indices) > 0:
+            assert self.bc_mask[
+                indices
+            ].all(), "Cannot select barcodes that are not in the current view"
         view = self._copy()
         mask = np.bincount(indices, minlength=len(view.bc_mask)).astype(bool)
         mask[mask > 1] = 1
@@ -197,25 +245,67 @@ class CountMatrixView:
         return view
 
     def select_barcodes_by_seq(self, barcode_seqs: list[bytes]) -> CountMatrixView:
+        """Subset current view by selecting on barcodes with given sequences.
+
+        Args:
+            barcode_seqs (list[bytes]): Barcode sequences
+
+        Returns:
+            CountMatrixView: A new view that subsets current view on barcodes with given sequences
+        """
         indices = self.matrix.bcs_to_ints(barcode_seqs)
         return self.select_barcodes(indices)
 
     def select_barcodes_by_gem_group(self, gem_group: int) -> CountMatrixView:
+        """Subset current view by selecting on barcode GEM group.
+
+        Args:
+            gem_group (int): Barcode GEM group
+
+        Returns:
+            CountMatrixView: A new view that subsets current view on barcodes with supplied GEM
+                group.
+        """
         return self.select_barcodes_by_seq(
             [bc for bc in self.matrix.bcs if gem_group == cr_utils.split_barcode_seq(bc)[1]]
         )
 
     def _update_feature_ref(self) -> None:
         """Make the feature reference consistent with the feature mask."""
-        indices = np.flatnonzero(self.feature_mask)
+        self.feat_original_indices: np.ndarray[tuple[int], np.dtype[np.intp]] = np.flatnonzero(
+            self.feature_mask
+        )
+        self.feat_view_indices: np.ndarray[tuple[int], np.dtype[np.intp]] = (
+            np.cumsum(self.feature_mask) - 1
+        )
         self.feature_ref = FeatureReference(
-            feature_defs=[self.matrix.feature_ref.feature_defs[i] for i in indices],
+            feature_defs=[
+                self.matrix.feature_ref.feature_defs[i] for i in self.feat_original_indices
+            ],
             all_tag_keys=self.matrix.feature_ref.all_tag_keys,
             target_features=self.matrix.feature_ref.target_features,
         )
 
-    def select_features(self, indices: list[int] | np.ndarray) -> CountMatrixView:
-        """Select a subset of features and return the resulting view."""
+    def select_features(
+        self,
+        indices: list[int] | np.ndarray[tuple[int], np.dtype[np.intp]],
+    ) -> CountMatrixView:
+        """Subset current view by selecting on features indices (referencing original matrix).
+
+        Selecting features that are not in the current view is an error, because the indices
+        reference the original matrix, not the current view, which is a surprising footgun.
+
+        Args:
+            indices (list[int] | np.ndarray[tuple[int], np.dtype[np.intp]]): List of feature indices
+                referencing the original matrix.
+
+        Returns:
+            CountMatrixView: A new view that subsets current view on feature indices
+        """
+        if len(indices) > 0:
+            assert self.feature_mask[
+                indices
+            ].all(), "Cannot select features that are not in the current view"
         view = self._copy()
         mask = np.bincount(indices, minlength=len(view.feature_mask)).astype(bool)
         mask[mask > 1] = 1
@@ -223,7 +313,7 @@ class CountMatrixView:
         view._update_feature_ref()
         return view
 
-    def select_features_by_genome(self, genome: str):
+    def select_features_by_genome(self, genome: str) -> CountMatrixView:
         """Select the subset of gene-expression features for genes in a specific genome."""
         indices = []
         for feature in self.matrix.feature_ref.feature_defs:
@@ -232,7 +322,11 @@ class CountMatrixView:
                     indices.append(feature.index)
         return self.select_features(indices)
 
-    def select_features_by_genome_and_types(self, genome: str, feature_types: Container[str]):
+    def select_features_by_genome_and_types(
+        self,
+        genome: str,
+        feature_types: Container[str],
+    ) -> CountMatrixView:
         """Subset the features by types and genome.
 
         Select the subset of gene-expression features for genes in a specific genome and matching
@@ -267,10 +361,25 @@ class CountMatrixView:
         return self.select_features(self.get_feature_indices_by_type(feature_type))
 
     def select_features_by_ids(self, feature_ids: Iterable[bytes]) -> CountMatrixView:
+        """Subset the view by feature IDs.
+
+        Args:
+            feature_ids (Iterable[bytes]): Feature IDs
+
+        Returns:
+            CountMatrixView: Current view further subset by feature IDs
+        """
         return self.select_features(self.matrix.feature_ids_to_ints(feature_ids))
 
     def get_feature_indices_by_type(self, feature_type: str) -> list[int]:
-        """Return the list of indices of features corresponding a feature type."""
+        """Return the list of indices of features corresponding a feature type.
+
+        Args:
+            feature_type (str): Feature type
+
+        Returns:
+            list[int]: List of feature indices referencing the original matrix
+        """
         return self.matrix.feature_ref.get_indices_for_type(feature_type)
 
     def get_genomes(self) -> list[str]:
@@ -278,14 +387,37 @@ class CountMatrixView:
         return self.feature_ref.get_genomes()
 
     def bcs_to_ints(self, bcs: list[bytes] | set[bytes]) -> list[int]:
-        # Only works when we haven't masked barcodes.
+        """Return for every barcode sequence its index in the view.
+
+        Args:
+            bcs (list[bytes] | set[bytes]): Barcode sequences
+
+        Raises:
+            NotImplementedError: When the view has any barcodes subseting
+
+        Returns:
+            list[int]: Barcode indices referencing the view
+        """
+        # TODO: Use the original index to view index to make this work when the view is subseted
         if np.count_nonzero(self.bc_mask) != self.matrix.bcs_dim:
             raise NotImplementedError(
                 "Calling bcs_to_ints on a barcode-sliced matrix view is unimplemented"
             )
         return self.matrix.bcs_to_ints(bcs)
 
-    def ints_to_bcs(self, bc_ints: list[int] | np.ndarray) -> list[bytes]:
+    def ints_to_bcs(
+        self,
+        bc_ints: list[int] | np.ndarray[tuple[int], np.dtype[np.intp]],
+    ) -> list[bytes]:
+        """Convert a list of barcode indices to their sequences.
+
+        Args:
+            bc_ints (list[int] | np.ndarray[tuple[int], np.dtype[np.intp]]): Barcode indices in the
+                current view (not in the original CountMatrix)
+
+        Returns:
+            list[bytes]: List of barcode sequences
+        """
         if bc_ints is None or len(bc_ints) == 0:
             return []
         sliced_bc_ints = np.flatnonzero(self.bc_mask)
@@ -293,18 +425,56 @@ class CountMatrixView:
         return [self.matrix.bcs[i] for i in orig_bc_ints]
 
     def int_to_feature_id(self, i: int) -> bytes:
+        """Feature index (in original matrix) to its ID.
+
+        Args:
+            i (int): Feature index in original matrix
+
+        Returns:
+            bytes: Feature ID
+        """
         return self.feature_ref.feature_defs[i].id
 
     def get_shape(self) -> tuple[int, int]:
-        """Return the shape of the sliced matrix."""
-        return (np.count_nonzero(self.feature_mask), np.count_nonzero(self.bc_mask))
+        """Return the shape of the matrix view."""
+        return (self.features_dim, self.bcs_dim)
 
-    def get_num_nonzero(self):
-        """Return the number of nonzero entries in the sliced matrix."""
+    def get_num_nonzero(self) -> np.uint64:
+        """Return the number of nonzero entries in the view."""
         return self.count_ge(axis=None, threshold=1)
 
-    def get_counts_per_bc(self):
+    def get_counts_per_bc(self) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
+        """Return the counts of each barcode in the view."""
         return self.sum(axis=0)
+
+    def get_per_barcode_counts_and_features(
+        self,
+    ) -> Generator[
+        tuple[
+            np.ndarray[tuple[int], np.dtype[np.int_]],  # feature counts
+            np.ndarray[tuple[int], np.dtype[np.intp]],  # feature indices
+        ],
+        None,
+        None,
+    ]:
+        """Generate feature counts and indices for each barcode.
+
+        Yields:
+            tuple of (feature counts, feature indices) for each barcode in the view. Feature indices
+            reference the view (instead of the original matrix)
+        """
+        # Get only the barcodes in the view
+        for i in np.flatnonzero(self.bc_mask):
+            # Get the column for this barcode
+            bc_feature_counts_col = self.matrix.m.getcol(i)
+            # Get only the features in the view
+            in_mask_feature_row_idxs = self.feature_mask.take(bc_feature_counts_col.indices)
+
+            bc_feature_idxs = bc_feature_counts_col.indices[in_mask_feature_row_idxs]
+            # Map original matrix feature indices to view feature indices
+            bc_feature_idxs = self.feat_view_indices[bc_feature_idxs]
+            bc_feature_cnts = bc_feature_counts_col.data[in_mask_feature_row_idxs]
+            yield (bc_feature_cnts, bc_feature_idxs)
 
 
 class CountMatrix:
@@ -313,7 +483,7 @@ class CountMatrix:
         self,
         feature_ref: FeatureReference,
         bcs: Collection[bytes] | Collection[str],
-        matrix: sp_sparse.spmatrix,
+        matrix: sp_sparse.csc_matrix,
     ):
         # Features (genes, CRISPR gRNAs, antibody barcodes, etc.)
         self.feature_ref = feature_ref
@@ -337,7 +507,7 @@ class CountMatrix:
             self.bcs.tobytes(), self.bcs.dtype.itemsize
         )
 
-        self.m: sp_sparse.spmatrix = matrix
+        self.m: sp_sparse.csc_matrix = matrix
         assert self.m.shape[1] == len(self.bcs), "Barcodes must be equal to cols of matrix"
 
     def get_shape(self) -> tuple[int, int]:
@@ -483,7 +653,7 @@ class CountMatrix:
         """
         return self.bcs_idx.bc_to_int(bc)
 
-    def bcs_to_ints(self, bcs: Sequence[bytes], return_sorted: bool = True) -> list[int]:
+    def bcs_to_ints(self, bcs: set[bytes] | list[bytes], return_sorted: bool = True) -> list[int]:
         if isinstance(bcs, set):
             bcs = list(bcs)
         return self.bcs_idx.bcs_to_ints(bcs, sort=return_sorted)
@@ -519,7 +689,7 @@ class CountMatrix:
 
     def save_h5_file(
         self,
-        filename,
+        filename: str | bytes,
         extra_attrs: None | (Mapping[str | bytes, str | bytes | Iterable[str | bytes]]) = None,
         sw_version=None,
     ):
@@ -561,7 +731,7 @@ class CountMatrix:
     @staticmethod
     def load_dims(group: h5.Group) -> tuple[int, int, int]:
         """Load the matrix shape from an HDF5 group."""
-        (rows, cols) = group[h5_constants.H5_MATRIX_SHAPE_ATTR][:]
+        rows, cols = group[h5_constants.H5_MATRIX_SHAPE_ATTR][:]
         entries = len(group[h5_constants.H5_MATRIX_DATA_ATTR])
         return (int(rows), int(cols), entries)
 
@@ -815,7 +985,7 @@ class CountMatrix:
             version = CountMatrix._get_format_version_from_handle(f)
             if version < MATRIX_H5_VERSION:
                 # Only GEX supported, check for any data and return GEX if any exists
-                (gene_count, _, _) = CountMatrix._load_dims_from_legacy_v1_h5_handle(f)
+                gene_count, _, _ = CountMatrix._load_dims_from_legacy_v1_h5_handle(f)
                 if gene_count > 0:
                     return {rna_library.GENE_EXPRESSION_LIBRARY_TYPE}
                 else:
@@ -996,6 +1166,170 @@ class CountMatrix:
                 indices.append(feature.index)
         return self.select_features(indices)
 
+    def select_barcodes_and_genes_targeted(
+        self,
+        bc_indices: Sequence[int] | np.ndarray,
+        gene_indices_to_keep: Iterable[int],
+    ) -> CountMatrix:
+        """Fused select_barcodes + remove_genes_not_on_list.
+
+        Equivalent to `self.select_barcodes(bc_indices).remove_genes_not_on_list(gene_indices_to_keep)`
+        but builds the final CSC directly from `self.m` in one walk, skipping the
+        intermediate barcode-subsetted matrix. Eliminates ~36 GiB of peak memory on
+        384-plex Flex by avoiding the M1 co-residency with `remove_genes_not_on_list`'s
+        scipy fancy-index transients.
+
+        Output ordering matches the canonical 2-step:
+          - columns in input `bc_indices` order
+          - rows = `list(gene_indices_to_keep)` followed by non-GEX features in
+            `feature_defs` index order (this is what `remove_genes_not_on_list` produces).
+        """
+        # Build the full feature index list in the same order as remove_genes_not_on_list.
+        feature_indices = list(gene_indices_to_keep)
+        for feature in self.feature_ref.feature_defs:
+            if feature.feature_type != rna_library.GENE_EXPRESSION_LIBRARY_TYPE:
+                feature_indices.append(feature.index)
+        return self._select_bcs_and_features_csc(bc_indices, feature_indices)
+
+    def _select_bcs_and_features_csc(
+        self,
+        bc_indices: Sequence[int] | np.ndarray,
+        feature_indices: Sequence[int],
+    ) -> CountMatrix:
+        """Build a fused barcode+feature submatrix from a CSC `self.m` in one walk.
+
+        Two-pass (count, then fill) so we allocate `new_indices` / `new_data` at their
+        exact final size - no concatenation step that would briefly hold 2x the output.
+        Chunked by NNZ so per-chunk transients are bounded regardless of how uneven
+        per-column nnz is.
+        """
+        self.tocsc()
+        assert isinstance(self.m, sp_sparse.csc_matrix)
+
+        bc_arr = np.asarray(bc_indices, dtype=np.intp)
+        feat_arr = np.asarray(feature_indices, dtype=np.intp)
+
+        n_features_old = self.m.shape[0]
+        n_features_new = len(feat_arr)
+        n_bcs_new = len(bc_arr)
+
+        # Map old feature index -> new feature row (-1 if dropped). int32 is enough
+        # for any realistic feature count and matches `m.indices` dtype.
+        new_feat_index = np.full(n_features_old, -1, dtype=np.int32)
+        new_feat_index[feat_arr] = np.arange(n_features_new, dtype=np.int32)
+
+        indptr = self.m.indptr
+        indices = self.m.indices
+        data = self.m.data
+
+        starts = indptr[bc_arr]
+        ends = indptr[bc_arr + 1]
+        col_lens = (ends - starts).astype(np.int64)
+        total_kept_bc_nnz = int(col_lens.sum())
+
+        # Chunk by source-side nnz so per-chunk transient memory is bounded.
+        # Target ~10M source-nnz per chunk → ~250 MiB transient peak across the
+        # half-dozen int32/int64 arrays held simultaneously inside _walk_chunk
+        # (col_ids, csum-gather, local_pos, src_pos, gathered indices/data,
+        # remapped feature lookup, keep mask). On the small/mid targeted cases
+        # the whole matrix would otherwise fit in one ~50M chunk and the
+        # chunk's transient peak alone exceeds the canonical-2-step working
+        # set; chunking down avoids that regression.
+        target_nnz_per_chunk = 10_000_000
+        if total_kept_bc_nnz == 0:
+            new_indptr = np.zeros(n_bcs_new + 1, dtype=indptr.dtype)
+            new_indices = np.empty(0, dtype=indices.dtype)
+            new_data = np.empty(0, dtype=data.dtype)
+        else:
+            cum_col_lens = np.cumsum(col_lens)
+            n_chunks = max(1, int(np.ceil(total_kept_bc_nnz / target_nnz_per_chunk)))
+            chunk_targets = np.arange(1, n_chunks + 1, dtype=np.int64) * target_nnz_per_chunk
+            chunk_boundaries = np.searchsorted(cum_col_lens, chunk_targets, side="left")
+            chunk_boundaries = np.unique(
+                np.concatenate(([0], np.clip(chunk_boundaries, 0, n_bcs_new), [n_bcs_new]))
+            )
+
+            def _walk_chunk(c_lo: int, c_hi: int):
+                """Gather kept (col_id, new_feat_index, data) for chunk [c_lo, c_hi).
+
+                Returns (kept_col_ids, kept_feat_new, kept_data). All transients
+                proportional to the *source-side* chunk nnz (bounded by
+                target_nnz_per_chunk) — we eagerly `del` the largest intermediates
+                so chunk-local peak stays close to two arrays in flight at a time.
+                """
+                chunk_lens = col_lens[c_lo:c_hi]
+                chunk_total = int(chunk_lens.sum())
+                # Build src_pos: for each entry k of this chunk's output, src_pos[k]
+                # is the position in raw_matrix.m.indices/.data of that entry.
+                col_ids = np.repeat(np.arange(c_hi - c_lo, dtype=np.int32), chunk_lens)
+                csum = np.empty(c_hi - c_lo + 1, dtype=np.int64)
+                csum[0] = 0
+                np.cumsum(chunk_lens, out=csum[1:])
+                src_pos = (np.arange(chunk_total, dtype=np.int64) - csum[col_ids]) + starts[
+                    c_lo:c_hi
+                ][col_ids].astype(np.int64)
+                del csum
+                # Gather feature indices + remap to new-feature space; then keep mask.
+                chunk_feat_new = new_feat_index[indices[src_pos]]
+                kept_mask = chunk_feat_new >= 0
+                kept_col_ids = col_ids[kept_mask]
+                del col_ids
+                kept_feat = chunk_feat_new[kept_mask].astype(indices.dtype, copy=False)
+                del chunk_feat_new
+                kept_data = data[src_pos][kept_mask]
+                del src_pos, kept_mask
+                return kept_col_ids, kept_feat, kept_data
+
+            # Pass 1: count kept entries per output column. Drop all transients.
+            new_lens = np.zeros(n_bcs_new, dtype=indptr.dtype)
+            for i in range(len(chunk_boundaries) - 1):
+                c_lo = int(chunk_boundaries[i])
+                c_hi = int(chunk_boundaries[i + 1])
+                if c_lo == c_hi:
+                    continue
+                if int(col_lens[c_lo:c_hi].sum()) == 0:
+                    continue
+                kept_col_ids, _kept_feat, _kept_data = _walk_chunk(c_lo, c_hi)
+                new_lens[c_lo:c_hi] = np.bincount(kept_col_ids, minlength=c_hi - c_lo).astype(
+                    indptr.dtype, copy=False
+                )
+
+            new_indptr = np.zeros(n_bcs_new + 1, dtype=indptr.dtype)
+            np.cumsum(new_lens, out=new_indptr[1:])
+            new_nnz = int(new_indptr[-1])
+
+            # Pass 2: fill exact-sized arrays. Drop transients after each chunk.
+            new_indices = np.empty(new_nnz, dtype=indices.dtype)
+            new_data = np.empty(new_nnz, dtype=data.dtype)
+            for i in range(len(chunk_boundaries) - 1):
+                c_lo = int(chunk_boundaries[i])
+                c_hi = int(chunk_boundaries[i + 1])
+                if c_lo == c_hi:
+                    continue
+                if int(col_lens[c_lo:c_hi].sum()) == 0:
+                    continue
+                _kept_col_ids, kept_feat, kept_data = _walk_chunk(c_lo, c_hi)
+                pos_start = int(new_indptr[c_lo])
+                pos_end = int(new_indptr[c_hi])
+                # kept_feat / kept_data are already in column-major order within
+                # the chunk because `col_ids` is monotone non-decreasing.
+                assert pos_end - pos_start == kept_feat.shape[0]
+                new_indices[pos_start:pos_end] = kept_feat
+                new_data[pos_start:pos_end] = kept_data
+
+        submat = sp_sparse.csc_matrix(
+            (new_data, new_indices, new_indptr),
+            shape=(n_features_new, n_bcs_new),
+        )
+        # Within-column rows are in source-CSC row order, not new-row order. Sort
+        # so the result is canonical CSC matching the saved-then-resorted output
+        # that the canonical 2-step would produce after save_mex.sort_indices().
+        submat.sort_indices()
+        submat = _ensure_types_match(self.m, submat)
+        feature_ref = self.feature_ref.select_features(feat_arr.tolist())
+        new_bcs = [self.bcs[int(i)] for i in bc_arr]
+        return CountMatrix(feature_ref=feature_ref, bcs=new_bcs, matrix=submat)
+
     def select_features_by_genome(self, genome: str) -> CountMatrix:
         """Select the subset of gene-expression features for genes in a specific genome."""
         indices = []
@@ -1162,6 +1496,10 @@ class CountMatrix:
         value = sorted(reads_per_bc, reverse=True)[index]
         return np.nonzero(reads_per_bc >= value)[0]
 
+    def get_num_nonzero_features(self) -> int:
+        """Return the number of features with at least one nonzero entry across all barcodes."""
+        return int(np.count_nonzero(self.get_numbcs_per_feature()))
+
     def save_mex(
         self,
         base_dir: str,
@@ -1171,10 +1509,6 @@ class CountMatrix:
     ):
         """Save in Matrix Market Exchange format.
 
-        Note:
-            This operation modifies the matrix by
-            converting to a coordinate representation by calling scipy.sparse.csc_matrix.tocoo().
-
         Args:
           base_dir (str): Path to directory to write files in.
           save_features_func (func): Func that takes (FeatureReference, base_dir, compress) and writes
@@ -1182,8 +1516,14 @@ class CountMatrix:
           metadata (dict): Optional metadata to encode into the comments as JSON.
           compress: Whether to compress output files with gzip.
         """
+        # Stream MEX triples directly from the CSC arrays. The previous implementation
+        # called self.tocoo() which allocated a coo_matrix holding nnz-sized copies of
+        # row/col/data (~3·nnz·int32 bytes transient) and additionally materialised
+        # `row + 1` and `col + 1` as nnz arrays alongside the COO during iteration.
+        # Iterating CSC columns produces the same column-major triple order that
+        # csc.tocoo() yields after sort_indices(), so the on-disk bytes are unchanged.
         self.sort_indices()
-        self.tocoo()
+        self.tocsc()
 
         os.makedirs(base_dir, exist_ok=True)
 
@@ -1202,7 +1542,7 @@ class CountMatrix:
         else:
             raise ValueError(f"Unsupported data type for the matrix: {self.m.dtype}")
 
-        assert isinstance(self.m, sp_sparse.coo.coo_matrix)
+        assert isinstance(self.m, sp_sparse.csc_matrix)
 
         rows, cols = self.m.shape
         # Header fields in the file
@@ -1226,9 +1566,16 @@ class CountMatrix:
 
             # write shape spec
             stream.write(b"%i %i %i\n" % (rows, cols, self.m.nnz))
-            # write row, col, val in 1-based indexing
-            for r, c, d in zip(self.m.row + 1, self.m.col + 1, self.m.data):
-                stream.write(fmt % (r, c, d))
+            # write row, col, val in 1-based indexing, iterating the CSC by column.
+            indptr = self.m.indptr
+            indices = self.m.indices
+            data = self.m.data
+            for col in range(cols):
+                col1 = col + 1
+                start = int(indptr[col])
+                end = int(indptr[col + 1])
+                for k in range(start, end):
+                    stream.write(fmt % (int(indices[k]) + 1, col1, data[k]))
 
         # both GEX and ATAC provide an implementation of this in respective feature_ref.py
         save_features_func(self.feature_ref, base_dir, compress=compress)
@@ -1582,8 +1929,23 @@ def create_merged_matrix_from_col_concat(
         matrix[h5_constants.H5_MATRIX_INDPTR_ATTR][:] = ind_ptr
 
 
-def make_matrix_attrs_count(sample_id, gem_groups, chemistry):
-    matrix_attrs = make_library_map_count(sample_id, gem_groups)
+def make_matrix_attrs_count(sample_id: str, gem_groups: list[int], chemistry: str) -> dict[
+    str,
+    str | np.ndarray[tuple[int], np.dtype[np.int_] | np.dtype[np.bytes_]],
+]:
+    unique_gem_groups = sorted(set(gem_groups))
+    matrix_attrs: dict[
+        str, str | np.ndarray[tuple[int], np.dtype[np.int_] | np.dtype[np.bytes_]]
+    ] = {
+        h5_constants.H5_LIBRARY_ID_MAPPING_KEY: np.array(
+            [sample_id] * len(unique_gem_groups),
+            dtype="S",  # Zero-terminated string (not recommended according to NumPy docs)
+        ),
+        h5_constants.H5_ORIG_GEM_GROUP_MAPPING_KEY: np.array(
+            unique_gem_groups,
+            dtype=int,
+        ),
+    }
     matrix_attrs[h5_constants.H5_CHEMISTRY_DESC_KEY] = chemistry
     return matrix_attrs
 
@@ -1644,18 +2006,6 @@ def load_matrix_h5_custom_attrs(filename):
             if key not in MATRIX_H5_BUILTIN_ATTRS:
                 attrs[key] = val
         return attrs
-
-
-def make_library_map_count(sample_id, gem_groups):
-    # store gem group mapping for use by Cell Loupe
-    unique_gem_groups = sorted(set(gem_groups))
-    library_map = {
-        h5_constants.H5_LIBRARY_ID_MAPPING_KEY: np.array(
-            [sample_id] * len(unique_gem_groups), dtype="S"
-        ),
-        h5_constants.H5_ORIG_GEM_GROUP_MAPPING_KEY: np.array(unique_gem_groups, dtype=int),
-    }
-    return library_map
 
 
 def make_library_map_aggr(gem_group_index) -> dict[str, np.ndarray]:

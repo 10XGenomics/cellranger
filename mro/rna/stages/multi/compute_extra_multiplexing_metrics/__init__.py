@@ -14,7 +14,9 @@ and the sets of multiplet and singlet barcodes
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
+import martian
 import numpy as np
 
 import cellranger.feature_ref as feature_ref
@@ -24,6 +26,9 @@ import tenkit.stats as tk_stats
 from cellranger import matrix as cr_matrix
 from cellranger.fast_utils import MultiGraph, tag_read_counts
 from cellranger.feature.feature_assignments import SampleBarcodes
+
+if TYPE_CHECKING:
+    import cellranger.mro_types.filetypes as mro_filetypes
 
 __MRO__ = """
 stage COMPUTE_EXTRA_MULTIPLEXING_METRICS(
@@ -77,7 +82,32 @@ def calculate_median_cmo_umis_per_singlet(fbm_fname, singlet_barcodes_json, libr
     return median_umis_per_singlet
 
 
-def split(args):
+class StageInputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """COMPUTE_EXTRA_MULTIPLEXING_METRICS stage inputs."""
+
+    molecule_info: mro_filetypes.h5
+    filtered_feature_counts_matrix: mro_filetypes.h5
+    multi_graph: None | mro_filetypes.json
+    sample_cell_barcodes: None | mro_filetypes.json
+    non_singlet_barcodes: None | mro_filetypes.json
+    multiplexing_method: str
+
+
+class StageOutputs(martian.Record):  # pylint: disable=too-few-public-methods
+    """COMPUTE_EXTRA_MULTIPLEXING_METRICS stage outputs."""
+
+    summary: None | mro_filetypes.json
+
+
+class ChunkInputs(StageInputs):  # pylint: disable=too-few-public-methods
+    """COMPUTE_EXTRA_MULTIPLEXING_METRICS chunk inputs."""
+
+
+class ChunkOutputs(StageOutputs):  # pylint: disable=too-few-public-methods
+    """COMPUTE_EXTRA_MULTIPLEXING_METRICS chunk outputs."""
+
+
+def split(args: StageInputs):
     matrix_dims = cr_matrix.CountMatrix.load_dims_from_h5(args.filtered_feature_counts_matrix)
     num_cells = matrix_dims[1]
     nnz = matrix_dims[2]
@@ -93,7 +123,7 @@ def split(args):
     }
 
 
-def main(args, _outs):
+def main(_args: ChunkInputs, _outs: ChunkOutputs):
     pass
 
 
@@ -103,7 +133,12 @@ def main(args, _outs):
 # - median CMO UMIs over all singlets
 # - fraction of CMO reads lost to multiplets
 # - fraction reads in cells on a per-tag basis
-def join(args, outs, chunk_defs, chunk_outs):
+def join(
+    args: StageInputs,
+    outs: StageOutputs,
+    _chunk_defs: list[ChunkInputs],
+    _chunk_outs: list[ChunkOutputs],
+):
     # pylint: disable=too-many-locals
     if args.multi_graph is None:
         outs.summary = None

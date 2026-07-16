@@ -6,11 +6,24 @@
 filetype bincode.lz4;
 filetype csv;
 filetype h5;
+filetype json;
 filetype npy;
 
 struct PcaOutputs(
     h5   pca_h5,
     path pca_csv,
+)
+
+stage ASSIGN_LOW_UMI_CELLS(
+    in  path analysis,
+    in  int  umi_upper_threshold,
+    in  int  umi_lower_threshold,
+    in  bool aggregate_and_annotate,
+    out json metacell_json,
+    src comp "cr_ana martian assign_low_umi_cells",
+) split (
+) using (
+    volatile = strict,
 )
 
 stage RUN_DIFFERENTIAL_EXPRESSION(

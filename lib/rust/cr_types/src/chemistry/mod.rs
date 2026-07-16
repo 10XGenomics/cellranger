@@ -1,11 +1,12 @@
 //! Specification of analysis chemistries.
-#![expect(missing_docs)]
+#![deny(missing_docs)]
 
+pub mod adapter;
 mod chemistry_defs;
 
 use crate::LibraryType;
 use anyhow::{Result, bail, ensure};
-use barcode::whitelist::{BarcodeId, ReqStrand, find_slide_design};
+use barcode::whitelist::{BarcodeId, ReqStrand};
 use barcode::{BarcodeConstruct, BcSegSeq, Segments, Whitelist, WhitelistSource, WhitelistSpec};
 use chemistry_defs::get_chemistry_def;
 pub use chemistry_defs::{known_chemistry_defs, normalize_chemistry_def};
@@ -26,8 +27,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use strum::{Display, EnumIter, EnumString};
 
-// "Auto" chemistries which are not fully specified and need to be further
-// refined into one of
+/// "Auto" chemistries which are not fully specified and need to be further refined.
 #[derive(
     Copy,
     Clone,
@@ -43,6 +43,7 @@ use strum::{Display, EnumIter, EnumString};
     Serialize,
     Deserialize,
 )]
+#[expect(missing_docs)]
 pub enum AutoChemistryName {
     #[serde(rename = "auto")]
     #[strum(serialize = "auto")]
@@ -58,14 +59,11 @@ pub enum AutoChemistryName {
     Vdj,
 }
 
-const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 10] = [
+const THREE_PRIME_AUTO_CHEMS: [ChemistryName; 9] = [
     ChemistryName::ThreePrimeV1,
     ChemistryName::ThreePrimeV2,
     ChemistryName::ThreePrimeV3PolyA,
     ChemistryName::ThreePrimeV3CS1,
-    // LT is no longer supported, but we retain it here so that we can issue
-    // an accurate error message in DETECT_CHEMISTRY if we detect an LT kit.
-    ChemistryName::ThreePrimeV3LT,
     ChemistryName::ThreePrimeV3HTPolyA,
     ChemistryName::ThreePrimeV3HTCS1,
     ChemistryName::ThreePrimeV4PolyA,
@@ -182,11 +180,15 @@ impl AutoChemistryName {
     Deserialize,
     MartianType,
 )]
-#[allow(non_camel_case_types)]
+#[expect(missing_docs, non_camel_case_types)]
 pub enum ChemistryName {
+    /// Custom chemistry
     #[serde(rename = "custom")]
     #[strum(serialize = "custom")]
     Custom,
+
+    /// Combinatorial Multiplexing
+    CombinatorialMultiplexingV1,
 
     /// Singleplex fixed RNA profiling
     SFRP,
@@ -370,10 +372,6 @@ pub enum ChemistryName {
     #[strum(serialize = "SC3Pv3-CS1-OCM")]
     ThreePrimeV3CS1OCM,
 
-    #[serde(rename = "SC3Pv3LT")]
-    #[strum(serialize = "SC3Pv3LT")]
-    ThreePrimeV3LT, // deprecated, to be removed
-
     #[serde(rename = "SC3Pv3HT-polyA")]
     #[strum(serialize = "SC3Pv3HT-polyA")]
     ThreePrimeV3HTPolyA,
@@ -419,6 +417,14 @@ pub enum ChemistryName {
     #[strum(serialize = "SPATIAL-HD-v1-3P")]
     SpatialHdV1ThreePrime,
 
+    #[serde(rename = "SPATIAL-HD-v1-11mm")]
+    #[strum(serialize = "SPATIAL-HD-v1-11mm")]
+    SpatialHdV1ElevenMm,
+
+    #[serde(rename = "SPATIAL-HD-v1-3P-11mm")]
+    #[strum(serialize = "SPATIAL-HD-v1-3P-11mm")]
+    SpatialHdV1ThreePrimeElevenMm,
+
     #[serde(rename = "ARC-v1")]
     #[strum(serialize = "ARC-v1")]
     ArcV1,
@@ -437,6 +443,12 @@ pub enum ChemistryName {
 }
 
 impl ChemistryName {
+    /// Return the static chemistry def that matches this name.
+    /// Panic for custom chemistry.
+    pub fn def(self) -> ChemistryDef {
+        ChemistryDef::named(self)
+    }
+
     /// Return Some(true) if an RTL chemistry, Some(false) if not an RTL chemistry, and None if unknown.
     /// Custom and spatial chemistries may be either 3'GEX or RTL.
     pub fn is_rtl(&self) -> Option<bool> {
@@ -446,9 +458,6 @@ impl ChemistryName {
             // Custom and spatial chemistries may be either 3'GEX or RTL.
             Custom | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
             | SpatialThreePrimeV4 | SpatialThreePrimeV5 => None,
-
-            SpatialHdV1Rtl => Some(true),
-            SpatialHdV1ThreePrime => Some(false),
 
             // FRP chemistries are RTL.
             SFRP
@@ -472,19 +481,48 @@ impl ChemistryName {
             | Flex_v2_Ab_R2_45
             | Flex_v2_Ab_R2_64
             | Flex_v2_CRISPR_R2_1
-            | Flex_v2_singleplex => Some(true),
+            | Flex_v2_singleplex
+            | SpatialHdV1Rtl
+            | SpatialHdV1ElevenMm => Some(true),
 
             // All other chemistries are not RTL.
             // These are explicitly listed for future exhaustiveness checks.
-            FeatureBarcodingOnly | VdjPE | VdjR2 | VdjPEV3 | VdjR2V3 | VdjR1 | VdjPEOCMV3
-            | VdjR2OCMV3 | FivePrimeR1 | FivePrimeR2 | FivePrimeR2OCM | FivePrimeHT
-            | FivePrimePE | FivePrimeR1V3 | FivePrimeR1OCMV3 | FivePrimeR2V3 | FivePrimeR2OCMV3
-            | FivePrimePEV3 | FivePrimePEOCMV3 | ThreePrimeV1 | ThreePrimeV2
-            | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 | ThreePrimeV4PolyA
-            | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM | ArcV1 | AtacV1 => {
-                Some(false)
-            }
+            FeatureBarcodingOnly
+            | VdjPE
+            | VdjR2
+            | VdjPEV3
+            | VdjR2V3
+            | VdjR1
+            | VdjPEOCMV3
+            | VdjR2OCMV3
+            | FivePrimeR1
+            | FivePrimeR2
+            | FivePrimeR2OCM
+            | FivePrimeHT
+            | FivePrimePE
+            | FivePrimeR1V3
+            | FivePrimeR1OCMV3
+            | FivePrimeR2V3
+            | FivePrimeR2OCMV3
+            | FivePrimePEV3
+            | FivePrimePEOCMV3
+            | ThreePrimeV1
+            | ThreePrimeV2
+            | ThreePrimeV3PolyA
+            | ThreePrimeV3CS1
+            | ThreePrimeV3PolyAOCM
+            | ThreePrimeV3CS1OCM
+            | ThreePrimeV3HTPolyA
+            | ThreePrimeV3HTCS1
+            | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1
+            | ThreePrimeV4PolyAOCM
+            | ThreePrimeV4CS1OCM
+            | ArcV1
+            | AtacV1
+            | CombinatorialMultiplexingV1
+            | SpatialHdV1ThreePrime
+            | SpatialHdV1ThreePrimeElevenMm => Some(false),
         }
     }
 
@@ -539,7 +577,6 @@ impl ChemistryName {
             | ThreePrimeV3CS1
             | ThreePrimeV3PolyAOCM
             | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT
             | ThreePrimeV3HTPolyA
             | ThreePrimeV3HTCS1
             | ThreePrimeV4PolyA
@@ -552,9 +589,12 @@ impl ChemistryName {
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
             | SpatialHdV1Rtl
+            | SpatialHdV1ElevenMm
             | SpatialHdV1ThreePrime
+            | SpatialHdV1ThreePrimeElevenMm
             | ArcV1
-            | AtacV1 => false,
+            | AtacV1
+            | CombinatorialMultiplexingV1 => false,
         }
     }
 
@@ -610,7 +650,6 @@ impl ChemistryName {
             | ThreePrimeV3CS1
             | ThreePrimeV3PolyAOCM
             | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT
             | ThreePrimeV3HTPolyA
             | ThreePrimeV3HTCS1
             | ThreePrimeV4PolyA
@@ -623,10 +662,13 @@ impl ChemistryName {
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
             | SpatialHdV1Rtl
+            | SpatialHdV1ElevenMm
             | SpatialHdV1ThreePrime
+            | SpatialHdV1ThreePrimeElevenMm
             | ArcV1
             | AtacV1
-            | SfrpNoTrimR2 => false,
+            | SfrpNoTrimR2
+            | CombinatorialMultiplexingV1 => false,
         }
     }
 
@@ -636,7 +678,7 @@ impl ChemistryName {
         use ChemistryName::*;
         match self {
             ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 => true,
+            | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 => true,
             Custom
             | SFRP
             | SfrpNoTrimR2
@@ -691,9 +733,12 @@ impl ChemistryName {
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
             | SpatialHdV1Rtl
+            | SpatialHdV1ElevenMm
             | SpatialHdV1ThreePrime
+            | SpatialHdV1ThreePrimeElevenMm
             | ArcV1
-            | AtacV1 => false,
+            | AtacV1
+            | CombinatorialMultiplexingV1 => false,
         }
     }
 
@@ -751,7 +796,6 @@ impl ChemistryName {
             | ThreePrimeV3CS1
             | ThreePrimeV3PolyAOCM
             | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT
             | ThreePrimeV3HTPolyA
             | ThreePrimeV3HTCS1
             | SpatialThreePrimeV1
@@ -760,9 +804,12 @@ impl ChemistryName {
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
             | SpatialHdV1Rtl
+            | SpatialHdV1ElevenMm
             | SpatialHdV1ThreePrime
+            | SpatialHdV1ThreePrimeElevenMm
             | ArcV1
-            | AtacV1 => false,
+            | AtacV1
+            | CombinatorialMultiplexingV1 => false,
         }
     }
 
@@ -815,7 +862,6 @@ impl ChemistryName {
             | ThreePrimeV3CS1
             | ThreePrimeV3PolyAOCM
             | ThreePrimeV3CS1OCM
-            | ThreePrimeV3LT
             | ThreePrimeV3HTPolyA
             | ThreePrimeV3HTCS1
             | ThreePrimeV4PolyA
@@ -828,9 +874,12 @@ impl ChemistryName {
             | SpatialThreePrimeV4
             | SpatialThreePrimeV5
             | SpatialHdV1Rtl
+            | SpatialHdV1ElevenMm
             | SpatialHdV1ThreePrime
+            | SpatialHdV1ThreePrimeElevenMm
             | ArcV1
-            | AtacV1 => false,
+            | AtacV1
+            | CombinatorialMultiplexingV1 => false,
         }
     }
 
@@ -874,7 +923,6 @@ impl ChemistryName {
                     | ThreePrimeV3HTPolyA
                     | ThreePrimeV4PolyA
                     | ThreePrimeV4PolyAOCM
-                    | ThreePrimeV3LT
             ),
             LibraryType::Antibody | LibraryType::Custom => matches!(
                 self,
@@ -902,7 +950,6 @@ impl ChemistryName {
                     | ThreePrimeV4PolyAOCM
                     | ThreePrimeV4CS1
                     | ThreePrimeV4CS1OCM
-                    | ThreePrimeV3LT
             ),
             LibraryType::Crispr => matches!(
                 self,
@@ -926,7 +973,6 @@ impl ChemistryName {
                     | ThreePrimeV3CS1OCM
                     | ThreePrimeV3HTPolyA
                     | ThreePrimeV3HTCS1
-                    | ThreePrimeV3LT
                     | ThreePrimeV4PolyA
                     | ThreePrimeV4CS1
                     | ThreePrimeV4PolyAOCM
@@ -947,29 +993,18 @@ impl ChemistryName {
         }
     }
 
-    /// Return true if a spatial chemistry.
-    pub fn is_spatial(&self) -> bool {
-        #[allow(clippy::enum_glob_use)]
-        use ChemistryName::*;
-        matches!(
-            self,
-            SpatialThreePrimeV1
-                | SpatialThreePrimeV2
-                | SpatialThreePrimeV3
-                | SpatialThreePrimeV4
-                | SpatialThreePrimeV5
-                | SpatialHdV1Rtl
-                | SpatialHdV1ThreePrime
-        )
-    }
-
     /// Return true if a spatial chemistry that supports CytAssist
     pub fn is_cytassist_compatible(&self) -> bool {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
         matches!(
             self,
-            SpatialThreePrimeV4 | SpatialThreePrimeV5 | SpatialHdV1Rtl | SpatialHdV1ThreePrime
+            SpatialThreePrimeV4
+                | SpatialThreePrimeV5
+                | SpatialHdV1Rtl
+                | SpatialHdV1ElevenMm
+                | SpatialHdV1ThreePrime
+                | SpatialHdV1ThreePrimeElevenMm
         )
     }
 
@@ -979,7 +1014,37 @@ impl ChemistryName {
         use ChemistryName::*;
         matches!(
             self,
+            SpatialThreePrimeV3
+                | SpatialThreePrimeV4
+                | SpatialThreePrimeV5
+                | SpatialHdV1Rtl
+                | SpatialHdV1ThreePrime
+                | SpatialHdV1ElevenMm
+                | SpatialHdV1ThreePrimeElevenMm
+        )
+    }
+
+    /// Return true if a spatial chemistry is a Visium SD one that supports feature barcoding
+    pub fn is_visium_sd_fb(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        matches!(
+            self,
             SpatialThreePrimeV3 | SpatialThreePrimeV4 | SpatialThreePrimeV5
+        )
+    }
+
+    /// Return true if spatial chemistry requires a probeset
+    pub fn does_spatial_need_probeset(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use ChemistryName::*;
+        matches!(
+            self,
+            SpatialThreePrimeV3
+                | SpatialThreePrimeV4
+                | SpatialThreePrimeV5
+                | SpatialHdV1Rtl
+                | SpatialHdV1ElevenMm
         )
     }
 
@@ -1014,10 +1079,13 @@ impl ChemistryName {
     }
 }
 
+/// An auto or refined chemistry name.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(untagged)] // Ensures that this (de)serializes from/to a string
 pub enum AutoOrRefinedChemistry {
+    /// An auto chemistry name.
     Auto(AutoChemistryName),
+    /// A refined chemistry name.
     Refined(ChemistryName),
 }
 
@@ -1109,7 +1177,7 @@ impl AutoOrRefinedChemistry {
 }
 
 impl ChemistryName {
-    // figure out the headers for bamtofastq
+    /// Return the headers for bamtofastq.
     pub fn bamtofastq_headers(&self) -> &'static [&'static str] {
         #[allow(clippy::enum_glob_use)]
         use ChemistryName::*;
@@ -1117,12 +1185,12 @@ impl ChemistryName {
         match self {
             // standard 'modern' chemistries
             ThreePrimeV2 | ThreePrimeV3PolyA | ThreePrimeV3CS1 | ThreePrimeV3PolyAOCM
-            | ThreePrimeV3CS1OCM | ThreePrimeV3LT | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1
-            | ThreePrimeV4PolyA | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM
-            | SpatialThreePrimeV1 | SpatialThreePrimeV2 | SpatialThreePrimeV3
-            | SpatialThreePrimeV4 | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OCM
-            | FivePrimeHT | FivePrimeR2V3 | FivePrimeR2OCMV3 | FeatureBarcodingOnly | SFRP
-            | SfrpNoTrimR2 | Flex_v2_singleplex | ArcV1 => &[
+            | ThreePrimeV3CS1OCM | ThreePrimeV3HTPolyA | ThreePrimeV3HTCS1 | ThreePrimeV4PolyA
+            | ThreePrimeV4CS1 | ThreePrimeV4PolyAOCM | ThreePrimeV4CS1OCM | SpatialThreePrimeV1
+            | SpatialThreePrimeV2 | SpatialThreePrimeV3 | SpatialThreePrimeV4
+            | SpatialThreePrimeV5 | FivePrimeR2 | FivePrimeR2OCM | FivePrimeHT | FivePrimeR2V3
+            | FivePrimeR2OCMV3 | FeatureBarcodingOnly | SFRP | SfrpNoTrimR2
+            | Flex_v2_singleplex | ArcV1 => &[
                 "10x_bam_to_fastq:R1(CR:CY,UR:UY)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL)",
             ],
@@ -1163,6 +1231,7 @@ impl ChemistryName {
             VdjR1 | VdjR2 | VdjPE | VdjR2V3 | VdjPEV3 | VdjPEOCMV3 | VdjR2OCMV3 => {
                 panic!("VDJ don't yet make a normal BAM file")
             }
+            CombinatorialMultiplexingV1 => &[], // can come back to this later.
 
             // this chemistry supported for customers & bamtofastq doesn't work, so don't emit any
             // bamtofastq headers
@@ -1185,7 +1254,10 @@ impl ChemistryName {
                 "10x_bam_to_fastq:I2(CR:CY)",
                 "10x_bam_to_fastq_seqnames:R1,R3,I1,R2",
             ],
-            SpatialHdV1Rtl | SpatialHdV1ThreePrime => &[
+            SpatialHdV1Rtl
+            | SpatialHdV1ThreePrime
+            | SpatialHdV1ElevenMm
+            | SpatialHdV1ThreePrimeElevenMm => &[
                 "10x_bam_to_fastq:R1(1R:1Y)",
                 "10x_bam_to_fastq:R2(SEQ:QUAL,2R:2Y)",
             ],
@@ -1193,13 +1265,16 @@ impl ChemistryName {
     }
 }
 
+/// One component of an RNA read.
 #[derive(Copy, Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
 pub struct RnaReadComponent {
     #[mro_type = "string"]
-    pub read_type: WhichRead,
+    pub(crate) read_type: WhichRead,
+    /// The offset of the RNA part within the read.
     pub offset: usize,
+    /// The length of the RNA part within the read, if explicit.
     pub length: Option<usize>,
-    pub min_length: Option<usize>,
+    pub(crate) min_length: Option<usize>,
 }
 
 impl From<RnaReadComponent> for RpRange {
@@ -1208,50 +1283,27 @@ impl From<RnaReadComponent> for RpRange {
     }
 }
 
-// TODO: Should this be in the `umi` crate?
-#[derive(Copy, Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianType)]
-#[serde(rename_all = "snake_case")]
-pub enum UmiTranslation {
-    /// Translate the UMI part to a single base. Used in multi barcode chemistries
-    /// to map the 4bp splints between barcode parts which have a diversity of 4 to a
-    /// single nucleotide
-    SingleBase,
-}
-
-// TODO: Should this be in the `umi` crate?
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
-pub struct UmiWhitelistSpec {
-    pub slide: String,
-    #[mro_type = "string"]
-    pub part: slide_design::OligoPart,
-    pub translation: UmiTranslation,
-}
-
-impl UmiWhitelistSpec {
-    pub fn sequences(&self) -> Vec<String> {
-        let slide_path = find_slide_design(&self.slide).expect("Failed to find slide design file");
-        slide_design::load_oligos(&slide_path, self.part).unwrap()
-    }
-}
-
+/// One component of a UMI.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
 pub struct UmiReadComponent {
+    /// The read from which to extract the UMI.
     #[mro_type = "string"]
     pub read_type: WhichRead,
+    /// The offset of the UMI within the read.
     pub offset: usize,
     /// The length of the UMI. At most this number of bases will be extracted for use as a UMI.
     pub length: usize,
-    /// If a shorter UMI can be used, add it here. None indicates that the full
-    /// `length` is required.
+    /// The minimum required length of the UMI, or `None` if the full length is required.
     pub min_length: Option<usize>,
-    pub whitelist: Option<UmiWhitelistSpec>,
 }
 
+/// The kind of a barcode segment.
 #[derive(
     Serialize, Deserialize, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug, MartianType,
 )]
 #[serde(rename_all = "snake_case")]
-pub(super) enum BarcodeKind {
+#[expect(missing_docs)]
+pub enum BarcodeKind {
     GelBead,
     LeftProbe,
     RightProbe,
@@ -1272,6 +1324,11 @@ pub struct BarcodeReadComponent {
 }
 
 impl BarcodeReadComponent {
+    /// Return the kind.
+    pub fn kind(&self) -> BarcodeKind {
+        self.kind
+    }
+
     /// Return the whitelist.
     pub fn whitelist(&self) -> &WhitelistSpec {
         &self.whitelist
@@ -1287,6 +1344,7 @@ impl BarcodeReadComponent {
         self.offset
     }
 
+    /// Return the range of this barcode segment.
     pub fn rprange(&self) -> RpRange {
         RpRange::new(self.read_type, self.offset, Some(self.length))
     }
@@ -1332,18 +1390,30 @@ fn bc_vec_to_construct(comps: &[BarcodeReadComponent]) -> BarcodeConstruct<&Barc
             BarcodeConstruct::GelBeadOnly(gel_bead)
         }
         [first, other] => match (first.kind, other.kind) {
-            (GelBead, LeftProbe) | (GelBead, RightProbe) => {
+            (GelBead, LeftProbe | RightProbe) => {
                 BarcodeConstruct::new_gel_bead_and_probe(first, other)
             }
             (GelBead, Overhang) => BarcodeConstruct::GelBeadOnly(first),
-            (SpotSegment, SpotSegment) => BarcodeConstruct::Segmented(Segments::from_iter(comps)),
+            (SpotSegment, SpotSegment) => {
+                BarcodeConstruct::SpatialSegmented(Segments::from_iter(comps))
+            }
             _ => unimplemented!("Combination of two other kinds segments are not supported"),
         },
-        [_, _, _] => unimplemented!("Barcodes with three segments are not supported"),
-        [_, _, _, _] => {
-            assert!(comps.iter().all(|x| x.kind == SpotSegment));
-            BarcodeConstruct::Segmented(Segments::from_iter(comps))
+        [first, second, third, fourth] => {
+            match (first.kind, second.kind, third.kind, fourth.kind) {
+                (GelBead, GelBead, GelBead, Overhang) => {
+                    BarcodeConstruct::new_segmented_gel_bead_and_sample(
+                        [first, second, third],
+                        fourth,
+                    )
+                }
+                _ => {
+                    assert!(comps.iter().all(|x| x.kind == SpotSegment));
+                    BarcodeConstruct::SpatialSegmented(Segments::from_iter(comps))
+                }
+            }
         }
+        [_, _, _] => unimplemented!("Barcodes with three segments are not supported"),
         [_, _, _, _, _, ..] => {
             unimplemented!("Barcodes with five or more segments are not supported")
         }
@@ -1358,13 +1428,18 @@ fn bc_vec_to_overhang_read_component(
         [] => panic!("No barcode segments"),
         [_] => None,
         [first, other] => match (first.kind, other.kind) {
-            (GelBead, LeftProbe) | (GelBead, RightProbe) => None,
+            (GelBead, LeftProbe | RightProbe) => None,
             (GelBead, Overhang) => Some(other),
             (SpotSegment, SpotSegment) => None,
             _ => unimplemented!("Combination of two other kinds segments are not supported"),
         },
         [_, _, _] => unimplemented!("Barcodes with three segments are not supported"),
-        [_, _, _, _] => None,
+        [first, second, third, fourth] => {
+            match (first.kind, second.kind, third.kind, fourth.kind) {
+                (GelBead, GelBead, GelBead, Overhang) => Some(fourth),
+                _ => None,
+            }
+        }
         [_, _, _, _, _, ..] => {
             unimplemented!("Barcodes with five or more segments are not supported")
         }
@@ -1384,7 +1459,12 @@ pub enum BarcodeExtraction {
     ///
     /// TODO: decide if we want to generalize this across BarcodeConstruct instead
     /// of special-casing to only multiplexing barcodees.
-    VariableMultiplexingBarcode { min_offset: i64, max_offset: i64 },
+    VariableMultiplexingBarcode {
+        /// The minimum offset.
+        min_offset: i64,
+        /// The maximum offset.
+        max_offset: i64,
+    },
     /// A two part barcode chemistry, where the two parts are adjacent to
     /// each other. The position of bc1 is flexible due to variable length
     /// regions upstream of bc1 and the possibility of indels. Instead of an
@@ -1477,16 +1557,24 @@ impl AsMartianPrimaryType for BarcodeExtraction {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
 #[serde(deny_unknown_fields)]
 pub struct ChemistryDef {
+    /// The name of the chemistry.
     pub name: ChemistryName,
+    /// The description of the chemistry.
     pub description: String,
+    /// The 5' or 3' endedness of the chemistry.
     #[mro_type = "string"]
     pub endedness: Option<WhichEnd>,
+    /// The forward or reverse strandedness of the chemistry.
     #[mro_type = "string"]
     pub strandedness: ReqStrand,
     barcode: Vec<BarcodeReadComponent>,
+    /// The UMI read components.
     pub umi: Vec<UmiReadComponent>,
+    /// The first RNA read component.
     pub rna: RnaReadComponent,
-    pub rna2: Option<RnaReadComponent>,
+    /// The optional second RNA read component.
+    pub(crate) rna2: Option<RnaReadComponent>,
+    /// The barcode extraction strategy, if any.
     barcode_extraction: Option<BarcodeExtraction>,
 }
 
@@ -1497,7 +1585,7 @@ impl JsonReport for ChemistryDef {
         };
         map.into_iter()
             // Only report the newly introduced key if it's not null
-            .filter(|(k, v)| !(k == "barcode_extraction" && v == &Value::Null))
+            .filter(|(k, v)| !((k == "barcode_extraction" || k == "adapter") && v == &Value::Null))
             .map(|(k, v)| (format!("chemistry_{k}"), v))
             .collect()
     }
@@ -1517,10 +1605,12 @@ impl ChemistryDef {
             .unwrap_or_else(|| panic!("no chemistry definition found for {name}"))
     }
 
+    /// Return whether this is a paired-end chemistry.
     pub fn is_paired_end(&self) -> bool {
         self.rna2.is_some()
     }
 
+    /// Return the barcode construct for this chemistry.
     pub fn barcode_construct(&self) -> BarcodeConstruct<&BarcodeReadComponent> {
         bc_vec_to_construct(&self.barcode)
     }
@@ -1531,6 +1621,7 @@ impl ChemistryDef {
         bc_vec_to_overhang_read_component(&self.barcode)
     }
 
+    /// Return the barcode range for each portion of the barcode.
     pub fn barcode_range(&self) -> BarcodeConstruct<RpRange> {
         if matches!(
             self.barcode_extraction,
@@ -1541,6 +1632,7 @@ impl ChemistryDef {
         self.barcode_construct().map(BarcodeReadComponent::rprange)
     }
 
+    /// Return the read type for each portion of the barcode.
     pub fn barcode_read_type(&self) -> BarcodeConstruct<WhichRead> {
         self.barcode_construct().map(|bc| bc.read_type)
     }
@@ -1566,6 +1658,7 @@ impl ChemistryDef {
             .map_result(WhitelistSource::as_whitelist)
     }
 
+    /// Return the minimum read length.
     pub fn min_read_length(&self, which: WhichRead) -> usize {
         // Minimum number of bases required for alignment/assembly
         const MIN_RNA_BASES: usize = 25;
@@ -1608,6 +1701,28 @@ impl ChemistryDef {
         result
     }
 
+    /// Return the BC + UMI offset when both are on R1
+    pub fn bc_umi_offset_into_r1(&self) -> Option<usize> {
+        let mut max_offset = 0;
+
+        for bc in &self.barcode {
+            if bc.read_type != WhichRead::R1 {
+                return None;
+            }
+            max_offset = max_offset.max(bc.offset + bc.length);
+        }
+
+        for umi in &self.umi {
+            if umi.read_type != WhichRead::R1 {
+                return None;
+            }
+            max_offset = max_offset.max(umi.offset + umi.length);
+        }
+
+        Some(max_offset)
+    }
+
+    /// Return the barcode extraction strategy, if any.
     pub fn barcode_extraction(&self) -> Option<&BarcodeExtraction> {
         self.barcode_extraction.as_ref()
     }
@@ -1648,6 +1763,7 @@ pub type ChemistryDefs = HashMap<LibraryType, ChemistryDef>;
 /// One chemistry spec per library type.
 pub type ChemistrySpecs = HashMap<LibraryType, AutoOrRefinedChemistry>;
 
+/// Extension methods for `ChemistryDefs`.
 pub trait ChemistryDefsExt {
     /// Return the primary chemistry definition.
     fn primary(&self) -> &ChemistryDef;
@@ -1764,6 +1880,7 @@ struct ReadDefs {
     right_probe_barcode_kind: Option<BarcodeKind>,
 }
 
+/// An index scheme definition, used to build a custom chemistry definition.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, MartianStruct)]
 pub struct IndexScheme {
     name: String,
@@ -1774,7 +1891,7 @@ pub struct IndexScheme {
 impl IndexScheme {
     /// Convert this IndexScheme to a ChemistryDef.
     /// Match logic from lib/python/puppy/argshim/lena.py, function `make_custom_chemistry_def`
-    pub fn to_chemistry_def(self, barcode_whitelist: &str) -> Result<ChemistryDef> {
+    pub fn into_chemistry_def(self, barcode_whitelist: &str) -> Result<ChemistryDef> {
         let name = ChemistryName::Custom;
         let description = format!("custom: {}", self.name);
         let strandedness = self.read_defs.strand;
@@ -1869,7 +1986,6 @@ impl IndexScheme {
             offset: self.read_defs.umi_read_offset,
             length: self.read_defs.umi_read_length,
             min_length: self.read_defs.umi_read_min_length,
-            whitelist: None, // TODO: build it
         }];
 
         let rna = RnaReadComponent {
@@ -1968,7 +2084,7 @@ mod tests {
         };
         assert_eq!(
             index_scheme
-                .to_chemistry_def("737K-fixed-rna-profiling")
+                .into_chemistry_def("737K-fixed-rna-profiling")
                 .unwrap(),
             ChemistryDef {
                 name: ChemistryName::Custom,
@@ -2047,7 +2163,7 @@ mod tests {
     fn test_min_read_length() {
         use ChemistryName::{
             FivePrimeHT, FivePrimePE, FivePrimeR1, FivePrimeR2, ThreePrimeV1, ThreePrimeV2,
-            ThreePrimeV3HTPolyA, ThreePrimeV3LT, ThreePrimeV3PolyA, VdjPE, VdjR2,
+            ThreePrimeV3HTPolyA, ThreePrimeV3PolyA, VdjPE, VdjR2,
         };
         use WhichRead::{I1, R1, R2};
         assert_eq!(ChemistryDef::named(ThreePrimeV1).min_read_length(I1), 14);
@@ -2065,9 +2181,6 @@ mod tests {
             ChemistryDef::named(ThreePrimeV3PolyA).min_read_length(R2),
             25
         );
-
-        assert_eq!(ChemistryDef::named(ThreePrimeV3LT).min_read_length(R1), 26);
-        assert_eq!(ChemistryDef::named(ThreePrimeV3LT).min_read_length(R2), 25);
 
         assert_eq!(
             ChemistryDef::named(ThreePrimeV3HTPolyA).min_read_length(R1),
@@ -2247,7 +2360,7 @@ mod tests {
 
         assert_eq!(
             bc_vec_to_construct(&barcode),
-            BarcodeConstruct::Segmented(Segments {
+            BarcodeConstruct::SpatialSegmented(Segments {
                 segment1: &barcode[0],
                 segment2: &barcode[1],
                 segment3: Some(&barcode[2]),
@@ -2257,7 +2370,7 @@ mod tests {
 
         assert_eq!(
             bc_vec_to_construct(&barcode[0..2]),
-            BarcodeConstruct::Segmented(Segments {
+            BarcodeConstruct::SpatialSegmented(Segments {
                 segment1: &barcode[0],
                 segment2: &barcode[1],
                 segment3: None,
@@ -2411,33 +2524,6 @@ mod tests {
                 length: 12,
                 min_length: Some(10),
                 offset: 16,
-                whitelist: None,
-            }
-        );
-        assert_eq!(
-            serde_json::from_str::<UmiReadComponent>(
-                r#"{
-                    "length": 4,
-                    "offset": 7,
-                    "read_type": "R1",
-                    "whitelist": {
-                        "slide": "test",
-                        "part": "bc1",
-                        "translation": "single_base"
-                    }
-                }"#,
-            )
-            .unwrap(),
-            UmiReadComponent {
-                read_type: WhichRead::R1,
-                length: 4,
-                min_length: None,
-                offset: 7,
-                whitelist: Some(UmiWhitelistSpec {
-                    slide: "test".into(),
-                    part: slide_design::OligoPart::Bc1,
-                    translation: UmiTranslation::SingleBase,
-                }),
             }
         );
     }

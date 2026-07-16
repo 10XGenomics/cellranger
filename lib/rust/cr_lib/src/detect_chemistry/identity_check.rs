@@ -13,15 +13,15 @@ pub(crate) fn check_read_identity(
     unit: &DetectChemistryUnit,
     read_pairs: &[ReadPair],
 ) -> Result<(u64, u64)> {
-    use ReadPart::{Header, Qual, Seq};
+    use ReadPart::{Qual, Seq};
     use WhichRead::{R1, R2};
     let mut r1_hasher = TxHasher::hasher();
     let mut r2_hasher = TxHasher::hasher();
     for read_pair in read_pairs {
-        let _ = read_pair.get(R1, Header).map(|x| r1_hasher.write(x));
+        r1_hasher.write(read_pair.id().unwrap_or(b""));
         let _ = read_pair.get(R1, Seq).map(|x| r1_hasher.write(x));
         let _ = read_pair.get(R1, Qual).map(|x| r1_hasher.write(x));
-        let _ = read_pair.get(R2, Header).map(|x| r2_hasher.write(x));
+        r2_hasher.write(read_pair.id().unwrap_or(b""));
         let _ = read_pair.get(R2, Seq).map(|x| r2_hasher.write(x));
         let _ = read_pair.get(R2, Qual).map(|x| r2_hasher.write(x));
     }
@@ -43,10 +43,12 @@ pub(crate) fn check_read_identity(
     Ok((r1_hash, r2_hash))
 }
 
-pub(crate) fn check_fastq_identity(units: &[DetectChemistryUnit]) -> Result<()> {
+pub(crate) fn check_fastq_identity<'a>(
+    units: impl Iterator<Item = &'a DetectChemistryUnit>,
+) -> Result<()> {
     fn format_unit_fastq(
         unit: &DetectChemistryUnit,
-        fastq: &fastq_set::read_pair_iter::InputFastqs,
+        fastq: &fastq_set::read_pair_iter::FastqSet,
     ) -> String {
         format!(
             "{}\"{}\"",

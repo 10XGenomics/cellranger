@@ -15,13 +15,13 @@ PIPELINE_META_COUNT = "meta-count"
 CELLRANGER_COMMAND_NAME = "Cell Ranger"
 
 # TODO delete this if it isn't being used anywhere
-WEBSHIM_PIPELINES = [
+WEBSHIM_PIPELINES = (
     PIPELINE_AGGR,
     PIPELINE_COUNT,
     PIPELINE_REANALYZE,
     PIPELINE_VDJ,
     PIPELINE_META_COUNT,
-]
+)
 
 ALARM_WARN = "warn"
 ALARM_ERROR = "error"

@@ -87,6 +87,7 @@ def main(args, outs):
         analysis_path=args.analysis,
         antibody_histograms_path=args.antibody_histograms,
         antibody_treemap_path=args.antibody_treemap,
+        filtered_matrix_h5_path=args.filtered_matrices,
     )
 
     _ = wsb.build_web_summary_html_sc(
